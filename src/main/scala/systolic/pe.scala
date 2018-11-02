@@ -8,6 +8,7 @@ import chisel3._
   * Compute PE .
   */
 class PE (width: Int) extends Module 
+{
   val io = IO(new Bundle {
     val in_a = Input(UInt(width.W))
     val out_a = Output(UInt(width.W))
@@ -19,24 +20,23 @@ class PE (width: Int) extends Module
 
 
 
-  val a  = Reg(UInt())
-  val b  = Reg(UInt())
-  val c  = Reg(UInt())
-  val s  = Reg(UInt())
+  val a  = RegInit(0.U)
+  val b  = RegInit(0.U)
+  val c  = RegInit(0.U)
+  val s  = RegInit(0.U)
    
   a := io.in_a
   b := io.in_b
-  c := io.in_c
   s := io.in_s
   io.out_s := s
   io.out_a := a
 
-  when(s === 0.U){
+  when(s === 1.U){
     io.out := c
     c := b
   }.otherwise {
     io.out := b
     c := (a*b) + c
-    }
+  }
 }
 
