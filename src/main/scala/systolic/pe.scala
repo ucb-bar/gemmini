@@ -12,13 +12,11 @@ class PE (width: Int) extends Module
   val io = IO(new Bundle {
     val in_a = Input(UInt(width.W))
     val out_a = Output(UInt(width.W))
-    val in_b = Input(UInt(width.W))
-    val in_s = Input(UInt(1.W))
-    val out_s = Output(UInt(1.W))
+    val in_b = Input(UInt((2*width).W))
+    val in_s = Input(UInt(2.W))
+    val out_s = Output(UInt(2.W))
     val out  = Output(UInt((2*width).W))
   })
-
-
 
   val a  = RegInit(0.U)
   val b  = RegInit(0.U)

@@ -7,12 +7,12 @@ import chisel3._
 /**
   * Computes Mesh output .
   */
-class MESH (width: Int, rows: Int, columns: Int) extends Module 
+class Mesh (width: Int, rows: Int, columns: Int) extends Module 
 {
   val io = IO(new Bundle {
     val in_a_vec = Input(Vec(rows,UInt(width.W)))
-    val in_b_vec = Input(Vec(columns,UInt(width.W)))
-    val in_s_vec = Input(Vec(columns,UInt(1.W)))
+    val in_b_vec = Input(Vec(columns,UInt((2*width).W)))
+    val in_s_vec = Input(Vec(columns,UInt(2.W)))
     val out_vec  = Output(Vec(columns,UInt((2*width).W)))
   })
 
