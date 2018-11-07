@@ -18,8 +18,6 @@ class PE (width: Int) extends Module
     val out  = Output(UInt((2*width).W))
   })
 
-
-
   val a  = RegInit(0.U)
   val b  = RegInit(0.U)
   val c  = RegInit(0.U)
