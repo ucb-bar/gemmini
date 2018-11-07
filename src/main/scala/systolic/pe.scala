@@ -7,7 +7,7 @@ import chisel3._
 /**
   * Compute PE .
   */
-class PE (width: Int) extends Module 
+class PE (width: Int) extends Module
 {
   val io = IO(new Bundle {
     val in_a = Input(UInt(width.W))
@@ -29,12 +29,30 @@ class PE (width: Int) extends Module
   io.out_s := s
   io.out_a := a
 
-  when(s === 1.U){
-    io.out := c
-    c := b
+  val mode = s(1)
+  val select = s(0)
+
+  val OUTPUT_STATIONARY = 0.U(1.W)
+  val WEIGHT_STATIONARY = 1.U(1.W)
+
+  val COMPUTE = 0.U(1.W)
+  val PROPAGATE = 1.U(1.W)
+
+  when (mode === OUTPUT_STATIONARY) {
+    when(select === PROPAGATE){
+      io.out := c
+      c := b
+    }.otherwise {
+      io.out := b
+      c := (a*b) + c
+    }
   }.otherwise {
-    io.out := b
-    c := (a*b) + c
+    when(select === PROPAGATE){
+      io.out := c
+      c := b
+    }.otherwise {
+      io.out := (a*c) + b
+      c := c
+    }
   }
 }
-
