@@ -7,10 +7,16 @@ import chisel3._
 import chisel3.iotesters.{ChiselFlatSpec, PeekPokeTester}
 
 class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
-  val m = Array(
+  val m1 = Array(
     Array(10, 3),
     Array(2, 13)
   )
+
+  val m2 = Array(
+    Array(2, 4),
+    Array(3, 9)
+  )
+
   def generateA(m: Array[Array[Int]]): Array[Array[Int]] = {
     (0 until c.rows).map { i =>
       (Seq.fill(i)(0) ++ m(i) ++ Seq.fill(c.rows*2 - i)(0)).toArray
@@ -18,10 +24,9 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
   }
 
   def generateB(m: Array[Array[Int]]): Array[Array[Int]] = {
+    val mT = m.transpose
     (0 until c.columns).map { i =>
-      (Seq.fill(i)(0) ++ m.flatMap(r => r.zipWithIndex.collect {
-        case (x, j) if j == i => x
-      }) ++ Seq.fill(c.columns*2 - i)(0)).toArray
+      (Seq.fill(i)(0) ++ mT(i) ++ Seq.fill(c.columns*2 - i)(0)).toArray
     }.toArray
   }
 
@@ -51,7 +56,7 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
   }
 
   println("Generating a:")
-  val aFormat = generateA(m)
+  val aFormat = generateA(m1)
   for (i <- aFormat) {
     for (j <- i) {
       print(j.toString + " ")
@@ -60,7 +65,7 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
   }
 
   println("Generating b:")
-  val bFormat = generateB(m)
+  val bFormat = generateB(m2)
   for (i <- bFormat) {
     for (j <- i) {
       print(j.toString + " ")
@@ -78,7 +83,7 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
   }
 
   println("Generating cGold:")
-  val cGold = mult(m, m)
+  val cGold = mult(m1, m2)
   for (i <- cGold) {
     for (j <- i) {
       print(j.toString + " ")
@@ -109,7 +114,6 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
     assert(peeked.zip(C(cycle)).forall {
       case (actual, (expected, true)) => actual == expected
       case (_, (_, false)) => true
-      case _ => false
     })
     println(peeked.map(_.toString).reduce(_ + "\t" + _))
   }
