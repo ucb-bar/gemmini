@@ -2,7 +2,6 @@
 
 package systolic
 
-import breeze.linalg.DenseMatrix
 import chisel3._
 import chisel3.iotesters.{ChiselFlatSpec, PeekPokeTester}
 
@@ -16,6 +15,12 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
     Array(2, 4),
     Array(3, 9)
   )
+
+  def print2DArray[A](a: Array[Array[A]]): Unit = {
+    a.map(_.mkString(", ")).foreach {
+      line => println(line)
+    }
+  }
 
   def generateA(m: Array[Array[Int]]): Array[Array[Int]] = {
     (0 until c.rows).map { i =>
@@ -40,7 +45,7 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
     import n._
     for (row <- a)
       yield for(col <- b.transpose)
-        yield (row zip col map Function.tupled(_*_) reduceLeft (_+_))
+        yield row zip col map Function.tupled(_*_) reduceLeft (_+_)
   }
 
   def generateC(cGold: Array[Array[Int]]): Array[Array[Tuple2[Int, Boolean]]]= {
@@ -50,54 +55,29 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
     }.toArray
   }
 
-  reset()
-  c.io.in_s_vec.foreach { s =>
-    poke(s, 0)
-  }
-
   println("Generating a:")
   val aFormat = generateA(m1)
-  for (i <- aFormat) {
-    for (j <- i) {
-      print(j.toString + " ")
-    }
-    println()
-  }
+  print2DArray(aFormat)
 
   println("Generating b:")
   val bFormat = generateB(m2)
-  for (i <- bFormat) {
-    for (j <- i) {
-      print(j.toString + " ")
-    }
-    println()
-  }
+  print2DArray(bFormat)
 
   println("Generating s:")
   val sFormat = generateS
-  for (i <- sFormat) {
-    for (j <- i) {
-      print(j.toString + " ")
-    }
-    println()
-  }
+  print2DArray(sFormat)
 
   println("Generating cGold:")
   val cGold = mult(m1, m2)
-  for (i <- cGold) {
-    for (j <- i) {
-      print(j.toString + " ")
-    }
-    println()
-  }
+  print2DArray(cGold.map(_.toArray))
 
   println("Generating C:")
   val C = generateC(cGold.map(_.toArray)).transpose
-  for (i <- C) {
-    for (j <- i) {
-      print(j.toString + " ")
-    }
-    println()
+  print2DArray(C)
+
+  reset()
+  c.io.in_s_vec.foreach { s =>
+    poke(s, 0)
   }
 
   def strobeInputs(cycle: Int): Unit = {
@@ -107,7 +87,9 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
       poke(c.io.in_s_vec(i), sFormat(i)(cycle))
     }
   }
-  for (cycle <- 0 until 6) {
+
+  println("Peeking output out_vec")
+  for (cycle <- 0 until aFormat(0).length) {
     strobeInputs(cycle)
     step(1)
     val peeked = peek(c.io.out_vec)
