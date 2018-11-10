@@ -8,8 +8,8 @@ import chisel3.iotesters.{ChiselFlatSpec, PeekPokeTester}
 
 class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
   val m = Array(
-    Array(1, 2),
-    Array(4, 4)
+    Array(10, 3),
+    Array(2, 13)
   )
   def generateA(m: Array[Array[Int]]): Array[Array[Int]] = {
     (0 until c.rows).map { i =>
@@ -28,6 +28,20 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
   def generateS: Array[Array[Int]] = {
     (0 until c.columns).map { i =>
       Array.fill(i)(0) ++ Array.fill(c.rows)(0) ++ Array.fill(c.rows)(1) ++ Array.fill(c.rows - i)(0)
+    }.toArray
+  }
+
+  def mult[A](a: Array[Array[A]], b: Array[Array[A]])(implicit n: Numeric[A]) = {
+    import n._
+    for (row <- a)
+      yield for(col <- b.transpose)
+        yield (row zip col map Function.tupled(_*_) reduceLeft (_+_))
+  }
+
+  def generateC(cGold: Array[Array[Int]]): Array[Array[Tuple2[Int, Boolean]]]= {
+    val cGoldT = cGold.transpose
+    (0 until c.columns).map { i =>
+      Array.fill(c.rows + i + 1)((0, false)) ++ cGoldT(i).reverse.map((_, true)) ++ Array.fill(c.rows - 1 - i)((0, false))
     }.toArray
   }
 
@@ -63,6 +77,24 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
     println()
   }
 
+  println("Generating cGold:")
+  val cGold = mult(m, m)
+  for (i <- cGold) {
+    for (j <- i) {
+      print(j.toString + " ")
+    }
+    println()
+  }
+
+  println("Generating C:")
+  val C = generateC(cGold.map(_.toArray)).transpose
+  for (i <- C) {
+    for (j <- i) {
+      print(j.toString + " ")
+    }
+    println()
+  }
+
   def strobeInputs(cycle: Int): Unit = {
     for (i <- 0 until c.io.in_a_vec.length) {
       poke(c.io.in_a_vec(i), aFormat(i)(cycle))
@@ -73,7 +105,13 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
   for (cycle <- 0 until 6) {
     strobeInputs(cycle)
     step(1)
-    println(peek(c.io.out_vec).map(_.toString).reduce(_ + "\t" + _))
+    val peeked = peek(c.io.out_vec)
+    assert(peeked.zip(C(cycle)).forall {
+      case (actual, (expected, true)) => actual == expected
+      case (_, (_, false)) => true
+      case _ => false
+    })
+    println(peeked.map(_.toString).reduce(_ + "\t" + _))
   }
 }
 
