@@ -30,7 +30,7 @@ name := "systolic array"
 
 version := "3.1.0"
 
-scalaVersion := "2.11.12"
+scalaVersion := "2.12.4"
 
 crossScalaVersions := Seq("2.11.12", "2.12.4")
 
@@ -47,6 +47,8 @@ val defaultVersions = Map(
 
 libraryDependencies ++= (Seq("chisel3","chisel-iotesters").map {
   dep: String => "edu.berkeley.cs" %% dep % sys.props.getOrElse(dep + "Version", defaultVersions(dep)) })
+
+libraryDependencies ++= Seq("org.scalanlp" %% "breeze" % "0.13.2")
 
 scalacOptions ++= scalacOptionsVersion(scalaVersion.value)
 

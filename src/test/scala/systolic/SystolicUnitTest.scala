@@ -23,7 +23,4 @@ import chisel3._
   * sbt 'test:runMain gcd.GCDMain --backend-name verilator'
   * }}}
   */
-object systolicMain extends App {
-  chisel3.Driver.execute(args, () => new Mesh(8, 4, 4))
-}
 
