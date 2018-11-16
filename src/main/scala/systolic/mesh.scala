@@ -7,7 +7,7 @@ import chisel3._
 /**
   * Computes Mesh output .
   */
-class Mesh (val width: Int, val rows: Int, val columns: Int) extends Module
+class Mesh (val width: Int, val rows: Int, val columns: Int, pass_through: Boolean) extends Module
 {
   val io = IO(new Bundle {
     val in_a_vec = Input(Vec(rows,UInt(width.W)))
@@ -16,7 +16,7 @@ class Mesh (val width: Int, val rows: Int, val columns: Int) extends Module
     val out_vec  = Output(Vec(columns,UInt((2*width).W)))
   })
 
-  val mesh = (0 until rows).map{_ => (0 until columns).map{_ => Module(new PE(width))}}
+  val mesh = (0 until rows).map{_ => (0 until columns).map{_ => Module(new PE(width,pass_through))}}
 
   for(r <- 0 until rows-1; c <- 0 until columns-1) {
     mesh(r+1)(c).io.in_s := mesh(r)(c).io.out_s
