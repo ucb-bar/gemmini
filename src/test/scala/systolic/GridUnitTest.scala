@@ -36,9 +36,9 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
 
   def generateS: Seq[Seq[Int]] = {
     (0 until c.gridColumns*c.meshColumns).map { i =>
-      Seq.fill(c.gridColumns*c.meshColumns)(0) ++
+      Seq.fill(math.max(c.gridRows*c.meshRows, c.gridColumns*c.meshColumns))(0) ++
         Seq.fill(c.meshRows*c.gridRows)(1) ++
-        Seq.fill(c.meshRows*c.gridRows)(0)
+        Seq.fill(c.meshRows*c.gridRows + 2)(0)
     }
   }
   val S = generateS
@@ -75,7 +75,7 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   val Bpad = B.map(_.padTo(S(0).length, 0))
   val Agrouped = Apad.grouped(c.meshRows).toList
   val Bgrouped = Bpad.grouped(c.meshColumns).toList
-  val Sgrouped = S.grouped(c.gridColumns).toList
+  val Sgrouped = S.grouped(c.meshColumns).toList
   val Cgold = mult(m1, m2)
   println("A Padded:")
   Predef.println(Apad)
@@ -136,10 +136,29 @@ class GridTester extends ChiselFlatSpec {
     Seq(7, 8)
   )
 
+  // Hybrid
   "GridTester" should "run matmul using a 2x2 grid with 3x2 meshes" in {
     iotesters.Driver.execute(
       Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
       () => new Grid(16, 3, 2, 2, 2))
+    {
+      c => new GridUnitTest(c, m1, m2)
+    } should be (true)
+  }
+  // Fully pipelined
+  "GridTester" should "run matmul using a 6x4 grid with 1x1 meshes" in {
+    iotesters.Driver.execute(
+      Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+      () => new Grid(16, 1, 1, 6, 4))
+    {
+      c => new GridUnitTest(c, m1, m2)
+    } should be (true)
+  }
+  // Fully combinational
+  "GridTester" should "run matmul using a 1x1 grid with one 6x4 mesh" in {
+    iotesters.Driver.execute(
+      Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+      () => new Grid(16, 6, 4, 1, 1))
     {
       c => new GridUnitTest(c, m1, m2)
     } should be (true)
