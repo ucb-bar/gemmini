@@ -10,6 +10,7 @@ class Grid(val width: Int, val meshRows: Int, val meshColumns: Int,
     val in_b_vec = Input(Vec(gridColumns, Vec(meshColumns, UInt((2*width).W))))
     val in_s_vec = Input(Vec(gridColumns, Vec(meshColumns, UInt(2.W))))
     val out_vec  = Output(Vec(gridColumns, Vec(meshColumns, UInt((2*width).W))))
+    val out_s_vec  = Output(Vec(gridColumns, Vec(meshColumns, UInt(2.W))))
   })
 
   // grid(r, c) => Mesh at row r, column c
@@ -50,5 +51,7 @@ class Grid(val width: Int, val meshRows: Int, val meshColumns: Int,
   // Capture out_vec (pipeline the output of the bottom row)
   for (c <- 0 until gridColumns) {
     io.out_vec(c) := RegNext(grid(gridRows-1)(c).io.out_vec)
+    // TODO: we have to double register s_out to treat it as a valid signal, maybe there's a better way
+    io.out_s_vec(c) := RegNext(RegNext(grid(gridRows-1)(c).io.out_s_vec))
   }
 }

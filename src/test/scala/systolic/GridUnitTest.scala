@@ -18,8 +18,7 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
       paddedA
     }
   }
-  Predef.println(generateA(m1))
-  //Predef.println(generateA(m2.transpose))
+  val A = generateA(m1)
 
   def generateB(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
     val mT = m.transpose
@@ -33,18 +32,76 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
       paddedB
     }
   }
-  Predef.println(generateB(m2))
+  val B = generateB(m2)
+
+  def generateS: Seq[Seq[Int]] = {
+    (0 until c.gridColumns*c.meshColumns).map { i =>
+      Seq.fill(c.gridColumns*c.meshColumns)(0) ++
+        Seq.fill(c.meshRows*c.gridRows + 0)(1) ++
+        Seq.fill(c.meshRows*c.gridRows)(0)
+    }
+  }
+  val S = generateS
+
+  def mult[A](a: Seq[Seq[A]], b: Seq[Seq[A]])(implicit n: Numeric[A]) = {
+    import n._
+    for (row <- a)
+      yield for(col <- b.transpose)
+        yield row zip col map Function.tupled(_*_) reduceLeft (_+_)
+  }
+  Predef.println(mult(m1, m2))
 /*
-  def generateS: Array[Array[Int]] = {
+  def generateC(cGold: Array[Array[Int]]): Array[Array[Tuple2[Int, Boolean]]]= {
+    val cGoldT = cGold.transpose
     (0 until c.columns).map { i =>
-      Array.fill(c.rows)(0) ++ Array.fill(c.rows)(1) ++ Array.fill(c.rows)(1)
+      Array.fill(c.rows )((0, false)) ++ cGoldT(i).reverse.map((_, true)) ++ Array.fill(c.rows - 1)((0, false))
     }.toArray
   }
-*/
+  */
+
   def print2DArray[A](a: Array[Array[A]]): Unit = {
     a.map(_.mkString(", ")).foreach {
       line => println(line)
     }
+  }
+
+  reset()
+  c.io.in_s_vec.foreach { col =>
+    col.foreach { colMesh =>
+      poke(colMesh, 0)
+    }
+  }
+
+  val Apad = A.map(_.padTo(S(0).length, 0))
+  val Bpad = B.map(_.padTo(S(0).length, 0))
+  val Agrouped = Apad.grouped(c.meshRows).toList
+  val Bgrouped = Bpad.grouped(c.meshColumns).toList
+  val Sgrouped = S.grouped(c.gridColumns).toList
+  Predef.println(Apad)
+  Predef.println(Bpad)
+  Predef.println(S)
+  def strobeInputs(cycle: Int): Unit = {
+    for (gridRow <- 0 until c.gridRows) {
+      for (meshRow <- 0 until c.meshRows) {
+        poke(c.io.in_a_vec(gridRow)(meshRow), Agrouped(gridRow)(meshRow)(cycle))
+      }
+    }
+    for (gridCol <- 0 until c.gridColumns) {
+      for (meshCol <- 0 until c.meshColumns) {
+        poke(c.io.in_b_vec(gridCol)(meshCol), Bgrouped(gridCol)(meshCol)(cycle))
+        poke(c.io.in_s_vec(gridCol)(meshCol), Sgrouped(gridCol)(meshCol)(cycle))
+      }
+    }
+  }
+
+  println("Peeking output out_vec")
+  for (cycle <- 0 until Apad(0).length) {
+    strobeInputs(cycle)
+    val peeked = peek(c.io.out_vec)
+    step(1)
+
+    println(peeked.map(_.toString).reduce(_ + "\t" + _))
+    Predef.println(peek(c.io.out_s_vec).map(_.toString))
   }
 }
 
