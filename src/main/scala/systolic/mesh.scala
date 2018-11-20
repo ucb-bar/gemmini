@@ -14,6 +14,8 @@ class Mesh (val width: Int, val rows: Int, val columns: Int, pass_through: Boole
     val in_b_vec = Input(Vec(columns,UInt((2*width).W)))
     val in_s_vec = Input(Vec(columns,UInt(2.W)))
     val out_vec  = Output(Vec(columns,UInt((2*width).W)))
+    val out_s_vec = Output(Vec(columns, UInt(2.W)))
+    val out_a_vec = Output(Vec(columns, UInt(width.W)))
   })
 
   val mesh = (0 until rows).map{_ => (0 until columns).map{_ => Module(new PE(width,pass_through))}}
@@ -25,20 +27,22 @@ class Mesh (val width: Int, val rows: Int, val columns: Int, pass_through: Boole
 
   }
   for(c <- 0 until columns) {
-    if (c < columns-1){	
-      mesh(rows-1)(c+1).io.in_a := mesh(rows-1)(c).io.out_a
+    if (c < columns-1){
+      mesh(rows-1)(c + 1).io.in_a := mesh(rows-1)(c).io.out_a
     }
     io.out_vec(c) := mesh(rows-1)(c).io.out
-    mesh(0)(c).io.in_b := io.in_b_vec(c) 
+    mesh(0)(c).io.in_b := io.in_b_vec(c)
     mesh(0)(c).io.in_s := io.in_s_vec(c)
+    io.out_s_vec(c) := mesh(0)(c).io.out_s
   }
 
   for(r <- 0 until rows) {
-    if (r < rows-1){	
-      mesh(r+1)(columns-1).io.in_b := mesh(r)(columns-1).io.out
-      mesh(r+1)(columns-1).io.in_s := mesh(r)(columns-1).io.out_s
+    if (r < rows-1) {
+      mesh(r + 1)(columns-1).io.in_b := mesh(r)(columns-1).io.out
+      mesh(r + 1)(columns-1).io.in_s := mesh(r)(columns-1).io.out_s
     }
-    mesh(r)(0).io.in_a := io.in_a_vec(r) 
+    mesh(r)(0).io.in_a := io.in_a_vec(r)
+    io.out_a_vec(r) := mesh(r)(columns-1).io.out_a
   }
 }
  
