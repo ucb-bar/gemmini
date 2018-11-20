@@ -20,7 +20,7 @@ class Grid(val width: Int, val meshRows: Int, val meshColumns: Int,
   }
   val gridT = grid.transpose
 
-  // Chain mesh_a_out -> mesh_a_in (chain a)
+  // Chain mesh_a_out -> mesh_a_in (pipeline a across each row)
   for (r <- 0 until gridRows) {
     grid(r).foldLeft(io.in_a_vec(r)) {
       case (in_a, mesh) =>
@@ -29,7 +29,7 @@ class Grid(val width: Int, val meshRows: Int, val meshColumns: Int,
     }
   }
 
-  // Chain mesh_out -> mesh_b_in (chain b)
+  // Chain mesh_out -> mesh_b_in (pipeline b across each column)
   for (c <- 0 until gridColumns) {
     gridT(c).foldLeft(io.in_b_vec(c)) {
       case (in_b, mesh) =>
@@ -38,7 +38,7 @@ class Grid(val width: Int, val meshRows: Int, val meshColumns: Int,
     }
   }
 
-  // Chain s
+  // Chain s (pipeline s across each column)
   for (c <- 0 until gridColumns) {
     gridT(c).foldLeft(io.in_s_vec(c)) {
       case (in_s, mesh) =>
@@ -47,9 +47,9 @@ class Grid(val width: Int, val meshRows: Int, val meshColumns: Int,
     }
   }
 
-  // Capture out_vec
+  // Capture out_vec (pipeline the output of the bottom row)
   for (c <- 0 until gridColumns) {
-    io.out_vec(c) := grid(gridRows-1)(c).io.out_vec
+    io.out_vec(c) := RegNext(grid(gridRows-1)(c).io.out_vec)
   }
 /*
   for(r <- 0 until gridRows-1; c <- 0 until gridColumns-1) {
