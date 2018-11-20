@@ -37,7 +37,7 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   def generateS: Seq[Seq[Int]] = {
     (0 until c.gridColumns*c.meshColumns).map { i =>
       Seq.fill(c.gridColumns*c.meshColumns)(0) ++
-        Seq.fill(c.meshRows*c.gridRows + 0)(1) ++
+        Seq.fill(c.meshRows*c.gridRows)(1) ++
         Seq.fill(c.meshRows*c.gridRows)(0)
     }
   }
@@ -49,7 +49,6 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
       yield for(col <- b.transpose)
         yield row zip col map Function.tupled(_*_) reduceLeft (_+_)
   }
-  Predef.println(mult(m1, m2))
 /*
   def generateC(cGold: Array[Array[Int]]): Array[Array[Tuple2[Int, Boolean]]]= {
     val cGoldT = cGold.transpose
@@ -77,8 +76,12 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   val Agrouped = Apad.grouped(c.meshRows).toList
   val Bgrouped = Bpad.grouped(c.meshColumns).toList
   val Sgrouped = S.grouped(c.gridColumns).toList
+  val Cgold = mult(m1, m2)
+  println("A Padded:")
   Predef.println(Apad)
+  println("B Padded:")
   Predef.println(Bpad)
+  println("S:")
   Predef.println(S)
   def strobeInputs(cycle: Int): Unit = {
     for (gridRow <- 0 until c.gridRows) {
@@ -95,23 +98,26 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   }
 
   println("Peeking output out_vec")
+  var C: Seq[Seq[BigInt]] = Seq()
   for (cycle <- 0 until Apad(0).length) {
     strobeInputs(cycle)
     val peeked = peek(c.io.out_vec)
     step(1)
 
     println(peeked.map(_.toString).reduce(_ + "\t" + _))
-    Predef.println(peek(c.io.out_s_vec).map(_.toString))
+    val outValid = peek(c.io.out_s_vec)
+    if (outValid.exists(_ > 0)) {
+      C = peeked.take(Cgold(0).length) +: C
+    }
   }
+  println("Got C:")
+  Predef.println(C)
+  println("Cgold:")
+  Predef.println(Cgold)
+  assert(C == Cgold)
 }
 
 class GridTester extends ChiselFlatSpec {
-  /*
-  val m1 = Seq(
-    Seq(10, 3),
-    Seq(2, 13)
-  )
-  */
   // 6x4
   val m1 = Seq(
     Seq(1, 2, 3, 4),
@@ -129,7 +135,8 @@ class GridTester extends ChiselFlatSpec {
     Seq(5, 6),
     Seq(7, 8)
   )
-  "GridTester" should "run matmul using a 2x2 grid with 2x2 meshes" in {
+
+  "GridTester" should "run matmul using a 2x2 grid with 3x2 meshes" in {
     iotesters.Driver.execute(
       Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
       () => new Grid(16, 3, 2, 2, 2))
