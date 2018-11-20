@@ -51,30 +51,4 @@ class Grid(val width: Int, val meshRows: Int, val meshColumns: Int,
   for (c <- 0 until gridColumns) {
     io.out_vec(c) := RegNext(grid(gridRows-1)(c).io.out_vec)
   }
-/*
-  for(r <- 0 until gridRows-1; c <- 0 until gridColumns-1) {
-    grid(r+1)(c).io.in_s_vec := RegNext(grid(r)(c).io.out_s_vec)
-    grid(r+1)(c).io.in_b_vec := RegNext(grid(r)(c).io.out_vec)
-    if (c < gridColumns - 1) {
-      grid(r)(c+1).io.in_a_vec := RegNext(grid(r)(c).io.out_a_vec)
-    }
-  }
-
-  for(c <- 0 until gridColumns) {
-    grid(0)(c).io.in_b_vec := RegNext(io.in_b_vec(c))
-    io.out_vec(c) := mesh(rows-1)(c).io.out
-    mesh(0)(c).io.in_b := io.in_b_vec(c)
-    if (c < gridColumns - 1) {
-      grid(r)(c+1).io.in_a_vec := RegNext(grid(r)(c).io.out_a_vec)
-    }
-  }
-
-  for(r <- 0 until rows) {
-    if (r < rows-1){
-      mesh(r+1)(columns-1).io.in_b := mesh(r)(columns-1).io.out
-      mesh(r+1)(columns-1).io.in_s := mesh(r)(columns-1).io.out_s
-    }
-    mesh(r)(0).io.in_a := io.in_a_vec(r)
-  }
-  */
 }
