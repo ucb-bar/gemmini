@@ -8,6 +8,7 @@ class Grid(val width: Int, val meshRows: Int, val meshColumns: Int,
   val io = IO(new Bundle {
     val in_a_vec = Input(Vec(gridRows, Vec(meshRows, UInt(width.W))))
     val in_b_vec = Input(Vec(gridColumns, Vec(meshColumns, UInt((2*width).W))))
+    val in_propag_vec = Input(Vec(gridColumns, Vec(meshColumns, UInt((2*width).W))))
     val in_s_vec = Input(Vec(gridColumns, Vec(meshColumns, UInt(2.W))))
     val out_vec  = Output(Vec(gridColumns, Vec(meshColumns, UInt((2*width).W))))
     val out_s_vec  = Output(Vec(gridColumns, Vec(meshColumns, UInt(2.W))))
@@ -30,11 +31,20 @@ class Grid(val width: Int, val meshRows: Int, val meshColumns: Int,
     }
   }
 
-  // Chain mesh_out -> mesh_b_in (pipeline b across each column)
+  // Chain mesh_out_b -> mesh_b_in (pipeline b across each column)
   for (c <- 0 until gridColumns) {
     gridT(c).foldLeft(io.in_b_vec(c)) {
       case (in_b, mesh) =>
         mesh.io.in_b_vec := RegNext(in_b)
+        mesh.io.out_b_vec
+    }
+  }
+
+  // Chain mesh_out -> mesh_propag (pipeline output across each column)
+  for (c <- 0 until gridColumns) {
+    gridT(c).foldLeft(io.in_propag_vec(c)) {
+      case (in_propag, mesh) =>
+        mesh.io.in_propag_vec := RegNext(in_propag)
         mesh.io.out_vec
     }
   }

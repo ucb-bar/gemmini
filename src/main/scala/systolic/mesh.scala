@@ -12,8 +12,10 @@ class Mesh (val width: Int, val rows: Int, val columns: Int, pass_through: Boole
   val io = IO(new Bundle {
     val in_a_vec = Input(Vec(rows,UInt(width.W)))
     val in_b_vec = Input(Vec(columns,UInt((2*width).W)))
+    val in_propag_vec = Input(Vec(columns,UInt((2*width).W)))
     val in_s_vec = Input(Vec(columns,UInt(2.W)))
     val out_vec  = Output(Vec(columns,UInt((2*width).W)))
+    val out_b_vec  = Output(Vec(columns,UInt((2*width).W)))
     val out_s_vec = Output(Vec(columns, UInt(2.W)))
     val out_a_vec = Output(Vec(rows, UInt(width.W)))
   })
@@ -34,11 +36,20 @@ class Mesh (val width: Int, val rows: Int, val columns: Int, pass_through: Boole
     }
   }
 
-  // Chain mesh_out -> mesh_b_in (connect b across each column)
+  // Chain mesh_out_b -> mesh_b_in (connect b across each column)
   for (c <- 0 until columns) {
     meshT(c).foldLeft(io.in_b_vec(c)) {
       case (in_b, pe) =>
         pe.io.in_b := in_b
+        pe.io.out_b
+    }
+  }
+
+  // Chain mesh_out -> mesh_propag_in (connect b across each column)
+  for (c <- 0 until columns) {
+    meshT(c).foldLeft(io.in_propag_vec(c)) {
+      case (in_propag, pe) =>
+        pe.io.in_propag := in_propag
         pe.io.out
     }
   }
@@ -55,6 +66,7 @@ class Mesh (val width: Int, val rows: Int, val columns: Int, pass_through: Boole
   // Capture out_vec (pipeline the output of the bottom row)
   for (c <- 0 until columns) {
     io.out_vec(c) := mesh(rows-1)(c).io.out
+    io.out_b_vec(c) := mesh(rows-1)(c).io.out_b
     io.out_s_vec(c) := mesh(rows-1)(c).io.out_s
   }
 

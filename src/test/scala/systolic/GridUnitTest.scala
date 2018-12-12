@@ -34,6 +34,12 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   }
   val B = generateB(m2)
 
+  val propag_pad = (0 until c.gridColumns * c.meshColumns).map { _ => 
+         Seq.fill(math.max(c.gridRows*c.meshRows, c.gridColumns*c.meshColumns))(0) ++
+         Seq.fill(c.meshRows*c.gridRows)(0) ++
+         Seq.fill(c.meshRows*c.gridRows + 2)(0)
+  }
+
   def generateS: Seq[Seq[Int]] = {
     (0 until c.gridColumns*c.meshColumns).map { i =>
       Seq.fill(math.max(c.gridRows*c.meshRows, c.gridColumns*c.meshColumns))(0) ++
@@ -75,6 +81,7 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   val Bpad = B.map(_.padTo(S(0).length, 0))
   val Agrouped = Apad.grouped(c.meshRows).toList
   val Bgrouped = Bpad.grouped(c.meshColumns).toList
+  val Propaggrouped = propag_pad.grouped(c.meshColumns).toList
   val Sgrouped = S.grouped(c.meshColumns).toList
   val Cgold = mult(m1, m2)
   println("A Padded:")
@@ -93,6 +100,7 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
       for (meshCol <- 0 until c.meshColumns) {
         poke(c.io.in_b_vec(gridCol)(meshCol), Bgrouped(gridCol)(meshCol)(cycle))
         poke(c.io.in_s_vec(gridCol)(meshCol), Sgrouped(gridCol)(meshCol)(cycle))
+        poke(c.io.in_propag_vec(gridCol)(meshCol),Propaggrouped(gridCol)(meshCol)(cycle))
       }
     }
   }
