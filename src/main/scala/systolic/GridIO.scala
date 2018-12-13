@@ -6,7 +6,6 @@ import chisel3.util._
 class GridIO (val width: Int, val meshRows: Int, val meshColumns: Int,
 val gridRows: Int, val gridColumns: Int, val sramEntries: Int){
 
-
   val top_mem = Mem(sramEntries,UInt((width*meshColumns*gridColumns).W))
   val left_mem = Mem(sramEntries,UInt((width*meshRows*gridRows).W))
   //val dataOut_top = Wire(Vec(meshColumns*gridColumns, UInt(width.W)))
