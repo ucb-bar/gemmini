@@ -4,55 +4,43 @@ package systolic
 
 import chisel3._
 import chisel3.iotesters.{ChiselFlatSpec, PeekPokeTester}
+import SystolicUtils.print2DArray
 
-class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
-  val m1 = Array(
-    Array(10, 3),
-    Array(2, 13)
+class MeshUnitTest(c: Mesh) extends PeekPokeTester(c) {
+  val m1 = Seq(
+    Seq(10, 3),
+    Seq(2, 13)
   )
 
-  val m2 = Array(
-    Array(2, 4),
-    Array(3, 9)
+  val m2 = Seq(
+    Seq(2, 4),
+    Seq(3, 9)
   )
 
-  def print2DArray[A](a: Array[Array[A]]): Unit = {
-    a.map(_.mkString(", ")).foreach {
-      line => println(line)
+  def generateA(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
+    (0 until c.rows).map { i =>
+      Seq.fill(i)(0) ++ m(i) ++ Seq.fill(c.rows*2 - i)(0)
     }
   }
 
-  def generateA(m: Array[Array[Int]]): Array[Array[Int]] = {
-    (0 until c.rows).map { i =>
-      (Seq.fill(i)(0) ++ m(i) ++ Seq.fill(c.rows*2 - i)(0)).toArray
-    }.toArray
-  }
-
-  def generateB(m: Array[Array[Int]]): Array[Array[Int]] = {
+  def generateB(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
     val mT = m.transpose
     (0 until c.columns).map { i =>
-      (Seq.fill(i)(0) ++ mT(i) ++ Seq.fill(c.columns*2 - i)(0)).toArray
-    }.toArray
+      Seq.fill(i)(0) ++ mT(i) ++ Seq.fill(c.columns*2 - i)(0)
+    }
   }
 
-  def generateS: Array[Array[Int]] = {
+  def generateS: Seq[Seq[Int]] = {
     (0 until c.columns).map { i =>
-      Array.fill(i)(0) ++ Array.fill(c.rows)(0) ++ Array.fill(c.rows)(1) ++ Array.fill(c.rows - i)(0)
-    }.toArray
+      Seq.fill(i)(0) ++ Seq.fill(c.rows)(0) ++ Seq.fill(c.rows)(1) ++ Seq.fill(c.rows - i)(0)
+    }
   }
 
-  def mult[A](a: Array[Array[A]], b: Array[Array[A]])(implicit n: Numeric[A]) = {
-    import n._
-    for (row <- a)
-      yield for(col <- b.transpose)
-        yield row zip col map Function.tupled(_*_) reduceLeft (_+_)
-  }
-
-  def generateC(cGold: Array[Array[Int]]): Array[Array[Tuple2[Int, Boolean]]]= {
+  def generateC(cGold: Seq[Seq[Int]]): Seq[Seq[Tuple2[Int, Boolean]]]= {
     val cGoldT = cGold.transpose
     (0 until c.columns).map { i =>
-      Array.fill(c.rows + i + 1)((0, false)) ++ cGoldT(i).reverse.map((_, true)) ++ Array.fill(c.rows - 1 - i)((0, false))
-    }.toArray
+      Seq.fill(c.rows + i + 1)((0, false)) ++ cGoldT(i).reverse.map((_, true)) ++ Seq.fill(c.rows - 1 - i)((0, false))
+    }
   }
 
   println("Generating a:")
@@ -68,11 +56,11 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
   print2DArray(sFormat)
 
   println("Generating cGold:")
-  val cGold = mult(m1, m2)
-  print2DArray(cGold.map(_.toArray))
+  val cGold = SystolicUtils.mult(m1, m2)
+  print2DArray(cGold)
 
   println("Generating C:")
-  val C = generateC(cGold.map(_.toArray)).transpose
+  val C = generateC(cGold).transpose
   print2DArray(C)
 
   reset()
@@ -89,7 +77,7 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
   }
 
   println("Peeking output out_vec")
-  for (cycle <- 0 until aFormat(0).length) {
+  for (cycle <- aFormat(0).indices) {
     strobeInputs(cycle)
     step(1)
     val peeked = peek(c.io.out_vec)
@@ -101,10 +89,10 @@ class SystolicUnitTest(c: Mesh) extends PeekPokeTester(c) {
   }
 }
 
-class SystolicTester extends ChiselFlatSpec {
+class MeshTester extends ChiselFlatSpec {
   "Basic test using Driver.execute" should "be used as an alternative way to run specification" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle"), () => new Mesh(16, 2, 2,pass_through = false)) {
-      c => new SystolicUnitTest(c)
+      c => new MeshUnitTest(c)
     } should be (true)
   }
 }

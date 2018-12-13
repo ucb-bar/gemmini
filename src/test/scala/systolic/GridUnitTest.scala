@@ -3,8 +3,7 @@ package systolic
 
 import chisel3._
 import chisel3.iotesters._
-
-import scala.collection.mutable
+import SystolicUtils.print2DArray
 
 class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
   def generateA(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
@@ -49,27 +48,6 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   }
   val S = generateS
 
-  def mult[A](a: Seq[Seq[A]], b: Seq[Seq[A]])(implicit n: Numeric[A]) = {
-    import n._
-    for (row <- a)
-      yield for(col <- b.transpose)
-        yield row zip col map Function.tupled(_*_) reduceLeft (_+_)
-  }
-/*
-  def generateC(cGold: Array[Array[Int]]): Array[Array[Tuple2[Int, Boolean]]]= {
-    val cGoldT = cGold.transpose
-    (0 until c.columns).map { i =>
-      Array.fill(c.rows )((0, false)) ++ cGoldT(i).reverse.map((_, true)) ++ Array.fill(c.rows - 1)((0, false))
-    }.toArray
-  }
-  */
-
-  def print2DArray[A](a: Array[Array[A]]): Unit = {
-    a.map(_.mkString(", ")).foreach {
-      line => println(line)
-    }
-  }
-
   reset()
   c.io.in_s_vec.foreach { col =>
     col.foreach { colMesh =>
@@ -83,13 +61,13 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   val Bgrouped = Bpad.grouped(c.meshColumns).toList
   val Propaggrouped = propag_pad.grouped(c.meshColumns).toList
   val Sgrouped = S.grouped(c.meshColumns).toList
-  val Cgold = mult(m1, m2)
+  val Cgold = SystolicUtils.mult(m1, m2)
   println("A Padded:")
-  Predef.println(Apad)
+  print2DArray(Apad)
   println("B Padded:")
-  Predef.println(Bpad)
+  print2DArray(Bpad)
   println("S:")
-  Predef.println(S)
+  print2DArray(S)
   def strobeInputs(cycle: Int): Unit = {
     for (gridRow <- 0 until c.gridRows) {
       for (meshRow <- 0 until c.meshRows) {
@@ -119,9 +97,9 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
     }
   }
   println("Got C:")
-  Predef.println(C)
+  print2DArray(C)
   println("Cgold:")
-  Predef.println(Cgold)
+  print2DArray(Cgold)
   assert(C == Cgold)
 }
 
