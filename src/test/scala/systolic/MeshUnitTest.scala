@@ -6,41 +6,31 @@ import chisel3._
 import chisel3.iotesters.{ChiselFlatSpec, PeekPokeTester}
 import SystolicUtils.print2DArray
 
-class MeshUnitTest(c: Mesh) extends PeekPokeTester(c) {
-  val m1 = Seq(
-    Seq(10, 3),
-    Seq(2, 13)
-  )
-
-  val m2 = Seq(
-    Seq(2, 4),
-    Seq(3, 9)
-  )
-
+class MeshUnitTest(c: Mesh, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
   def generateA(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
     (0 until c.rows).map { i =>
-      Seq.fill(i)(0) ++ m(i) ++ Seq.fill(c.rows*2 - i)(0)
+      m(i) ++ Seq.fill(c.rows*2)(0)
     }
   }
 
   def generateB(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
     val mT = m.transpose
     (0 until c.columns).map { i =>
-      Seq.fill(i)(0) ++ mT(i) ++ Seq.fill(c.columns*2 - i)(0)
+      (mT(i) ++ Seq.fill(c.columns*2)(0))
     }
   }
 
   def generateS: Seq[Seq[Int]] = {
     (0 until c.columns).map { i =>
-      Seq.fill(i)(0) ++ Seq.fill(c.rows)(0) ++ Seq.fill(c.rows)(1) ++ Seq.fill(c.rows - i)(0)
+      Seq.fill(c.rows)(0) ++ Seq.fill(c.rows)(1) ++ Seq.fill(c.rows)(1)
     }
   }
 
   def generateC(cGold: Seq[Seq[Int]]): Seq[Seq[Tuple2[Int, Boolean]]]= {
     val cGoldT = cGold.transpose
     (0 until c.columns).map { i =>
-      Seq.fill(c.rows + i + 1)((0, false)) ++ cGoldT(i).reverse.map((_, true)) ++ Seq.fill(c.rows - 1 - i)((0, false))
-    }
+      Seq.fill(c.rows)((0, false)) ++ cGoldT(i).reverse.map((_, true)) ++ Seq.fill(c.rows)((0, false))
+    }.transpose
   }
 
   println("Generating a:")
@@ -60,7 +50,7 @@ class MeshUnitTest(c: Mesh) extends PeekPokeTester(c) {
   print2DArray(cGold)
 
   println("Generating C:")
-  val C = generateC(cGold).transpose
+  val C = generateC(cGold)
   print2DArray(C)
 
   reset()
@@ -78,9 +68,10 @@ class MeshUnitTest(c: Mesh) extends PeekPokeTester(c) {
 
   println("Peeking output out_vec")
   for (cycle <- aFormat(0).indices) {
+    // TODO: ordering matters (strobe, peek, step) for combinational modules
     strobeInputs(cycle)
-    step(1)
     val peeked = peek(c.io.out_vec)
+    step(1)
     assert(peeked.zip(C(cycle)).forall {
       case (actual, (expected, true)) => actual == expected
       case (_, (_, false)) => true
@@ -90,9 +81,20 @@ class MeshUnitTest(c: Mesh) extends PeekPokeTester(c) {
 }
 
 class MeshTester extends ChiselFlatSpec {
-  "Basic test using Driver.execute" should "be used as an alternative way to run specification" in {
-    iotesters.Driver.execute(Array("--backend-name", "treadle"), () => new Mesh(16, 2, 2,pass_through = false)) {
-      c => new MeshUnitTest(c)
+  val m1 = Seq(
+    Seq(10, 3),
+    Seq(2, 13)
+  )
+
+  val m2 = Seq(
+    Seq(2, 4),
+    Seq(3, 9)
+  )
+
+  "Simple 2x2 combinational mesh" should "calculate C correctly" in {
+    iotesters.Driver.execute(Array("--backend-name", "treadle"),
+      () => new Mesh(16, 2, 2)) {
+      c => new MeshUnitTest(c, m1, m2)
     } should be (true)
   }
 }

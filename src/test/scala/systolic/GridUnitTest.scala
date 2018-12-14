@@ -33,7 +33,7 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   }
   val B = generateB(m2)
 
-  val propag_pad = (0 until c.gridColumns * c.meshColumns).map { _ => 
+  val propag_pad = (0 until c.gridColumns * c.meshColumns).map { _ =>
          Seq.fill(math.max(c.gridRows*c.meshRows, c.gridColumns*c.meshColumns))(0) ++
          Seq.fill(c.meshRows*c.gridRows)(0) ++
          Seq.fill(c.meshRows*c.gridRows + 2)(0)
@@ -84,7 +84,7 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   }
 
   println("Peeking output out_vec")
-  var C: Seq[Seq[BigInt]] = Seq()
+  var C: Seq[Seq[Int]] = Seq()
   for (cycle <- 0 until Apad(0).length) {
     strobeInputs(cycle)
     val peeked = peek(c.io.out_vec)
@@ -93,7 +93,7 @@ class GridUnitTest(c: Grid, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
     println(peeked.map(_.toString).reduce(_ + "\t" + _))
     val outValid = peek(c.io.out_s_vec)
     if (outValid.exists(_ > 0)) {
-      C = peeked.take(Cgold(0).length) +: C
+      C = peeked.take(Cgold(0).length).map(_.toInt) +: C
     }
   }
   println("Got C:")

@@ -64,7 +64,7 @@
   </parameters>
   <customMessage>No lines ending with a ;</customMessage>
  </check>
- <check level="warning" class="org.scalastyle.file.RegexChecker" enabled="true">
+ <check level="warning" class="org.scalastyle.file.RegexChecker" enabled="false">
   <parameters>
    <parameter name="regex"><![CDATA[println]]></parameter>
   </parameters>

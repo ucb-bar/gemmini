@@ -5,13 +5,15 @@ package systolic
 import chisel3._
 
 /**
-  * Compute PE .
+  * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
+  * @param width Data width of operands
+  * @param pass_through If false, the PE pipelines in_a, in_b, in_propag, in_s for 1 cycle
   */
-class PE (width: Int, pass_through: Boolean) extends Module
-{
+class PE(width: Int, pass_through: Boolean) extends Module {
   val io = IO(new Bundle {
     val in_a = Input(UInt(width.W))
     val out_a = Output(UInt(width.W))
+    // TODO: why is in_b 2*width and not width
     val in_b = Input(UInt((2*width).W))
     val in_propag = Input(UInt((2*width).W))
     val in_s = Input(UInt(2.W))
@@ -23,6 +25,7 @@ class PE (width: Int, pass_through: Boolean) extends Module
   val a  = if (pass_through) Wire(UInt()) else RegInit(0.U)
   val b  = if (pass_through) Wire(UInt()) else RegInit(0.U)
   val propag  = if (pass_through) Wire(UInt()) else RegInit(0.U)
+  // TODO: potential for overflow in internal accumulators (add assertion) (use explicit width)
   val c1  = RegInit(0.U)
   val c2  = RegInit(0.U)
   val s  = if (pass_through) Wire(UInt()) else RegInit(0.U)
@@ -68,4 +71,8 @@ class PE (width: Int, pass_through: Boolean) extends Module
       c2 := propag
     }
   }
+}
+
+object PEMain extends App {
+  chisel3.Driver.execute(args, () => new PE(8,true))
 }
