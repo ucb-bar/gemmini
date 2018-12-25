@@ -29,7 +29,7 @@ class PE(width: Int, pass_through: Boolean) extends Module {
   val c1  = RegInit(0.U)
   val c2  = RegInit(0.U)
   val s  = if (pass_through) Wire(UInt()) else RegInit(0.U)
-   
+
   a := io.in_a
   b := io.in_b
   propag := io.in_propag

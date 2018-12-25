@@ -24,11 +24,7 @@ class Grid(width: Int, val meshRows: Int, val meshColumns: Int,
   })
 
   // grid(r)(c) => Mesh at row r, column c
-  val grid: Seq[Seq[Mesh]] = (0 until gridRows).map {
-    _ => (0 until gridColumns).map {
-      _ => Module(new Mesh(width, meshRows, meshColumns))
-    }
-  }
+  val grid: Seq[Seq[Mesh]] = Seq.fill(gridRows, gridColumns)(Module(new Mesh(width, meshRows, meshColumns)))
   val gridT = grid.transpose
 
   // Chain mesh_a_out -> mesh_a_in (pipeline a across each row)
