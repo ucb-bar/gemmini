@@ -5,7 +5,7 @@ import chisel3._
 import chisel3.iotesters._
 import systolic.SystolicUtils.print2DArray
 
-class GridWithMemoryUnitTest(c: GridWithMemory, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
+class MeshWithMemoryUnitTest(c: MeshWithMemory, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
   def generateA(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
     m.map(_ ++ Seq.fill(21)(0))
   }
@@ -16,26 +16,26 @@ class GridWithMemoryUnitTest(c: GridWithMemory, m1: Seq[Seq[Int]], m2: Seq[Seq[I
   }
   val B = generateB(m2)
 
-  val propag_pad = (0 until c.gridColumns * c.meshColumns).map { _ =>
-         Seq.fill(math.max(c.gridRows*c.meshRows, c.gridColumns*c.meshColumns))(0) ++
-         Seq.fill(c.meshRows*c.gridRows)(0) ++
-         Seq.fill(c.meshRows*c.gridRows + 2)(0)
+  val propag_pad = (0 until c.meshColumns * c.tileColumns).map { _ =>
+         Seq.fill(math.max(c.meshRows*c.tileRows, c.meshColumns*c.tileColumns))(0) ++
+         Seq.fill(c.tileRows*c.meshRows)(0) ++
+         Seq.fill(c.tileRows*c.meshRows + 2)(0)
   }
 
   def generateS: Seq[Seq[Int]] = {
-    (0 until c.gridColumns*c.meshColumns).map { i =>
-      Seq.fill(math.max(c.gridRows*c.meshRows, c.gridColumns*c.meshColumns))(0) ++
-        Seq.fill(c.meshRows*c.gridRows)(1) ++
-        Seq.fill(c.meshRows*c.gridRows + 2)(0)
+    (0 until c.meshColumns*c.tileColumns).map { i =>
+      Seq.fill(math.max(c.meshRows*c.tileRows, c.meshColumns*c.tileColumns))(0) ++
+        Seq.fill(c.tileRows*c.meshRows)(1) ++
+        Seq.fill(c.tileRows*c.meshRows + 2)(0)
     }
   }
   val S = generateS
 
   val Apad = A.map(_.padTo(S(0).length, 0))
   val Bpad = B.map(_.padTo(S(0).length, 0))
-  val Agrouped = Apad.grouped(c.meshRows).toList
-  val Bgrouped = Bpad.grouped(c.meshColumns).toList
-  val Propaggrouped = propag_pad.grouped(c.meshColumns).toList
+  val Agrouped = Apad.grouped(c.tileRows).toList
+  val Bgrouped = Bpad.grouped(c.tileColumns).toList
+  val Propaggrouped = propag_pad.grouped(c.tileColumns).toList
   val Cgold = SystolicUtils.mult(m1, m2)
   println("A Padded:")
   print2DArray(Apad)
@@ -45,14 +45,14 @@ class GridWithMemoryUnitTest(c: GridWithMemory, m1: Seq[Seq[Int]], m2: Seq[Seq[I
   def strobeInputs(cycle: Int): Unit = {
     poke(c.io.valid, true)
 
-    for (gridRow <- 0 until c.gridRows) {
-      for (meshRow <- 0 until c.meshRows) {
-        poke(c.io.a(gridRow)(meshRow), Agrouped(gridRow)(meshRow)(cycle))
+    for (meshRow <- 0 until c.meshRows) {
+      for (tileRow <- 0 until c.tileRows) {
+        poke(c.io.a(meshRow)(tileRow), Agrouped(meshRow)(tileRow)(cycle))
       }
     }
-    for (gridCol <- 0 until c.gridColumns) {
-      for (meshCol <- 0 until c.meshColumns) {
-        poke(c.io.b(gridCol)(meshCol), Bgrouped(gridCol)(meshCol)(cycle))
+    for (meshCol <- 0 until c.meshColumns) {
+      for (tileCol <- 0 until c.tileColumns) {
+        poke(c.io.b(meshCol)(tileCol), Bgrouped(meshCol)(tileCol)(cycle))
       }
     }
   }
@@ -96,7 +96,7 @@ class GridWithMemoryUnitTest(c: GridWithMemory, m1: Seq[Seq[Int]], m2: Seq[Seq[I
   assert(Cgold == C_formatted)
 }
 
-class GridWithMemoryTester extends ChiselFlatSpec {
+class MeshWithMemoryTester extends ChiselFlatSpec {
   // 6x4
   val m1 = Seq(
     Seq(1, 2, 3, 4),
@@ -116,32 +116,29 @@ class GridWithMemoryTester extends ChiselFlatSpec {
   )
 
   // Fully pipelined
-  "GridWithMemoryTester" should "run matmul using a 6x6 grid with 1x1 meshes" in {
-    iotesters.Driver.execute(
-      Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-      () => new GridWithMemory(16, 1, 1, 6, 6, 6))
+  "MeshWithMemoryTester" should "run matmul using a 6x6 mesh with 1x1 tiles" in {
+    iotesters.Driver.execute(Array("--backend-name", "treadle"),
+      () => new MeshWithMemory(16, 1, 1, 6, 6, 6))
     {
-      c => new GridWithMemoryUnitTest(c, m1, m2)
+      c => new MeshWithMemoryUnitTest(c, m1, m2)
     } should be (true)
   }
 
   // Partially pipelined
-  it should "run matmul using a 3x2 grid with 2x3 meshes" in {
-    iotesters.Driver.execute(
-      Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-      () => new GridWithMemory(16, 2, 3, 3, 2, 6))
+  it should "run matmul using a 3x2 mesh with 2x3 tiles" in {
+    iotesters.Driver.execute(Array("--backend-name", "treadle"),
+      () => new MeshWithMemory(16, 2, 3, 3, 2, 6))
     {
-      c => new GridWithMemoryUnitTest(c, m1, m2)
+      c => new MeshWithMemoryUnitTest(c, m1, m2)
     } should be (true)
   }
 
   // Fully combinational
-  it should "run matmul using a 1x1 grid with one 6x6 mesh" in {
-    iotesters.Driver.execute(
-      Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-      () => new GridWithMemory(16, 6, 6, 1, 1, 6))
+  it should "run matmul using a 1x1 mesh with one 6x6 tile" in {
+    iotesters.Driver.execute(Array("--backend-name", "treadle"),
+      () => new MeshWithMemory(16, 6, 6, 1, 1, 6))
     {
-      c => new GridWithMemoryUnitTest(c, m1, m2)
+      c => new MeshWithMemoryUnitTest(c, m1, m2)
     } should be (true)
   }
 }

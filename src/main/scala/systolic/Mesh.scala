@@ -1,85 +1,82 @@
-// See README.md for license details.
 
 package systolic
 
 import chisel3._
 
 /**
-  * A Mesh is a purely combinational 2D array of passThrough PEs.
-  * a, b, s, and in_propag are broadcast across the entire array and are passed through to the Mesh's outputs
-  * @param width The data width of each PE in bits
-  * @param rows Number of PEs on each row
-  * @param columns Number of PEs on each column
+  * A Grid is a 2D array of Tile modules with registers in between each tile and
+  * registers from the bottom row and rightmost column of tiles to the Grid outputs.
+  * @param width
+  * @param tileRows
+  * @param tileColumns
+  * @param meshRows
+  * @param meshColumns
   */
-class Mesh(val width: Int, val rows: Int, val columns: Int) extends Module {
+class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
+           val meshRows: Int, val meshColumns: Int) extends Module {
   val io = IO(new Bundle {
-    val in_a_vec      = Input(Vec(rows,UInt(width.W)))
-    val in_b_vec      = Input(Vec(columns,UInt((2*width).W)))
-    val in_propag_vec = Input(Vec(columns,UInt((2*width).W)))
-    val in_s_vec      = Input(Vec(columns,UInt(2.W)))
-    val out_a_vec     = Output(Vec(rows, UInt(width.W)))
-    val out_vec       = Output(Vec(columns,UInt((2*width).W)))
-    val out_b_vec     = Output(Vec(columns,UInt((2*width).W)))
-    val out_s_vec     = Output(Vec(columns, UInt(2.W)))
+    val in_a_vec      = Input(Vec(meshRows, Vec(tileRows, UInt(width.W))))
+    val in_b_vec      = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val in_propag_vec = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val in_s_vec      = Input(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
+    val out_vec       = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val out_s_vec     = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
+
+    val en            = Input(Bool())
   })
 
-  val mesh: Seq[Seq[PE]] = (0 until rows).map {
-    _ => (0 until columns).map {
-      _ => Module(new PE(width, pass_through = true))
-    }
-  }
+  // mesh(r)(c) => Tile at row r, column c
+  val mesh: Seq[Seq[Tile]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(width, tileRows, tileColumns)))
   val meshT = mesh.transpose
 
-  // TODO: abstract hori/vert broadcast, all these connections look the same
-  // Broadcast 'a' horizontally across the Mesh
-  for (r <- 0 until rows) {
+  // Chain tile_a_out -> tile_a_in (pipeline a across each row)
+  for (r <- 0 until meshRows) {
     mesh(r).foldLeft(io.in_a_vec(r)) {
-      case (in_a, pe) =>
-        pe.io.in_a := in_a
-        pe.io.out_a
+      case (in_a, tile) =>
+        tile.io.in_a_vec := RegNext(in_a)
+        tile.io.out_a_vec
     }
   }
 
-  // Broadcast 'b' vertically across the Mesh
-  for (c <- 0 until columns) {
+  // Chain tile_out_b -> tile_b_in (pipeline b across each column)
+  for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_b_vec(c)) {
-      case (in_b, pe) =>
-        pe.io.in_b := in_b
-        pe.io.out_b
+      case (in_b, tile) =>
+        tile.io.in_b_vec := RegNext(in_b)
+        tile.io.out_b_vec
     }
   }
 
-  // Broadcast 'in_propag' vertically across the Mesh
-  for (c <- 0 until columns) {
+  // Chain tile_out -> tile_propag (pipeline output across each column)
+  for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_propag_vec(c)) {
-      case (in_propag, pe) =>
-        pe.io.in_propag := in_propag
-        pe.io.out
+      case (in_propag, tile) =>
+        tile.io.in_propag_vec := RegNext(in_propag)
+        tile.io.out_vec
     }
   }
 
-  // Broadcast 's' vertically across the Mesh
-  for (c <- 0 until columns) {
+  // Chain s (pipeline s across each column)
+  for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_s_vec(c)) {
-      case (in_s, pe) =>
-        pe.io.in_s := in_s
-        pe.io.out_s
+      case (in_s, tile) =>
+        tile.io.in_s_vec := RegNext(in_s)
+        tile.io.out_s_vec
     }
   }
 
-  // Drive the Mesh's bottom IO
-  for (c <- 0 until columns) {
-    io.out_vec(c) := mesh(rows-1)(c).io.out
-    io.out_b_vec(c) := mesh(rows-1)(c).io.out_b
-    io.out_s_vec(c) := mesh(rows-1)(c).io.out_s
+  // Capture out_vec (pipeline the output of the bottom row)
+  for (c <- 0 until meshColumns) {
+    io.out_vec(c) := RegNext(mesh(meshRows-1)(c).io.out_vec)
+    // TODO: we have to double register s_out to treat it as a valid signal, maybe there's a better way
+    // io.out_s_vec(c) := RegNext(RegNext(mesh(meshRows-1)(c).io.out_s_vec))
+    io.out_s_vec(c) := RegNext(mesh(meshRows-1)(c).io.out_s_vec)
   }
 
-  // Drive the Mesh's right IO
-  for (r <- 0 until rows) {
-    io.out_a_vec(r) := mesh(r)(columns-1).io.out_a
-  }
+  // Connect enable signals
+  mesh.flatten.foreach(_.io.en := io.en)
 }
 
-object MeshMain extends App {
-  chisel3.Driver.execute(args, () => new Mesh(8, 16, 16))
+object GridMain extends App {
+  chisel3.Driver.execute(args, () => new Mesh(16, 3, 2, 2, 2))
 }

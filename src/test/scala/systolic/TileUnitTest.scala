@@ -6,7 +6,7 @@ import chisel3._
 import chisel3.iotesters.{ChiselFlatSpec, PeekPokeTester}
 import SystolicUtils.print2DArray
 
-class MeshUnitTest(c: Mesh, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
+class TileUnitTest(c: Tile, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
   def generateA(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
     (0 until c.rows).map { i =>
       m(i) ++ Seq.fill(c.rows*2)(0)
@@ -80,7 +80,7 @@ class MeshUnitTest(c: Mesh, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   }
 }
 
-class MeshTester extends ChiselFlatSpec {
+class TileTester extends ChiselFlatSpec {
   val m1 = Seq(
     Seq(10, 3),
     Seq(2, 13)
@@ -91,10 +91,10 @@ class MeshTester extends ChiselFlatSpec {
     Seq(3, 9)
   )
 
-  "Simple 2x2 combinational mesh" should "calculate C correctly" in {
+  "Simple 2x2 combinational tile" should "calculate C correctly" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle"),
-      () => new Mesh(16, 2, 2)) {
-      c => new MeshUnitTest(c, m1, m2)
+      () => new Tile(16, 2, 2)) {
+      c => new TileUnitTest(c, m1, m2)
     } should be (true)
   }
 }

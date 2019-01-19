@@ -3,6 +3,7 @@
 package systolic
 
 import chisel3._
+import chisel3.util._
 
 /**
   * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
@@ -20,15 +21,17 @@ class PE(width: Int, pass_through: Boolean) extends Module {
     val out_s = Output(UInt(2.W))
     val out  = Output(UInt((2*width).W))
     val out_b  = Output(UInt((2*width).W))
+
+    val en = Input(Bool())
   })
 
-  val a  = if (pass_through) Wire(UInt()) else RegInit(0.U)
-  val b  = if (pass_through) Wire(UInt()) else RegInit(0.U)
-  val propag  = if (pass_through) Wire(UInt()) else RegInit(0.U)
+  val a  = if (pass_through) Wire(UInt()) else RegEnable(0.U(width.W), io.en)
+  val b  = if (pass_through) Wire(UInt()) else RegEnable(0.U(width.W), io.en)
+  val propag  = if (pass_through) Wire(UInt()) else RegEnable(0.U((2*width).W), io.en)
   // TODO: potential for overflow in internal accumulators (add assertion) (use explicit width)
-  val c1  = RegInit(0.U)
-  val c2  = RegInit(0.U)
-  val s  = if (pass_through) Wire(UInt()) else RegInit(0.U)
+  val c1  = RegEnable(0.U((2*width).W), io.en)
+  val c2  = RegEnable(0.U((2*width).W), io.en)
+  val s  = if (pass_through) Wire(UInt(2.W)) else RegEnable(0.U(2.W), io.en)
 
   a := io.in_a
   b := io.in_b
