@@ -11,7 +11,7 @@ import chisel3._
   * @param rows Number of PEs on each row
   * @param columns Number of PEs on each column
   */
-class Tile(val width: Int, val rows: Int, val columns: Int) extends Module {
+class Tile(val width: Int, val rows: Int, val columns: Int, should_print: Boolean = false) extends Module {
   val io = IO(new Bundle {
     val in_a_vec      = Input(Vec(rows,UInt(width.W)))
     val in_b_vec      = Input(Vec(columns,UInt((2*width).W)))
@@ -25,10 +25,10 @@ class Tile(val width: Int, val rows: Int, val columns: Int) extends Module {
     val en            = Input(Bool())
   })
 
-  val tile: Seq[Seq[PE]] = (0 until rows).map {
-    _ => (0 until columns).map {
-      _ => Module(new PE(width, pass_through = true))
-    }
+  val tile = {
+    for (r <- 0 until rows)
+      yield for (c <- 0 until columns)
+        yield Module(new PE(width, !(r == 0 || c == 0), should_print))
   }
   val tileT = tile.transpose
 
@@ -82,7 +82,7 @@ class Tile(val width: Int, val rows: Int, val columns: Int) extends Module {
   }
 
   // Connect enable signals
-  tile.flatten.foreach(_.io.en := io.en)
+  tile.flatten.foreach(_.io.en := true.B || io.en)
 }
 
 object TileMain extends App {

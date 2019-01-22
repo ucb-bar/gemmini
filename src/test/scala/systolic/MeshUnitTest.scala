@@ -5,7 +5,7 @@ import chisel3._
 import chisel3.iotesters._
 import SystolicUtils.print2DArray
 
-class GridUnitTest(c: Mesh, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
+class MeshUnitTest(c: Mesh, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
   def generateA(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
     val numEltsInRow = m(0).length * math.ceil(m.length / (c.meshRows * c.tileRows).toDouble).toInt
     (0 until c.meshRows*c.tileRows).map { r =>
@@ -69,16 +69,16 @@ class GridUnitTest(c: Mesh, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   println("S:")
   print2DArray(S)
   def strobeInputs(cycle: Int): Unit = {
-    for (gridRow <- 0 until c.meshRows) {
+    for (meshRow <- 0 until c.meshRows) {
       for (meshRow <- 0 until c.tileRows) {
-        poke(c.io.in_a_vec(gridRow)(meshRow), Agrouped(gridRow)(meshRow)(cycle))
+        poke(c.io.in_a_vec(meshRow)(meshRow), Agrouped(meshRow)(meshRow)(cycle))
       }
     }
-    for (gridCol <- 0 until c.meshColumns) {
+    for (mesh <- 0 until c.meshColumns) {
       for (meshCol <- 0 until c.tileColumns) {
-        poke(c.io.in_b_vec(gridCol)(meshCol), Bgrouped(gridCol)(meshCol)(cycle))
-        poke(c.io.in_s_vec(gridCol)(meshCol), Sgrouped(gridCol)(meshCol)(cycle))
-        poke(c.io.in_propag_vec(gridCol)(meshCol),Propaggrouped(gridCol)(meshCol)(cycle))
+        poke(c.io.in_b_vec(mesh)(meshCol), Bgrouped(mesh)(meshCol)(cycle))
+        poke(c.io.in_s_vec(mesh)(meshCol), Sgrouped(mesh)(meshCol)(cycle))
+        poke(c.io.in_propag_vec(mesh)(meshCol),Propaggrouped(mesh)(meshCol)(cycle))
       }
     }
   }
@@ -123,30 +123,27 @@ class MeshTester extends ChiselFlatSpec {
   )
 
   // Hybrid
-  "GridTester" should "run matmul using a 2x2 grid with 3x2 meshes" in {
-    iotesters.Driver.execute(
-      Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+  "MeshTester" should "run matmul using a 2x2 mesh with 3x2 meshes" in {
+    iotesters.Driver.execute(Array("--backend-name", "treadle"),
       () => new Mesh(16, 3, 2, 2, 2))
     {
-      c => new GridUnitTest(c, m1, m2)
+      c => new MeshUnitTest(c, m1, m2)
     } should be (true)
   }
   // Fully pipelined
-  "GridTester" should "run matmul using a 6x4 grid with 1x1 meshes" in {
-    iotesters.Driver.execute(
-      Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+  it should "run matmul using a 6x4 mesh with 1x1 meshes" in {
+    iotesters.Driver.execute(Array("--backend-name", "treadle"),
       () => new Mesh(16, 1, 1, 6, 4))
     {
-      c => new GridUnitTest(c, m1, m2)
+      c => new MeshUnitTest(c, m1, m2)
     } should be (true)
   }
   // Fully combinational
-  "GridTester" should "run matmul using a 1x1 grid with one 6x4 mesh" in {
-    iotesters.Driver.execute(
-      Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+  it should "run matmul using a 1x1 mesh with one 6x4 mesh" in {
+    iotesters.Driver.execute(Array("--backend-name", "treadle"),
       () => new Mesh(16, 6, 4, 1, 1))
     {
-      c => new GridUnitTest(c, m1, m2)
+      c => new MeshUnitTest(c, m1, m2)
     } should be (true)
   }
 }
