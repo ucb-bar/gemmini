@@ -11,7 +11,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   val io = IO(new Bundle {
     val a = Input(Vec(meshRows, Vec(tileRows, UInt(width.W))))
     val b = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
-    val c = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+//    val c = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
 
     val out_c = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
     val out_s = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
