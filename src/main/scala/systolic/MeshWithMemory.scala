@@ -11,7 +11,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   val io = IO(new Bundle {
     val a = Input(Vec(meshRows, Vec(tileRows, UInt(width.W))))
     val b = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
-    val c = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val d = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
 
     val out_c = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
     val out_s = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
@@ -43,31 +43,25 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   val fire = io.ready && io.valid
   io.ready := addrs(not_active) =/= 0.U || is_empty
 
-  // val compute_done = addrs(active) === (sramEntries - 1).U
-  // val buffering_done = !is_empty && (addrs(not_active) === 0.U || (addrs(not_active) === (sramEntries - 1).U && fire))
   val compute_done = addrs(active) === 0.U && has_started === true.B
   val buffering_done = !is_empty && addrs(not_active) === 0.U
 
   // Wire up mesh's IO to this module's IO
-  mesh.io.in_s_vec.foreach(_.foreach(_ := not_active))
-  // mesh.io.in_s_vec.zipWithIndex.foreach{case (v, i) => v.foreach(_ := ShiftRegister(not_active, i))}
-  mesh.io.in_propag_vec.foreach(_.foreach(_ := 0.U))// TODO
+  mesh.io.in_s_vec.zipWithIndex.foreach{case (s, i) => s.foreach(_ := ShiftRegister(not_active, i))}
+  mesh.io.in_propag_vec.foreach(_.foreach(_ := 0.U)) // TODO
 
-  val en = WireInit(has_started)
-  mesh.io.en := en
+  mesh.io.in_a_vec := a_reads(active).zipWithIndex.map{case (a, i) => ShiftRegister(a, i)}
+  mesh.io.in_b_vec := b_reads(active).zipWithIndex.map{case (b, i) => ShiftRegister(b, i)}
+
+  io.out_c := mesh.io.out_vec.zip(mesh.io.out_vec.indices.reverse).map{case (c, i) => ShiftRegister(c, i)}
+  io.out_s := mesh.io.out_s_vec.zip(mesh.io.out_s_vec.indices.reverse).map{case (s, i) => ShiftRegister(s, i)}
 
   printf(p"     active == $active / addrs(active) == ${addrs(active)} / addrs(not_active) == ${addrs(not_active)} / addrs(0) == ${addrs(0.U)} / addrs(1) == ${addrs(1.U)}\n")
-  // printf(p"     active == $active / addrs(active) == ${addrs(active)} / addrs(not_active) == ${addrs(not_active)}\n")
-  printf(p"     ${a_reads(active)}\n")
+  printf(p"     a_read: ${a_reads(active)}\n")
+  printf(p"     b_read: ${b_reads(active)}\n")
 
-  io.out_c := mesh.io.out_vec
-  io.out_s := mesh.io.out_s_vec
-
-  val a_delays = a_reads(active).zipWithIndex.map{case (a, i) => ShiftRegister(a, i, true.B || en)}
-  val b_delays = b_reads(active).zipWithIndex.map{case (b, i) => ShiftRegister(b, i, true.B || en)}
-
-  mesh.io.in_a_vec := a_delays
-  mesh.io.in_b_vec := b_delays
+  val comp_and_next = WireInit(!(RegNext(compute_done) && compute_done))
+  val read_enable = WireInit(has_started && comp_and_next)
 
   // Control logic for buffers
   for (i <- 0 until 2) {
@@ -78,7 +72,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
       addrs(i) := Mux(addrs(i) === (sramEntries - 1).U, 0.U, addrs(i) + 1.U)
       is_empty := false.B
 
-      printf(p"    Fire!\n")
+      printf(p"    Fire! (${io.a})\n")
     }.otherwise {
       when(!fire && active =/= i.U) {
         // TODO remove this when block. Its only here for debugging help
@@ -87,6 +81,11 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
 
       a_reads(i) := a_bufs(i).read(addrs(i))
       b_reads(i) := b_bufs(i).read(addrs(i))
+
+      when(!has_started || (RegNext(compute_done) && compute_done)) {
+        a_reads(i).foreach(_.foreach(_ := 0.U))
+        b_reads(i).foreach(_.foreach(_ := 0.U))
+      }
     }
   }
 
@@ -103,6 +102,5 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   }.otherwise {
     // Pause systolic array
     printf(p"     PAUSING\n\n")
-    en := false.B
   }
 }

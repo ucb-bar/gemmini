@@ -21,22 +21,20 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
     val in_s_vec      = Input(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
     val out_vec       = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
     val out_s_vec     = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
-
-    val en            = Input(Bool())
   })
 
   // mesh(r)(c) => Tile at row r, column c
   // val mesh: Seq[Seq[Tile]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(width, tileRows, tileColumns)))
   val mesh = for (r <- 0 until meshRows) yield
     for (c <- 0 until meshColumns) yield
-      Module(new Tile(width, tileRows, tileColumns, should_print = r == 1 && c == 0))
+      Module(new Tile(width, tileRows, tileColumns, should_print = r == 0 && c == 0))
   val meshT = mesh.transpose
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   for (r <- 0 until meshRows) {
     mesh(r).foldLeft(io.in_a_vec(r)) {
       case (in_a, tile) =>
-        tile.io.in_a_vec := in_a
+        tile.io.in_a_vec := RegNext(in_a)
         tile.io.out_a_vec
     }
   }
@@ -45,7 +43,7 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_b_vec(c)) {
       case (in_b, tile) =>
-        tile.io.in_b_vec := in_b
+        tile.io.in_b_vec := RegNext(in_b)
         tile.io.out_b_vec
     }
   }
@@ -54,7 +52,7 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_propag_vec(c)) {
       case (in_propag, tile) =>
-        tile.io.in_propag_vec := in_propag
+        tile.io.in_propag_vec := RegNext(in_propag)
         tile.io.out_vec
     }
   }
@@ -63,19 +61,14 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_s_vec(c)) {
       case (in_s, tile) =>
-        tile.io.in_s_vec := in_s
+        tile.io.in_s_vec := RegNext(in_s)
         tile.io.out_s_vec
     }
   }
 
-  // Capture out_vec (pipeline the output of the bottom row)
-  for (c <- 0 until meshColumns) {
-    io.out_vec(c) := mesh(meshRows-1)(c).io.out_vec
-    // TODO: we have to double register s_out to treat it as a valid signal, maybe there's a better way
-    // io.out_s_vec(c) := RegNext(RegNext(mesh(meshRows-1)(c).io.out_s_vec))
-    io.out_s_vec(c) := mesh(meshRows-1)(c).io.out_s_vec
+  // Capture out_vec and out_s_vec (connect IO to bottom row of mesh)
+  for ((out, s, tile) <- (io.out_vec, io.out_s_vec, mesh.last).zipped) {
+    out := tile.io.out_vec
+    s := tile.io.out_s_vec
   }
-
-  // Connect enable signals
-  mesh.flatten.foreach(_.io.en := io.en)
 }

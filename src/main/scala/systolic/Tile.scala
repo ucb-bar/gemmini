@@ -21,14 +21,12 @@ class Tile(val width: Int, val rows: Int, val columns: Int, should_print: Boolea
     val out_vec       = Output(Vec(columns,UInt((2*width).W)))
     val out_b_vec     = Output(Vec(columns,UInt((2*width).W)))
     val out_s_vec     = Output(Vec(columns, UInt(2.W)))
-
-    val en            = Input(Bool())
   })
 
   val tile = {
     for (r <- 0 until rows)
       yield for (c <- 0 until columns)
-        yield Module(new PE(width, !(r == 0 || c == 0), should_print))
+        yield Module(new PE(width, true, should_print = should_print && (r == 0 && c == 0)))
   }
   val tileT = tile.transpose
 
@@ -80,9 +78,6 @@ class Tile(val width: Int, val rows: Int, val columns: Int, should_print: Boolea
   for (r <- 0 until rows) {
     io.out_a_vec(r) := tile(r)(columns-1).io.out_a
   }
-
-  // Connect enable signals
-  tile.flatten.foreach(_.io.en := true.B || io.en)
 }
 
 object TileMain extends App {

@@ -10,7 +10,7 @@ import chisel3.util._
   * @param width Data width of operands
   * @param pass_through If false, the PE pipelines in_a, in_b, in_propag, in_s for 1 cycle
   */
-class PE(width: Int, pass_through: Boolean, should_print: Boolean = false) extends Module {
+class PE(width: Int, pass_through: Boolean = true, should_print: Boolean = false) extends Module {
   val io = IO(new Bundle {
     val in_a = Input(UInt(width.W))
     val out_a = Output(UInt(width.W))
@@ -21,17 +21,15 @@ class PE(width: Int, pass_through: Boolean, should_print: Boolean = false) exten
     val out_s = Output(UInt(2.W))
     val out  = Output(UInt((2*width).W))
     val out_b  = Output(UInt((2*width).W))
-
-    val en = Input(Bool())
   })
 
-  val a  = if (pass_through) Wire(UInt()) else RegEnable(0.U(width.W), 0.U, io.en)
-  val b  = if (pass_through) Wire(UInt()) else RegEnable(0.U(width.W), 0.U, io.en)
-  val propag  = if (pass_through) Wire(UInt()) else RegEnable(0.U((2*width).W), 0.U, io.en)
+  val a  = if (pass_through) Wire(UInt()) else RegInit(0.U)
+  val b  = if (pass_through) Wire(UInt()) else RegInit(0.U)
+  val propag  = if (pass_through) Wire(UInt()) else RegInit(0.U)
   // TODO: potential for overflow in internal accumulators (add assertion) (use explicit width)
-  val c1  = RegEnable(0.U((2*width).W), 0.U, io.en)
-  val c2  = RegEnable(0.U((2*width).W), 0.U, io.en)
-  val s  = if (pass_through) Wire(UInt(2.W)) else RegEnable(0.U(2.W), 0.U, io.en)
+  val c1  = RegInit(0.U)
+  val c2  = RegInit(0.U)
+  val s  = if (pass_through) Wire(UInt(2.W)) else RegInit(0.U)
 
   a := io.in_a
   b := io.in_b
@@ -76,20 +74,6 @@ class PE(width: Int, pass_through: Boolean, should_print: Boolean = false) exten
   }
 
   if (should_print) {
-    printf(p"($a * $b) = $c1, $c2    (${io.en})\n")
-  }
-
-  // TODO why the heck is this necessary? Why isn't RegEnable working?
-  when (!io.en) {
-    if (!pass_through) {
-      a := a
-      b := b
-      propag := propag
-      s := s
-      // when (select === PROPAGATE) { c2 := c2 } otherwise { c1 := c1 }
-    }
-
-    c1 := c1
-    c2 := c2
+    printf(p"($a * $b) = $c1, $c2\n")
   }
 }
