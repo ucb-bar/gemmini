@@ -23,8 +23,8 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   val a_bufs = Seq.fill(2)(SyncReadMem(sramEntries, io.a.cloneType))
   val b_bufs = Seq.fill(2)(SyncReadMem(sramEntries, io.b.cloneType))
 
-  val is_empty = RegInit(true.B)
-  val has_started = RegInit(false.B)
+  val buffer_is_empty = RegInit(true.B)
+  val compute_has_started = RegInit(false.B)
 
   val addrs = RegInit(VecInit(Seq.fill(2)(0.U((log2Ceil(sramEntries) max 1).W))))
 
@@ -35,16 +35,16 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   a_reads := DontCare
   b_reads := DontCare
 
-  val mesh = Module(new Mesh(width, tileRows, tileColumns, meshRows, meshColumns))
-
   val active = RegInit(0.U(1.W)) // Which buffer is currently being read from?
   val not_active = (~active).asUInt()
 
   val fire = io.ready && io.valid
-  io.ready := addrs(not_active) =/= 0.U || is_empty
+  io.ready := addrs(not_active) =/= 0.U || buffer_is_empty
 
-  val compute_done = addrs(active) === 0.U && has_started === true.B
-  val buffering_done = !is_empty && addrs(not_active) === 0.U
+  val compute_done = addrs(active) === 0.U && compute_has_started
+  val buffering_done = !buffer_is_empty && addrs(not_active) === 0.U
+
+  val mesh = Module(new Mesh(width, tileRows, tileColumns, meshRows, meshColumns))
 
   // Wire up mesh's IO to this module's IO
   mesh.io.in_s_vec.zipWithIndex.foreach{case (s, i) => s.foreach(_ := ShiftRegister(not_active, i))}
@@ -56,12 +56,9 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   io.out_c := mesh.io.out_vec.zip(mesh.io.out_vec.indices.reverse).map{case (c, i) => ShiftRegister(c, i)}
   io.out_s := mesh.io.out_s_vec.zip(mesh.io.out_s_vec.indices.reverse).map{case (s, i) => ShiftRegister(s, i)}
 
-  printf(p"     active == $active / addrs(active) == ${addrs(active)} / addrs(not_active) == ${addrs(not_active)} / addrs(0) == ${addrs(0.U)} / addrs(1) == ${addrs(1.U)}\n")
-  printf(p"     a_read: ${a_reads(active)}\n")
-  printf(p"     b_read: ${b_reads(active)}\n")
-
-  val comp_and_next = WireInit(!(RegNext(compute_done) && compute_done))
-  val read_enable = WireInit(has_started && comp_and_next)
+  // printf(p"     active == $active / addrs(active) == ${addrs(active)} / addrs(not_active) == ${addrs(not_active)} / addrs(0) == ${addrs(0.U)} / addrs(1) == ${addrs(1.U)}\n")
+  // printf(p"     a_read: ${a_reads(active)}\n")
+  // printf(p"     b_read: ${b_reads(active)}\n")
 
   // Control logic for buffers
   for (i <- 0 until 2) {
@@ -70,19 +67,19 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
       b_bufs(i).write(addrs(i), io.b)
 
       addrs(i) := Mux(addrs(i) === (sramEntries - 1).U, 0.U, addrs(i) + 1.U)
-      is_empty := false.B
+      buffer_is_empty := false.B
 
-      printf(p"    Fire! (${io.a})\n")
+      // printf(p"    Fire! (${io.a})\n")
     }.otherwise {
       when(!fire && active =/= i.U) {
         // TODO remove this when block. Its only here for debugging help
-        printf(p"    Miss!\n")
+        // printf(p"    Miss!\n")
       }
 
       a_reads(i) := a_bufs(i).read(addrs(i))
       b_reads(i) := b_bufs(i).read(addrs(i))
 
-      when(!has_started || (RegNext(compute_done) && compute_done)) {
+      when(!compute_has_started || (RegNext(compute_done) && compute_done)) {
         a_reads(i).foreach(_.foreach(_ := 0.U))
         b_reads(i).foreach(_.foreach(_ := 0.U))
       }
@@ -92,15 +89,15 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   when(compute_done && buffering_done) {
     // addrs(active) := 0.U
     active := not_active
-    is_empty := true.B
-    has_started := false.B
-    printf(p"     Done!\n\n")
+    buffer_is_empty := true.B
+    compute_has_started := false.B
+    // printf(p"     Done!   (ready: ${io.ready}, ${addrs(not_active) =/= 0.U || buffer_is_empty}; has_started: $compute_has_started; is_empty: $buffer_is_empty)\n\n")
   }.elsewhen(!compute_done) {
     addrs(active) := Mux(addrs(active) === (sramEntries - 1).U, 0.U, addrs(active) + 1.U)
-    has_started := true.B
-    printf(p"     Computing!\n\n")
+    compute_has_started := true.B
+    // printf(p"     Computing!  (ready: ${io.ready}, ${addrs(not_active) =/= 0.U || buffer_is_empty}; has_started: $compute_has_started; is_empty: $buffer_is_empty)\n\n")
   }.otherwise {
     // Pause systolic array
-    printf(p"     PAUSING\n\n")
+    // printf(p"     PAUSING  (ready: ${io.ready}, ${addrs(not_active) =/= 0.U || buffer_is_empty}; has_started: $compute_has_started; is_empty: $buffer_is_empty)\n\n")
   }
 }

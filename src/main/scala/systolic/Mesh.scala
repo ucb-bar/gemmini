@@ -27,7 +27,7 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
   // val mesh: Seq[Seq[Tile]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(width, tileRows, tileColumns)))
   val mesh = for (r <- 0 until meshRows) yield
     for (c <- 0 until meshColumns) yield
-      Module(new Tile(width, tileRows, tileColumns, should_print = r == 0 && c == 0))
+      Module(new Tile(width, tileRows, tileColumns, should_print = false /*r == 0 && c == 0*/))
   val meshT = mesh.transpose
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)

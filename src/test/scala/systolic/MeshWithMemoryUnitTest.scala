@@ -3,135 +3,183 @@ package systolic
 
 import chisel3._
 import chisel3.iotesters._
-import systolic.SystolicUtils.print2DArray
+import systolic.SystolicUtils._
 
-class MeshWithMemoryUnitTest(c: MeshWithMemory, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
-  def generateA(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
-    m.map(_ ++ Seq.fill(30)(0))
-  }
-  val A = generateA(m1)
+object x {
+  type Matrix = Seq[Seq[Int]]
+}
 
-  def generateB(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
-    (m.transpose ++ Seq.fill(4)(Seq.fill(m.transpose.head.size)(0))).map(_ ++ Seq.fill(30)(0))
-  }
-  val B = generateB(m2)
-
-  val propag_pad = (0 until c.meshColumns * c.tileColumns).map { _ =>
-         Seq.fill(math.max(c.meshRows*c.tileRows, c.meshColumns*c.tileColumns))(0) ++
-         Seq.fill(c.tileRows*c.meshRows)(0) ++
-         Seq.fill(c.tileRows*c.meshRows + 2)(0)
-  }
-
-  def generateS: Seq[Seq[Int]] = {
-    (0 until c.meshColumns*c.tileColumns).map { i =>
-      Seq.fill(math.max(c.meshRows*c.tileRows, c.meshColumns*c.tileColumns))(0) ++
-        Seq.fill(c.tileRows*c.meshRows)(1) ++
-        Seq.fill(c.tileRows*c.meshRows + 2)(0)
-    }
-  }
-  val S = generateS
-
-  val Apad = A.map(_.padTo(S(0).length, 0))
-  val Bpad = B.map(_.padTo(S(0).length, 0))
-  val Agrouped = Apad.grouped(c.tileRows).toList
-  val Bgrouped = Bpad.grouped(c.tileColumns).toList
-  val Propaggrouped = propag_pad.grouped(c.tileColumns).toList
-  val Cgold = SystolicUtils.mult(m1, m2)
-  println("A Padded:")
-  print2DArray(Apad)
-  println("B Padded:")
-  print2DArray(Bpad)
-
-  def strobeInputs(cycle: Int): Unit = {
+class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple2[Matrix[Int], Matrix[Int]]], garbageCyles: () => Int)
+  extends PeekPokeTester(c)
+{
+  def strobeInputs[T <: Bits](m: Seq[Int], input: Vec[Vec[T]]): Unit = {
     poke(c.io.valid, true)
 
-    for (meshRow <- 0 until c.meshRows) {
-      for (tileRow <- 0 until c.tileRows) {
-        poke(c.io.a(meshRow)(tileRow), Agrouped(meshRow)(tileRow)(cycle))
+    val slices = m.grouped(input.head.length).toList
+
+    for ((slice, i) <- slices.zipWithIndex) {
+      for ((elem, j) <- slice.zipWithIndex) {
+        poke(input(i)(j), elem)
       }
     }
-    for (meshCol <- 0 until c.meshColumns) {
-      for (tileCol <- 0 until c.tileColumns) {
-        poke(c.io.b(meshCol)(tileCol), Bgrouped(meshCol)(tileCol)(cycle))
-      }
-    }
+  }
+
+  // The matrices must be perfectly sized for this unit test
+  assert(ms.forall{ case (m1, m2) =>
+    rows(m1) == c.meshRows * c.tileRows && cols(m2) == c.meshColumns * c.tileColumns &&
+      cols(m1) == rows(m2) && cols(m1) == c.sramEntries
+  }, "Array must be square and the matrices must be the same size as the array") // TODO get rid of square requirement
+
+  var mesh_output = Seq.empty[Seq[Tuple2[Int, Int]]]
+
+  def updateOutput(): Unit = {
+    mesh_output = (peek(c.io.out_c).map(_.toInt) zip peek(c.io.out_s).map(_.toInt)) +: mesh_output
   }
 
   reset()
 
-  println("Peeking output out_vec")
-  var C: Seq[Seq[Int]] = Seq()
-  for (cycle <- 0 until Apad(0).length) {
-    strobeInputs(cycle)
+  // First, flush out the initial garbage output. Basically, we wait for the out_s signals to propagate through all
+  // the shift registers to the output
+  while (peek(c.io.out_s).contains(0))
+    step(1)
 
-    // Put in garbage while peeking
-    for (i <- 1 to 1) {
-      // println(s"go $i")
-      val peeked = peek(c.io.out_c)
+  // Input all matrices
+  for ((mA, mB) <- ms) {
+    val A = mA.transpose
+    val B = mB
 
-      // println(peeked.zip(peek(c.io.out_s)).map(t => s"(${t._1}, ${t._2})").reduce(_ + "\t" + _))
-      val outValid = peek(c.io.out_s)
-      C = peeked.take(Cgold(0).length).map(_.toInt) +: C
+    /*
+    println("A:")
+    print2DArray(A)
+    println("B:")
+    print2DArray(B)
+    */
 
-      step(1)
+    for ((a, b) <- A zip B) {
+      strobeInputs(a, c.io.a)
+      strobeInputs(b, c.io.b)
 
-      poke(c.io.valid, false)
+      var garbage_cycles = garbageCyles() + 1
+
+      do {
+        step(1)
+        updateOutput()
+
+        // Put in garbage data
+        poke(c.io.valid, false)
+        garbage_cycles -= 1
+
+      } while (peek(c.io.ready) == 0 // Wait for the systolic array to be ready for more inputs
+        || garbage_cycles > 0)
     }
   }
 
-  // TODO find a better way to get the correct matrix output
-  val C_formatted = C // dropWhile(_ != Cgold.head) take Cgold.size
+  // Pass in garbage data till all the results are read out
+  var cycles_left = (rows(ms.head._1) + c.meshColumns) * 2
 
-  println("Got C:")
-  print2DArray(C_formatted)
-  println("Cgold:")
-  print2DArray(Cgold)
-  // assert(Cgold == C_formatted)
+  poke(c.io.valid, true)
+  while (cycles_left > 0) {
+    step (1)
+    updateOutput()
+    if (peek(c.io.ready) != 0)
+      cycles_left -= 1
+  }
+
+  // println("Mesh output:")
+  // print2DArray(mesh_output)
+
+  // Extract the results from the output
+  var output_matrices = Seq(Seq(mesh_output.head.map(_._1)))
+  for (i <- 1 until mesh_output.length) {
+    val current_s = mesh_output(i).head._2
+    val last_s = mesh_output(i-1).head._2
+
+    val current_c = mesh_output(i).map(_._1)
+
+    if (current_s == last_s) {
+      output_matrices = output_matrices.init :+ (output_matrices.last :+ current_c)
+    } else {
+      output_matrices = output_matrices :+ Seq(current_c)
+    }
+  }
+
+  output_matrices = output_matrices.dropRight(2).takeRight(ms.length) // Drop initial garbage data from startup
+  output_matrices = output_matrices.map(om => om takeRight rows(ms.head._1)) // Drop garbage output from each readout
+  output_matrices = output_matrices.reverse
+
+  // Get the gold results
+  val golds = ms.map(t => mult(t._1, t._2))
+
+  // Compare the gold results to the systolic array's outputs
+  for ((out, gold) <- output_matrices zip golds) {
+    /*
+    println("Result:")
+    print2DArray(out)
+    println("Gold:")
+    print2DArray(gold)
+    println()
+    */
+
+    assert(out == gold, "Array output is not correct")
+  }
 }
 
 class MeshWithMemoryTester extends ChiselFlatSpec {
-  // 6x4
-  val m1 = Seq(
-    Seq(1, 2, 3, 4),
-    Seq(5, 6, 7, 8),
-    Seq(9, 10, 11, 12),
-    Seq(13, 14, 15, 16),
-    Seq(17, 18, 19, 20),
-    Seq(21, 22, 23, 24)
-  )
+  // Fully combinational
+  "MeshWithMemoryTest" should "work fully combinationally with no delays" in {
+    iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+      () => new MeshWithMemory(16, 8, 8, 1, 1, 8))
+    {
+      c => new MeshWithMemoryUnitTest(c, Seq.fill(8)((rand(8, 8), rand(8, 8))), () => 0)
+    } should be (true)
+  }
 
-  // 4x2
-  val m2 = Seq(
-    Seq(1, 2),
-    Seq(3, 4),
-    Seq(5, 6),
-    Seq(7, 8)
-  )
+  it should "work fully combinationally with random delays" in {
+    iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+      () => new MeshWithMemory(16, 8, 8, 1, 1, 8))
+    {
+      c => new MeshWithMemoryUnitTest(c, Seq.fill(8)((rand(8, 8), rand(8, 8))), () => scala.util.Random.nextInt(5))
+    } should be (true)
+  }
 
   // Fully pipelined
-  "MeshWithMemoryTester" should "run matmul using a 6x6 mesh with 1x1 tiles" in {
+  it should "work fully pipelined with no delays" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-      () => new MeshWithMemory(16, 1, 1, 6, 6, 6))
+      () => new MeshWithMemory(16, 1, 1, 8, 8, 8))
     {
-      c => new MeshWithMemoryUnitTest(c, m1, m2)
+      c => new MeshWithMemoryUnitTest(c, Seq.fill(8)((rand(8, 8), rand(8, 8))), () => 0)
     } should be (true)
   }
 
-  // Partially pipelined
-  it should "run matmul using a 3x2 mesh with 2x3 tiles" in {
-    iotesters.Driver.execute(Array("--backend-name", "treadle"),
-      () => new MeshWithMemory(16, 2, 3, 3, 2, 6))
+  it should "work fully pipelined with random delays" in {
+    iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+      () => new MeshWithMemory(16, 1, 1, 8, 8, 8))
     {
-      c => new MeshWithMemoryUnitTest(c, m1, m2)
+      c => new MeshWithMemoryUnitTest(c, Seq.fill(8)((rand(8, 8), rand(8, 8))), () => scala.util.Random.nextInt(5))
     } should be (true)
   }
 
-  // Fully combinational
-  it should "run matmul using a 1x1 mesh with one 6x6 tile" in {
-    iotesters.Driver.execute(Array("--backend-name", "treadle"),
-      () => new MeshWithMemory(16, 6, 6, 1, 1, 6))
-    {
-      c => new MeshWithMemoryUnitTest(c, m1, m2)
-    } should be (true)
+  // Partly pipelined
+  it should "work partially pipelined with no delays, as well as with random delays" in {
+    val matrix_dim = 8
+    val factors = (1 to matrix_dim).filter(matrix_dim % _ == 0)
+
+    val sram_entries = matrix_dim // TODO this may change when the square requirement is lifted
+
+    val delay_functions = Seq(() => 0, () => scala.util.Random.nextInt(5))
+
+    for (pipeline_depth <- factors) {
+      val tile_dim = pipeline_depth
+      val mesh_dim = matrix_dim / pipeline_depth
+
+      for (delay_function <- delay_functions) {
+        iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+          () => new MeshWithMemory(16, tile_dim, tile_dim, mesh_dim, mesh_dim, sram_entries))
+        {
+          c => new MeshWithMemoryUnitTest(c, Seq.fill(8)((rand(matrix_dim, matrix_dim), rand(matrix_dim, matrix_dim))),
+            delay_function)
+        } should be(true)
+      }
+    }
   }
 }
