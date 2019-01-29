@@ -78,7 +78,7 @@ class MeshUnitTest(c: Mesh, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
       for (meshCol <- 0 until c.tileColumns) {
         poke(c.io.in_b_vec(mesh)(meshCol), Bgrouped(mesh)(meshCol)(cycle))
         poke(c.io.in_s_vec(mesh)(meshCol), Sgrouped(mesh)(meshCol)(cycle))
-        poke(c.io.in_propag_vec(mesh)(meshCol),Propaggrouped(mesh)(meshCol)(cycle))
+        poke(c.io.in_d_vec(mesh)(meshCol),Propaggrouped(mesh)(meshCol)(cycle))
       }
     }
   }

@@ -70,7 +70,7 @@ class TileUnitTest(c: Tile, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   for (cycle <- aFormat(0).indices) {
     // TODO: ordering matters (strobe, peek, step) for combinational modules
     strobeInputs(cycle)
-    val peeked = peek(c.io.out_vec)
+    val peeked = peek(c.io.out_c_vec)
     step(1)
     assert(peeked.zip(C(cycle)).forall {
       case (actual, (expected, true)) => actual == expected

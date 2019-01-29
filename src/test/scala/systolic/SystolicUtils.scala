@@ -7,11 +7,18 @@ object SystolicUtils {
   def rows[T](m: Matrix[T]) = m.length
   def cols[T](m: Matrix[T]) = m.head.length
 
-  def mult[A](a: Seq[Seq[A]], b: Seq[Seq[A]])(implicit n: Numeric[A]) = {
+  def mult[A](a: Matrix[A], b: Matrix[A])(implicit n: Numeric[A]): Matrix[A] = {
     import n._
     for (row <- a)
       yield for(col <- b.transpose)
         yield row zip col map Function.tupled(_*_) reduceLeft (_+_)
+  }
+
+  def add[A](a: Matrix[A], b: Matrix[A])(implicit n: Numeric[A]): Matrix[A] = {
+    import n._
+    for ((ra, rb) <- a zip b)
+      yield for ((elema, elemb) <- ra zip rb)
+        yield elema + elemb
   }
 
   def identity(dim: Int): Matrix[Int] = {

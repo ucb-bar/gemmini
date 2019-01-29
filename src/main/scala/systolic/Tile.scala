@@ -13,14 +13,14 @@ import chisel3._
   */
 class Tile(val width: Int, val rows: Int, val columns: Int, should_print: Boolean = false) extends Module {
   val io = IO(new Bundle {
-    val in_a_vec      = Input(Vec(rows,UInt(width.W)))
-    val in_b_vec      = Input(Vec(columns,UInt((2*width).W)))
-    val in_propag_vec = Input(Vec(columns,UInt((2*width).W)))
-    val in_s_vec      = Input(Vec(columns,UInt(2.W)))
-    val out_a_vec     = Output(Vec(rows, UInt(width.W)))
-    val out_vec       = Output(Vec(columns,UInt((2*width).W)))
-    val out_b_vec     = Output(Vec(columns,UInt((2*width).W)))
-    val out_s_vec     = Output(Vec(columns, UInt(2.W)))
+    val in_a_vec    = Input(Vec(rows,UInt(width.W)))
+    val in_b_vec    = Input(Vec(columns,UInt((2*width).W)))
+    val in_d_vec    = Input(Vec(columns,UInt((2*width).W)))
+    val in_s_vec    = Input(Vec(columns,UInt(3.W)))
+    val out_a_vec   = Output(Vec(rows, UInt(width.W)))
+    val out_c_vec     = Output(Vec(columns,UInt((2*width).W)))
+    val out_b_vec   = Output(Vec(columns,UInt((2*width).W)))
+    val out_s_vec   = Output(Vec(columns, UInt(3.W)))
   })
 
   val tile = {
@@ -49,12 +49,12 @@ class Tile(val width: Int, val rows: Int, val columns: Int, should_print: Boolea
     }
   }
 
-  // Broadcast 'in_propag' vertically across the Tile
+  // Broadcast 'd' vertically across the Tile
   for (c <- 0 until columns) {
-    tileT(c).foldLeft(io.in_propag_vec(c)) {
+    tileT(c).foldLeft(io.in_d_vec(c)) {
       case (in_propag, pe) =>
-        pe.io.in_propag := in_propag
-        pe.io.out
+        pe.io.in_d := in_propag
+        pe.io.out_c
     }
   }
 
@@ -69,7 +69,7 @@ class Tile(val width: Int, val rows: Int, val columns: Int, should_print: Boolea
 
   // Drive the Tile's bottom IO
   for (c <- 0 until columns) {
-    io.out_vec(c) := tile(rows-1)(c).io.out
+    io.out_c_vec(c) := tile(rows-1)(c).io.out_c
     io.out_b_vec(c) := tile(rows-1)(c).io.out_b
     io.out_s_vec(c) := tile(rows-1)(c).io.out_s
   }

@@ -15,12 +15,12 @@ import chisel3._
 class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
            val meshRows: Int, val meshColumns: Int) extends Module {
   val io = IO(new Bundle {
-    val in_a_vec      = Input(Vec(meshRows, Vec(tileRows, UInt(width.W))))
-    val in_b_vec      = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
-    val in_propag_vec = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
-    val in_s_vec      = Input(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
-    val out_vec       = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
-    val out_s_vec     = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
+    val in_a_vec   = Input(Vec(meshRows, Vec(tileRows, UInt(width.W))))
+    val in_b_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val in_d_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val in_s_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt(3.W))))
+    val out_vec    = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val out_s_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt(3.W))))
   })
 
   // mesh(r)(c) => Tile at row r, column c
@@ -50,10 +50,10 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
 
   // Chain tile_out -> tile_propag (pipeline output across each column)
   for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_propag_vec(c)) {
+    meshT(c).foldLeft(io.in_d_vec(c)) {
       case (in_propag, tile) =>
-        tile.io.in_propag_vec := RegNext(in_propag)
-        tile.io.out_vec
+        tile.io.in_d_vec := RegNext(in_propag)
+        tile.io.out_c_vec
     }
   }
 
@@ -68,7 +68,7 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
 
   // Capture out_vec and out_s_vec (connect IO to bottom row of mesh)
   for ((out, s, tile) <- (io.out_vec, io.out_s_vec, mesh.last).zipped) {
-    out := tile.io.out_vec
+    out := tile.io.out_c_vec
     s := tile.io.out_s_vec
   }
 }
