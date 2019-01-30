@@ -19,7 +19,8 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
     val in_b_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
     val in_d_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
     val in_s_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt(3.W))))
-    val out_vec    = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val out_b_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val out_c_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
     val out_s_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt(3.W))))
   })
 
@@ -27,7 +28,7 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
   // val mesh: Seq[Seq[Tile]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(width, tileRows, tileColumns)))
   val mesh = for (r <- 0 until meshRows) yield
     for (c <- 0 until meshColumns) yield
-      Module(new Tile(width, tileRows, tileColumns, should_print = false /*r == 0 && c == 0*/))
+      Module(new Tile(width, tileRows, tileColumns, should_print = false && r == 0 && c == 0))
   val meshT = mesh.transpose
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
@@ -67,8 +68,10 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
   }
 
   // Capture out_vec and out_s_vec (connect IO to bottom row of mesh)
-  for ((out, s, tile) <- (io.out_vec, io.out_s_vec, mesh.last).zipped) {
-    out := tile.io.out_c_vec
+  // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple4)
+  for (((b, c), (s, tile)) <- (io.out_b_vec zip io.out_c_vec) zip (io.out_s_vec zip mesh.last)) {
+    b := tile.io.out_b_vec
+    c := tile.io.out_c_vec
     s := tile.io.out_s_vec
   }
 }

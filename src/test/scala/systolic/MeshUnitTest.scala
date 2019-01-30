@@ -87,7 +87,7 @@ class MeshUnitTest(c: Mesh, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPo
   var C: Seq[Seq[Int]] = Seq()
   for (cycle <- 0 until Apad(0).length) {
     strobeInputs(cycle)
-    val peeked = peek(c.io.out_vec)
+    val peeked = peek(c.io.out_c_vec)
     step(1)
 
     println(peeked.map(_.toString).reduce(_ + "\t" + _))

@@ -52,8 +52,8 @@ class Tile(val width: Int, val rows: Int, val columns: Int, should_print: Boolea
   // Broadcast 'd' vertically across the Tile
   for (c <- 0 until columns) {
     tileT(c).foldLeft(io.in_d_vec(c)) {
-      case (in_propag, pe) =>
-        pe.io.in_d := in_propag
+      case (in_d, pe) =>
+        pe.io.in_d := in_d
         pe.io.out_c
     }
   }

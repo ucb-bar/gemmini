@@ -1,5 +1,4 @@
 // See README.md for license details.
-
 package systolic
 
 import chisel3._
@@ -46,7 +45,7 @@ class PE(width: Int, pass_through: Boolean = true, should_print: Boolean = false
   val OUTPUT_STATIONARY = 0.U(1.W)
   val WEIGHT_STATIONARY = 1.U(1.W)
 
-  // Is c2 being computed on, or propagated forward (in the output-stationary dataflow)?
+  // Is c1 being computed on, or propagated forward (in the output-stationary dataflow)?
   val COMPUTE = 0.U(1.W)
   val PROPAGATE = 1.U(1.W)
 
@@ -69,18 +68,19 @@ class PE(width: Int, pass_through: Boolean = true, should_print: Boolean = false
   }.otherwise {
     when(select === PROPAGATE){
       io.out_c := c1
-      io.out_b := c1
-      c1 := b
-      when (!pause) { c2 := d }
+      io.out_b := (a*c2) + b
+      when (!pause) { c1 := d }
+      // c1 := d
     }.otherwise {
-      io.out_c := (a*c1) + b
+      io.out_c := c2
       io.out_b := (a*c1) + b
-      c1 := c1
       when (!pause) { c2 := d }
+      // c2 := d
     }
   }
 
   if (should_print) {
-    printf(p"($a * $b) = $c1, $c2 ($pause)\n")
+    // printf(p"($a * $b) = $c1, $c2 ($pause)\n")
+    printf(p"a=$a, b=$b, c1=$c1, c2=$c2\n")
   }
 }

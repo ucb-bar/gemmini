@@ -20,7 +20,9 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
     val b = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
     val d = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
 
-    val out_c = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val m = Input(UInt(1.W))
+
+    val out = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
     val out_s = Output(Vec(meshColumns, Vec(tileColumns, UInt(3.W))))
 
     val ready = Output(Bool())
@@ -65,10 +67,14 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   mesh.io.in_b_vec := b_reads(active).zipWithIndex.map{case (b, i) => ShiftRegister(b, i)}
   mesh.io.in_d_vec := d_reads(active).zipWithIndex.map{case (d, i) => ShiftRegister(d, i)}
 
-  mesh.io.in_s_vec.zipWithIndex.foreach{case (s, i) => s.foreach(_ := ShiftRegister(Cat(stalling, 0.U(1.W), not_active), i))}
+  mesh.io.in_s_vec.zipWithIndex.foreach{case (s, i) => s.foreach(_ := ShiftRegister(Cat(stalling, io.m, not_active), i))}
 
-  io.out_c := mesh.io.out_vec.zip(mesh.io.out_vec.indices.reverse).map{case (c, i) => ShiftRegister(c, i)}
   io.out_s := mesh.io.out_s_vec.zip(mesh.io.out_s_vec.indices.reverse).map{case (s, i) => ShiftRegister(s, i)}
+
+  // We want to output C when we're output-stationary, but B when we're weight-stationary
+  io.out := (mesh.io.out_b_vec, mesh.io.out_c_vec, mesh.io.out_c_vec.indices.reverse).zipped.map { case (b, c, i) =>
+    ShiftRegister(Mux(io.m === 0.U, c, b), i) // TODO get rid of magic number and SAVE "m"
+  }
 
   // printf(p"     active == $active / addrs(active) == ${addrs(active)} / addrs(not_active) == ${addrs(not_active)} / addrs(0) == ${addrs(0.U)} / addrs(1) == ${addrs(1.U)}\n")
   // printf(p"     a_read: ${a_reads(active)}\n")
