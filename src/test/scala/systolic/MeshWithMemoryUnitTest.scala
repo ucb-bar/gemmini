@@ -5,9 +5,14 @@ import chisel3._
 import chisel3.iotesters._
 import SystolicUtils._
 
+// TODO add test for switching dataflow at runtime
+// TODO add test for randomly choosing S
+
 abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]],
                              garbageCyles: () => Int) extends PeekPokeTester(c)
 {
+  case class MeshInput(A: Matrix[Int], B: Matrix[Int], D: Matrix[Int], S: Int, M: Int)
+
   def strobeInputs[T <: Bits](m: Seq[Int], input: Vec[Vec[T]]): Unit = {
     poke(c.io.valid, true)
 
@@ -34,13 +39,10 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
     mesh_output = (peek(c.io.out).map(_.toInt) zip peek(c.io.out_s).map(_.toInt % 2)) +: mesh_output
   }
 
-  def formatMs(ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]]): Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]]
+  def formatMs(ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]]): Seq[MeshInput]
   def formatOut(outs: Seq[Matrix[Int]]): Seq[Matrix[Int]]
 
-  def setup(): Unit
-
   reset()
-  setup()
 
   // First, flush out the initial garbage output. Basically, we wait for the out_s signals to propagate through all
   // the shift registers to the output
@@ -48,7 +50,8 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
     step(1)
 
   // Input all matrices
-  for ((mA, mB, mD) <- formatMs(ms)) {
+  val meshInputs = formatMs(ms)
+  for (meshIn <- meshInputs) {
     /*
     println("A:")
     print2DArray(mA)
@@ -58,7 +61,10 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
     print2DArray(mD)
     */
 
-    for ((a, b, d) <- (mA, mB, mD).zipped) {
+    poke(c.io.s, meshIn.S)
+    poke(c.io.m, meshIn.M)
+
+    for ((a, b, d) <- (meshIn.A, meshIn.B, meshIn.D).zipped) {
       strobeInputs(a, c.io.a)
       strobeInputs(b, c.io.b)
       strobeInputs(d, c.io.d)
@@ -82,6 +88,7 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
   var cycles_left = (rows(ms.head._1) + c.meshColumns) * 2
 
   poke(c.io.valid, true)
+  poke(c.io.s, (meshInputs.last.S+1)%2)
   while (cycles_left > 0) {
     step (1)
     updateOutput()
@@ -113,18 +120,23 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
   val golds = ms.map(t => add(t._3, mult(t._1, t._2)))
 
   // Compare the gold results to the systolic array's outputs
+  /*
   for ((out, gold) <- output_matrices zip golds) {
-    /*
     println("Result:")
     print2DArray(out)
     println("Gold:")
     print2DArray(gold)
     println()
-    Console.flush()
-    */
-
-    assert(out == gold, "Array output is not correct")
   }
+  for (gold <- golds drop output_matrices.size) {
+    println("Gold (no result):")
+    print2DArray(gold)
+    println()
+  }
+  Console.flush()
+  */
+
+  assert(output_matrices == golds, "Array output is not correct")
 }
 
 class OSMeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]],
@@ -135,18 +147,18 @@ class OSMeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Ma
     val shifted = (zero(dim), zero(dim), ms.head._3) +:
       (ms.tail zip ms).map { case ((_, _, d), (a, b, _)) => (a, b, d) } :+
       (ms.last._1, ms.last._2, zero(dim))
+
     // Then, transpose A and reverse the rows of D
-    shifted.map{case (a, b, d) => (a.transpose, b, d.reverse)}
+    val mats = shifted.map{case (a, b, d) => (a.transpose, b, d.reverse)}
+
+    // Finally, add the S and M parameters
+    mats.zipWithIndex.map { case ((m1,m2,m3),i) => MeshInput(m1, m2, m3, S=i%2, M=0)}
   }
 
   override def formatOut(outs: Seq[Matrix[Int]]) = {
     outs.dropRight(3).takeRight(ms.length). // Drop initial garbage data from startup
       map(om => om takeRight rows(ms.head._1)) // Drop garbage output from each readout
       .reverse
-  }
-
-  override def setup(): Unit = {
-    poke(c.io.m, 0)
   }
 }
 
@@ -158,18 +170,18 @@ class WSMeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Ma
     val shifted = (zero(dim), ms.head._2, zero(dim)) +:
       (ms.tail zip ms).map { case ((_, b, _), (a, _, d)) => (a, b, d) } :+
       (ms.last._1, zero(dim), ms.last._3)
+
     // Then, reverse B and change the positions of A, B, and D since the IO names are only correct for output-stationary
-    shifted.map{case (a, b, d) => (a, d, b.reverse)}
+    val mats = shifted.map{case (a, b, d) => (a, d, b.reverse)}
+
+    // Finally, add the S and M parameters
+    mats.zipWithIndex.map { case ((m1,m2,m3),i) => MeshInput(m1, m2, m3, S=i%2, M=1)}
   }
 
   override def formatOut(outs: Seq[Matrix[Int]]) = {
     outs.dropRight(2).takeRight(ms.length). // Drop initial garbage data from startup
       map(om => om.reverse.drop(1) take dim). // Drop garbage output from each readout and reverse the rows
       reverse
-  }
-
-  override def setup(): Unit = {
-    poke(c.io.m, 1)
   }
 }
 

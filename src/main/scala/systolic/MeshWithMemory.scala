@@ -3,14 +3,13 @@ package systolic
 import chisel3._
 import chisel3.util._
 
-// TODO add weight-stationary support
-// TODO add support for user-given S and M
 // TODO create new SRAM module (I don't like Chisel mems very much)
 // TODO get rid of wasted cycle at end
 // TODO add output SRAM
 // TODO add separate ready-vals for all inputs (with the associated new address counters)
 // TODO add option to shift inputs with SRAM banking instead
 // TODO Handle matrices where N1 =/= N2 =/= N3
+// TODO Change S and M to enums
 
 class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
                      val meshRows: Int, val meshColumns: Int, val sramEntries: Int) extends Module {
@@ -20,6 +19,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
     val b = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
     val d = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
 
+    val s = Input(UInt(1.W))
     val m = Input(UInt(1.W))
 
     val out = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
@@ -34,6 +34,10 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   val a_bufs = Seq.fill(2)(SyncReadMem(sramEntries, io.a.cloneType))
   val b_bufs = Seq.fill(2)(SyncReadMem(sramEntries, io.b.cloneType))
   val d_bufs = Seq.fill(2)(SyncReadMem(meshRows*tileRows, io.d.cloneType))
+
+  // The next two buffers are actually just simple Regs, but we still call them "buf" for consistency
+  val s_bufs = RegInit(VecInit(1.U, 0.U))
+  val m_bufs = RegInit(VecInit(0.U, 0.U))
 
   val buffer_is_empty = RegInit(true.B)
   val compute_has_started = RegInit(false.B)
@@ -67,13 +71,19 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   mesh.io.in_b_vec := b_reads(active).zipWithIndex.map{case (b, i) => ShiftRegister(b, i)}
   mesh.io.in_d_vec := d_reads(active).zipWithIndex.map{case (d, i) => ShiftRegister(d, i)}
 
-  mesh.io.in_s_vec.zipWithIndex.foreach{case (s, i) => s.foreach(_ := ShiftRegister(Cat(stalling, io.m, not_active), i))}
+  mesh.io.in_s_vec.zipWithIndex.foreach { case (ss, i) =>
+    // s.foreach(_ := ShiftRegister(Cat(stalling, io.m, not_active), i))
+    ss.foreach(_ := ShiftRegister(Cat(stalling, m_bufs(active), s_bufs(active)), i))
+  }
 
   io.out_s := mesh.io.out_s_vec.zip(mesh.io.out_s_vec.indices.reverse).map{case (s, i) => ShiftRegister(s, i)}
 
   // We want to output C when we're output-stationary, but B when we're weight-stationary
-  io.out := (mesh.io.out_b_vec, mesh.io.out_c_vec, mesh.io.out_c_vec.indices.reverse).zipped.map { case (b, c, i) =>
-    ShiftRegister(Mux(io.m === 0.U, c, b), i) // TODO get rid of magic number and SAVE "m"
+  val bottom_mesh_io = (mesh.io.out_b_vec, mesh.io.out_c_vec, mesh.io.out_s_vec).zipped.toSeq
+  io.out := bottom_mesh_io.zip(bottom_mesh_io.indices.reverse).map { case ((bs, cs, ss), i) =>
+    // TODO get rid of magic numbers
+    val mode = ss.head(1)
+    ShiftRegister(Mux(io.m === 0.U, cs, bs), i)
   }
 
   // printf(p"     active == $active / addrs(active) == ${addrs(active)} / addrs(not_active) == ${addrs(not_active)} / addrs(0) == ${addrs(0.U)} / addrs(1) == ${addrs(1.U)}\n")
@@ -87,6 +97,9 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
       a_bufs(i).write(addrs(i), io.a)
       b_bufs(i).write(addrs(i), io.b)
       d_bufs(i).write(addrs(i), io.d)
+
+      s_bufs(i) := io.s
+      m_bufs(i) := io.m
 
       addrs(i) := Mux(addrs(i) === (sramEntries - 1).U, 0.U, addrs(i) + 1.U)
       buffer_is_empty := false.B
