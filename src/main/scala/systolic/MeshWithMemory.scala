@@ -10,6 +10,7 @@ import chisel3.util._
 // TODO add option to shift inputs with SRAM banking instead
 // TODO Handle matrices where N1 =/= N2 =/= N3
 // TODO Change S and M to enums
+// TODO Consider adding a FREEZE signal to the mesh, instead of passing in zeros
 
 class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
                      val meshRows: Int, val meshColumns: Int, val sramEntries: Int) extends Module {
@@ -31,27 +32,34 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
 
   assert(meshRows*tileRows == meshColumns*tileColumns && meshRows*tileRows == sramEntries)
 
-  val a_bufs = Seq.fill(2)(SyncReadMem(sramEntries, io.a.cloneType))
-  val b_bufs = Seq.fill(2)(SyncReadMem(sramEntries, io.b.cloneType))
-  val d_bufs = Seq.fill(2)(SyncReadMem(meshRows*tileRows, io.d.cloneType))
-
-  // The next two buffers are actually just simple Regs, but we still call them "buf" for consistency
-  val s_bufs = RegInit(VecInit(1.U, 0.U))
-  val m_bufs = RegInit(VecInit(0.U, 0.U))
-
   val buffer_is_empty = RegInit(true.B)
   val compute_has_started = RegInit(false.B)
 
   val addrs = RegInit(VecInit(Seq.fill(2)(0.U((log2Ceil(sramEntries) max 1).W))))
 
-  val a_reads = Wire(Vec(2, io.a.cloneType))
-  val b_reads = Wire(Vec(2, io.b.cloneType))
-  val d_reads = Wire(Vec(2, io.d.cloneType))
+  // TODO find a better name for these two
+  val s_bufs = RegInit(VecInit(1.U, 0.U))
+  val m_bufs = RegInit(VecInit(0.U, 0.U))
 
-  // The read signals can only be connected to the read ports in a "when" block further down, to avoid creating a double-ported SRAM
-  a_reads := DontCare
-  b_reads := DontCare
-  d_reads := DontCare
+  val a_bufs = VecInit(Seq.fill(2)(SinglePortedSyncMem(sramEntries, io.a.cloneType).io))
+  val b_bufs = VecInit(Seq.fill(2)(SinglePortedSyncMem(sramEntries, io.b.cloneType).io))
+  val d_bufs = VecInit(Seq.fill(2)(SinglePortedSyncMem(meshRows*tileRows, io.d.cloneType).io))
+
+  val a_reads = VecInit(a_bufs.map(_.rdata))
+  val b_reads = VecInit(b_bufs.map(_.rdata))
+  val d_reads = VecInit(d_bufs.map(_.rdata))
+
+  a_bufs.foreach(_.wdata := io.a)
+  b_bufs.foreach(_.wdata := io.b)
+  d_bufs.foreach(_.wdata := io.d)
+
+  a_bufs.foreach{ab => ab.wen := false.B; ab.ren := false.B}
+  b_bufs.foreach{bb => bb.wen := false.B; bb.ren := false.B}
+  d_bufs.foreach{db => db.wen := false.B; db.ren := false.B}
+
+  a_bufs.zip(addrs).foreach { case (ab, addr) => ab.addr := addr }
+  b_bufs.zip(addrs).foreach { case (bb, addr) => bb.addr := addr }
+  d_bufs.zip(addrs).foreach { case (db, addr) => db.addr := addr }
 
   val active = RegInit(0.U(1.W)) // Which buffer is currently being read from?
   val not_active = (~active).asUInt()
@@ -62,7 +70,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   val compute_done = addrs(active) === 0.U && compute_has_started
   val buffering_done = !buffer_is_empty && addrs(not_active) === 0.U
 
-  val stalling = compute_done && RegNext(compute_done) // TODO this seems messy...
+  val stalling = compute_done && RegNext(compute_done) // TODO this seems inelegant...
 
   // Wire up mesh's IO to this module's IO
   val mesh = Module(new Mesh(width, tileRows, tileColumns, meshRows, meshColumns))
@@ -72,7 +80,6 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   mesh.io.in_d_vec := d_reads(active).zipWithIndex.map{case (d, i) => ShiftRegister(d, i)}
 
   mesh.io.in_s_vec.zipWithIndex.foreach { case (ss, i) =>
-    // s.foreach(_ := ShiftRegister(Cat(stalling, io.m, not_active), i))
     ss.foreach(_ := ShiftRegister(Cat(stalling, m_bufs(active), s_bufs(active)), i))
   }
 
@@ -92,35 +99,31 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   // printf(p"     d_read: ${d_reads(active)}\n")
 
   // Control logic for buffers
-  for (i <- 0 until 2) {
-    when(fire && active =/= i.U) {
-      a_bufs(i).write(addrs(i), io.a)
-      b_bufs(i).write(addrs(i), io.b)
-      d_bufs(i).write(addrs(i), io.d)
+  when(fire) {
+    a_bufs(not_active).wen := true.B
+    b_bufs(not_active).wen := true.B
+    d_bufs(not_active).wen := true.B
 
-      s_bufs(i) := io.s
-      m_bufs(i) := io.m
+    s_bufs(not_active) := io.s
+    m_bufs(not_active) := io.m
 
-      addrs(i) := Mux(addrs(i) === (sramEntries - 1).U, 0.U, addrs(i) + 1.U)
-      buffer_is_empty := false.B
+    addrs(not_active) := Mux(addrs(not_active) === (sramEntries - 1).U, 0.U, addrs(not_active) + 1.U)
+    buffer_is_empty := false.B
 
-      // printf(p"    Fire! (${io.d})\n")
-    }.otherwise {
-      when(!fire && active =/= i.U) {
-        // TODO remove this when block. Its only here for debugging help
-        // printf(p"    Miss!\n")
-      }
+    // printf(p"    Fire! (${io.d})\n")
+  }.elsewhen(!fire) {
+      // TODO remove this when block. Its only here for debugging help
+      // printf(p"    Miss!\n")
+  }
 
-      a_reads(i) := a_bufs(i).read(addrs(i))
-      b_reads(i) := b_bufs(i).read(addrs(i))
-      d_reads(i) := d_bufs(i).read(addrs(i))
+  a_bufs(active).ren := !compute_done
+  b_bufs(active).ren := !compute_done
+  d_bufs(active).ren := !compute_done
 
-      when(!compute_has_started || stalling) {
-        a_reads(i).foreach(_.foreach(_ := 0.U))
-        b_reads(i).foreach(_.foreach(_ := 0.U))
-        d_reads(i).foreach(_.foreach(_ := 0.U))
-      }
-    }
+  when(!compute_has_started || stalling) {
+    a_reads(active).foreach(_.foreach(_ := 0.U))
+    b_reads(active).foreach(_.foreach(_ := 0.U))
+    d_reads(active).foreach(_.foreach(_ := 0.U))
   }
 
   when(compute_done && buffering_done) {
