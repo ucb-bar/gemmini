@@ -3,8 +3,6 @@ package systolic
 import chisel3._
 import chisel3.util._
 
-// TODO create new SRAM module (I don't like Chisel mems very much)
-// TODO get rid of wasted cycle at end
 // TODO add output SRAM
 // TODO add separate ready-vals for all inputs (with the associated new address counters)
 // TODO add option to shift inputs with SRAM banking instead
@@ -37,17 +35,18 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
 
   val addrs = RegInit(VecInit(Seq.fill(2)(0.U((log2Ceil(sramEntries) max 1).W))))
 
-  // TODO find a better name for these two
-  val s_bufs = RegInit(VecInit(1.U, 0.U))
-  val m_bufs = RegInit(VecInit(0.U, 0.U))
-
+  // Double-buffers
   val a_bufs = VecInit(Seq.fill(2)(SinglePortedSyncMem(sramEntries, io.a.cloneType).io))
   val b_bufs = VecInit(Seq.fill(2)(SinglePortedSyncMem(sramEntries, io.b.cloneType).io))
   val d_bufs = VecInit(Seq.fill(2)(SinglePortedSyncMem(meshRows*tileRows, io.d.cloneType).io))
 
-  val a_reads = VecInit(a_bufs.map(_.rdata))
-  val b_reads = VecInit(b_bufs.map(_.rdata))
-  val d_reads = VecInit(d_bufs.map(_.rdata))
+  // TODO find a better name for these two
+  val s_bufs = RegInit(VecInit(1.U, 0.U))
+  val m_bufs = RegInit(VecInit(0.U, 0.U))
+
+  val a_reads = WireInit(VecInit(a_bufs.map(_.rdata)))
+  val b_reads = WireInit(VecInit(b_bufs.map(_.rdata)))
+  val d_reads = WireInit(VecInit(d_bufs.map(_.rdata)))
 
   a_bufs.foreach(_.wdata := io.a)
   b_bufs.foreach(_.wdata := io.b)
@@ -67,7 +66,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   val fire = io.ready && io.valid
   io.ready := addrs(not_active) =/= 0.U || buffer_is_empty
 
-  val compute_done = addrs(active) === 0.U && compute_has_started
+  val compute_done = compute_has_started && addrs(active) === 0.U
   val buffering_done = !buffer_is_empty && addrs(not_active) === 0.U
 
   val stalling = compute_done && RegNext(compute_done) // TODO this seems inelegant...
@@ -99,7 +98,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   // printf(p"     d_read: ${d_reads(active)}\n")
 
   // Control logic for buffers
-  when(fire) {
+  when(fire && !buffering_done) {
     a_bufs(not_active).wen := true.B
     b_bufs(not_active).wen := true.B
     d_bufs(not_active).wen := true.B
@@ -110,24 +109,34 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
     addrs(not_active) := Mux(addrs(not_active) === (sramEntries - 1).U, 0.U, addrs(not_active) + 1.U)
     buffer_is_empty := false.B
 
-    // printf(p"    Fire! (${io.d})\n")
+    // printf(p"    Fire! (${io.a})\n")
   }.elsewhen(!fire) {
-      // TODO remove this when block. Its only here for debugging help
-      // printf(p"    Miss!\n")
+    // TODO remove this when block. Its only here for debugging help
+    // printf(p"    Miss!\n")
   }
 
   a_bufs(active).ren := !compute_done
   b_bufs(active).ren := !compute_done
   d_bufs(active).ren := !compute_done
 
-  when(!compute_has_started || stalling) {
+  when(stalling) {
     a_reads(active).foreach(_.foreach(_ := 0.U))
     b_reads(active).foreach(_.foreach(_ := 0.U))
     d_reads(active).foreach(_.foreach(_ := 0.U))
   }
 
   when(compute_done && buffering_done) {
-    // addrs(active) := 0.U
+    addrs.foreach(_ := 1.U)
+
+    a_bufs(not_active).ren := true.B
+    b_bufs(not_active).ren := true.B
+    d_bufs(not_active).ren := true.B
+
+    io.ready := true.B
+    a_bufs(active).wen := fire
+    b_bufs(active).wen := fire
+    d_bufs(active).wen := fire
+
     active := not_active
     buffer_is_empty := true.B
     compute_has_started := false.B

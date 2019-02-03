@@ -12,6 +12,8 @@ class SinglePortedSyncMem[T <: Data](n: Int, t: T) extends Module {
     val ren = Input(Bool())
   })
 
+  assert(!(io.ren && io.wen), "undefined behavior in SRAM")
+
   val mem = SyncReadMem(n, t)
 
   when (io.wen) {
