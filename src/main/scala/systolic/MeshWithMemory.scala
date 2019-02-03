@@ -92,10 +92,10 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
     ShiftRegister(Mux(io.m === 0.U, cs, bs), i)
   }
 
-  // printf(p"     active == $active / addrs(active) == ${addrs(active)} / addrs(not_active) == ${addrs(not_active)} / addrs(0) == ${addrs(0.U)} / addrs(1) == ${addrs(1.U)}\n")
-  // printf(p"     a_read: ${a_reads(active)}\n")
-  // printf(p"     b_read: ${b_reads(active)}\n")
-  // printf(p"     d_read: ${d_reads(active)}\n")
+  printf(p"     active == $active / addrs(active) == ${addrs(active)} / addrs(not_active) == ${addrs(not_active)} / addrs(0) == ${addrs(0.U)} / addrs(1) == ${addrs(1.U)}\n")
+  printf(p"     a_read: ${a_reads(active)}\n")
+  printf(p"     b_read: ${b_reads(active)}\n")
+  printf(p"     d_read: ${d_reads(active)}\n")
 
   // Control logic for buffers
   when(fire && !buffering_done) {
@@ -109,10 +109,10 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
     addrs(not_active) := Mux(addrs(not_active) === (sramEntries - 1).U, 0.U, addrs(not_active) + 1.U)
     buffer_is_empty := false.B
 
-    // printf(p"    Fire! (${io.a})\n")
+    printf(p"    Fire! (a: ${io.a}),    b: ${io.b},    d: ${io.d}\n")
   }.elsewhen(!fire) {
     // TODO remove this when block. Its only here for debugging help
-    // printf(p"    Miss!\n")
+    printf(p"    Miss!\n")
   }
 
   a_bufs(active).ren := !compute_done
@@ -126,7 +126,8 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   }
 
   when(compute_done && buffering_done) {
-    addrs.foreach(_ := 1.U)
+    addrs(not_active) := 1.U
+    addrs(active) := Mux(fire, 1.U, 0.U)
 
     a_bufs(not_active).ren := true.B
     b_bufs(not_active).ren := true.B
@@ -140,13 +141,13 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
     active := not_active
     buffer_is_empty := true.B
     compute_has_started := false.B
-    // printf(p"     Done!   (ready: ${io.ready}, ${addrs(not_active) =/= 0.U || buffer_is_empty}; has_started: $compute_has_started; is_empty: $buffer_is_empty)\n\n")
+    printf(p"     Done!   (ready: ${io.ready}, ${addrs(not_active) =/= 0.U || buffer_is_empty}; has_started: $compute_has_started; is_empty: $buffer_is_empty)\n\n")
   }.elsewhen(!compute_done) {
     addrs(active) := Mux(addrs(active) === (sramEntries - 1).U, 0.U, addrs(active) + 1.U)
     compute_has_started := true.B
-    // printf(p"     Computing!  (ready: ${io.ready}, ${addrs(not_active) =/= 0.U || buffer_is_empty}; has_started: $compute_has_started; is_empty: $buffer_is_empty)\n\n")
+    printf(p"     Computing!  (ready: ${io.ready}, ${addrs(not_active) =/= 0.U || buffer_is_empty}; has_started: $compute_has_started; is_empty: $buffer_is_empty)\n\n")
   }.otherwise {
     // Pause systolic array
-    // printf(p"     PAUSING  (ready: ${io.ready}, ${addrs(not_active) =/= 0.U || buffer_is_empty}; has_started: $compute_has_started; is_empty: $buffer_is_empty)\n\n")
+    printf(p"     PAUSING  (ready: ${io.ready}, ${addrs(not_active) =/= 0.U || buffer_is_empty}; has_started: $compute_has_started; is_empty: $buffer_is_empty)\n\n")
   }
 }

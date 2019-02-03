@@ -96,8 +96,8 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
       cycles_left -= 1
   }
 
-  // println("Mesh output:")
-  // print2DArray(mesh_output)
+  println("Mesh output:")
+  print2DArray(mesh_output)
 
   // Extract the results from the output
   var output_matrices = Seq(Seq(mesh_output.head.map(_._1)))
@@ -120,7 +120,6 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
   val golds = ms.map(t => add(t._3, mult(t._1, t._2)))
 
   // Compare the gold results to the systolic array's outputs
-  /*
   for ((out, gold) <- output_matrices zip golds) {
     println("Result:")
     print2DArray(out)
@@ -134,7 +133,6 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
     println()
   }
   Console.flush()
-  */
 
   assert(output_matrices == golds, "Array output is not correct")
 }
@@ -180,7 +178,7 @@ class WSMeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Ma
 
   override def formatOut(outs: Seq[Matrix[Int]]) = {
     outs.dropRight(2).takeRight(ms.length). // Drop initial garbage data from startup
-      map(om => om.reverse.drop(1) take dim). // Drop garbage output from each readout and reverse the rows
+      map(om => om.reverse take dim). // Drop garbage output from each readout and reverse the rows
       reverse
   }
 }
