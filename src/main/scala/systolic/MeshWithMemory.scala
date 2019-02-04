@@ -92,6 +92,16 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
     ShiftRegister(Mux(io.m === 0.U, cs, bs), i)
   }
 
+  val out_buf = Module(new OutputBuffer(sramEntries, io.out.cloneType))
+  out_buf.io.in := bottom_mesh_io.zip(bottom_mesh_io.indices.reverse).map { case ((bs, cs, ss), i) =>
+    // TODO get rid of magic numbers
+    val mode = ss.head(1)
+    ShiftRegister(Mux(io.m === 0.U, cs, bs), i)
+  }
+  out_buf.io.s := ShiftRegister(mesh.io.out_s_vec.head(0), mesh.io.out_s_vec.size-1)(0) // TODO magic number
+  io.out := out_buf.io.out
+  io.out_s := mesh.io.out_s_vec.zip(mesh.io.out_s_vec.indices.reverse).map{case (s, i) => ShiftRegister(s, i+1)}
+
   printf(p"     active == $active / addrs(active) == ${addrs(active)} / addrs(not_active) == ${addrs(not_active)} / addrs(0) == ${addrs(0.U)} / addrs(1) == ${addrs(1.U)}\n")
   printf(p"     a_read: ${a_reads(active)}\n")
   printf(p"     b_read: ${b_reads(active)}\n")
@@ -149,5 +159,46 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   }.otherwise {
     // Pause systolic array
     printf(p"     PAUSING  (ready: ${io.ready}, ${addrs(not_active) =/= 0.U || buffer_is_empty}; has_started: $compute_has_started; is_empty: $buffer_is_empty)\n\n")
+  }
+}
+
+class OutputBuffer[T <: Data](n: Int, t: T) extends Module {
+  val io = IO(new Bundle {
+    val s = Input(Bool())
+    val in = Input(t)
+    val out = Output(t)
+  })
+
+  val addr = RegInit(0.U((log2Ceil(n) max 1).W))
+
+  val current_s = RegInit(io.s)
+  val not_current_s = (~current_s).asUInt()
+
+  val bufs = VecInit(Seq.fill(2)(SinglePortedSyncMem(n, t).io))
+  bufs.foreach { b =>
+    b.wdata := DontCare
+    b.ren := false.B; b.wen := false.B
+    b.addr := addr // TODO give them each separate addrs
+  }
+
+  io.out := bufs(current_s).rdata
+
+  when (io.s =/= current_s) {
+    current_s := io.s
+
+    bufs(not_current_s).ren := true.B
+
+    bufs(current_s).wdata := io.in
+    bufs(current_s).wen := true.B
+
+    bufs.foreach(_.addr := 0.U)
+    addr := 1.U
+  }.elsewhen(addr =/= 0.U) {
+    bufs(current_s).ren := true.B
+
+    bufs(not_current_s).wdata := io.in
+    bufs(not_current_s).wen := true.B
+
+    addr := Mux(addr === (n-1).U, 0.U, addr + 1.U)
   }
 }

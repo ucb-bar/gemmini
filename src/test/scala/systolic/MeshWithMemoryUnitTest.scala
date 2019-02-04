@@ -85,15 +85,18 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
   }
 
   // Pass in garbage data till all the results are read out
-  var cycles_left = (rows(ms.head._1) + c.meshColumns) * 2
-
   poke(c.io.valid, true)
-  poke(c.io.s, (meshInputs.last.S+1)%2)
-  while (cycles_left > 0) {
-    step (1)
-    updateOutput()
-    if (peek(c.io.ready) != 0)
-      cycles_left -= 1
+  for (i <- 1 to 3) {
+    poke(c.io.s, (meshInputs.last.S+i)%2)
+
+    var cycles = rows(ms.head._1) + c.meshColumns
+    while (cycles > 0) {
+      step(1)
+      updateOutput()
+      if (peek(c.io.ready) != 0) {
+        cycles -= 1
+      }
+    }
   }
 
   println("Mesh output:")
@@ -154,7 +157,7 @@ class OSMeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Ma
   }
 
   override def formatOut(outs: Seq[Matrix[Int]]) = {
-    outs.dropRight(3).takeRight(ms.length). // Drop initial garbage data from startup
+    outs.dropRight(4).takeRight(ms.length). // Drop initial garbage data from startup
       map(om => om takeRight rows(ms.head._1)) // Drop garbage output from each readout
       .reverse
   }
@@ -177,7 +180,7 @@ class WSMeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Ma
   }
 
   override def formatOut(outs: Seq[Matrix[Int]]) = {
-    outs.dropRight(2).takeRight(ms.length). // Drop initial garbage data from startup
+    outs.dropRight(3).takeRight(ms.length). // Drop initial garbage data from startup
       map(om => om.reverse take dim). // Drop garbage output from each readout and reverse the rows
       reverse
   }
