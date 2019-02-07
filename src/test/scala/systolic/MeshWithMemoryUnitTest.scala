@@ -5,6 +5,7 @@ import chisel3._
 import chisel3.iotesters._
 import SystolicUtils._
 
+// TODO add test for inputting in different orders
 // TODO add test for switching dataflow at runtime
 // TODO add test for randomly choosing S
 
@@ -13,8 +14,8 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
 {
   case class MeshInput(A: Matrix[Int], B: Matrix[Int], D: Matrix[Int], S: Int, M: Int)
 
-  def strobeInputs[T <: Bits](m: Seq[Int], input: Vec[Vec[T]]): Unit = {
-    poke(c.io.valid, true)
+  def strobeInputs[T <: Bits](m: Seq[Int], input: Vec[Vec[T]], valid: Bool): Unit = {
+    poke(valid, true)
 
     val slices = m.grouped(input.head.length).toList
 
@@ -23,6 +24,15 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
         poke(input(i)(j), elem)
       }
     }
+  }
+
+  def pokeAllValids(v: Boolean): Unit = {
+    Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid, c.io.s.valid, c.io.m.valid).foreach(vpin => poke(vpin, v))
+  }
+
+  def allAreReady(): Boolean = {
+    // Ignore m and s here, since they're only supposed to be set once per multiplication
+    Seq(c.io.a.ready, c.io.b.ready, c.io.d.ready).forall(r => peek(r) != 0)
   }
 
   // The matrices must be perfectly sized for this unit test
@@ -61,13 +71,15 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
     print2DArray(mD)
     */
 
-    poke(c.io.s, meshIn.S)
-    poke(c.io.m, meshIn.M)
+    poke(c.io.s.bits, meshIn.S)
+    poke(c.io.m.bits, meshIn.M)
 
     for ((a, b, d) <- (meshIn.A, meshIn.B, meshIn.D).zipped) {
-      strobeInputs(a, c.io.a)
-      strobeInputs(b, c.io.b)
-      strobeInputs(d, c.io.d)
+      pokeAllValids(true)
+
+      strobeInputs(a, c.io.a.bits, c.io.a.valid)
+      strobeInputs(b, c.io.b.bits, c.io.b.valid)
+      strobeInputs(d, c.io.d.bits, c.io.d.valid)
 
       var garbage_cycles = garbageCyles() + 1
 
@@ -76,24 +88,26 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
         updateOutput()
 
         // Put in garbage data
-        poke(c.io.valid, false)
+        pokeAllValids(false)
+
         garbage_cycles -= 1
 
-      } while (peek(c.io.ready) == 0 // Wait for the systolic array to be ready for more inputs
+      } while (!allAreReady() // Wait for the systolic array to be ready for more inputs
         || garbage_cycles > 0)
     }
   }
 
   // Pass in garbage data till all the results are read out
-  poke(c.io.valid, true)
+  pokeAllValids(true)
   for (i <- 1 to 3) {
-    poke(c.io.s, (meshInputs.last.S+i)%2)
+    poke(c.io.s.bits, (meshInputs.last.S+i)%2)
 
     var cycles = rows(ms.head._1) + c.meshColumns
     while (cycles > 0) {
       step(1)
+      poke(c.io.s.valid, false)
       updateOutput()
-      if (peek(c.io.ready) != 0) {
+      if (allAreReady()) {
         cycles -= 1
       }
     }
@@ -232,13 +246,15 @@ class MeshWithMemoryTester extends ChiselFlatSpec
   // Partly pipelined
   it should "work partially pipelined with no delays, as well as with random delays" in {
     val matrix_dim = 8
-    val factors = (1 to matrix_dim).filter(matrix_dim % _ == 0)
+    val factors = (1 to matrix_dim).filter(matrix_dim % _ == 0).tail.init
 
     val sram_entries = matrix_dim // TODO this may change when the square requirement is lifted
 
     val delay_functions = Seq(() => 0, () => scala.util.Random.nextInt(5))
 
     for (pipeline_depth <- factors) {
+      println(s"Pipeline depth is $pipeline_depth")
+
       val tile_dim = pipeline_depth
       val mesh_dim = matrix_dim / pipeline_depth
 
