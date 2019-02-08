@@ -101,10 +101,6 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
       // Now, refuse to read out data
       poke(c.io.out.ready, false)
       step(outputGarbageCycles())
-      for (i <- 0 until 1) {
-        // step(1)
-        // updateOutput()
-      }
       poke(c.io.out.ready, true)
     }
   }
