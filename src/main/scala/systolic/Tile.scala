@@ -11,22 +11,26 @@ import chisel3._
   * @param rows Number of PEs on each row
   * @param columns Number of PEs on each column
   */
-class Tile(val width: Int, val rows: Int, val columns: Int, should_print: Boolean = false) extends Module {
+class Tile(val width: Int, val rows: Int, val columns: Int,
+           should_print: Boolean = false, rId : Int = 0, cId: Int = 0) extends Module {
   val io = IO(new Bundle {
-    val in_a_vec    = Input(Vec(rows,UInt(width.W)))
-    val in_b_vec    = Input(Vec(columns,UInt((2*width).W)))
-    val in_d_vec    = Input(Vec(columns,UInt((2*width).W)))
-    val in_s_vec    = Input(Vec(columns,UInt(3.W)))
-    val out_a_vec   = Output(Vec(rows, UInt(width.W)))
-    val out_c_vec     = Output(Vec(columns,UInt((2*width).W)))
-    val out_b_vec   = Output(Vec(columns,UInt((2*width).W)))
-    val out_s_vec   = Output(Vec(columns, UInt(3.W)))
+    val in_a_vec     = Input(Vec(rows,UInt(width.W)))
+    val in_b_vec     = Input(Vec(columns,UInt((2*width).W)))
+    val in_d_vec     = Input(Vec(columns,UInt((2*width).W)))
+    val in_s_vec     = Input(Vec(columns,UInt(2.W)))
+    val out_a_vec    = Output(Vec(rows, UInt(width.W)))
+    val out_c_vec    = Output(Vec(columns,UInt((2*width).W)))
+    val out_b_vec    = Output(Vec(columns,UInt((2*width).W)))
+    val out_s_vec    = Output(Vec(columns, UInt(2.W)))
+
+    val pause = Input(Bool())
   })
 
+  // val tile = Seq.fill(rows, columns)(Module(new PE(width, true)))
   val tile = {
     for (r <- 0 until rows)
       yield for (c <- 0 until columns)
-        yield Module(new PE(width, true, should_print = should_print && (r == 0 && c == 0)))
+        yield Module(new PE(width, true, should_print = should_print, r = rId*rows + r, c = cId*columns + c))
   }
   val tileT = tile.transpose
 
@@ -78,6 +82,9 @@ class Tile(val width: Int, val rows: Int, val columns: Int, should_print: Boolea
   for (r <- 0 until rows) {
     io.out_a_vec(r) := tile(r)(columns-1).io.out_a
   }
+
+  // Connect global pause signals
+  tile.flatten.foreach(_.io.pause := io.pause)
 }
 
 object TileMain extends App {

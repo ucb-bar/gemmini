@@ -2,6 +2,7 @@
 package systolic
 
 import chisel3._
+import chisel3.util.RegEnable
 
 /**
   * A Grid is a 2D array of Tile modules with registers in between each tile and
@@ -18,24 +19,26 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
     val in_a_vec   = Input(Vec(meshRows, Vec(tileRows, UInt(width.W))))
     val in_b_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
     val in_d_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
-    val in_s_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt(3.W))))
+    val in_s_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
     val out_b_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
     val out_c_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
-    val out_s_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt(3.W))))
+    val out_s_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
+
+    val pause = Input(Bool())
   })
 
   // mesh(r)(c) => Tile at row r, column c
   // val mesh: Seq[Seq[Tile]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(width, tileRows, tileColumns)))
   val mesh = for (r <- 0 until meshRows) yield
     for (c <- 0 until meshColumns) yield
-      Module(new Tile(width, tileRows, tileColumns, should_print = false && r == 0 && c == 0))
+      Module(new Tile(width, tileRows, tileColumns, should_print = false, rId = r, cId = c))
   val meshT = mesh.transpose
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   for (r <- 0 until meshRows) {
     mesh(r).foldLeft(io.in_a_vec(r)) {
       case (in_a, tile) =>
-        tile.io.in_a_vec := RegNext(in_a)
+        tile.io.in_a_vec := RegEnable(in_a, !io.pause)
         tile.io.out_a_vec
     }
   }
@@ -44,7 +47,7 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_b_vec(c)) {
       case (in_b, tile) =>
-        tile.io.in_b_vec := RegNext(in_b)
+        tile.io.in_b_vec := RegEnable(in_b, !io.pause)
         tile.io.out_b_vec
     }
   }
@@ -53,7 +56,7 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_d_vec(c)) {
       case (in_propag, tile) =>
-        tile.io.in_d_vec := RegNext(in_propag)
+        tile.io.in_d_vec := RegEnable(in_propag, !io.pause)
         tile.io.out_c_vec
     }
   }
@@ -62,7 +65,7 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_s_vec(c)) {
       case (in_s, tile) =>
-        tile.io.in_s_vec := RegNext(in_s)
+        tile.io.in_s_vec := RegEnable(in_s, !io.pause)
         tile.io.out_s_vec
     }
   }
@@ -74,4 +77,7 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
     c := tile.io.out_c_vec
     s := tile.io.out_s_vec
   }
+
+  // Connect global pause signals
+  mesh.flatten.foreach(_.io.pause := io.pause)
 }

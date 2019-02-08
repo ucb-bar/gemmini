@@ -3,7 +3,6 @@ package systolic
 import chisel3._
 import chisel3.util._
 
-// TODO add ready-vals for output
 // TODO add option to shift inputs with SRAM banking instead
 // TODO Handle matrices where N1 =/= N2 =/= N3
 // TODO Change S and M to enums
@@ -26,7 +25,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
     val s = Flipped(Decoupled(UInt(1.W)))
     val m = Flipped(Decoupled(UInt(1.W)))
 
-    val out = Output(C_TYPE)
+    val out = Decoupled(Output(C_TYPE))
     val out_s = Output(S_TYPE)
   })
 
@@ -39,7 +38,6 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   val a_buf = Module(new InputBuffer(sramEntries, A_TYPE))
   val b_buf = Module(new InputBuffer(sramEntries, B_TYPE))
   val d_buf = Module(new InputBuffer(meshRows*tileRows, D_TYPE))
-  val out_buf = Module(new OutputBuffer(sramEntries, C_TYPE))
 
   a_buf.io.in := io.a.bits
   b_buf.io.in := io.b.bits
@@ -52,17 +50,33 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   io.a.ready := a_buf.io.ready
   io.b.ready := b_buf.io.ready
   io.d.ready := d_buf.io.ready
-  out_buf.io.ready := true.B // TODO
 
-  val compute_done = a_buf.io.emptied && b_buf.io.emptied && d_buf.io.emptied
+  // TODO this seems inelegant...
+  val last_output_retrieved = RegInit(false.B)
+  val all_emptied = a_buf.io.emptied && b_buf.io.emptied && d_buf.io.emptied
+  val compute_done = (all_emptied && io.out.ready) || (all_emptied && last_output_retrieved)
+  when (compute_done && io.out.ready) { last_output_retrieved := true.B }
+
+  // val compute_done = a_buf.io.emptied && b_buf.io.emptied && d_buf.io.emptied
   val buffering_done = a_buf.io.full && b_buf.io.full && d_buf.io.full
 
-  a_buf.io.fire := compute_done && buffering_done
-  b_buf.io.fire := compute_done && buffering_done
-  d_buf.io.fire := compute_done && buffering_done
+  // TODO inelegant
+  // val output_done_reg = RegInit(false.B)
+  // when (compute_done && io.out.fire()) { output_done_reg := false.B }
+  // val output_done = (compute_done && io.out.fire()) || output_done_reg
 
-  val flip = compute_done && buffering_done // When the double-buffers flip roles
-  val stalling = compute_done && RegNext(compute_done) // TODO this seems inelegant...
+  val compute_stalling = compute_done && RegNext(compute_done) // TODO this also seems inelegant...
+
+  val flip = compute_done && buffering_done /*&& output_done*/ // When the double-buffers flip roles
+  val pause = compute_stalling || !io.out.ready
+
+  a_buf.io.fire := flip
+  b_buf.io.fire := flip
+  d_buf.io.fire := flip
+
+  a_buf.io.pause := pause
+  b_buf.io.pause := pause
+  d_buf.io.pause := pause
 
   // TODO find a better name for these
   val a_read = WireInit(a_buf.io.out)
@@ -82,32 +96,36 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   // Wire up mesh's IO to this module's IO
   val mesh = Module(new Mesh(width, tileRows, tileColumns, meshRows, meshColumns))
 
-  mesh.io.in_a_vec := a_read.zipWithIndex.map{case (a, i) => ShiftRegister(a, i)}
-  mesh.io.in_b_vec := b_read.zipWithIndex.map{case (b, i) => ShiftRegister(b, i)}
-  mesh.io.in_d_vec := d_read.zipWithIndex.map{case (d, i) => ShiftRegister(d, i)}
+  mesh.io.in_a_vec := a_read.zipWithIndex.map{case (a, i) => ShiftRegister(a, i, !pause)}
+  mesh.io.in_b_vec := b_read.zipWithIndex.map{case (b, i) => ShiftRegister(b, i, !pause)}
+  mesh.io.in_d_vec := d_read.zipWithIndex.map{case (d, i) => ShiftRegister(d, i, !pause)}
 
   mesh.io.in_s_vec.zipWithIndex.foreach { case (ss, i) =>
-    ss.foreach(_ := ShiftRegister(Cat(stalling, m_bufs(active), s_bufs(active)), i))
+    ss.foreach(_ := ShiftRegister(Cat(m_bufs(active), s_bufs(active)), i, !pause))
   }
-
-  io.out := out_buf.io.out
-  io.out_s := mesh.io.out_s_vec.zip(mesh.io.out_s_vec.indices.reverse).map{case (s, i) => ShiftRegister(s, i+1)}
-
-  out_buf.io.s := ShiftRegister(mesh.io.out_s_vec.head(0), mesh.io.out_s_vec.size-1)(0) // TODO magic number
+  mesh.io.pause := pause
 
   // We want to output C when we're output-stationary, but B when we're weight-stationary
   val bottom_mesh_io = (mesh.io.out_b_vec, mesh.io.out_c_vec, mesh.io.out_s_vec).zipped.toSeq
-  out_buf.io.in := bottom_mesh_io.zip(bottom_mesh_io.indices.reverse).map { case ((bs, cs, ss), i) =>
+  io.out.bits := bottom_mesh_io.zip(bottom_mesh_io.indices.reverse).map { case ((bs, cs, ss), i) =>
     // TODO these would actually overlap when we switch from output-stationary to weight-stationary
-    // TODO get rid of magic numbers
-    val mode = ss.head(1)
-    ShiftRegister(Mux(io.m.bits === 0.U, cs, bs), i)
+    // TODO should we use io.m, or the mode output of the mesh?
+    ShiftRegister(Mux(io.m.bits === 0.U, cs, bs), i, !pause) // TODO get rid of magic number
   }
+  io.out_s := mesh.io.out_s_vec.zip(mesh.io.out_s_vec.indices.reverse).map{case (s, i) => ShiftRegister(s, i, !pause)}
 
-  // printf(p"     compute_done: $compute_done,    buffering_done: $buffering_done\n")
-  // printf(p"     a_read: $a_read\n")
-  // printf(p"     b_read: $b_read\n")
-  // printf(p"     d_read: $d_read\n")
+  val out_is_valid = RegInit(true.B)
+  when (!pause) { out_is_valid := true.B }.
+    elsewhen (io.out.fire()) { out_is_valid := false.B }
+  io.out.valid := out_is_valid
+
+  /*
+  printf(p"     active: $active,     compute_done: $compute_done,    buffering_done: $buffering_done,    s_buf(active): ${s_bufs(active)}\n")
+  printf(p"     io.a: ${io.a.bits}, a_read: $a_read\n")
+  printf(p"     io.b: ${io.b.bits}, b_read: $b_read\n")
+  printf(p"     io.d: ${io.d.bits}, d_read: $d_read\n")
+  printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (s: ${io.out_s(0)(0)})\n")
+  */
 
   // Control logic for buffers
   when(io.s.fire() && !flip) {
@@ -120,7 +138,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
     m_next_written := true.B
   }
 
-  when(stalling) {
+  when(compute_stalling) {
     a_read.foreach(_.foreach(_ := 0.U))
     b_read.foreach(_.foreach(_ := 0.U))
   }
@@ -136,17 +154,21 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
 
     s_next_written := io.s.fire()
     m_next_written := io.m.fire()
-    // printf(p"     Done!   (ready: ${io.ready})\n\n")
+
+    last_output_retrieved := false.B
+
+    // printf(p"     Done!   (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.elsewhen(!compute_done) {
-    // printf(p"     Computing!  (ready: ${io.ready})\n\n")
+    // printf(p"     Computing!  (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.otherwise {
     // Pause systolic array
-    // printf(p"     PAUSING  (ready: ${io.ready})\n\n")
+    // printf(p"     PAUSING  (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }
 }
 
 class InputBuffer[T <: Data](n: Int, t: T) extends Module {
   val io = IO(new Bundle {
+    // TODO use the standard Chisel Decoupled interface for these two
     val in = Input(t)
     val out = Output(t)
 
@@ -155,6 +177,8 @@ class InputBuffer[T <: Data](n: Int, t: T) extends Module {
 
     val full = Output(Bool()) // Refers to the buffer for the next computation
     val emptied = Output(Bool()) // Refers to the buffer for the current computation
+
+    val pause = Input(Bool()) // Pauses the output, not the input
 
     // TODO add ability to fire without switching SRAMs
     val fire = Input(Bool())
@@ -203,10 +227,12 @@ class InputBuffer[T <: Data](n: Int, t: T) extends Module {
 
     buffering_started := in_fire
     io.ready := true.B
-  }.elsewhen(!output_done) {
+  }.elsewhen(!output_done && !io.pause) {
     bufs(read_from).ren := true.B
     addrs(read_from) := Mux(addrs(read_from) === (n-1).U, 0.U, addrs(read_from) + 1.U)
   }
+
+  // assert(!(io.pause && io.fire), "fired when paused") // TODO add this back when possible
 }
 
 class OutputBuffer[T <: Data](n: Int, t: T) extends Module {

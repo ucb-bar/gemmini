@@ -26,6 +26,10 @@ object SystolicUtils {
       yield Seq.fill(i)(0) ++ Seq(1) ++ Seq.fill(dim-i-1)(0)
   }
 
+  def consecutive(dim: Int): Matrix[Int] = {
+    (1 to dim*dim).grouped(dim).toSeq
+  }
+
   def zero(dim: Int): Matrix[Int] = Seq.fill(dim, dim)(0)
 
   def rand(r: Int, c: Int, max: Int = 8): Matrix[Int] = Seq.fill(r, c)(scala.util.Random.nextInt(max))
