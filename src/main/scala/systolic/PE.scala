@@ -57,22 +57,22 @@ class PE(width: Int, pass_through: Boolean = true,
       io.out_c := c1
       io.out_b := b
       c2 := (a*b) + c2
-      when (!io.pause) { c1 := d }
+      c1 := d
     }.otherwise {
       io.out_c := c2
       io.out_b := b
       c1 := (a*b) + c1
-      when (!io.pause) { c2 := d }
+      c2 := d
     }
   }.otherwise {
     when(select === PROPAGATE){
       io.out_c := c1
       io.out_b := (a*c2) + b
-      when (!io.pause) { c1 := d }
+      c1 := d
     }.otherwise {
       io.out_c := c2
       io.out_b := (a*c1) + b
-      when (!io.pause) { c2 := d }
+      c2 := d
     }
   }
 
