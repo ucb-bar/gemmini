@@ -123,7 +123,7 @@ class MeshTester extends ChiselFlatSpec {
   )
 
   // Hybrid
-  "MeshTester" should "run matmul using a 2x2 mesh with 3x2 meshes" in {
+  ignore should "run matmul using a 2x2 mesh with 3x2 meshes" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle"),
       () => new Mesh(16, 3, 2, 2, 2))
     {

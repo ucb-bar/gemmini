@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 
 // TODO add option to shift inputs with SRAM banking instead
+// TODO Add counter to check output valids
 // TODO Handle matrices where N1 =/= N2 =/= N3
 // TODO Change S and M to enums
 // TODO Consider adding a FREEZE signal to the mesh, instead of passing in zeros
@@ -57,17 +58,11 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   val compute_done = (all_emptied && io.out.ready) || (all_emptied && last_output_retrieved)
   when (compute_done && io.out.ready) { last_output_retrieved := true.B }
 
-  // val compute_done = a_buf.io.emptied && b_buf.io.emptied && d_buf.io.emptied
-  val buffering_done = a_buf.io.full && b_buf.io.full && d_buf.io.full
-
-  // TODO inelegant
-  // val output_done_reg = RegInit(false.B)
-  // when (compute_done && io.out.fire()) { output_done_reg := false.B }
-  // val output_done = (compute_done && io.out.fire()) || output_done_reg
-
   val compute_stalling = compute_done && RegNext(compute_done) // TODO this also seems inelegant...
 
-  val flip = compute_done && buffering_done /*&& output_done*/ // When the double-buffers flip roles
+  val buffering_done = a_buf.io.full && b_buf.io.full && d_buf.io.full
+
+  val flip = compute_done && buffering_done // When the double-buffers flip roles
   val pause = compute_stalling || !io.out.ready
 
   a_buf.io.fire := flip
@@ -77,11 +72,6 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   a_buf.io.pause := pause
   b_buf.io.pause := pause
   d_buf.io.pause := pause
-
-  // TODO find a better name for these
-  val a_read = WireInit(a_buf.io.out)
-  val b_read = WireInit(b_buf.io.out)
-  val d_read = WireInit(d_buf.io.out)
 
   // TODO find a better name for these two
   val s_bufs = RegInit(VecInit(1.U, 0.U))
@@ -96,9 +86,9 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   // Wire up mesh's IO to this module's IO
   val mesh = Module(new Mesh(width, tileRows, tileColumns, meshRows, meshColumns))
 
-  mesh.io.in_a_vec := a_read.zipWithIndex.map{case (a, i) => ShiftRegister(a, i, !pause)}
-  mesh.io.in_b_vec := b_read.zipWithIndex.map{case (b, i) => ShiftRegister(b, i, !pause)}
-  mesh.io.in_d_vec := d_read.zipWithIndex.map{case (d, i) => ShiftRegister(d, i, !pause)}
+  mesh.io.in_a_vec := a_buf.io.out.zipWithIndex.map{case (a, i) => ShiftRegister(a, i, !pause)}
+  mesh.io.in_b_vec := b_buf.io.out.zipWithIndex.map{case (b, i) => ShiftRegister(b, i, !pause)}
+  mesh.io.in_d_vec := d_buf.io.out.zipWithIndex.map{case (d, i) => ShiftRegister(d, i, !pause)}
 
   mesh.io.in_s_vec.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_ := ShiftRegister(Cat(m_bufs(active), s_bufs(active)), i, !pause))
@@ -136,11 +126,6 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   when(io.m.fire() && !flip) {
     m_bufs(not_active) := io.m.bits
     m_next_written := true.B
-  }
-
-  when(compute_stalling) {
-    a_read.foreach(_.foreach(_ := 0.U))
-    b_read.foreach(_.foreach(_ := 0.U))
   }
 
   when(flip) {
@@ -233,70 +218,4 @@ class InputBuffer[T <: Data](n: Int, t: T) extends Module {
   }
 
   // assert(!(io.pause && io.fire), "fired when paused") // TODO add this back when possible
-}
-
-class OutputBuffer[T <: Data](n: Int, t: T) extends Module {
-  val io = IO(new Bundle {
-    val s = Input(UInt(1.W))
-    val in = Input(t)
-    val out = Output(t)
-
-    val ready = Input(Bool())
-    val valid = Output(Bool())
-
-    val empty = Output(Bool())
-  })
-
-  val fire = io.ready && io.valid
-
-  val addrs = RegInit(VecInit(Seq.fill(2)(0.U((log2Ceil(n) max 1).W))))
-
-  // We read from buf(current_s), and we write into buf(not_current_s)
-  val current_s = RegInit(io.s)
-  val not_current_s = (~current_s).asUInt()
-
-  val bufs = VecInit(Seq.fill(2)(SinglePortedSyncMem(n, t).io))
-  bufs.foreach { b =>
-    b.wdata := io.in
-    b.ren := false.B; b.wen := false.B
-  }
-
-  bufs.zip(addrs).foreach { case (b, a) => b.addr := a }
-
-  val output_started = RegInit(false.B)
-  val output_done = output_started && addrs(current_s) === 0.U
-
-  val flip = io.s =/= current_s
-
-  io.out := bufs(current_s).rdata
-  io.valid := !output_done
-  io.empty := output_done
-
-  when (fire) {
-    addrs(current_s) := Mux(addrs(current_s) === (n-1).U, 0.U, addrs(current_s) + 1.U)
-    output_started := true.B
-  }
-
-  when (flip) {
-    current_s := io.s
-
-    bufs(not_current_s).ren := true.B
-    bufs(current_s).wen := fire
-
-    bufs.foreach(_.addr := 0.U)
-    addrs(not_current_s) := 1.U
-    addrs(current_s) := Mux(fire, 1.U, 0.U)
-
-    output_started := fire
-    io.valid := true.B
-  }.elsewhen(!output_done) {
-    bufs(current_s).ren := true.B
-    bufs(not_current_s).wen := true.B
-    addrs(not_current_s) := Mux(addrs(not_current_s) === (n-1).U, 0.U, addrs(not_current_s) + 1.U)
-  }
-
-  // It is assumed that io.s won't be switched until the buffer is ready. We check that in simulation here
-  val first_flip = RegInit(false.B) // TODO why can the first flip be ignored?
-  when (flip) { first_flip := true.B }
-  assert(!(first_flip && !output_done && flip), "output buffer: flipped when not ready")
 }

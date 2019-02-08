@@ -46,13 +46,8 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[I
   var mesh_output = Seq.empty[Seq[Tuple2[Int, Int]]]
 
   def updateOutput(): Unit = {
-    val v = peek(c.io.out.valid)
-    val peeked = peek(c.io.out.bits).map(_.toInt) zip peek(c.io.out_s).map(_.toInt % 2)
-
-    // if (peek(c.io.out.valid) == 1)
-    if (v == 1)
-      mesh_output = peeked +: mesh_output
-      // mesh_output = (peek(c.io.out.bits).map(_.toInt) zip peek(c.io.out_s).map(_.toInt % 2)) +: mesh_output
+    if (peek(c.io.out.valid) == 1)
+      mesh_output = (peek(c.io.out.bits).map(_.toInt) zip peek(c.io.out_s).map(_.toInt % 2)) +: mesh_output
   }
 
   def formatMs(ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]]): Seq[MeshInput]
@@ -290,7 +285,7 @@ class MeshWithMemoryTester extends ChiselFlatSpec
   // Partly pipelined
   it should "work partially pipelined with no delays, as well as with random delays" in {
     val matrix_dim = 8
-    val factors = (1 to matrix_dim).filter(matrix_dim % _ == 0).tail.init
+    val factors = (1 to matrix_dim).filter(matrix_dim % _ == 0)
 
     val sram_entries = matrix_dim // TODO this may change when the square requirement is lifted
 
@@ -300,11 +295,11 @@ class MeshWithMemoryTester extends ChiselFlatSpec
       val tile_dim = pipeline_depth
       val mesh_dim = matrix_dim / pipeline_depth
 
-      for (delay_function <- delay_functions; df <- dataflows) {
+      for (in_delay <- delay_functions; out_delay <- delay_functions; df <- dataflows) {
         iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
           () => new MeshWithMemory(16, tile_dim, tile_dim, mesh_dim, mesh_dim, sram_entries)) {
             c => df(c, Seq.fill(8)((rand(matrix_dim, matrix_dim), rand(matrix_dim, matrix_dim),
-              zero(matrix_dim))), delay_function, delay_function)
+              zero(matrix_dim))), in_delay, out_delay)
         } should be(true)
       }
     }
