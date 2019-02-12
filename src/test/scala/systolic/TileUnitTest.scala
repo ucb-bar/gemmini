@@ -93,7 +93,7 @@ class TileTester extends ChiselFlatSpec {
 
   "Simple 2x2 combinational tile" should "calculate C correctly" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle"),
-      () => new Tile(16, 2, 2)) {
+      () => new Tile(16, Dataflow.BOTH, 2, 2)) {
       c => new TileUnitTest(c, m1, m2)
     } should be (true)
   }

@@ -11,7 +11,7 @@ import chisel3._
   * @param rows Number of PEs on each row
   * @param columns Number of PEs on each column
   */
-class Tile(val width: Int, val rows: Int, val columns: Int,
+class Tile(val width: Int, df: Dataflow.Value, val rows: Int, val columns: Int,
            should_print: Boolean = false, rId : Int = 0, cId: Int = 0) extends Module {
   val io = IO(new Bundle {
     val in_a_vec     = Input(Vec(rows,UInt(width.W)))
@@ -30,7 +30,7 @@ class Tile(val width: Int, val rows: Int, val columns: Int,
   val tile = {
     for (r <- 0 until rows)
       yield for (c <- 0 until columns)
-        yield Module(new PE(width, true, should_print = should_print, r = rId*rows + r, c = cId*columns + c))
+        yield Module(new PE(width, df,true, should_print = should_print, r = rId*rows + r, c = cId*columns + c))
   }
   val tileT = tile.transpose
 
@@ -88,5 +88,5 @@ class Tile(val width: Int, val rows: Int, val columns: Int,
 }
 
 object TileMain extends App {
-  chisel3.Driver.execute(args, () => new Tile(8, 16, 16))
+  chisel3.Driver.execute(args, () => new Tile(8, Dataflow.BOTH, 16, 16))
 }

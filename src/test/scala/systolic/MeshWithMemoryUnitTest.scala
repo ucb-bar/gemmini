@@ -5,9 +5,9 @@ import chisel3._
 import chisel3.iotesters._
 import SystolicUtils._
 
+// TODO add test for randomly choosing S
 // TODO add test for inputting in different orders
 // TODO add test for switching dataflow at runtime
-// TODO add test for randomly choosing S
 
 abstract class MeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]],
                                       inputGarbageCycles: () => Int, outputGarbageCycles: () => Int) extends PeekPokeTester(c)
@@ -226,7 +226,7 @@ class WSMeshWithMemoryUnitTest(c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Ma
 
 class MeshWithMemoryTester extends ChiselFlatSpec
 {
-  val dataflows = Seq((c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new OSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles),
+  val dataflow_testers = Seq((c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new OSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles),
     (c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new WSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))
 
   // val dataflows = Seq((c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new OSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))
@@ -236,30 +236,28 @@ class MeshWithMemoryTester extends ChiselFlatSpec
     // This is really just here to help with debugging
     val dim = 2
 
-    for (df <- dataflows.slice(0, 1)) {
-      iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-        // () => new MeshWithMemory(16, 1, 1, dim, dim, dim)) {
-        () => new MeshWithMemory(16, dim, dim, 1, 1, dim, 1)) {
-          // c => new OSMeshWithMemoryUnitTest(c, Seq((zero(dim), zero(dim), consecutive(dim)), (zero(dim), zero(dim), consecutive(dim).map(_.map(_*10))), (identity(dim), identity(dim), identity(dim))), () => 0, () => 0)
-        c => new OSMeshWithMemoryUnitTest(c, Seq.fill(2)((zero(dim), zero(dim), consecutive(dim))), () => 0, () => 0)
-      } should be(true)
-    }
+    iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+      // () => new MeshWithMemory(16, 1, 1, dim, dim, dim)) {
+      () => new MeshWithMemory(16, Dataflow.BOTH, dim, dim, 1, 1, dim, 1)) {
+        // c => new OSMeshWithMemoryUnitTest(c, Seq((zero(dim), zero(dim), consecutive(dim)), (zero(dim), zero(dim), consecutive(dim).map(_.map(_*10))), (identity(dim), identity(dim), identity(dim))), () => 0, () => 0)
+      c => new OSMeshWithMemoryUnitTest(c, Seq.fill(2)((zero(dim), zero(dim), consecutive(dim))), () => 0, () => 0)
+    } should be(true)
   }
 
   // Fully combinational
   "MeshWithMemoryTest" should "work fully combinationally with no delays" in {
-    for (df <- dataflows) {
+    for (df <- dataflow_testers) {
       iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-        () => new MeshWithMemory(16, 8, 8, 1, 1, 8, 1)) {
+        () => new MeshWithMemory(16, Dataflow.BOTH, 8, 8, 1, 1, 8, 1)) {
         c => df(c, Seq.fill(8)((rand(8, 8), rand(8, 8), rand(8, 8))), () => 0, () => 0)
       } should be(true)
     }
   }
 
   it should "work fully combinationally with random delays" in {
-    for (df <- dataflows) {
+    for (df <- dataflow_testers) {
       iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-        () => new MeshWithMemory(16, 8, 8, 1, 1, 8, 1)) {
+        () => new MeshWithMemory(16, Dataflow.BOTH, 8, 8, 1, 1, 8, 1)) {
         c => df(c, Seq.fill(8)((rand(8, 8), rand(8, 8), rand(8, 8))), () => scala.util.Random.nextInt(5), () => scala.util.Random.nextInt(5))
       } should be(true)
     }
@@ -267,25 +265,25 @@ class MeshWithMemoryTester extends ChiselFlatSpec
 
   // Fully pipelined
   it should "work fully pipelined with no delays" in {
-    for (df <- dataflows) {
+    for (df <- dataflow_testers) {
       iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-        () => new MeshWithMemory(16, 1, 1, 8, 8, 8, 1)) {
+        () => new MeshWithMemory(16, Dataflow.BOTH, 1, 1, 8, 8, 8, 1)) {
         c => df(c, Seq.fill(8)((rand(8, 8), rand(8, 8), rand(8, 8))), () => 0, () => 0)
       } should be(true)
     }
   }
 
   it should "work fully pipelined with random delays" in {
-    for (df <- dataflows) {
+    for (df <- dataflow_testers) {
       iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-        () => new MeshWithMemory(16, 1, 1, 8, 8, 8, 1)) {
+        () => new MeshWithMemory(16, Dataflow.BOTH, 1, 1, 8, 8, 8, 1)) {
         c => df(c, Seq.fill(8)((rand(8, 8), rand(8, 8), rand(8, 8))), () => scala.util.Random.nextInt(5), () => scala.util.Random.nextInt(5))
       } should be(true)
     }
   }
 
   // Partly pipelined
-  it should "work partially pipelined with no delays, as well as with random delays" in {
+  it should "work arbitrarily pipelined with no delays, as well as with random delays, with all possible dataflows, with all possible banking strategies" in {
     val matrix_dim = 8
     val factors = (1 to matrix_dim).filter(matrix_dim % _ == 0)
 
@@ -293,18 +291,28 @@ class MeshWithMemoryTester extends ChiselFlatSpec
 
     val delay_functions = Seq(() => 0, () => scala.util.Random.nextInt(5))
 
+    val dataflows = Seq((Dataflow.OS, Seq((c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new OSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))),
+      (Dataflow.WS, Seq((c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new WSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))),
+      (Dataflow.BOTH, dataflow_testers))
+
     for (pipeline_depth <- factors) {
       val tile_dim = pipeline_depth
       val mesh_dim = matrix_dim / pipeline_depth
 
       val bankings = (1 to mesh_dim).filter(mesh_dim % _ == 0)
 
-      for (in_delay <- delay_functions; out_delay <- delay_functions; banks <- bankings; df <- dataflows) {
-        iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-          () => new MeshWithMemory(16, tile_dim, tile_dim, mesh_dim, mesh_dim, sram_entries, 1)) {
-            c => df(c, Seq.fill(8)((rand(matrix_dim, matrix_dim), rand(matrix_dim, matrix_dim),
-              zero(matrix_dim))), in_delay, out_delay)
-        } should be(true)
+      for (in_delay <- delay_functions; out_delay <- delay_functions; banks <- bankings; df_with_tester <- dataflows) {
+        val df = df_with_tester._1
+        val df_testers = df_with_tester._2
+
+        for (dft <- df_testers) {
+          iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+            () => new MeshWithMemory(16, df, tile_dim, tile_dim, mesh_dim, mesh_dim, sram_entries, 1)) {
+            c =>
+              dft(c, Seq.fill(8)((rand(matrix_dim, matrix_dim), rand(matrix_dim, matrix_dim),
+                zero(matrix_dim))), in_delay, out_delay)
+          } should be(true)
+        }
       }
     }
   }

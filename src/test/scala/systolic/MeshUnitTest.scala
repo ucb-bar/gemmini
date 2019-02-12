@@ -125,7 +125,7 @@ class MeshTester extends ChiselFlatSpec {
   // Hybrid
   ignore should "run matmul using a 2x2 mesh with 3x2 meshes" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle"),
-      () => new Mesh(16, 3, 2, 2, 2))
+      () => new Mesh(16, Dataflow.BOTH, 3, 2, 2, 2))
     {
       c => new MeshUnitTest(c, m1, m2)
     } should be (true)
@@ -133,7 +133,7 @@ class MeshTester extends ChiselFlatSpec {
   // Fully pipelined
   it should "run matmul using a 6x4 mesh with 1x1 meshes" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle"),
-      () => new Mesh(16, 1, 1, 6, 4))
+      () => new Mesh(16, Dataflow.BOTH, 1, 1, 6, 4))
     {
       c => new MeshUnitTest(c, m1, m2)
     } should be (true)
@@ -141,7 +141,7 @@ class MeshTester extends ChiselFlatSpec {
   // Fully combinational
   it should "run matmul using a 1x1 mesh with one 6x4 mesh" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle"),
-      () => new Mesh(16, 6, 4, 1, 1))
+      () => new Mesh(16, Dataflow.BOTH, 6, 4, 1, 1))
     {
       c => new MeshUnitTest(c, m1, m2)
     } should be (true)

@@ -6,10 +6,11 @@ import chisel3.util._
 // TODO add a flush option
 // TODO add option to shift output with SRAM banking instead
 // TODO Handle matrices where N1 =/= N2 =/= N3
-// TODO Change S and M to enums
+// TODO Change S to an enum
 // TODO Does it make sense to not pause when the output isn't valid?
 
-class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
+class MeshWithMemory(val width: Int, df: Dataflow.Value,
+                     val tileRows: Int, val tileColumns: Int,
                      val meshRows: Int, val meshColumns: Int,
                      val sramEntries: Int, val banks: Int) extends Module {
 
@@ -85,7 +86,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   io.m.ready := !m_next_written
 
   // Wire up mesh's IO to this module's IO
-  val mesh = Module(new Mesh(width, tileRows, tileColumns, meshRows, meshColumns))
+  val mesh = Module(new Mesh(width, df, tileRows, tileColumns, meshRows, meshColumns))
 
   mesh.io.in_a_vec := a_buf.io.out
   mesh.io.in_b_vec := b_buf.io.out
@@ -101,7 +102,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   io.out.bits := bottom_mesh_io.zip(bottom_mesh_io.indices.reverse).map { case ((bs, cs, ss), i) =>
     // TODO these would actually overlap when we switch from output-stationary to weight-stationary
     // TODO should we use io.m, or the mode output of the mesh?
-    ShiftRegister(Mux(io.m.bits === 0.U, cs, bs), i, !pause) // TODO get rid of magic number
+    ShiftRegister(Mux(io.m.bits === Dataflow.OS.id.U, cs, bs), i, !pause)
   }
   io.out_s := mesh.io.out_s_vec.zip(mesh.io.out_s_vec.indices.reverse).map{case (s, i) => ShiftRegister(s, i, !pause)}
 

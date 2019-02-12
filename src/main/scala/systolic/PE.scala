@@ -9,7 +9,7 @@ import chisel3.util._
   * @param width Data width of operands
   * @param pass_through If false, the PE pipelines in_a, in_b, in_d, in_s for 1 cycle
   */
-class PE(width: Int, pass_through: Boolean = true,
+class PE(width: Int, df: Dataflow.Value, pass_through: Boolean = true,
          should_print: Boolean = false, r:Int = 0, c: Int = 0) extends Module { // Debugging variables
   val io = IO(new Bundle {
     val in_a =   Input(UInt(width.W))
@@ -45,14 +45,14 @@ class PE(width: Int, pass_through: Boolean = true,
   val mode = s(1)
 
   // Which dataflow are we using?
-  val OUTPUT_STATIONARY = 0.U(1.W)
-  val WEIGHT_STATIONARY = 1.U(1.W)
+  val OUTPUT_STATIONARY = (Dataflow.OS.id).U(1.W)
+  val WEIGHT_STATIONARY = (Dataflow.WS.id).U(1.W)
 
   // Is c1 being computed on, or propagated forward (in the output-stationary dataflow)?
   val COMPUTE = 0.U(1.W)
   val PROPAGATE = 1.U(1.W)
 
-  when (mode === OUTPUT_STATIONARY) {
+  def add_os_conditions() = {
     when(select === PROPAGATE){
       io.out_c := c1
       io.out_b := b
@@ -64,7 +64,9 @@ class PE(width: Int, pass_through: Boolean = true,
       c1 := (a*b) + c1
       c2 := d
     }
-  }.otherwise {
+  }
+
+  def add_ws_conditions() = {
     when(select === PROPAGATE){
       io.out_c := c1
       io.out_b := (a*c2) + b
@@ -73,6 +75,18 @@ class PE(width: Int, pass_through: Boolean = true,
       io.out_c := c2
       io.out_b := (a*c1) + b
       c2 := d
+    }
+  }
+
+  if (df == Dataflow.OS) {
+    add_os_conditions()
+  } else if (df == Dataflow.WS) {
+    add_ws_conditions()
+  } else { // if (df == Dataflow.BOTH) {
+    when (mode === OUTPUT_STATIONARY) {
+      add_os_conditions()
+    }.otherwise {
+      add_ws_conditions()
     }
   }
 

@@ -13,7 +13,7 @@ import chisel3.util.RegEnable
   * @param meshRows
   * @param meshColumns
   */
-class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
+class Mesh(width: Int, df: Dataflow.Value, val tileRows: Int, val tileColumns: Int,
            val meshRows: Int, val meshColumns: Int) extends Module {
   val io = IO(new Bundle {
     val in_a_vec   = Input(Vec(meshRows, Vec(tileRows, UInt(width.W))))
@@ -31,7 +31,7 @@ class Mesh(width: Int, val tileRows: Int, val tileColumns: Int,
   // val mesh: Seq[Seq[Tile]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(width, tileRows, tileColumns)))
   val mesh = for (r <- 0 until meshRows) yield
     for (c <- 0 until meshColumns) yield
-      Module(new Tile(width, tileRows, tileColumns, should_print = false, rId = r, cId = c))
+      Module(new Tile(width, df, tileRows, tileColumns, should_print = false, rId = r, cId = c))
   val meshT = mesh.transpose
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
