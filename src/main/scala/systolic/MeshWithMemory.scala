@@ -3,14 +3,15 @@ package systolic
 import chisel3._
 import chisel3.util._
 
-// TODO add option to shift inputs with SRAM banking instead
-// TODO Add counter to check output valids
+// TODO add a flush option
+// TODO add option to shift output with SRAM banking instead
 // TODO Handle matrices where N1 =/= N2 =/= N3
 // TODO Change S and M to enums
-// TODO Consider adding a FREEZE signal to the mesh, instead of passing in zeros
+// TODO Does it make sense to not pause when the output isn't valid?
 
 class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
-                     val meshRows: Int, val meshColumns: Int, val sramEntries: Int) extends Module {
+                     val meshRows: Int, val meshColumns: Int,
+                     val sramEntries: Int, val banks: Int) extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, UInt(width.W)))
   val B_TYPE = Vec(meshColumns, Vec(tileColumns, UInt((2*width).W)))
@@ -36,9 +37,9 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   val not_active = (~active).asUInt()
 
   // Double-buffers
-  val a_buf = Module(new InputBuffer(sramEntries, A_TYPE))
-  val b_buf = Module(new InputBuffer(sramEntries, B_TYPE))
-  val d_buf = Module(new InputBuffer(meshRows*tileRows, D_TYPE))
+  val a_buf = Module(new InputBuffer(sramEntries, A_TYPE, banks))
+  val b_buf = Module(new InputBuffer(sramEntries, B_TYPE, banks))
+  val d_buf = Module(new InputBuffer(meshRows*tileRows, D_TYPE, banks))
 
   a_buf.io.in := io.a.bits
   b_buf.io.in := io.b.bits
@@ -86,9 +87,9 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   // Wire up mesh's IO to this module's IO
   val mesh = Module(new Mesh(width, tileRows, tileColumns, meshRows, meshColumns))
 
-  mesh.io.in_a_vec := a_buf.io.out.zipWithIndex.map{case (a, i) => ShiftRegister(a, i, !pause)}
-  mesh.io.in_b_vec := b_buf.io.out.zipWithIndex.map{case (b, i) => ShiftRegister(b, i, !pause)}
-  mesh.io.in_d_vec := d_buf.io.out.zipWithIndex.map{case (d, i) => ShiftRegister(d, i, !pause)}
+  mesh.io.in_a_vec := a_buf.io.out
+  mesh.io.in_b_vec := b_buf.io.out
+  mesh.io.in_d_vec := d_buf.io.out
 
   mesh.io.in_s_vec.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_ := ShiftRegister(Cat(m_bufs(active), s_bufs(active)), i, !pause))
@@ -111,9 +112,9 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
 
   /*
   printf(p"     active: $active,     compute_done: $compute_done,    buffering_done: $buffering_done,    s_buf(active): ${s_bufs(active)}\n")
-  printf(p"     io.a: ${io.a.bits}, a_read: $a_read\n")
-  printf(p"     io.b: ${io.b.bits}, b_read: $b_read\n")
-  printf(p"     io.d: ${io.d.bits}, d_read: $d_read\n")
+  printf(p"     io.a: ${io.a.bits}, a_read: ${a_buf.io.out}\n")
+  printf(p"     io.b: ${io.b.bits}, b_read: ${b_buf.io.out}\n")
+  printf(p"     io.d: ${io.d.bits}, d_read: ${d_buf.io.out}\n")
   printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (s: ${io.out_s(0)(0)})\n")
   */
 
@@ -151,7 +152,7 @@ class MeshWithMemory(val width: Int, val tileRows: Int, val tileColumns: Int,
   }
 }
 
-class InputBuffer[T <: Data](n: Int, t: T) extends Module {
+class InputBuffer[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module {
   val io = IO(new Bundle {
     // TODO use the standard Chisel Decoupled interface for these two
     val in = Input(t)
@@ -177,22 +178,29 @@ class InputBuffer[T <: Data](n: Int, t: T) extends Module {
   val read_from = RegInit(0.U(1.W))
   val write_into = (~read_from).asUInt()
 
-  val bufs = VecInit(Seq.fill(2)(SinglePortedSyncMem(n, t).io))
+  // val bufs = VecInit(Seq.fill(2)(SinglePortedSyncMem(n, t).io))
+  val bufs = VecInit(Seq.fill(2)(Module(new BankedMem(n, t, banks)).io))
   bufs.foreach { b =>
     b.wdata := io.in
     b.ren := false.B; b.wen := false.B
   }
 
   bufs.zip(addrs).foreach { case (b, a) => b.addr := a }
+  bufs.zip(addrs.reverse).foreach { case (b, ao) => b.addr_other := ao }
+  bufs.zip(bufs.reverse).foreach { case (b1, b2) => b1.ren_other := b2.ren }
 
   val buffering_started = RegInit(false.B)
   val buffering_done = buffering_started && addrs(write_into) === 0.U
   val output_done = addrs(read_from) === 0.U
 
-  io.out := bufs(read_from).rdata
   io.ready := !buffering_done
   io.full := buffering_done
   io.emptied := output_done
+
+  io.out := (bufs(read_from).rdata, bufs(write_into).rdata, bufs(read_from).valid).zipped.toSeq.zipWithIndex.map {
+    case ((br, bw, v), i) =>
+      ShiftRegister(Mux(v, br, bw), i % (t.size / banks), !io.pause)
+  }
 
   when (in_fire && !buffering_done) {
     addrs(write_into) := Mux(addrs(write_into) === (n-1).U, 0.U, addrs(write_into) + 1.U)
@@ -218,4 +226,53 @@ class InputBuffer[T <: Data](n: Int, t: T) extends Module {
   }
 
   // assert(!(io.pause && io.fire), "fired when paused") // TODO add this back when possible
+}
+
+class BankedMem[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module {
+  // This writes horizontally, but it reads in a staggered format
+  val io = IO(new Bundle {
+    val addr = Input(UInt((log2Ceil(n) max 1).W))
+    val addr_other = Input(UInt((log2Ceil(n) max 1).W))
+    val wdata = Input(t)
+    val rdata = Output(t)
+    val wen = Input(Bool())
+    val ren = Input(Bool())
+    val ren_other = Input(Bool())
+    val valid = Output(Vec(t.size, Bool()))
+  })
+
+  assert(t.size % banks == 0, "banks must be divisible")
+
+  val banked_t = Vec(t.size / banks, t.head.cloneType)
+  val banked_mems = Seq.fill(banks)(SinglePortedSyncMem(n, banked_t).io)
+
+  // TODO better names
+  val wdata_banked = io.wdata.grouped(io.wdata.size / banks).toSeq
+  val rdata_banked = io.rdata.grouped(io.rdata.size / banks).toSeq
+  val valid_banked = io.valid.grouped(io.valid.size / banks).toSeq
+
+  banked_mems.zipWithIndex.foreach { case (b, i) =>
+    b.ren := (io.ren && io.addr >= i.U) || (io.ren_other && io.addr_other < i.U)
+    b.wen := io.wen
+    b.wdata := wdata_banked(i)
+
+    b.addr := DontCare
+    when (io.wen) {
+      b.addr := io.addr
+    }.elsewhen (io.ren) {
+      b.addr := io.addr - i.U
+    }.elsewhen(io.ren_other) {
+      b.addr := io.addr_other + (banks - i).U
+    }
+  }
+
+  for ((buf, out) <- banked_mems zip rdata_banked) {
+    (out zip buf.rdata).foreach { case (o, b) => o := b }
+  }
+
+  valid_banked.zipWithIndex.foreach { case (v, i) =>
+    v.foreach(_ := io.addr >= i.U)
+  }
+
+  assert(!(io.ren && io.ren_other), "both banks are being read from at the same time")
 }
