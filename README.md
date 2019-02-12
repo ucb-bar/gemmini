@@ -9,9 +9,9 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 ## Integration with Rocket
 ## Top-Level Generator Parameters
 - `tileRows`, `tileColumns`
-    - A Tile is a fully combinational 2D array of PEs with dimension (`tileRows` X `tileColumns`)
+    - A Tile is a fully combinational 2D array of PEs with dimension (`tileRows` x `tileColumns`)
 - `meshRows`, `meshColumns`
-    - A Mesh is a pipelined 2D array of Tiles with dimension (`meshRows` X `meshColumns`)
+    - A Mesh is a pipelined 2D array of Tiles with dimension (`meshRows` x `meshColumns`)
     - A Mesh is the top-level 'core' systolic array structure
     - It can natively perform a `matmul` of square and equal dimension matrices
         - e.g. C = A (m x n) `matmul` B (n x k) where `m = n = k = tileRows x meshRows = tileColumns x meshColumns`
@@ -30,6 +30,7 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 **Action:** Scratchpad[rs2] <= DRAM[Translate[rs1]]
 - Loads a fixed amount of data into the scratchpad = `tileRows x meshRows x dataBytes` corresponding to the Mesh's parameterization
 - Load is sequential from the rs1/rs2 base address. Any stride or skip operation is implemented in software
+
 **TODO** Decide what to do when `tileRows != tileColumns` or `meshRows != meshColumns` (should these not be considered?)
 
 **Commit Behavior:** This instruction is synchronous and will stall Rocket's pipeline until all the DRAM data is resident in the scratchpad
@@ -46,25 +47,49 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 **Commit Behavior:** Identical to `mvin`, synchronous and will stall until all scratchpad data has been flushed into the L2
 
 ## Core Matmul Sequences
-### Generic Instructions
-- mult.preload rs1
-    - rs1 = `pointer to tileRows X meshRows X dataWidth block of scratchpad` (D matrix)
-    - if rs1 == 0x0, then preload all zeros
+Every matrix multiply operation begins with a `matmul.preload` which specifies how the Mesh's PE's accumulators should start off before the matmul takes place. There are 3 options:
+1. Initialize all the accumulators with zeros
+1. Preload a bias/partial result matrix `D` (partial products of `C` in the output stationary dataflow) or a weight matrix `B` (in the weight stationary dataflow)
+1. Use the existing state of the accumulators as-is **TODO: not clear if this works if double buffering loses the state to preserve**
+
+After the preload instruction, you must specify an exact sequence of output or weight stationary instructions following it to trigger the `matmul`.
+
+### Preloading
+**Format:** `matmul.preload rs1`
+- `rs1` = local scratchpad address of B matrix (weight stationary), D matrix (final biasing or output stationary), `0xAAAA_AAAA` (don't preload, use existing state) or `0xFFFF_FFFF` (preload zeros)
+
+**Action:** Mesh[PE Double Buffer Accumulators] <= Scratchpad[rs1] OR zeros OR NOP
+
+**Commit Behavior:** This instruction commits on the cycle after the systolic array receives it. The systolic array remains idle until the subsequent OS/WS specific instructions are seen.
 
 ### Output Stationary
-- mult.os1 rs1, rs2
-    - rs1 = `pointer to tileColumns X meshColumns X dataWidth block of scratchpad` (A matrix)
-    - rs1 = `pointer to tileRows X meshRows X dataWidth block of scratchpad` (B matrix)
-- mult.os2 rs1
-    - rs1 = `pointer to tileRows X meshRows X dataWidth block of scratchpad` (C matrix) **may be wrong (consider middle dimension)**
-    - Fire off matmul into RoCC queue
-- mult.os2.stay
-    - Fire off matmul into RoCC queue
-    - Don't move data out of accumulators into SRAM
+Issue the `matmul.os1` instruction to set up A and B for the matmul operation.
+
+**Format:** `matmul.os1 rs1, rs2`
+- `rs1` = local scratchpad address of A matrix (stored as rows of A.T)
+- `rs2` = local scratchpad address of B matrix (stored as rows of B)
+
+Then issue `matmul.os2` OR `matmul.os2.stay` depending on whether you want to send the matmul result to the scratchpad or hold it inside the PEs' accumulators.
+
+**Format:** `matmul.os2 rs1`
+- `rs1` = local scratchpad address to store C matrix (stored as rows of C)
+
+**Format:** `matmul.os2.stay` (no register arguments)
+
+**Commit Behavior:** Upon issuing the sequence of instructions `matmul.preload, matmul.os1, matmul.os2` the sequence will be stored as a single matmul compute unit in a queue inside the RoCC accelerator. These instructions will commit immediately and won't stall Rocket's pipeline.
+
 ### Weight Stationary
-- mult.ws1/2
-    - Identical encoding to mult.os1/2 but trigger a weight stationary computation
-    - If rs2 == 0x0, then feed zeros in on the B-axis in the systolic array
+Similar to the output stationary instructions, there is a similar set of weight stationary instructions `matmul.ws1, matmul.ws2` that trigger a WS dataflow matmul operation.
+
+**Format:** `matmul.ws1 rs1, rs2`
+- `rs1` = local scratchpad address of A matrix
+- `rs2` = local scratchpad address of partial C matrix OR zeros
+    - If `rs2 == 0xFFFF_FFFF`, then feed zeros in on the B-axis in the systolic array
+    - Otherwise stream the partial `C` matrix from the scratchpad on the B-axis
+
+**Format:** `matmul.ws2 rs1`
+- `rs1` = local scratchpad address to store output C matrix (stored as rows of C)
+- **TODO** do we need functionality to keep the output in-place for the WS dataflow?
 
 # Semantics
 ## Instruction Dependency Management
@@ -99,9 +124,9 @@ for (i = 0; i < n; ++i) {
 for (i = 0; i < m; ++i) {
     mvin (DaddrD + i*k*dataBytes) (SaddrD + i*k*dataBytes)
 }
-mult.preload SaddrD
-mult.os1 SaddrA, SaddrB
-mult.os2 SaddrC
+matmul.preload SaddrD
+matmul.os1 SaddrA, SaddrB
+matmul.os2 SaddrC
 for (i = 0; i < m; ++i) {
     mvout (DaddrC + i*k*dataBytes) (SaddrD + i*k*dataBytes)
 }
