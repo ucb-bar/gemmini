@@ -13,15 +13,17 @@ import chisel3.util.RegEnable
   * @param meshRows
   * @param meshColumns
   */
-class Mesh(width: Int, df: Dataflow.Value, val tileRows: Int, val tileColumns: Int,
-           val meshRows: Int, val meshColumns: Int) extends Module {
+class Mesh[T <: Data](innerType: T, df: Dataflow.Value, val tileRows: Int, val tileColumns: Int,
+           val meshRows: Int, val meshColumns: Int)(implicit ev: Arithmetic[T]) extends Module {
+  import ev._
+  
   val io = IO(new Bundle {
-    val in_a_vec   = Input(Vec(meshRows, Vec(tileRows, UInt(width.W))))
-    val in_b_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
-    val in_d_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val in_a_vec   = Input(Vec(meshRows, Vec(tileRows, innerType)))
+    val in_b_vec   = Input(Vec(meshColumns, Vec(tileColumns, innerType.doubleWidth)))
+    val in_d_vec   = Input(Vec(meshColumns, Vec(tileColumns, innerType.doubleWidth)))
     val in_s_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
-    val out_b_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
-    val out_c_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt((2*width).W))))
+    val out_b_vec  = Output(Vec(meshColumns, Vec(tileColumns, innerType.doubleWidth)))
+    val out_c_vec  = Output(Vec(meshColumns, Vec(tileColumns, innerType.doubleWidth)))
     val out_s_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
 
     val pause = Input(Bool())
@@ -31,7 +33,7 @@ class Mesh(width: Int, df: Dataflow.Value, val tileRows: Int, val tileColumns: I
   // val mesh: Seq[Seq[Tile]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(width, tileRows, tileColumns)))
   val mesh = for (r <- 0 until meshRows) yield
     for (c <- 0 until meshColumns) yield
-      Module(new Tile(width, df, tileRows, tileColumns, should_print = false, rId = r, cId = c))
+      Module(new Tile(innerType, df, tileRows, tileColumns, should_print = false, rId = r, cId = c))
   val meshT = mesh.transpose
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)

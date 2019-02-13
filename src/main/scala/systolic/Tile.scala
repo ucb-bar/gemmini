@@ -11,16 +11,18 @@ import chisel3._
   * @param rows Number of PEs on each row
   * @param columns Number of PEs on each column
   */
-class Tile(val width: Int, df: Dataflow.Value, val rows: Int, val columns: Int,
-           should_print: Boolean = false, rId : Int = 0, cId: Int = 0) extends Module {
+class Tile[T <: Data](innerType: T, df: Dataflow.Value, val rows: Int, val columns: Int,
+           should_print: Boolean = false, rId : Int = 0, cId: Int = 0)(implicit ev: Arithmetic[T]) extends Module {
+  import ev._
+  
   val io = IO(new Bundle {
-    val in_a_vec     = Input(Vec(rows,UInt(width.W)))
-    val in_b_vec     = Input(Vec(columns,UInt((2*width).W)))
-    val in_d_vec     = Input(Vec(columns,UInt((2*width).W)))
+    val in_a_vec     = Input(Vec(rows,innerType))
+    val in_b_vec     = Input(Vec(columns,innerType.doubleWidth))
+    val in_d_vec     = Input(Vec(columns,innerType.doubleWidth))
     val in_s_vec     = Input(Vec(columns,UInt(2.W)))
-    val out_a_vec    = Output(Vec(rows, UInt(width.W)))
-    val out_c_vec    = Output(Vec(columns,UInt((2*width).W)))
-    val out_b_vec    = Output(Vec(columns,UInt((2*width).W)))
+    val out_a_vec    = Output(Vec(rows, innerType))
+    val out_c_vec    = Output(Vec(columns,innerType.doubleWidth))
+    val out_b_vec    = Output(Vec(columns,innerType.doubleWidth))
     val out_s_vec    = Output(Vec(columns, UInt(2.W)))
 
     val pause = Input(Bool())
@@ -30,7 +32,7 @@ class Tile(val width: Int, df: Dataflow.Value, val rows: Int, val columns: Int,
   val tile = {
     for (r <- 0 until rows)
       yield for (c <- 0 until columns)
-        yield Module(new PE(width, df,true, should_print = should_print, r = rId*rows + r, c = cId*columns + c))
+        yield Module(new PE(innerType, df,true, should_print = should_print, r = rId*rows + r, c = cId*columns + c))
   }
   val tileT = tile.transpose
 
@@ -88,5 +90,5 @@ class Tile(val width: Int, df: Dataflow.Value, val rows: Int, val columns: Int,
 }
 
 object TileMain extends App {
-  chisel3.Driver.execute(args, () => new Tile(8, Dataflow.BOTH, 16, 16))
+  chisel3.Driver.execute(args, () => new Tile(UInt(8.W), Dataflow.BOTH, 16, 16))
 }

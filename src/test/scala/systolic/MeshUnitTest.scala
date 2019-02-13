@@ -5,7 +5,7 @@ import chisel3._
 import chisel3.iotesters._
 import SystolicUtils.print2DArray
 
-class MeshUnitTest(c: Mesh, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
+class MeshUnitTest(c: Mesh[UInt], m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
   def generateA(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
     val numEltsInRow = m(0).length * math.ceil(m.length / (c.meshRows * c.tileRows).toDouble).toInt
     (0 until c.meshRows*c.tileRows).map { r =>
@@ -125,7 +125,7 @@ class MeshTester extends ChiselFlatSpec {
   // Hybrid
   ignore should "run matmul using a 2x2 mesh with 3x2 meshes" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle"),
-      () => new Mesh(16, Dataflow.BOTH, 3, 2, 2, 2))
+      () => new Mesh(UInt(16.W), Dataflow.BOTH, 3, 2, 2, 2))
     {
       c => new MeshUnitTest(c, m1, m2)
     } should be (true)
@@ -133,7 +133,7 @@ class MeshTester extends ChiselFlatSpec {
   // Fully pipelined
   it should "run matmul using a 6x4 mesh with 1x1 meshes" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle"),
-      () => new Mesh(16, Dataflow.BOTH, 1, 1, 6, 4))
+      () => new Mesh(UInt(16.W), Dataflow.BOTH, 1, 1, 6, 4))
     {
       c => new MeshUnitTest(c, m1, m2)
     } should be (true)
@@ -141,7 +141,7 @@ class MeshTester extends ChiselFlatSpec {
   // Fully combinational
   it should "run matmul using a 1x1 mesh with one 6x4 mesh" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle"),
-      () => new Mesh(16, Dataflow.BOTH, 6, 4, 1, 1))
+      () => new Mesh(UInt(16.W), Dataflow.BOTH, 6, 4, 1, 1))
     {
       c => new MeshUnitTest(c, m1, m2)
     } should be (true)

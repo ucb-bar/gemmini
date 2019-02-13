@@ -7,18 +7,19 @@ import chisel3.util._
 // TODO add option to shift output with SRAM banking instead
 // TODO Handle matrices where N1 =/= N2 =/= N3
 // TODO Change S to an enum
-// TODO Does it make sense to not pause when the output isn't valid?
+// TODO Does it make sense to not pause when the output isn't valid? And is that possible with the current setup anyway?
+// TODO Should I add a reset buffers input?
 
-class MeshWithMemory(val width: Int, df: Dataflow.Value,
+class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
                      val tileRows: Int, val tileColumns: Int,
                      val meshRows: Int, val meshColumns: Int,
                      val sramEntries: Int, val banks: Int) extends Module {
 
-  val A_TYPE = Vec(meshRows, Vec(tileRows, UInt(width.W)))
-  val B_TYPE = Vec(meshColumns, Vec(tileColumns, UInt((2*width).W)))
-  val C_TYPE = Vec(meshColumns, Vec(tileColumns, UInt((2*width).W)))
-  val D_TYPE = Vec(meshColumns, Vec(tileColumns, UInt((2*width).W)))
-  val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(3.W)))
+  val A_TYPE = Vec(meshRows, Vec(tileRows, innerType))
+  val B_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
+  val C_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
+  val D_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
+  val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(2.W)))
 
   val io = IO(new Bundle {
     val a = Flipped(Decoupled(A_TYPE))
@@ -30,6 +31,8 @@ class MeshWithMemory(val width: Int, df: Dataflow.Value,
 
     val out = Decoupled(Output(C_TYPE))
     val out_s = Output(S_TYPE)
+
+    // val flush = Input(Bool())
   })
 
   assert(meshRows*tileRows == meshColumns*tileColumns && meshRows*tileRows == sramEntries)
@@ -41,6 +44,13 @@ class MeshWithMemory(val width: Int, df: Dataflow.Value,
   val a_buf = Module(new InputBuffer(sramEntries, A_TYPE, banks))
   val b_buf = Module(new InputBuffer(sramEntries, B_TYPE, banks))
   val d_buf = Module(new InputBuffer(meshRows*tileRows, D_TYPE, banks))
+
+  // TODO find a better name for these two
+  val s_bufs = RegInit(VecInit(1.U, 0.U))
+  val m_bufs = RegInit(VecInit(0.U, 0.U)) // TODO should m be removed and just routed from IO?
+
+  val s_next_written = RegInit(false.B)
+  val m_next_written = RegInit(false.B)
 
   a_buf.io.in := io.a.bits
   b_buf.io.in := io.b.bits
@@ -62,10 +72,10 @@ class MeshWithMemory(val width: Int, df: Dataflow.Value,
 
   val compute_stalling = compute_done && RegNext(compute_done) // TODO this also seems inelegant...
 
-  val buffering_done = a_buf.io.full && b_buf.io.full && d_buf.io.full
+  val buffering_done = a_buf.io.full && b_buf.io.full && d_buf.io.full // && (s_next_written || io.flush)
 
   val flip = compute_done && buffering_done // When the double-buffers flip roles
-  val pause = compute_stalling || !io.out.ready
+  val pause = (compute_stalling || !io.out.ready) // && !io.flush
 
   a_buf.io.fire := flip
   b_buf.io.fire := flip
@@ -75,18 +85,15 @@ class MeshWithMemory(val width: Int, df: Dataflow.Value,
   b_buf.io.pause := pause
   d_buf.io.pause := pause
 
-  // TODO find a better name for these two
-  val s_bufs = RegInit(VecInit(1.U, 0.U))
-  val m_bufs = RegInit(VecInit(0.U, 0.U)) // TODO should m be removed and just routed from IO?
-
-  val s_next_written = RegInit(false.B)
-  val m_next_written = RegInit(false.B)
+  /*a_buf.io.flush := io.flush
+  b_buf.io.flush := io.flush
+  d_buf.io.flush := io.flush*/
 
   io.s.ready := !s_next_written
   io.m.ready := !m_next_written
 
   // Wire up mesh's IO to this module's IO
-  val mesh = Module(new Mesh(width, df, tileRows, tileColumns, meshRows, meshColumns))
+  val mesh = Module(new Mesh(innerType, df, tileRows, tileColumns, meshRows, meshColumns))
 
   mesh.io.in_a_vec := a_buf.io.out
   mesh.io.in_b_vec := b_buf.io.out
@@ -136,6 +143,7 @@ class MeshWithMemory(val width: Int, df: Dataflow.Value,
     io.s.ready := true.B
     io.m.ready := true.B
 
+    // when (io.flush) { s_bufs(not_active) := ~s_bufs(active) }.elsewhen(io.s.fire()) { s_bufs(active) := io.s.bits }
     when(io.s.fire()) { s_bufs(active) := io.s.bits }
     when(io.m.fire()) { m_bufs(active) := io.m.bits }
 
@@ -169,9 +177,10 @@ class InputBuffer[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module 
 
     // TODO add ability to fire without switching SRAMs
     val fire = Input(Bool())
+    // val flush = Input(Bool())
   })
 
-  val in_fire = io.ready && io.valid
+  val in_fire = (io.ready && io.valid) // || io.flush
 
   val addrs = RegInit(VecInit(Seq.fill(2)(0.U((log2Ceil(n) max 1).W))))
 
@@ -225,6 +234,10 @@ class InputBuffer[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module 
     bufs(read_from).ren := true.B
     addrs(read_from) := Mux(addrs(read_from) === (n-1).U, 0.U, addrs(read_from) + 1.U)
   }
+
+  /*when (io.flush) {
+    bufs.foreach(_.wen := false.B)
+  }*/
 
   // assert(!(io.pause && io.fire), "fired when paused") // TODO add this back when possible
 }

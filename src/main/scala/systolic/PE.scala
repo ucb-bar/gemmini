@@ -9,30 +9,32 @@ import chisel3.util._
   * @param width Data width of operands
   * @param pass_through If false, the PE pipelines in_a, in_b, in_d, in_s for 1 cycle
   */
-class PE(width: Int, df: Dataflow.Value, pass_through: Boolean = true,
-         should_print: Boolean = false, r:Int = 0, c: Int = 0) extends Module { // Debugging variables
+class PE[T <: Data](innerType: T, df: Dataflow.Value, pass_through: Boolean = true,
+         should_print: Boolean = false, r:Int = 0, c: Int = 0)(implicit ev: Arithmetic[T]) extends Module { // Debugging variables
+  import ev._
+
   val io = IO(new Bundle {
-    val in_a =   Input(UInt(width.W))
-    val out_a =  Output(UInt(width.W))
+    val in_a =   Input(innerType)
+    val out_a =  Output(innerType)
     // TODO: why is in_b 2*width and not width
-    val in_b =   Input(UInt((2*width).W))
-    val out_b =  Output(UInt((2*width).W))
+    val in_b =   Input(innerType.doubleWidth)
+    val out_b =  Output(innerType.doubleWidth)
     val in_s =   Input(UInt(2.W))
     val out_s =  Output(UInt(2.W))
-    val in_d =   Input(UInt((2*width).W))
-    val out_c =  Output(UInt((2*width).W))
+    val in_d =   Input(innerType.doubleWidth)
+    val out_c =  Output(innerType.doubleWidth)
 
     // Global signals
     val pause = Input(Bool())
   })
 
-  val a  = if (pass_through) Wire(UInt()) else RegInit(0.U)
-  val b  = if (pass_through) Wire(UInt()) else RegInit(0.U)
-  val d  = if (pass_through) Wire(UInt()) else RegInit(0.U)
+  val a  = if (pass_through) Wire(innerType) else Reg(innerType)
+  val b  = if (pass_through) Wire(innerType.doubleWidth) else Reg(innerType.doubleWidth)
+  val d  = if (pass_through) Wire(innerType.doubleWidth) else Reg(innerType.doubleWidth)
   // TODO: potential for overflow in internal accumulators (add assertion) (use explicit width)
-  val c1  = RegInit(0.U((2*width).W))
-  val c2  = RegInit(0.U((2*width).W))
-  val s  = if (pass_through) Wire(UInt(3.W)) else RegInit(0.U)
+  val c1 = Reg(innerType.doubleWidth)
+  val c2 = Reg(innerType.doubleWidth)
+  val s  = if (pass_through) Wire(UInt(2.W)) else Reg(UInt(2.W))
 
   a := io.in_a
   b := io.in_b
@@ -45,8 +47,8 @@ class PE(width: Int, df: Dataflow.Value, pass_through: Boolean = true,
   val mode = s(1)
 
   // Which dataflow are we using?
-  val OUTPUT_STATIONARY = (Dataflow.OS.id).U(1.W)
-  val WEIGHT_STATIONARY = (Dataflow.WS.id).U(1.W)
+  val OUTPUT_STATIONARY = Dataflow.OS.id.U(1.W)
+  val WEIGHT_STATIONARY = Dataflow.WS.id.U(1.W)
 
   // Is c1 being computed on, or propagated forward (in the output-stationary dataflow)?
   val COMPUTE = 0.U(1.W)

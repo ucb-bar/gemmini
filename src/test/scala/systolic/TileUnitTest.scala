@@ -6,7 +6,7 @@ import chisel3._
 import chisel3.iotesters.{ChiselFlatSpec, PeekPokeTester}
 import SystolicUtils.print2DArray
 
-class TileUnitTest(c: Tile, m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
+class TileUnitTest(c: Tile[UInt], m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
   def generateA(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
     (0 until c.rows).map { i =>
       m(i) ++ Seq.fill(c.rows*2)(0)
@@ -93,7 +93,7 @@ class TileTester extends ChiselFlatSpec {
 
   "Simple 2x2 combinational tile" should "calculate C correctly" in {
     iotesters.Driver.execute(Array("--backend-name", "treadle"),
-      () => new Tile(16, Dataflow.BOTH, 2, 2)) {
+      () => new Tile(UInt(16.W), Dataflow.BOTH, 2, 2)) {
       c => new TileUnitTest(c, m1, m2)
     } should be (true)
   }
