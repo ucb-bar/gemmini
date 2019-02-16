@@ -8,14 +8,17 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util.InOrderArbiter
+import freechips.rocketchip.tile._
 
-class SystolicArray(implicit p: Parameters) extends LazyRoCC {
+class SystolicArray(implicit p: Parameters) extends LazyRoCC(
+    opcodes = OpcodeSet.custom3,
+    nPTWPorts = 1) {
   override lazy val module = new SystolicArrayModule(this)
   override val atlNode = TLClientNode(Seq(TLClientPortParameters(Seq(TLClientParameters("SystolicArrayRoCC")))))
 }
 
 class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner_type: T, val tileRows: Int, val tileColumns: Int, val meshRows: Int, val meshColumns: Int,
-                          val queue_length: Int, val block_size: Int, val sp_banks: Int, val sp_bank_entries: Int, val sp_width: Int) extends LazyRoCCModule(outer) {
+                          val queue_length: Int, val block_size: Int, val sp_banks: Int, val sp_bank_entries: Int, val sp_width: Int) extends LazyRoCCModuleImp(outer) {
   val cmd = Queue(io.cmd, queue_length)
   io.busy := !(cmd.entries === 0.U)
 
@@ -224,6 +227,7 @@ when(outputed_all_rows) {blocks_outputed := blocks_outputed+1}
         SRAM_to_DRAM_state := start_store_to_DRAM
 
       }
+    }
     is(start_store_to_DRAM){
       when(scratchpad_memory.io.resp.valid){
         cmd.deq.ready := true.B
@@ -231,3 +235,4 @@ when(outputed_all_rows) {blocks_outputed := blocks_outputed+1}
       }
     }
   }
+}
