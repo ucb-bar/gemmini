@@ -47,10 +47,34 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 **Commit Behavior:** Identical to `mvin`, synchronous and will stall until all scratchpad data has been flushed into the L2
 
 ## Core Matmul Sequences
-Every matrix multiply operation begins with a `matmul.preload` which specifies how the Mesh's PE's accumulators should start off before the matmul takes place. There are 3 options:
-1. Initialize all the accumulators with zeros
-1. Preload a bias/partial result matrix `D` (partial products of `C` in the output stationary dataflow) or a weight matrix `B` (in the weight stationary dataflow)
-1. Use the existing state of the accumulators as-is **TODO: not clear if this works if double buffering loses the state to preserve**
+Every single matrix multiply operation is a combination of matmul.preload and matmul.compute (due to the length of a single instruction it was split into two instructions). matmul.preload should preceed the matmul.compute.
+
+Example:
+```
+//// first matmul ////
+// rs1 = InputD 
+// rs2 = OutputC
+// rs3 = InputA
+// rs4 = InputB
+//matmul InputA InputB OutputC InputD
+1. matmul.preload $rs1 $rs2
+2. matmul.compute $rs3 $rs4
+
+//// second matmul ////
+//matmul InputA2 InputB2 OutputC2 InputD2
+3. matmul.preload $rs5 $rs6
+4. matmul.compute $rs7 $rs8
+```
+
+Note that as defined above the data preloaded in matmul.preload is for the matmul in the next instruction (i.e., the data preloaded in 1 is actually used in 4 because 4 is the next matmul instruction). OutputC is always for the CURRENT `matmul` instruction.
+
+The preload command is encoded to funct field #6.
+- If you set the preload command's rd value to 1 it will automatically preload zeros.
+- If you set the preload command's C value to 0xFFFFFFFF the systolic array will assume the output will remain in the systolic array and won't be read out.
+The compute command is encoded to funct fields #4 and #5.
+- Compute associated with funct field #4 will compute on the value preloaded in the PREVIOUS `matmul` instruction.
+- Compute associated with funct field #5 will accumulate on top of the results of the PREVIOUS `matmul` instruction.
+
 
 After the preload instruction, you must specify an exact sequence of output or weight stationary instructions following it to trigger the `matmul`.
 
