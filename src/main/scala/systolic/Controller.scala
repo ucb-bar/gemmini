@@ -151,7 +151,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
 
   when(meshIO.io.out.fire() && !meshIO.io.w_address.bits===0xFFFFFFFF.U) {
     val w_address = meshIO.io.w_address.bits
-    val w_bank_number = w_address(w(w_address),w(w_address)-log2Ceil(sp_banks)
+    val w_bank_number = w_address(w(w_address),w(w_address)-log2Ceil(sp_banks))
     val w_bank_address = w_address(w(w_address)-log2Ceil(sp_banks)-1,0)
 
     scratchpad_memory.io.write(w_bank_number).en := true.B
