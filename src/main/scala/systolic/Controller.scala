@@ -18,7 +18,7 @@ class SystolicArray(implicit p: Parameters) extends LazyRoCC(
 }
 
 class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner_type: T, val tileRows: Int, val tileColumns: Int, val meshRows: Int, val meshColumns: Int,
-                          val queue_length: Int, val block_size: Int, val sp_banks: Int, val sp_bank_entries: Int, val sp_width: Int) extends LazyRoCCModuleImp(outer) {
+                          val queue_length: Int, val block_size: Int, val sp_banks: Int, val sp_bank_entries: Int, val sp_width: Int, val InternalSramEntries: Int) extends LazyRoCCModuleImp(outer) {
   val cmd = Queue(io.cmd, queue_length)
   io.busy := !(cmd.entries === 0.U)
 
@@ -42,7 +42,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
   val DoComputeAndFlip = funct === UInt(4)
   val DoComputeAndStay = funct === UInt(5)
   val DoPreLoad = funct === UInt(6)
-  val meshIO = Module(new MeshWithMemory(inner_type,Dataflow.BOTH,tileRows,tileColumns,meshRows,meshColumns,sp_bank_entries,banks)) //what you mean by T/df/banks in MeshWithMemory
+  val meshIO = Module(new MeshWithMemory(inner_type,Dataflow.BOTH,tileRows,tileColumns,meshRows,meshColumns,InternalSramEntries)) //what you mean by T/df/banks in MeshWithMemory
   // STATE defines
   val idle :: start_load_to_SRAM :: Nil = Enum(2)
   val DRAM_to_SRAM_state = RegInit(idle)
@@ -54,7 +54,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
 
   //asserts
   assert(meshRows*tileRows == meshColumns*tileColumns) // this also assumes symmetric systolic array
-  assert(meshRows*tileRows == sramEntries)
+  assert(meshRows*tileRows == InternalSramEntries)
   assert(InteralSramEntries == sp_bank_entries)
   assert(sp_width == meshRows*tileRows*inner_type.getWidth)
   assert(block_size == meshRows*tileRows)
@@ -111,7 +111,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
         sp_b_read.en := true.B
         sp_d_read.en := preload_zeros
 
-        compute_state := feed_data
+        feed_state := feed_data
       }
 
     }
@@ -121,7 +121,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
       sp_d_read.en := preload_zeros
 
       when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
-        fired_all_rows = fire_counter.inc()
+        fired_all_rows := fire_counter.inc()
         rs1 := rs1 + 1.U // check if should move to previous state too
         rs2 := rs2 + 1.U
         d_address_rs1 := d_address_rs1 + 1.U
@@ -140,9 +140,9 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
 
       when(fired_all_rows) {
         preload_zeros := false.B
-        compute_state := idle
+        feed_state := idle
         cmd.deq.ready := true.B
-        blocks_fired := blocks_fired + 1.U
+        blocks_fired.inc()
       }
     }
   }
@@ -159,7 +159,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
     scratchpad_memory.io.write(w_bank_number).wdata := mesh_io.out.bits
     outputed_all_rows = output_counter.inc()
   }
-when(outputed_all_rows) {blocks_outputed := blocks_outputed+1}
+when(outputed_all_rows) {blocks_outputed.inc()}
 
 
 //        when(DoComputeOnly){
