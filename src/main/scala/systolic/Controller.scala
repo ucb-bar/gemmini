@@ -44,9 +44,9 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
   val DoPreLoad = funct === UInt(6)
   val meshIO = Module(new MeshWithMemory(inner_type,Dataflow.BOTH,tileRows,tileColumns,meshRows,meshColumns,InternalSramEntries)) //what you mean by T/df/banks in MeshWithMemory
   // STATE defines
-  val idle :: start_load_to_SRAM :: Nil = Enum(2)
+  val idle_store :: start_load_to_SRAM :: Nil = Enum(2)
   val DRAM_to_SRAM_state = RegInit(idle)
-  val idle :: start_store_to_DRAM :: Nil = Enum(2)
+  val idle_load :: start_store_to_DRAM :: Nil = Enum(2)
   val SRAM_to_DRAM_state = RegInit(idle)
   val idle :: feed_data :: Nil = Enum(2)
 
@@ -193,7 +193,7 @@ when(outputed_all_rows) {blocks_outputed.inc()}
   scratchpad_memory.req.valid := false.B
 
   switch(DRAM_to_SRAM_state){
-    is(idle) {
+    is(idle_load) {
       when (DoLoad && cmd.valid && sp_a_read.io.req.ready && blocks_fired === blocks_outputed){
         scratchpad_memory.io.req.valid := true.B
         scratchpad_memory.io.req.bits := ScratchpadMemRequest(
@@ -214,7 +214,7 @@ when(outputed_all_rows) {blocks_outputed.inc()}
   }
 
   switch(SRAM_to_DRAM_state){
-    is(idle) {
+    is(idle_store) {
       when (DoStore && cmd.valid && sp_a_read.io.req.ready && blocks_fired === blocks_outputed){
         scratchpad_memory.io.req.valid := true.B
         scratchpad_memory.io.req.bits := ScratchpadMemRequest(
