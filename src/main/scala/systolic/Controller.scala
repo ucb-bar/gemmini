@@ -42,7 +42,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
   val DoComputeAndFlip = funct === UInt(4)
   val DoComputeAndStay = funct === UInt(5)
   val DoPreLoad = funct === UInt(6)
-  val meshIO = Module(new MeshWithMemory(inner_type,tileRows,tileColumns,meshRows,meshColumns,sp_bank_entries,banks)) //what you mean by T/df/banks in MeshWithMemory
+  val meshIO = Module(new MeshWithMemory(inner_type,Dataflow.BOTH,tileRows,tileColumns,meshRows,meshColumns,sp_bank_entries,banks)) //what you mean by T/df/banks in MeshWithMemory
   // STATE defines
   val idle :: start_load_to_SRAM :: Nil = Enum(2)
   val DRAM_to_SRAM_state = RegInit(idle)
@@ -135,8 +135,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
         meshIO.io.out_address.valid := true.B
         meshIO.io.out_address.bits := c_address_rs2 //if this is 0xFFFFFF then don't output
         meshIO.io.s.bits := DoComputeAndFlip
-
-
+        meshIO.io.m.bits := Dataflow.OS.id.U
       }
 
       when(fired_all_rows) {
