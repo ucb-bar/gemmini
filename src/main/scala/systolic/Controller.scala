@@ -18,7 +18,7 @@ class SystolicArray(implicit p: Parameters) extends LazyRoCC(
 }
 
 class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner_type: T, val tileRows: Int, val tileColumns: Int, val meshRows: Int, val meshColumns: Int,
-                          val queue_length: Int, val block_size: Int, val sp_banks: Int, val sp_bank_entries: Int, val sp_width: Int, val InternalSramEntries: Int) extends LazyRoCCModuleImp(outer) {
+                          val queue_length: Int, val block_size: Int, val sp_banks: Int, val sp_bank_entries: Int, val sp_width: Int, val InternalSramEntries: Int, val InternalSramBanks: Int)) extends LazyRoCCModuleImp(outer) {
   val cmd = Queue(io.cmd, queue_length)
   io.busy := !(cmd.entries === 0.U)
 
@@ -42,7 +42,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
   val DoComputeAndFlip = funct === UInt(4)
   val DoComputeAndStay = funct === UInt(5)
   val DoPreLoad = funct === UInt(6)
-  val meshIO = Module(new MeshWithMemory(inner_type,Dataflow.BOTH,tileRows,tileColumns,meshRows,meshColumns,InternalSramEntries)) //what you mean by T/df/banks in MeshWithMemory
+  val meshIO = Module(new MeshWithMemory(inner_type,Dataflow.BOTH,tileRows,tileColumns,meshRows,meshColumns,InternalSramEntries,InternalSramBanks)) //what you mean by T/df/banks in MeshWithMemory
   // STATE defines
   val idle_store :: start_load_to_SRAM :: Nil = Enum(2)
   val DRAM_to_SRAM_state = RegInit(idle)
@@ -55,7 +55,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
   //asserts
   assert(meshRows*tileRows == meshColumns*tileColumns) // this also assumes symmetric systolic array
   assert(meshRows*tileRows == InternalSramEntries)
-  assert(InteralSramEntries == sp_bank_entries)
+  assert(InternalSramEntries == sp_bank_entries)
   assert(sp_width == meshRows*tileRows*inner_type.getWidth)
   assert(block_size == meshRows*tileRows)
 
@@ -157,7 +157,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
     scratchpad_memory.io.write(w_bank_number).en := true.B
     scratchpad_memory.io.write(w_bank_number).addr := w_bank_address
     scratchpad_memory.io.write(w_bank_number).wdata := mesh_io.out.bits
-    outputed_all_rows = output_counter.inc()
+    outputed_all_rows := output_counter.inc()
   }
 when(outputed_all_rows) {blocks_outputed.inc()}
 
