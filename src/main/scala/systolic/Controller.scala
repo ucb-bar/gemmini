@@ -18,7 +18,7 @@ class SystolicArray(implicit p: Parameters) extends LazyRoCC(
 }
 
 class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner_type: T, val tileRows: Int, val tileColumns: Int, val meshRows: Int, val meshColumns: Int,
-                          val queue_length: Int, val block_size: Int, val sp_banks: Int, val sp_bank_entries: Int, val sp_width: Int, val InternalSramEntries: Int, val InternalSramBanks: Int)) extends LazyRoCCModuleImp(outer) {
+                          val queue_length: Int, val block_size: Int, val sp_banks: Int, val sp_bank_entries: Int, val sp_width: Int, val InternalSramEntries: Int, val InternalSramBanks: Int) extends LazyRoCCModuleImp(outer) {
   val cmd = Queue(io.cmd, queue_length)
   io.busy := !(cmd.entries === 0.U)
 
