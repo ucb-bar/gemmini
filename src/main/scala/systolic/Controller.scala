@@ -65,9 +65,9 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
 
   //SRAM scratchpad
   val scratchpad_memory = Module(new InputScratchpad(sp_bank_entries,sp_width,sp_banks))
-  val a_read_bank_number = rs1(w(rs1),w(rs1)-log2Ceil(sp_banks))
-  val b_read_bank_number = rs2(w(rs2),w(rs2)-log2Ceil(sp_banks))
-  val d_read_bank_number = d_address_rs1(w(d_address_rs1),w(d_address_rs1)-log2Ceil(sp_banks))
+  val a_read_bank_number = rs1(rs1.getWidth,rs1.getWidth-log2Ceil(sp_banks))
+  val b_read_bank_number = rs2(rs2.getWidth,rs2.getWidth-log2Ceil(sp_banks))
+  val d_read_bank_number = d_address_rs1(d_address_rs1.getWidth,d_address_rs1.getWidth-log2Ceil(sp_banks))
 
   val sp_a_read = scratchpad_memory.io.read(a_read_bank_number)
   val sp_b_read = scratchpad_memory.io.read(b_read_bank_number)
@@ -151,8 +151,8 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
 
   when(meshIO.io.out.fire() && !meshIO.io.w_address.bits===0xFFFFFFFF.U) {
     val w_address = meshIO.io.w_address.bits
-    val w_bank_number = w_address(w(w_address),w(w_address)-log2Ceil(sp_banks))
-    val w_bank_address = w_address(w(w_address)-log2Ceil(sp_banks)-1,0)
+    val w_bank_number = w_address(w_address.getWidth,w_address.getWidth-log2Ceil(sp_banks))
+    val w_bank_address = w_address(w_address.getWidth-log2Ceil(sp_banks)-1,0)
 
     scratchpad_memory.io.write(w_bank_number).en := true.B
     scratchpad_memory.io.write(w_bank_number).addr := w_bank_address
@@ -198,8 +198,8 @@ when(outputed_all_rows) {blocks_outputed.inc()}
         scratchpad_memory.io.req.valid := true.B
         scratchpad_memory.io.req.bits := ScratchpadMemRequest(
           vaddr = rs1,
-          sp_bank = rs2(w(rs2),w(rs2)-log2Ceil(sp_banks)),
-          spaddr = rs2(w(rs2)-log2Ceil(sp_banks)-1,0),
+          sp_bank = rs2(rs2.getWidth,rs2.getWidth-log2Ceil(sp_banks)),
+          spaddr = rs2(rs2.getWidth-log2Ceil(sp_banks)-1,0),
           write = true.B
         )
         DRAM_to_SRAM_state := start_load_to_SRAM
@@ -219,8 +219,8 @@ when(outputed_all_rows) {blocks_outputed.inc()}
         scratchpad_memory.io.req.valid := true.B
         scratchpad_memory.io.req.bits := ScratchpadMemRequest(
           vaddr = rs2,
-          sp_bank = rs1(w(rs1),w(rs1)-log2Ceil(sp_banks)),
-          spaddr = rs1(w(rs1)-log2Ceil(sp_banks)-1,0),
+          sp_bank = rs1(rs1.getWidth,rs1.getWidth-log2Ceil(sp_banks)),
+          spaddr = rs1(rs1.getWidth-log2Ceil(sp_banks)-1,0),
           write = false.B
         )
         SRAM_to_DRAM_state := start_store_to_DRAM
