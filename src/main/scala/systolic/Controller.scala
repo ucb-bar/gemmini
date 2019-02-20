@@ -158,11 +158,15 @@ class SystolicArrayModule[T <: Data: Arithmetic]
         d_address_rs1 := d_address_rs1 + 1.U
 
         meshIO.io.a.valid := true.B
-        meshIO.io.a.bits := sp_a_read.data
+        meshIO.io.a.bits := sp_a_read.data.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
         meshIO.io.b.valid := true.B
-        meshIO.io.b.bits := sp_b_read.data
+        meshIO.io.b.bits := sp_b_read.data.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
         meshIO.io.d.valid := true.B
-        meshIO.io.d.bits := Mux(preload_zeros, sp_d_read.data, 0.U)
+        meshIO.io.d.bits := Mux(
+          preload_zeros,
+          sp_d_read.data.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type))),
+          (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+        )
         meshIO.io.tag_in.valid := true.B
         meshIO.io.tag_in.bits := c_address_rs2 //if this is 0xFFFFFF then don't output
         meshIO.io.s.bits := DoComputeAndFlip
@@ -180,14 +184,14 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   meshIO.io.out.ready := true.B
 
-  when(meshIO.io.out.fire() && !meshIO.io.tag_out===0xFFFFFFFF.U) {
+  when(meshIO.io.out.fire() && !meshIO.io.tag_out===0xFFFFFFFFL.U) {
     val w_address = meshIO.io.tag_out
     val w_bank_number = w_address(w_address.getWidth,w_address.getWidth-log2Ceil(sp_banks))
     val w_bank_address = w_address(w_address.getWidth-log2Ceil(sp_banks)-1,0)
 
     spad.module.io.write(w_bank_number).en := true.B
     spad.module.io.write(w_bank_number).addr := w_bank_address
-    spad.module.io.write(w_bank_number).data := meshIO.io.out.bits
+    spad.module.io.write(w_bank_number).data := meshIO.io.out.bits.asUInt()
     outputed_all_rows := output_counter.inc()
   }
 when(outputed_all_rows) {blocks_outputed.inc()}
