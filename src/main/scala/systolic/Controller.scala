@@ -25,7 +25,7 @@ case class SystolicArrayConfig(
                               )
 case object SystolicArrayKey extends Field[SystolicArrayConfig]
 
-class SystolicArray[T <: Data: Arithmetic](dtype: T)(implicit p: Parameters) extends LazyRoCC (
+class SystolicArray[T <: Data: Arithmetic](dtype: T, opcodes: OpcodeSet)(implicit p: Parameters) extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
     nPTWPorts = 1) {
   val config = p(SystolicArrayKey)
