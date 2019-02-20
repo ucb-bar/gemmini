@@ -56,6 +56,9 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Ma
   reset()
   poke(c.io.out.ready, true)
 
+  poke(c.io.tag_in.valid, true)
+  poke(c.io.tag_in.bits, 2)
+
   // Input all matrices
   val meshInputs = formatMs(ms)
   for (meshIn <- meshInputs) {
@@ -248,8 +251,8 @@ class MeshWithMemoryTester extends ChiselFlatSpec
     iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
       // () => new MeshWithMemory(16, 1, 1, dim, dim, dim)) {
       () => new MeshWithMemory(SInt(16.W), Dataflow.BOTH, dim, dim, 1, 1, dim, 1)) {
-        // c => new OSMeshWithMemoryUnitTest(c, Seq((zero(dim), zero(dim), consecutive(dim))), () => 0, () => 0)
-      c => new OSMeshWithMemoryUnitTest(c, Seq.fill(2)((rand(dim, dim), rand(dim, dim), rand(dim, dim))), () => 5, () => 0)
+        c => new OSMeshWithMemoryUnitTest(c, Seq((zero(dim), zero(dim), consecutive(dim)), (zero(dim), zero(dim), consecutive(dim).map(_.map(_*10)))), () => 0, () => 0)
+      // c => new OSMeshWithMemoryUnitTest(c, Seq.fill(2)((rand(dim, dim), rand(dim, dim), rand(dim, dim))), () => 0, () => 0)
     } should be(true)
   }
 

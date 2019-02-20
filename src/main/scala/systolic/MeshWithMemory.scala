@@ -1,7 +1,10 @@
 //DO NOT TOUCH
 package systolic
+
 import chisel3._
 import chisel3.util._
+
+import systolic.Util._
 
 // TODO add a flush option
 // TODO add option to shift output with SRAM banking instead
@@ -28,6 +31,9 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
 
     val s = Flipped(Decoupled(UInt(1.W)))
     val m = Flipped(Decoupled(UInt(1.W)))
+
+    val tag_in = Flipped(Decoupled(UInt(32.W)))
+    val tag_out = Output(UInt(32.W))
 
     val out = Decoupled(Output(C_TYPE))
     val out_s = Output(S_TYPE)
@@ -118,13 +124,23 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
     elsewhen (io.out.fire()) { out_is_valid := false.B }
   io.out.valid := out_is_valid
 
+  // Tags
+  val tag_queue = Module(new TagQueue(4, UInt(32.W)))
+  tag_queue.io.in.valid := io.tag_in.valid && io.tag_in.ready
+  tag_queue.io.in.bits := io.tag_in.bits
+  tag_queue.io.out.ready := io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))
+  tag_queue.io.garbage := 15.U
+
+  io.tag_in.ready := flip
+  io.tag_out := tag_queue.io.out.bits(Mux(io.m.bits === Dataflow.OS.id.U, 0.U, 1.U))
+
   /*
   printf(p"     active: $active,     compute_done: $compute_done,    buffering_done: $buffering_done,    s_buf(active): ${s_bufs(active)}\n")
   printf(p"     io.a: ${io.a.bits}, a_read: ${a_buf.io.out}\n")
   printf(p"     io.b: ${io.b.bits}, b_read: ${b_buf.io.out}\n")
   printf(p"     io.d: ${io.d.bits}, d_read: ${d_buf.io.out}\n")
-  printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (s: ${io.out_s(0)(0)})\n")
   */
+  printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (s: ${io.out_s(0)(0)}) (tag: ${io.tag_out})\n")
 
   // Control logic for buffers
   when(io.s.fire() && !flip) {
@@ -152,7 +168,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
 
     last_output_retrieved := false.B
 
-    // printf(p"     Done!   (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    printf(p"     Done!   (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.elsewhen(!compute_done) {
     // printf(p"     Computing!  (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.otherwise {
@@ -289,4 +305,39 @@ class BankedMem[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module {
   }
 
   assert(!(io.ren && io.ren_other), "both banks are being read from at the same time")
+}
+
+class TagQueue[T <: Data](len: Int, t: T) extends Module {
+  val io = IO(new Bundle {
+    val in = new Bundle {
+      val valid = Input(Bool())
+      val bits = Input(t)
+    }
+
+    val out = new Bundle {
+      val ready = Input(Bool())
+      val bits = Output(Vec(2, t))
+    }
+
+    // This should really be a constructor parameter, but Chisel errors out when it is
+    val garbage = Input(t)
+  })
+
+  val regs = RegInit(VecInit(Seq.fill(len)(io.garbage)))
+  val raddr = RegInit(0.U((log2Ceil(len) max 1).W))
+  val waddr = RegInit(2.U((log2Ceil(len) max 1).W))
+
+  val raddr_inc = wrappingAdd(raddr, 1.U, len)
+
+  io.out.bits(0) := Mux(raddr =/= waddr, regs(raddr), io.garbage)
+  io.out.bits(1) := Mux(raddr_inc =/= waddr, regs(raddr_inc), io.garbage)
+
+  when (io.in.valid) {
+    waddr := wrappingAdd(waddr, 1.U, len)
+    regs(waddr) := io.in.bits
+  }
+
+  when (io.out.ready) {
+    raddr := wrappingAdd(waddr, 1.U, len)
+  }
 }
