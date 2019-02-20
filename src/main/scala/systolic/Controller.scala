@@ -32,11 +32,13 @@ class SystolicArray[T <: Data: Arithmetic](dtype: T, opcodes: OpcodeSet)(implici
   val spad = LazyModule(new Scratchpad(
     config.sp_banks, config.sp_bank_entries, config.sp_width))
   override lazy val module = new SystolicArrayModule(this, dtype)
-
-  tlNode :=* spad.node
+  override val tlNode = spad.node
 }
 
-class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray[T], val inner_type: T) extends LazyRoCCModuleImp(outer) {
+class SystolicArrayModule[T <: Data: Arithmetic]
+    (outer: SystolicArray[T], val inner_type: T)
+    extends LazyRoCCModuleImp(outer)
+    with HasCoreParameters {
   import outer.config._
   import outer.spad
 
@@ -48,13 +50,13 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray[T], val in
   val output_counter = new Counter(block_size)
 
   //aliases of cmd
-  val rs1 = Reg(UInt())
+  val rs1 = Reg(UInt(xLen.W))
   rs1 := cmd.bits.rs1
-  val rs2 = Reg(UInt())
+  val rs2 = Reg(UInt(xLen.W))
   rs2 := cmd.bits.rs2
   //val rs3 = RegInit(cmd.bits.rs3)
-  val d_address_rs1 = Reg(UInt()) //verify if it is only updated once
-  val c_address_rs2 = Reg(UInt())
+  val d_address_rs1 = Reg(UInt(xLen.W)) //verify if it is only updated once
+  val c_address_rs2 = Reg(UInt(xLen.W))
   val preload_zeros = RegInit(false.B)
   //val rd = RegInit(cmd.bits.rd)
   val funct = cmd.bits.inst.funct
@@ -78,7 +80,7 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray[T], val in
   val feed_state = RegInit(idle)
 
   ////////
-  implicit val edge = p(SharedMemoryTLEdge)
+  implicit val edge = outer.tlNode.edges.out.head
   val tlb = Module(new FrontendTLB(1, 4))
   tlb.io.clients(0) <> outer.spad.module.io.tlb
   io.ptw.head <> tlb.io.ptw
@@ -96,9 +98,9 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray[T], val in
   val blocks_outputed = new Counter(10)
 
   //SRAM scratchpad
-  val a_read_bank_number = rs1(rs1.getWidth,rs1.getWidth-log2Ceil(sp_banks))
-  val b_read_bank_number = rs2(rs2.getWidth,rs2.getWidth-log2Ceil(sp_banks))
-  val d_read_bank_number = d_address_rs1(d_address_rs1.getWidth,d_address_rs1.getWidth-log2Ceil(sp_banks))
+  val a_read_bank_number = rs1(rs1.getWidth - 1, rs1.getWidth-log2Ceil(sp_banks))
+  val b_read_bank_number = rs2(rs2.getWidth - 1, rs2.getWidth-log2Ceil(sp_banks))
+  val d_read_bank_number = d_address_rs1(d_address_rs1.getWidth - 1, d_address_rs1.getWidth-log2Ceil(sp_banks))
 
   val sp_a_read = spad.module.io.read(a_read_bank_number)
   val sp_b_read = spad.module.io.read(b_read_bank_number)
