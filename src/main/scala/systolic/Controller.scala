@@ -33,7 +33,7 @@ class SystolicArray[T <: Data: Arithmetic](dtype: T, opcodes: OpcodeSet)(implici
     config.sp_banks, config.sp_bank_entries, config.sp_width))
   override lazy val module = new SystolicArrayModule(this, dtype)
 
-  tlNode := spad.node
+  tlNode :=* spad.node
 }
 
 class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray[T], val inner_type: T) extends LazyRoCCModuleImp(outer) {
@@ -70,12 +70,11 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray[T], val in
     InternalSramEntries,InternalSramBanks)) //what you mean by T/df/banks in MeshWithMemory
 
   // STATE defines
-  val idle_store :: start_load_to_SRAM :: Nil = Enum(2)
-  val DRAM_to_SRAM_state = RegInit(idle)
-  val idle_load :: start_store_to_DRAM :: Nil = Enum(2)
-  val SRAM_to_DRAM_state = RegInit(idle)
   val idle :: feed_data :: Nil = Enum(2)
-
+  val idle_store :: start_load_to_SRAM :: Nil = Enum(2)
+  val idle_load :: start_store_to_DRAM :: Nil = Enum(2)
+  val DRAM_to_SRAM_state = RegInit(idle)
+  val SRAM_to_DRAM_state = RegInit(idle)
   val feed_state = RegInit(idle)
 
   ////////
