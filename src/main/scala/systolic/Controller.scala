@@ -10,15 +10,33 @@ import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util.InOrderArbiter
 import freechips.rocketchip.tile._
 
-class SystolicArray(implicit p: Parameters) extends LazyRoCC(
+case class SystolicArrayConfig(
+                                val tileRows: Int,
+                                val tileColumns: Int,
+                                val meshRows: Int,
+                                val meshColumns: Int,
+                                val queue_length: Int,
+                                val block_size: Int,
+                                val sp_banks: Int,
+                                val sp_bank_entries: Int,
+                                val sp_width: Int,
+                                val InternalSramEntries: Int,
+                                val InternalSramBanks: Int
+                              )
+case object SystolicArrayKey extends Field[SystolicArrayConfig]
+
+class SystolicArray[T <: Data: Arithmetic](dtype: T)(implicit p: Parameters) extends LazyRoCC(
     opcodes = OpcodeSet.custom3,
     nPTWPorts = 1) {
-  override lazy val module = new SystolicArrayModule(this)
-  override val atlNode = TLClientNode(Seq(TLClientPortParameters(Seq(TLClientParameters("SystolicArrayRoCC")))))
+  val config = p(SystolicArrayKey)
+  val spad = LazyModule(new Scratchpad(
+    config.sp_banks, config.sp_bank_entries, config.sp_width))
+  override lazy val module = new SystolicArrayModule(this, dtype)
+
+  tlNode := spad.node
 }
 
-class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner_type: T, val tileRows: Int, val tileColumns: Int, val meshRows: Int, val meshColumns: Int,
-                          val queue_length: Int, val block_size: Int, val sp_banks: Int, val sp_bank_entries: Int, val sp_width: Int, val InternalSramEntries: Int, val InternalSramBanks: Int) extends LazyRoCCModuleImp(outer) {
+class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner_type: T) extends LazyRoCCModuleImp(outer) {
   val cmd = Queue(io.cmd, queue_length)
   io.busy := !(cmd.entries === 0.U)
 
@@ -52,6 +70,13 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
 
   val feed_state = RegInit(idle)
 
+  ////////
+  implicit val edge = p(SharedMemoryTLEdge)
+  val tlb = Module(new FrontendTLB(1, 4))
+  tlb.io.clients(0) <> spad.module.io.tlb
+  io.ptw.head <> tlb.io.ptw
+
+  ///////
   //asserts
   assert(meshRows*tileRows == meshColumns*tileColumns) // this also assumes symmetric systolic array
   assert(meshRows*tileRows == InternalSramEntries)
@@ -64,7 +89,6 @@ class SystolicArrayModule[T <: Data: Arithmetic](outer: SystolicArray, val inner
   val blocks_outputed = new Counter(10)
 
   //SRAM scratchpad
-  val scratchpad_memory = Module(new InputScratchpad(sp_bank_entries,sp_width,sp_banks))
   val a_read_bank_number = rs1(rs1.getWidth,rs1.getWidth-log2Ceil(sp_banks))
   val b_read_bank_number = rs2(rs2.getWidth,rs2.getWidth-log2Ceil(sp_banks))
   val d_read_bank_number = d_address_rs1(d_address_rs1.getWidth,d_address_rs1.getWidth-log2Ceil(sp_banks))
@@ -198,7 +222,7 @@ when(outputed_all_rows) {blocks_outputed.inc()}
         scratchpad_memory.io.req.valid := true.B
         scratchpad_memory.io.req.bits := ScratchpadMemRequest(
           vaddr = rs1,
-          sp_bank = rs2(rs2.getWidth,rs2.getWidth-log2Ceil(sp_banks)),
+          spbank = rs2(rs2.getWidth,rs2.getWidth-log2Ceil(sp_banks)),
           spaddr = rs2(rs2.getWidth-log2Ceil(sp_banks)-1,0),
           write = true.B
         )
@@ -219,7 +243,7 @@ when(outputed_all_rows) {blocks_outputed.inc()}
         scratchpad_memory.io.req.valid := true.B
         scratchpad_memory.io.req.bits := ScratchpadMemRequest(
           vaddr = rs2,
-          sp_bank = rs1(rs1.getWidth,rs1.getWidth-log2Ceil(sp_banks)),
+          spbank = rs1(rs1.getWidth,rs1.getWidth-log2Ceil(sp_banks)),
           spaddr = rs1(rs1.getWidth-log2Ceil(sp_banks)-1,0),
           write = false.B
         )
@@ -228,7 +252,8 @@ when(outputed_all_rows) {blocks_outputed.inc()}
       }
     }
     is(start_store_to_DRAM){
-      when(scratchpad_memory.io.resp.valid){
+      //scratchpad_memory.io.resp.ready
+      when(scratchpad_memory.io.resp.valid){ // assumes no page faults occur
         cmd.deq.ready := true.B
         DRAM_to_SRAM_state := idle
       }
