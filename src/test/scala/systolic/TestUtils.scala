@@ -1,7 +1,7 @@
 // See README.md for license details.
 package systolic
 
-object SystolicUtils {
+object TestUtils {
   type Matrix[T] = Seq[Seq[T]]
 
   def rows[T](m: Matrix[T]) = m.length

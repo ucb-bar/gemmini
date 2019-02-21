@@ -3,16 +3,18 @@ package systolic
 
 import chisel3._
 import chisel3.iotesters._
-import SystolicUtils._
+import TestUtils._
 
 // TODO add test for randomly choosing S
 // TODO add test for inputting in different orders
 // TODO add test for switching dataflow at runtime
+// TODO get a better initilization strategy
 
 abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]],
                                       inputGarbageCycles: () => Int, outputGarbageCycles: () => Int) extends PeekPokeTester(c)
 {
-  case class MeshInput(A: Matrix[Int], B: Matrix[Int], D: Matrix[Int], S: Int, M: Int)
+  case class MeshInput(A: Matrix[Int], B: Matrix[Int], D: Matrix[Int], S: Int, M: Int, tag: Int)
+  case class MeshOutput(C: Matrix[Int], tag: Int)
 
   def strobeInputs[T <: Bits](m: Seq[Int], input: Vec[Vec[T]], valid: Bool): Unit = {
     poke(valid, true)
@@ -27,7 +29,8 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Ma
   }
 
   def pokeAllInputValids(v: Boolean): Unit = {
-    Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid, c.io.s.valid, c.io.m.valid).foreach(vpin => poke(vpin, v))
+    val valids = Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid, c.io.s.valid, c.io.m.valid, c.io.tag_in.valid)
+    valids.foreach(vpin => poke(vpin, v))
   }
 
   def allInputsAreReady(): Boolean = {
@@ -43,36 +46,43 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Ma
   }, "Array must be square and the matrices must be the same size as the array") // TODO get rid of square requirement
   val dim = rows(ms.head._1)
 
-  var mesh_output = Seq.empty[Seq[Tuple2[Int, Int]]]
+  type RawMeshOutputT = Tuple3[Seq[Int], Int, Int]
+  var raw_mesh_output = Seq.empty[RawMeshOutputT]
 
   def updateOutput(): Unit = {
-    if (peek(c.io.out.valid) == 1)
-      mesh_output = (peek(c.io.out.bits).map(_.toInt) zip peek(c.io.out_s).map(_.toInt % 2)) +: mesh_output
+    if (peek(c.io.out.valid) == 1) {
+      val peek_c = peek(c.io.out.bits).map(_.toInt)
+      val peek_s = peek(c.io.out_s).map(_.toInt % 2).reduce { (acc, s) =>
+          assert(acc == s, "s values aren't all the same")
+          acc
+      }
+      val peek_tag = peek(c.io.tag_out).toInt
+      raw_mesh_output = (peek_c, peek_s, peek_tag) +: raw_mesh_output
+    }
   }
 
   def formatMs(ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]]): Seq[MeshInput]
-  def formatOut(outs: Seq[Matrix[Int]]): Seq[Matrix[Int]]
+  def formatOut(outs: Seq[Matrix[Int]], tags: Seq[Int]): Seq[MeshOutput]
 
   reset()
   poke(c.io.out.ready, true)
-
-  poke(c.io.tag_in.valid, true)
-  poke(c.io.tag_in.bits, 2)
 
   // Input all matrices
   val meshInputs = formatMs(ms)
   for (meshIn <- meshInputs) {
     /*
+    println(s"Tag: ${meshIn.tag}")
     println("A:")
-    print2DArray(mA)
+    print2DArray(meshIn.A)
     println("B:")
-    print2DArray(mB)
+    print2DArray(meshIn.B)
     println("D:")
-    print2DArray(mD)
+    print2DArray(meshIn.D)
     */
 
     poke(c.io.s.bits, meshIn.S)
     poke(c.io.m.bits, meshIn.M)
+    poke(c.io.tag_in.bits, meshIn.tag)
 
     for ((a, b, d) <- (meshIn.A, meshIn.B, meshIn.D).zipped) {
       pokeAllInputValids(true)
@@ -131,60 +141,64 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Ma
     }
   }
 
-  println("Mesh output:")
-  print2DArray(mesh_output)
+  // println("Mesh output:")
+  // print2DArray(raw_mesh_output.map{ case (seq, i, j) => seq.map((_, i, j))})
 
   // Get rid of initial spurious output
   {
-    var i = mesh_output.size-1
+    var i = raw_mesh_output.size-1
     var first_ones_reached = false
     while(!first_ones_reached) {
-      if (mesh_output(i)(0)._2 == 1)
+      if (raw_mesh_output(i)._2 == 1)
         first_ones_reached = true
       i -= 1
     }
-    mesh_output = mesh_output.take(i+2)
+    raw_mesh_output = raw_mesh_output.take(i+2)
   }
 
   // println("Mesh output (after pruning):")
   // print2DArray(mesh_output)
 
   // Extract the results from the output
-  var output_matrices = Seq(Seq(mesh_output.head.map(_._1)))
-  for (i <- 1 until mesh_output.length) {
-    val current_s = mesh_output(i).head._2
-    val last_s = mesh_output(i-1).head._2
-
-    val current_c = mesh_output(i).map(_._1)
+  var output_matrices = Seq(Seq(raw_mesh_output.head._1))
+  var output_tags = Seq(raw_mesh_output.head._3)
+  for (i <- 1 until raw_mesh_output.length) {
+    val last_s = raw_mesh_output(i-1)._2
+    val (current_c, current_s, current_tag) = raw_mesh_output(i)
 
     if (current_s == last_s) {
       output_matrices = output_matrices.init :+ (output_matrices.last :+ current_c)
     } else {
       output_matrices = output_matrices :+ Seq(current_c)
+      output_tags = output_tags :+ current_tag
     }
   }
 
-  output_matrices = formatOut(output_matrices)
+  val results = formatOut(output_matrices, output_tags)
 
   // Get the gold results
   val golds = ms.map(t => add(t._3, mult(t._1, t._2)))
 
   // Compare the gold results to the systolic array's outputs
-  for ((out, gold) <- output_matrices zip golds) {
+  /*
+  for ((MeshOutput(out, tag), gold) <- results zip golds) {
+    println(s"Tag: $tag")
     println("Result:")
     print2DArray(out)
     println("Gold:")
     print2DArray(gold)
     println()
   }
-  for (gold <- golds drop output_matrices.size) {
+  for (gold <- golds drop results.size) {
     println("Gold (no result):")
     print2DArray(gold)
     println()
   }
   Console.flush()
+  */
 
-  assert(output_matrices == golds, "Array output is not correct")
+  assert(results.map(_.C) == golds, "Array output is not correct")
+  assert(results.map(_.tag) == meshInputs.tail.map(_.tag), "Array tags are not correct")
 }
 
 class OSMeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]],
@@ -201,13 +215,13 @@ class OSMeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[In
     val mats = shifted.map{case (a, b, d) => (a.transpose, b, d.reverse)}
 
     // Finally, add the S and M parameters
-    mats.zipWithIndex.map { case ((m1,m2,m3),i) => MeshInput(m1, m2, m3, S=i%2, M=0)}
+    mats.zipWithIndex.map { case ((m1,m2,m3),i) => MeshInput(m1, m2, m3, S=i%2, M=0, tag=i+100)}
   }
 
-  override def formatOut(outs: Seq[Matrix[Int]]) = {
-    outs.dropRight(3).takeRight(ms.length). // Drop initial garbage data from startup
-      // map(om => om takeRight rows(ms.head._1)). // Drop garbage output from each readout
-      reverse
+  override def formatOut(outs: Seq[Matrix[Int]], tags: Seq[Int])= {
+    (outs zip tags).dropRight(3).takeRight(ms.length). // Drop initial garbage data from startup
+      reverse.
+      map(t => MeshOutput(t._1, t._2))
   }
 }
 
@@ -225,14 +239,14 @@ class WSMeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[In
     val mats = shifted.map{case (a, b, d) => (a, d, b.reverse)}
 
     // Finally, add the S and M parameters
-    mats.zipWithIndex.map { case ((m1,m2,m3),i) => MeshInput(m1, m2, m3, S=i%2, M=1)}
+    mats.zipWithIndex.map { case ((m1,m2,m3),i) => MeshInput(m1, m2, m3, S=i%2, M=1, tag=i)}
   }
 
-  override def formatOut(outs: Seq[Matrix[Int]]) = {
-    outs.dropRight(2).takeRight(ms.length). // Drop initial garbage data from startup
-      // map(om => om.reverse take dim). // Drop garbage output from each readout and reverse the rows
-      map(om => om.reverse). // Reverse the rows
-      reverse
+  override def formatOut(outs: Seq[Matrix[Int]], tags: Seq[Int]) = {
+    (outs zip tags).dropRight(2).takeRight(ms.length). // Drop initial garbage data from startup
+      map(t => (t._1.reverse, t._2)). // Reverse the rows
+      reverse.
+      map(t => MeshOutput(t._1, t._2))
   }
 }
 
@@ -241,17 +255,17 @@ class MeshWithMemoryTester extends ChiselFlatSpec
   val dataflow_testers = Seq((c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new OSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles),
     (c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new WSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))
 
-  // val dataflows = Seq((c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new OSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))
-  // val dataflows = Seq((c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new WSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))
+  // val dataflow_testers = Seq((c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new OSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))
+  // val dataflow_testers = Seq((c: MeshWithMemory, ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new WSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))
 
   "SimpleMeshWithMemoryTester" should "work" in {
     // This is really just here to help with debugging
     val dim = 3
 
     iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-      // () => new MeshWithMemory(16, 1, 1, dim, dim, dim)) {
+      // () => new MeshWithMemory(SInt(16.W), Dataflow.BOTH, 1, 1, dim, dim, dim, 1)) {
       () => new MeshWithMemory(SInt(16.W), Dataflow.BOTH, dim, dim, 1, 1, dim, 1)) {
-        c => new OSMeshWithMemoryUnitTest(c, Seq((zero(dim), zero(dim), consecutive(dim)), (zero(dim), zero(dim), consecutive(dim).map(_.map(_*10)))), () => 0, () => 0)
+        c => new WSMeshWithMemoryUnitTest(c, Seq((zero(dim), zero(dim), consecutive(dim)), (zero(dim), zero(dim), consecutive(dim).map(_.map(_*10)))), () => 0, () => 0)
       // c => new OSMeshWithMemoryUnitTest(c, Seq.fill(2)((rand(dim, dim), rand(dim, dim), rand(dim, dim))), () => 0, () => 0)
     } should be(true)
   }
@@ -295,35 +309,36 @@ class MeshWithMemoryTester extends ChiselFlatSpec
   }
 
   // Partly pipelined
-  it should "work arbitrarily pipelined with no delays, as well as with random delays, with all possible dataflows, with all possible banking strategies" in {
-    val matrix_dim = 8
-    val factors = (1 to matrix_dim).filter(matrix_dim % _ == 0)
+  it should "work arbitrarily pipelined with no delays, as well as with random delays, with all possible dataflows, with all possible banking strategies, with many different array sizes" in {
+    for (matrix_dim <- 8 to 8) { // TODO test more sizes later
+      val factors = (1 to matrix_dim).filter(matrix_dim % _ == 0)
 
-    val sram_entries = matrix_dim // TODO this may change when the square requirement is lifted
+      val sram_entries = matrix_dim // TODO this may change when the square requirement is lifted
 
-    val delay_functions = Seq(() => 0, () => scala.util.Random.nextInt(5))
+      val delay_functions = Seq(() => 0, () => scala.util.Random.nextInt(5))
 
-    val dataflows = Seq((Dataflow.OS, Seq((c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new OSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))),
-      (Dataflow.WS, Seq((c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new WSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))),
-      (Dataflow.BOTH, dataflow_testers))
+      val dataflows = Seq((Dataflow.OS, Seq((c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new OSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))),
+        (Dataflow.WS, Seq((c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[Int], Matrix[Int], Matrix[Int]]], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new WSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles, outputGarbageCyles))),
+        (Dataflow.BOTH, dataflow_testers))
 
-    for (pipeline_depth <- factors) {
-      val tile_dim = pipeline_depth
-      val mesh_dim = matrix_dim / pipeline_depth
+      for (pipeline_depth <- factors) {
+        val tile_dim = pipeline_depth
+        val mesh_dim = matrix_dim / pipeline_depth
 
-      val bankings = (1 to mesh_dim).filter(mesh_dim % _ == 0)
+        val bankings = (1 to mesh_dim).filter(mesh_dim % _ == 0)
 
-      for (in_delay <- delay_functions; out_delay <- delay_functions; banks <- bankings; df_with_tester <- dataflows) {
-        val df = df_with_tester._1
-        val df_testers = df_with_tester._2
+        for (in_delay <- delay_functions; out_delay <- delay_functions; banks <- bankings; df_with_tester <- dataflows) {
+          val df = df_with_tester._1
+          val df_testers = df_with_tester._2
 
-        for (dft <- df_testers) {
-          iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-            () => new MeshWithMemory(SInt(16.W), df, tile_dim, tile_dim, mesh_dim, mesh_dim, sram_entries, 1)) {
-            c =>
-              dft(c, Seq.fill(8)((rand(matrix_dim, matrix_dim), rand(matrix_dim, matrix_dim),
-                zero(matrix_dim))), in_delay, out_delay)
-          } should be(true)
+          for (dft <- df_testers) {
+            iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+              () => new MeshWithMemory(SInt(32.W), df, tile_dim, tile_dim, mesh_dim, mesh_dim, sram_entries, 1)) {
+              c =>
+                dft(c, Seq.fill(8)((rand(matrix_dim, matrix_dim), rand(matrix_dim, matrix_dim),
+                  zero(matrix_dim))), in_delay, out_delay)
+            } should be(true)
+          }
         }
       }
     }

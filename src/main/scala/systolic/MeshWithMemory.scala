@@ -125,13 +125,17 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
   io.out.valid := out_is_valid
 
   // Tags
-  val tag_queue = Module(new TagQueue(4, UInt(32.W)))
-  tag_queue.io.in.valid := io.tag_in.valid && io.tag_in.ready
+  val TAG_WIDTH = 32
+  val tag_queue = Module(new TagQueue(5, UInt(TAG_WIDTH.W))) // TODO understand the actual required size better. It seems there may be a bug with it
   tag_queue.io.in.bits := io.tag_in.bits
-  tag_queue.io.out.ready := io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))
-  tag_queue.io.garbage := 15.U
+  tag_queue.io.out.next := io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))
+  tag_queue.io.garbage := Cat(Seq.fill(TAG_WIDTH)(1.U(1.W)))
 
-  io.tag_in.ready := flip
+  val tag_queue_ready = RegInit(true.B)
+  when (io.tag_in.fire()) { tag_queue_ready := false.B }
+  io.tag_in.ready := tag_queue_ready
+  tag_queue.io.in.valid := io.tag_in.fire()
+
   io.tag_out := tag_queue.io.out.bits(Mux(io.m.bits === Dataflow.OS.id.U, 0.U, 1.U))
 
   /*
@@ -139,8 +143,8 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
   printf(p"     io.a: ${io.a.bits}, a_read: ${a_buf.io.out}\n")
   printf(p"     io.b: ${io.b.bits}, b_read: ${b_buf.io.out}\n")
   printf(p"     io.d: ${io.d.bits}, d_read: ${d_buf.io.out}\n")
-  */
   printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (s: ${io.out_s(0)(0)}) (tag: ${io.tag_out})\n")
+  */
 
   // Control logic for buffers
   when(io.s.fire() && !flip) {
@@ -168,7 +172,10 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
 
     last_output_retrieved := false.B
 
-    printf(p"     Done!   (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    tag_queue_ready := true.B
+    io.tag_in.ready := !io.tag_in.valid
+
+    // printf(p"     Done!   (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.elsewhen(!compute_done) {
     // printf(p"     Computing!  (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.otherwise {
@@ -204,7 +211,6 @@ class InputBuffer[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module 
   val read_from = RegInit(0.U(1.W))
   val write_into = (~read_from).asUInt()
 
-  // val bufs = VecInit(Seq.fill(2)(SinglePortedSyncMem(n, t).io))
   val bufs = VecInit(Seq.fill(2)(Module(new BankedMem(n, t, banks)).io))
   bufs.foreach { b =>
     b.wdata := io.in
@@ -315,7 +321,7 @@ class TagQueue[T <: Data](len: Int, t: T) extends Module {
     }
 
     val out = new Bundle {
-      val ready = Input(Bool())
+      val next = Input(Bool())
       val bits = Output(Vec(2, t))
     }
 
@@ -325,19 +331,20 @@ class TagQueue[T <: Data](len: Int, t: T) extends Module {
 
   val regs = RegInit(VecInit(Seq.fill(len)(io.garbage)))
   val raddr = RegInit(0.U((log2Ceil(len) max 1).W))
-  val waddr = RegInit(2.U((log2Ceil(len) max 1).W))
+  val waddr = RegInit(3.U((log2Ceil(len) max 1).W))
 
   val raddr_inc = wrappingAdd(raddr, 1.U, len)
+  val raddr_inc2 = wrappingAdd(raddr, 2.U, len)
 
-  io.out.bits(0) := Mux(raddr =/= waddr, regs(raddr), io.garbage)
-  io.out.bits(1) := Mux(raddr_inc =/= waddr, regs(raddr_inc), io.garbage)
+  io.out.bits(0) := Mux(io.out.next, regs(raddr_inc), regs(raddr))
+  io.out.bits(1) := Mux(io.out.next, regs(raddr_inc2), regs(raddr_inc))
 
   when (io.in.valid) {
     waddr := wrappingAdd(waddr, 1.U, len)
     regs(waddr) := io.in.bits
   }
 
-  when (io.out.ready) {
-    raddr := wrappingAdd(waddr, 1.U, len)
+  when (io.out.next) {
+    raddr := wrappingAdd(raddr, 1.U, len)
   }
 }
