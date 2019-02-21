@@ -143,7 +143,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
 
   // Control logic for buffers
   when(io.s.fire() && !flip) {
-    s_bufs(not_active) := io.s.bits
+    s_bufs(not_active) := io.s.bits ^ s_bufs(active)
     s_next_written := true.B
   }
 
@@ -153,7 +153,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
     io.s.ready := true.B
     s_next_written := io.s.fire()
     // when (io.flush) { s_bufs(not_active) := ~s_bufs(active) }.elsewhen(io.s.fire()) { s_bufs(active) := io.s.bits }
-    when(io.s.fire()) { s_bufs(active) := io.s.bits }
+    when(io.s.fire()) { s_bufs(active) := io.s.bits ^ s_bufs(not_active) }
 
     last_output_retrieved := false.B
 

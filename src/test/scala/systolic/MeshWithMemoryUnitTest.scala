@@ -115,9 +115,8 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Ma
 
   // Pass in garbage data till all the results are read out
   pokeAllInputValids(true)
-  strobeInputs(Seq.fill(dim)(0), c.io.d.bits, c.io.d.valid)
+  poke(c.io.s.bits, 1)
   for (i <- 1 to 4) {
-    poke(c.io.s.bits, (meshInputs.last.S+i)%2)
     do {
       step(1)
       updateOutput()
@@ -198,7 +197,7 @@ class OSMeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[In
     val mats = shifted.map{case (a, b, d) => (a.transpose, b, d.reverse)}
 
     // Finally, add the S and M parameters
-    mats.zipWithIndex.map { case ((m1,m2,m3),i) => MeshInput(m1, m2, m3, S=i%2, M=0, tag=i+100)}
+    mats.zipWithIndex.map { case ((m1,m2,m3),i) => MeshInput(m1, m2, m3, S=1, M=0, tag=i+100)}
   }
 
   override def formatOut(outs: Seq[Matrix[Int]], tags: Seq[Int])= {
@@ -222,7 +221,7 @@ class WSMeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Matrix[In
     val mats = shifted.map{case (a, b, d) => (a, d, b.reverse)}
 
     // Finally, add the S and M parameters
-    mats.zipWithIndex.map { case ((m1,m2,m3),i) => MeshInput(m1, m2, m3, S=i%2, M=1, tag=i)}
+    mats.zipWithIndex.map { case ((m1,m2,m3),i) => MeshInput(m1, m2, m3, S=1, M=1, tag=i)}
   }
 
   override def formatOut(outs: Seq[Matrix[Int]], tags: Seq[Int]) = {
