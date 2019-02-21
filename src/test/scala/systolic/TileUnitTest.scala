@@ -4,7 +4,7 @@ package systolic
 
 import chisel3._
 import chisel3.iotesters.{ChiselFlatSpec, PeekPokeTester}
-import SystolicUtils.print2DArray
+import TestUtils.print2DArray
 
 class TileUnitTest(c: Tile[UInt], m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
   def generateA(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
@@ -46,7 +46,7 @@ class TileUnitTest(c: Tile[UInt], m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends 
   print2DArray(sFormat)
 
   println("Generating cGold:")
-  val cGold = SystolicUtils.mult(m1, m2)
+  val cGold = TestUtils.mult(m1, m2)
   print2DArray(cGold)
 
   println("Generating C:")

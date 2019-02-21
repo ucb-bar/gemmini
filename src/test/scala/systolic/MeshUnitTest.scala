@@ -3,7 +3,7 @@ package systolic
 
 import chisel3._
 import chisel3.iotesters._
-import SystolicUtils.print2DArray
+import TestUtils.print2DArray
 
 class MeshUnitTest(c: Mesh[UInt], m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends PeekPokeTester(c) {
   def generateA(m: Seq[Seq[Int]]): Seq[Seq[Int]] = {
@@ -61,7 +61,7 @@ class MeshUnitTest(c: Mesh[UInt], m1: Seq[Seq[Int]], m2: Seq[Seq[Int]]) extends 
   val Bgrouped = Bpad.grouped(c.tileColumns).toList
   val Propaggrouped = propag_pad.grouped(c.tileColumns).toList
   val Sgrouped = S.grouped(c.tileColumns).toList
-  val Cgold = SystolicUtils.mult(m1, m2)
+  val Cgold = TestUtils.mult(m1, m2)
   println("A Padded:")
   print2DArray(Apad)
   println("B Padded:")
