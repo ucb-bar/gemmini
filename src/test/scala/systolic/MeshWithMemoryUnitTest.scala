@@ -29,11 +29,11 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Ma
   }
 
   def pokeAllInputValids(v: Boolean): Unit = {
-    val valids = Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid, c.io.s.valid, c.io.m.valid, c.io.tag_in.valid)
+    val valids = Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid, c.io.s.valid, c.io.tag_in.valid)
     valids.foreach(vpin => poke(vpin, v))
   }
 
-  def allInputsAreReady(): Boolean = {
+  def allMatrixInputsAreReady(): Boolean = {
     // Ignore m and s here, since they're only supposed to be set once per multiplication
     Seq(c.io.a.ready, c.io.b.ready, c.io.d.ready).forall(r => peek(r) != 0)
   }
@@ -81,7 +81,7 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Ma
     */
 
     poke(c.io.s.bits, meshIn.S)
-    poke(c.io.m.bits, meshIn.M)
+    poke(c.io.m, meshIn.M)
     poke(c.io.tag_in.bits, meshIn.tag)
 
     for ((a, b, d) <- (meshIn.A, meshIn.B, meshIn.D).zipped) {
@@ -103,7 +103,7 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Ma
 
         garbage_cycles -= 1
 
-      } while (!allInputsAreReady() // Wait for the systolic array to be ready for more inputs
+      } while (!allMatrixInputsAreReady() // Wait for the systolic array to be ready for more inputs
         || garbage_cycles > 0)
 
       // Now, refuse to read out data
@@ -114,31 +114,14 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[Tuple3[Ma
   }
 
   // Pass in garbage data till all the results are read out
-  /*poke(c.io.flush, true)
-  // var s_changed = false; var s_changed_again = false; var s_changed_again_again = false
-  var last_s = meshInputs.last.S
-  var s_changed = 0
-  while (s_changed < 4) {
-    if (peek(c.io.out_s(0)(0)) != last_s)
-      s_changed += 1
-    last_s = peek(c.io.out_s(0)(0)).toInt
-    step(1)
-    updateOutput()
-  }*/
   pokeAllInputValids(true)
   strobeInputs(Seq.fill(dim)(0), c.io.d.bits, c.io.d.valid)
-  for (i <- 1 to 2) {
+  for (i <- 1 to 4) {
     poke(c.io.s.bits, (meshInputs.last.S+i)%2)
-
-    var cycles = rows(ms.head._1) + c.meshColumns
-    while (cycles > 0) {
+    do {
       step(1)
-      poke(c.io.s.valid, false)
       updateOutput()
-      if (allInputsAreReady()) {
-        cycles -= 1
-      }
-    }
+    } while (peek(c.io.s.ready) == 0)
   }
 
   // println("Mesh output:")
@@ -263,8 +246,8 @@ class MeshWithMemoryTester extends ChiselFlatSpec
     val dim = 3
 
     iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-      // () => new MeshWithMemory(SInt(16.W), Dataflow.BOTH, 1, 1, dim, dim, dim, 1)) {
-      () => new MeshWithMemory(SInt(16.W), Dataflow.BOTH, dim, dim, 1, 1, dim, 1)) {
+      () => new MeshWithMemory(SInt(16.W), Dataflow.BOTH, 1, 1, dim, dim, dim, 1)) {
+      // () => new MeshWithMemory(SInt(16.W), Dataflow.BOTH, dim, dim, 1, 1, dim, 1)) {
         c => new WSMeshWithMemoryUnitTest(c, Seq((zero(dim), zero(dim), consecutive(dim)), (zero(dim), zero(dim), consecutive(dim).map(_.map(_*10)))), () => 0, () => 0)
       // c => new OSMeshWithMemoryUnitTest(c, Seq.fill(2)((rand(dim, dim), rand(dim, dim), rand(dim, dim))), () => 0, () => 0)
     } should be(true)

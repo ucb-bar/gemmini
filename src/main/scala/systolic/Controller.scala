@@ -167,7 +167,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
         meshIO.io.tag_in.valid := true.B
         meshIO.io.tag_in.bits := c_address_rs2 //if this is 0xFFFFFF then don't output
         meshIO.io.s.bits := DoComputeAndFlip
-        meshIO.io.m.bits := Dataflow.OS.id.U
+        meshIO.io.m := Dataflow.OS.id.U
       }
 
       when(fired_all_rows) {

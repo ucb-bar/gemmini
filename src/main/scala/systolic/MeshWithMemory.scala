@@ -23,6 +23,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
   val C_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
   val D_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(2.W)))
+  val TAG_WIDTH = 32
 
   val io = IO(new Bundle {
     val a = Flipped(Decoupled(A_TYPE))
@@ -30,7 +31,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
     val d = Flipped(Decoupled(D_TYPE))
 
     val s = Flipped(Decoupled(UInt(1.W)))
-    val m = Flipped(Decoupled(UInt(1.W)))
+    val m = Input(UInt(1.W))
 
     val tag_in = Flipped(Decoupled(UInt(32.W)))
     val tag_out = Output(UInt(32.W))
@@ -50,13 +51,10 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
   val a_buf = Module(new InputBuffer(sramEntries, A_TYPE, banks))
   val b_buf = Module(new InputBuffer(sramEntries, B_TYPE, banks))
   val d_buf = Module(new InputBuffer(meshRows*tileRows, D_TYPE, banks))
-
-  // TODO find a better name for these two
-  val s_bufs = RegInit(VecInit(1.U, 0.U))
-  val m_bufs = RegInit(VecInit(0.U, 0.U)) // TODO should m be removed and just routed from IO?
+  val s_bufs = RegInit(VecInit(1.U, 0.U)) // TODO find a better name for this
 
   val s_next_written = RegInit(false.B)
-  val m_next_written = RegInit(false.B)
+  val tag_written = RegInit(false.B)
 
   a_buf.io.in := io.a.bits
   b_buf.io.in := io.b.bits
@@ -78,7 +76,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
 
   val compute_stalling = compute_done && RegNext(compute_done) // TODO this also seems inelegant...
 
-  val buffering_done = a_buf.io.full && b_buf.io.full && d_buf.io.full // && (s_next_written || io.flush)
+  val buffering_done = a_buf.io.full && b_buf.io.full && d_buf.io.full /* && s_next_written && tag_written */
 
   val flip = compute_done && buffering_done // When the double-buffers flip roles
   val pause = (compute_stalling || !io.out.ready) // && !io.flush
@@ -96,7 +94,6 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
   d_buf.io.flush := io.flush*/
 
   io.s.ready := !s_next_written
-  io.m.ready := !m_next_written
 
   // Wire up mesh's IO to this module's IO
   val mesh = Module(new Mesh(innerType, df, tileRows, tileColumns, meshRows, meshColumns))
@@ -106,7 +103,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
   mesh.io.in_d_vec := d_buf.io.out
 
   mesh.io.in_s_vec.zipWithIndex.foreach { case (ss, i) =>
-    ss.foreach(_ := ShiftRegister(Cat(m_bufs(active), s_bufs(active)), i, !pause))
+    ss.foreach(_ := ShiftRegister(Cat(io.m, s_bufs(active)), i, !pause))
   }
   mesh.io.pause := pause
 
@@ -115,7 +112,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
   io.out.bits := bottom_mesh_io.zip(bottom_mesh_io.indices.reverse).map { case ((bs, cs, ss), i) =>
     // TODO these would actually overlap when we switch from output-stationary to weight-stationary
     // TODO should we use io.m, or the mode output of the mesh?
-    ShiftRegister(Mux(io.m.bits === Dataflow.OS.id.U, cs, bs), i, !pause)
+    ShiftRegister(Mux(io.m === Dataflow.OS.id.U, cs, bs), i, !pause)
   }
   io.out_s := mesh.io.out_s_vec.zip(mesh.io.out_s_vec.indices.reverse).map{case (s, i) => ShiftRegister(s, i, !pause)}
 
@@ -125,18 +122,16 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
   io.out.valid := out_is_valid
 
   // Tags
-  val TAG_WIDTH = 32
   val tag_queue = Module(new TagQueue(5, UInt(TAG_WIDTH.W))) // TODO understand the actual required size better. It seems there may be a bug with it
   tag_queue.io.in.bits := io.tag_in.bits
   tag_queue.io.out.next := io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))
   tag_queue.io.garbage := Cat(Seq.fill(TAG_WIDTH)(1.U(1.W)))
 
-  val tag_queue_ready = RegInit(true.B)
-  when (io.tag_in.fire()) { tag_queue_ready := false.B }
-  io.tag_in.ready := tag_queue_ready
+  when (io.tag_in.fire()) { tag_written := true.B }
+  io.tag_in.ready := !tag_written
   tag_queue.io.in.valid := io.tag_in.fire()
 
-  io.tag_out := tag_queue.io.out.bits(Mux(io.m.bits === Dataflow.OS.id.U, 0.U, 1.U))
+  io.tag_out := tag_queue.io.out.bits(Mux(io.m === Dataflow.OS.id.U, 0.U, 1.U))
 
   /*
   printf(p"     active: $active,     compute_done: $compute_done,    buffering_done: $buffering_done,    s_buf(active): ${s_bufs(active)}\n")
@@ -152,28 +147,18 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
     s_next_written := true.B
   }
 
-  when(io.m.fire() && !flip) {
-    m_bufs(not_active) := io.m.bits
-    m_next_written := true.B
-  }
-
   when(flip) {
     active := not_active
 
     io.s.ready := true.B
-    io.m.ready := true.B
-
+    s_next_written := io.s.fire()
     // when (io.flush) { s_bufs(not_active) := ~s_bufs(active) }.elsewhen(io.s.fire()) { s_bufs(active) := io.s.bits }
     when(io.s.fire()) { s_bufs(active) := io.s.bits }
-    when(io.m.fire()) { m_bufs(active) := io.m.bits }
-
-    s_next_written := io.s.fire()
-    m_next_written := io.m.fire()
 
     last_output_retrieved := false.B
 
-    tag_queue_ready := true.B
-    io.tag_in.ready := !io.tag_in.valid
+    io.tag_in.ready := true.B
+    tag_written := io.tag_in.fire()
 
     // printf(p"     Done!   (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.elsewhen(!compute_done) {
