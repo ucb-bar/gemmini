@@ -106,6 +106,15 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   meshIO.io.b.valid := false.B
   meshIO.io.d.valid := false.B
 
+  // TODO Ameer, check these default DontCare values
+  meshIO.io.a.bits := DontCare
+  meshIO.io.b.bits := DontCare
+  meshIO.io.d.bits := DontCare
+  meshIO.io.tag_in.bits := DontCare
+  meshIO.io.m := DontCare // This especially doesn't feel right
+  meshIO.io.s.valid := DontCare
+  meshIO.io.tag_in.valid := DontCare
+  meshIO.io.s.bits := DontCare
 
   for(i <- 0 until sp_banks){
     spad.module.io.read(i).en := start_sram_feeding &&
@@ -116,13 +125,10 @@ class SystolicArrayModule[T <: Data: Arithmetic]
         (d_read_bank_number === i.U && !preload_zeros) -> d_address_rs1))
   }
 
-
   val readData = VecInit(spad.module.io.read.map(_.data))
   val dataA = readData(RegNext(a_read_bank_number))
   val dataB = readData(RegNext(b_read_bank_number))
   val dataD = readData(RegNext(d_read_bank_number))
-
-
 
   val fired_all_rows = WireInit(false.B)
   val outputed_all_rows = WireInit(false.B)
@@ -192,7 +198,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     spad.module.io.write(i).data := MuxCase(0.U,
       Seq((w_bank_number === i.U && start_array_outputting) -> meshIO.io.out.bits.asUInt()))
   }
-
 
   when(meshIO.io.out.fire() && !meshIO.io.tag_out===0xFFFFFFFFL.U) {
     start_array_outputting := true.B
