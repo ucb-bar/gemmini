@@ -13,7 +13,7 @@ import systolic.Util._
 // TODO Does it make sense to not pause when the output isn't valid? And is that possible with the current setup anyway?
 // TODO Should I add a reset buffers input?
 
-class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
+class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dataflow.Value,
                      val tileRows: Int, val tileColumns: Int,
                      val meshRows: Int, val meshColumns: Int,
                      val sramEntries: Int, val banks: Int) extends Module {
@@ -23,7 +23,6 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
   val C_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
   val D_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(2.W)))
-  val TAG_WIDTH = 32
 
   val io = IO(new Bundle {
     val a = Flipped(Decoupled(A_TYPE))
@@ -122,10 +121,10 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, df: Dataflow.Value,
   io.out.valid := out_is_valid
 
   // Tags
-  val tag_queue = Module(new TagQueue(5, UInt(TAG_WIDTH.W))) // TODO understand the actual required size better. It seems there may be a bug with it
+  val tag_queue = Module(new TagQueue(5, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
   tag_queue.io.in.bits := io.tag_in.bits
   tag_queue.io.out.next := io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))
-  tag_queue.io.garbage := Cat(Seq.fill(TAG_WIDTH)(1.U(1.W)))
+  tag_queue.io.garbage := Cat(Seq.fill(tagWidth)(1.U(1.W)))
 
   when (io.tag_in.fire()) { tag_written := true.B }
   io.tag_in.ready := !tag_written

@@ -67,9 +67,9 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val DoComputeAndStay = funct === 5.U
   val DoPreLoad = funct === 6.U
 
-  val meshIO = Module(new MeshWithMemory(inner_type,Dataflow.BOTH, tileRows,
-    tileColumns,meshRows,meshColumns,
-    InternalSramEntries,InternalSramBanks)) //what you mean by T/df/banks in MeshWithMemory
+  val meshIO = Module(new MeshWithMemory(inner_type, xLen, Dataflow.BOTH, tileRows,
+    tileColumns, meshRows, meshColumns,
+    InternalSramEntries, InternalSramBanks)) //what you mean by T/df/banks in MeshWithMemory
 
   // STATE defines
   val idle :: feed_data :: Nil = Enum(2)
