@@ -55,7 +55,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val rs2 = Reg(UInt(xLen.W))
   rs2 := cmd.bits.rs2
   //val rs3 = RegInit(cmd.bits.rs3)
-  val d_address_rs1 = Reg(UInt(xLen.W)) //verify if it is only updated once
+  val d_address_rs1 = Reg(UInt(xLen.W)) 
   val c_address_rs2 = Reg(UInt(xLen.W))
   val preload_zeros = RegInit(false.B)
   //val rd = RegInit(cmd.bits.rd)
@@ -63,13 +63,16 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val opcode = cmd.bits.inst.opcode
   val DoLoad = funct === 2.U
   val DoStore = funct === 3.U
-  val DoComputeAndFlip = funct === 4.U
-  val DoComputeAndStay = funct === 5.U
-  val DoPreLoad = funct === 6.U
+  val DoComputeAndFlip = funct === 4.U | funct === 6.U
+  val DoComputeAndStay = funct === 5.U | funct === 7.U
+  val ModeOS = funct === 4.U | funct === 5.U
+  val ModeWS = funct === 6.U | funct === 7.U
+
+  val DoPreLoad = funct === 8.U
 
   val meshIO = Module(new MeshWithMemory(inner_type, xLen, Dataflow.BOTH, tileRows,
     tileColumns, meshRows, meshColumns,
-    InternalSramEntries, InternalSramBanks)) //what you mean by T/df/banks in MeshWithMemory
+    InternalSramEntries, InternalSramBanks)) 
 
   // STATE defines
   val idle :: feed_data :: Nil = Enum(2)
@@ -105,15 +108,15 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   meshIO.io.a.valid := false.B
   meshIO.io.b.valid := false.B
   meshIO.io.d.valid := false.B
-
-  // TODO Ameer, check these default DontCare values
+  meshIO.io.s.valid := false.B
+  meshIO.io.tag_in.valid := false.B
+  meshIO.io.m.valid := false.B
+  
   meshIO.io.a.bits := DontCare
   meshIO.io.b.bits := DontCare
   meshIO.io.d.bits := DontCare
   meshIO.io.tag_in.bits := DontCare
-  meshIO.io.m := DontCare // This especially doesn't feel right
-  meshIO.io.s.valid := DontCare
-  meshIO.io.tag_in.valid := DontCare
+  meshIO.io.m.bits := DontCare // This especially doesn't feel right
   meshIO.io.s.bits := DontCare
 
   for(i <- 0 until sp_banks){
@@ -171,9 +174,15 @@ class SystolicArrayModule[T <: Data: Arithmetic]
           dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
         )
         meshIO.io.tag_in.valid := true.B
+        meshIO.io.s.valid = true.B
+        mesh.io.m.valid = true.B
         meshIO.io.tag_in.bits := c_address_rs2 //if this is 0xFFFFFF then don't output
         meshIO.io.s.bits := DoComputeAndFlip
-        meshIO.io.m := Dataflow.OS.id.U
+        meshIO.io.m := Mux(
+          ModeOS,
+          Dataflow.OS.id.U,
+          Dataflow.WS.id.U
+        )
       }
 
       when(fired_all_rows) {
