@@ -174,8 +174,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
           dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
         )
         meshIO.io.tag_in.valid := true.B
-        meshIO.io.s.valid = true.B
-        mesh.io.m.valid = true.B
+        meshIO.io.s.valid := true.B
+        mesh.io.m.valid := true.B
         meshIO.io.tag_in.bits := c_address_rs2 //if this is 0xFFFFFF then don't output
         meshIO.io.s.bits := DoComputeAndFlip
         meshIO.io.m := Mux(
