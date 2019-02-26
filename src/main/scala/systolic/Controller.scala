@@ -119,6 +119,9 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   meshIO.io.m.bits := DontCare // This especially doesn't feel right
   meshIO.io.s.bits := DontCare
 
+  val start_sram_feeding = WireInit(false.B)
+  val start_array_outputting = WireInit(false.B)
+  
   for(i <- 0 until sp_banks){
     spad.module.io.read(i).en := start_sram_feeding &&
       (a_read_bank_number === i.U  || b_read_bank_number === i.U || (d_read_bank_number === i.U && !preload_zeros))
@@ -143,8 +146,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     preload_zeros := cmd.bits.inst.rd === 1.U // when rd number is 1 it means to preload zeros
   }
 
-  val start_sram_feeding = WireInit(false.B)
-  val start_array_outputting = WireInit(false.B)
 
   switch(feed_state) {
     is(idle) {
