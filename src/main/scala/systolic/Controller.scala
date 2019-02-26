@@ -110,14 +110,15 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   meshIO.io.d.valid := false.B
   meshIO.io.s.valid := false.B
   meshIO.io.tag_in.valid := false.B
-  meshIO.io.m.valid := false.B
+  //meshIO.io.m.valid := false.B
   
   meshIO.io.a.bits := DontCare
   meshIO.io.b.bits := DontCare
   meshIO.io.d.bits := DontCare
   meshIO.io.tag_in.bits := DontCare
-  meshIO.io.m.bits := DontCare // This especially doesn't feel right
+  //meshIO.io.m.bits := DontCare // This especially doesn't feel right
   meshIO.io.s.bits := DontCare
+  meshIO.io.m := DontCare
 
   val start_sram_feeding = WireInit(false.B)
   val start_array_outputting = WireInit(false.B)
@@ -139,6 +140,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val fired_all_rows = WireInit(false.B)
   val outputed_all_rows = WireInit(false.B)
 
+  cmd.ready := false.B
   when(cmd.valid && DoPreLoad) {
     d_address_rs1 := cmd.bits.rs1 //SRAM_D_Address
     c_address_rs2 := cmd.bits.rs2 //SRAM_C_Address
@@ -176,7 +178,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
         )
         meshIO.io.tag_in.valid := true.B
         meshIO.io.s.valid := true.B
-        mesh.io.m.valid := true.B
+        //mesh.io.m.valid := true.B
         meshIO.io.tag_in.bits := c_address_rs2 //if this is 0xFFFFFF then don't output
         meshIO.io.s.bits := DoComputeAndFlip
         meshIO.io.m := Mux(
@@ -243,7 +245,6 @@ when(outputed_all_rows) {blocks_outputed.inc()}
 //    }
 
 
-  cmd.ready := false.B
   spad.module.io.dma.req.valid := false.B
 
   switch(DRAM_to_SRAM_state){
