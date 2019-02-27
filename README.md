@@ -60,7 +60,7 @@ Example:
 1. matmul.preload $rs1 $rs2
 2. matmul.compute $rs3 $rs4
 ```
-**Action:** Scratchpad[rs1] <= Scratchpad[rs3]*Scratchpad[rs4]+Scratchpad[rs2]
+**Action:** Scratchpad[rs2] <= Scratchpad[rs3]*Scratchpad[rs4]+Scratchpad[rs1]
 
 **Action:** C <= A*B+D
 <!---
