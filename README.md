@@ -59,7 +59,7 @@ Example:
 //matmul InputA InputB OutputC InputD
 1. matmul.preload $rs1 $rs2
 2. matmul.compute $rs3 $rs4
-
+```
 **Action:** Scratchpad[rs1] <= Scratchpad[rs3]*Scratchpad[rs4]+Scratchpad[rs2]
 **Action:** C <= A*B+D
 <!---
@@ -68,7 +68,7 @@ Example:
 3. matmul.preload $rs5 $rs6
 4. matmul.compute $rs7 $rs8
 -->
-```
+
 <!---
 
 Note that as defined above the data preloaded in matmul.preload is for the matmul in the next instruction (i.e., the data preloaded in 1 is actually used in 4 because 4 is the next matmul instruction). OutputC is always for the CURRENT `matmul` instruction.
