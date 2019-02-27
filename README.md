@@ -25,7 +25,7 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 ### `mvin` Move Data From L2/DRAM to Scratchpad
 **Format:** `mvin rs1, rs2`
 - `rs1` = virtual DRAM address to load into scratchpad
-- `rs2` = local scratchpad address
+- `rs2` = local scratchpad address (the highest bits of rs2 determine the bank number and the lowests bits determine the entry)
 
 **Action:** Scratchpad[rs2] <= DRAM[Translate[rs1]]
 - Loads a fixed amount of data into the scratchpad = `tileRows x meshRows x dataBytes` corresponding to the Mesh's parameterization
@@ -37,10 +37,10 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 
 ### `mvout` Move Data from Scratchpad to L2/DRAM
 **Format:** `mvout rs1, rs2`
-- rs1 = virtual DRAM address to write to
-- rs2 = local scratchpad address
+- rs1 = local scratchpad address (the highest bits of rs1 determine the bank number and the lowests bits determine the entry)
+- rs2 = virtual DRAM address to write to 
 
-**Action:** DRAM[Translate[rs1]] <= Scratchpad[rs2]
+**Action:** DRAM[Translate[rs2]] <= Scratchpad[rs1]
 - Stores a fixed amount of data from the scratchpad to L2/DRAM = `tileRows x meshRows x dataBytes`
 - Store is sequential from the rs1/rs2 base address. Strides in software.
 
@@ -60,24 +60,31 @@ Example:
 1. matmul.preload $rs1 $rs2
 2. matmul.compute $rs3 $rs4
 
+**Action:** Scratchpad[rs1] <= Scratchpad[rs3]*Scratchpad[rs4]+Scratchpad[rs2]
+**Action:** C <= A*B+D
+<!---
 //// second matmul ////
 //matmul InputA2 InputB2 OutputC2 InputD2
 3. matmul.preload $rs5 $rs6
 4. matmul.compute $rs7 $rs8
+-->
 ```
+<!---
 
 Note that as defined above the data preloaded in matmul.preload is for the matmul in the next instruction (i.e., the data preloaded in 1 is actually used in 4 because 4 is the next matmul instruction). OutputC is always for the CURRENT `matmul` instruction.
+-->
 
 The preload command is encoded to funct field #8.
 - If you set the preload command's rd value to 1 it will automatically preload zeros.
 - If you set the preload command's C value to 0xFFFFFFFF the systolic array will assume the output will remain in the systolic array and won't be read out.
 The compute command is encoded to funct fields #4 (or #6 for WS) and #5 (or #7 for WS).
-- Compute associated with funct field #4 will compute on the value preloaded in the PREVIOUS `matmul` instruction.
-- Compute associated with funct field #5 will accumulate on top of the results of the PREVIOUS `matmul` instruction.
+- Compute associated with funct field #4 will compute on the value preloaded <!---
+in the PREVIOUS `matmul` instruction.-->
+- Compute associated with funct field #5 will accumulate on top of the previous results <!---of the PREVIOUS `matmul` instruction.-->
 
 
 After the preload instruction, you must specify an exact sequence of output or weight stationary instructions following it to trigger the `matmul`.
-
+<!---
 ### Preloading
 **Format:** `matmul.preload rs1`
 - `rs1` = local scratchpad address of B matrix (weight stationary), D matrix (final biasing or output stationary), `0xAAAA_AAAA` (don't preload, use existing state) or `0xFFFF_FFFF` (preload zeros)
@@ -122,7 +129,7 @@ Similar to the output stationary instructions, there is a similar set of weight 
 - multseq -> multseq (handled by HW, SW doesn't have to worry about polling for completion if there exists a mult -> mult RAW dependency)
 - multseq -> mvout (handled by HW, blocking on all previous mults completing)
 - mvout -> multseq (WAR dependency is handled by instruction ordering, mvout is blocking)
-
+-->
 # Software Examples
 ## Basic Output Stationary Mapping
 We want to calculate C = A x B + D.
