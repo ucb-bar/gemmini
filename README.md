@@ -46,6 +46,12 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 
 **Commit Behavior:** Identical to `mvin`, synchronous and will stall until all scratchpad data has been flushed into the L2
 
+## Dataflow Mode
+### `setmode` set the mode to weight/output stationary
+**Format:** `setmode rs1`
+- `rs1` = the lsb of rs1 will determine if weight (0U) or output (1.U) stationary.
+**Action:** mode <= rs1(0)
+
 ## Core Matmul Sequences
 Every single matrix multiply operation is a combination of matmul.preload and matmul.compute (due to the length of a single instruction it was split into two instructions). matmul.preload should preceed the matmul.compute.
 
@@ -78,13 +84,11 @@ Note that as defined above the data preloaded in matmul.preload is for the matmu
 The preload command is encoded to funct field #8.
 - If you set the preload command's rd value to 1 it will automatically preload zeros.
 - If you set the preload command's C value to 0xFFFFFFFF the systolic array will assume the output will remain in the systolic array and won't be read out.
-The `matmu.compute` command is encoded to funct fields #4 and #5.
+The `matmul.compute` command is encoded to funct fields #4 and #5.
 - `matmul.compute` associated with funct field #4 will compute on the value preloaded (D) <!---
 in the PREVIOUS `matmul` instruction.-->
 - `matmul.compute` associated with funct field #5 will accumulate on top of the previously computed results <!---of the PREVIOUS `matmul` instruction.-->
 
-
-After the preload instruction, you must specify an exact sequence of output or weight stationary instructions following it to trigger the `matmul`.
 <!---
 ### Preloading
 **Format:** `matmul.preload rs1`
