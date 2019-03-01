@@ -43,44 +43,38 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   import outer.spad
 
   val cmd = Queue(io.cmd, queue_length)
-
+  cmd.ready := false.B
   io.busy := cmd.valid
 
-  val fire_counter = new Counter(block_size)
-  val output_counter = new Counter(block_size)
 
   //aliases of cmd
-  val rs1 = Reg(UInt(xLen.W))
-  rs1 := cmd.bits.rs1
-  val rs2 = Reg(UInt(xLen.W))
-  rs2 := cmd.bits.rs2
-  //val rs3 = RegInit(cmd.bits.rs3)
-  val d_address_rs1 = Reg(UInt(xLen.W)) 
-  val c_address_rs2 = Reg(UInt(xLen.W))
-  val preload_zeros = RegInit(false.B)
-  //val rd = RegInit(cmd.bits.rd)
+  val mydataflow = RegInit(Dataflow.OS.id.U)
+  val rs1 = cmd.bits.rs1
+  val rs2 = cmd.bits.rs2
+  val a_address_rs1 = Reg(UInt(xLen.W))
+  val b_address_rs2 = Reg(UInt(xLen.W))
+
+  val d_address_rs1 = cmd.bits.rs1 //SRAM_D_Address
+  val c_address_rs2 = cmd.bits.rs2 //SRAM_C_Address
+
   val funct = cmd.bits.inst.funct
-  val opcode = cmd.bits.inst.opcode
   val DoLoad = funct === 2.U
   val DoStore = funct === 3.U
-  val DoComputeAndFlip = funct === 4.U | funct === 6.U
-  val DoComputeAndStay = funct === 5.U | funct === 7.U
-  val ModeOS = funct === 4.U | funct === 5.U
-  val ModeWS = funct === 6.U | funct === 7.U
+  val DoComputeAndFlip = funct === 4.U
+  val DoComputeAndStay = funct === 5.U
 
   val DoPreLoad = funct === 8.U
+  val DoSetMode = funct === 9.U
+
+  val preload_zeros = WireInit(cmd.bits.inst.rd === 1.U) // when rd number is 1 it means to preload zeros
 
   val meshIO = Module(new MeshWithMemory(inner_type, xLen, Dataflow.BOTH, tileRows,
     tileColumns, meshRows, meshColumns,
     InternalSramEntries, InternalSramBanks)) 
 
   // STATE defines
-  val idle :: feed_data :: Nil = Enum(2)
-  val idle_store :: start_load_to_SRAM :: Nil = Enum(2)
-  val idle_load :: start_store_to_DRAM :: Nil = Enum(2)
-  val DRAM_to_SRAM_state = RegInit(idle)
-  val SRAM_to_DRAM_state = RegInit(idle)
-  val feed_state = RegInit(idle)
+  val decode :: compute ::flush :: Nil = Enum(3)
+  val control_state = RegInit(decode)
 
   ////////
   implicit val edge = outer.tlNode.edges.out.head
@@ -96,13 +90,10 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   assert(sp_width == meshRows*tileRows*inner_type.getWidth)
   assert(block_size == meshRows*tileRows)
 
-  // compute/output_compute counters
-  val blocks_fired = new Counter(10)
-  val blocks_outputed = new Counter(10)
 
   //SRAM scratchpad
-  val a_read_bank_number = rs1(rs1.getWidth - 1, rs1.getWidth-log2Ceil(sp_banks))
-  val b_read_bank_number = rs2(rs2.getWidth - 1, rs2.getWidth-log2Ceil(sp_banks))
+  val a_read_bank_number = a_address_rs1(rs1.getWidth - 1, rs1.getWidth-log2Ceil(sp_banks))
+  val b_read_bank_number = b_address_rs2(rs2.getWidth - 1, rs2.getWidth-log2Ceil(sp_banks))
   val d_read_bank_number = d_address_rs1(d_address_rs1.getWidth - 1, d_address_rs1.getWidth-log2Ceil(sp_banks))
 
   meshIO.io.a.valid := false.B
@@ -110,26 +101,36 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   meshIO.io.d.valid := false.B
   meshIO.io.s.valid := false.B
   meshIO.io.tag_in.valid := false.B
-  //meshIO.io.m.valid := false.B
-  
+  meshIO.io.flush.valid := false.B
+
+
   meshIO.io.a.bits := DontCare
   meshIO.io.b.bits := DontCare
   meshIO.io.d.bits := DontCare
   meshIO.io.tag_in.bits := DontCare
-  //meshIO.io.m.bits := DontCare // This especially doesn't feel right
   meshIO.io.s.bits := DontCare
-  meshIO.io.m := DontCare
+  meshIO.io.m := mydataflow
 
   val start_sram_feeding = WireInit(false.B)
   val start_array_outputting = WireInit(false.B)
-  
+  val perform_store = WireInit(false.B)
+  val perform_load = WireInit(false.B)
+  val perform_single_preload = WireInit(false.B)
+  val perform_single_mul = WireInit(false.B)
+  val perform_mul_pre = WireInit(false.B)
+
+  val fired_all_rows = WireInit(false.B)
+  val fire_counter = new Counter(block_size)
+  val output_counter = new Counter(block_size)
+  val in_s = RegInit(0.U)
+
   for(i <- 0 until sp_banks){
     spad.module.io.read(i).en := start_sram_feeding &&
-      (a_read_bank_number === i.U  || b_read_bank_number === i.U || (d_read_bank_number === i.U && !preload_zeros))
+      ((a_read_bank_number === i.U && !perform_single_preload)  || (b_read_bank_number === i.U && !perform_single_preload) || (d_read_bank_number === i.U && !preload_zeros))
     spad.module.io.read(i).addr := MuxCase(0.U,
-      Seq((a_read_bank_number === i.U) -> rs1,
-      (b_read_bank_number === i.U) -> rs2,
-        (d_read_bank_number === i.U && !preload_zeros) -> d_address_rs1))
+      Seq((a_read_bank_number === i.U && !perform_single_preload) -> (a_address_rs1 + fire_counter.value),
+      (b_read_bank_number === i.U && !perform_single_preload) -> (b_address_rs2 + fire_counter.value),
+        (d_read_bank_number === i.U && !preload_zeros) -> (d_address_rs1+fire_counter.value)))
   }
 
   val readData = VecInit(spad.module.io.read.map(_.data))
@@ -137,63 +138,120 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val dataB = readData(RegNext(b_read_bank_number))
   val dataD = readData(RegNext(d_read_bank_number))
 
-  val fired_all_rows = WireInit(false.B)
-  val outputed_all_rows = WireInit(false.B)
 
-  cmd.ready := false.B
-  when(cmd.valid && DoPreLoad) {
-    d_address_rs1 := cmd.bits.rs1 //SRAM_D_Address
-    c_address_rs2 := cmd.bits.rs2 //SRAM_C_Address
-    cmd.ready := true.B
-    preload_zeros := cmd.bits.inst.rd === 1.U // when rd number is 1 it means to preload zeros
+  switch(control_state){
+    is(decode){
+      when(cmd.valid && DoStore){
+        perform_store := true.B
+      }
+      when(cmd.valid && DoLoad){
+        perform_load := true.B
+      }
+
+      when(cmd.valid && DoSetMode){
+        val data_mode = rs1(0) //0 is output stationary, 1 is weight
+        mydataflow := data_mode
+        cmd.ready := true.B
+
+      }
+      when(cmd.valid && DoPreLoad){
+        perform_single_preload := true.B
+        start_sram_feeding := true.B
+      }
+      when(cmd.valid && (DoComputeAndFlip || DoComputeAndStay)){
+        a_address_rs1 := rs1
+        b_address_rs2 := rs2
+        in_s := Mux(DoComputeAndFlip,~in_s,in_s)
+        control_state := compute
+        cmd.ready := true.B
+      }
+    }
+    is(compute){
+      when(cmd.valid && !DoPreLoad) {
+        perform_single_mul := true.B
+        start_sram_feeding := true.B
+        preload_zeros := true.B
+        when(fired_all_rows){
+          control_state := flush
+          meshIO.io.flush.valid := true.B
+        }
+      }
+      when(cmd.valid && DoPreLoad) {
+        start_sram_feeding := true.B
+        perform_mul_pre := true.B
+        when(fired_all_rows){
+          cmd.ready := true.B
+        }
+      }
+    }
+    is(flush){
+      when(meshIO.io.flush.ready){
+        control_state := decode
+      }
+    }
   }
 
 
-  switch(feed_state) {
-    is(idle) {
-      when((DoComputeAndFlip || DoComputeAndStay) && cmd.valid) {
-        start_sram_feeding := true.B
-        feed_state := feed_data
-      }
-
+  when(perform_mul_pre){
+    when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
+      fired_all_rows := fire_counter.inc()
+      meshIO.io.a.valid := true.B
+      meshIO.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
+      meshIO.io.b.valid := true.B
+      meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+      meshIO.io.d.valid := true.B
+      meshIO.io.d.bits := Mux(
+        preload_zeros,
+        (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type))),
+        dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+      )
+      meshIO.io.tag_in.valid := true.B
+      meshIO.io.s.valid := true.B
+      meshIO.io.tag_in.bits := c_address_rs2 //if this is 0xFFFFFF then don't output
+      meshIO.io.s.bits := in_s
     }
-    is(feed_data) {
-      start_sram_feeding := true.B
+  }
 
-      when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
-        fired_all_rows := fire_counter.inc()
-        rs1 := rs1 + 1.U // check if should move to previous state too
-        rs2 := rs2 + 1.U
-        d_address_rs1 := d_address_rs1 + 1.U
+  when(perform_single_mul){
+    when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
+    fired_all_rows := fire_counter.inc()
 
-        meshIO.io.a.valid := true.B
-        meshIO.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
-        meshIO.io.b.valid := true.B
-        meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-        meshIO.io.d.valid := true.B
-        meshIO.io.d.bits := Mux(
-          preload_zeros,
-          (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type))),
-          dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-        )
-        meshIO.io.tag_in.valid := true.B
-        meshIO.io.s.valid := true.B
-        //mesh.io.m.valid := true.B
-        meshIO.io.tag_in.bits := c_address_rs2 //if this is 0xFFFFFF then don't output
-        meshIO.io.s.bits := DoComputeAndFlip
-        meshIO.io.m := Mux(
-          ModeOS,
-          Dataflow.OS.id.U,
-          Dataflow.WS.id.U
-        )
-      }
+    meshIO.io.a.valid := true.B
+    meshIO.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
+    meshIO.io.b.valid := true.B
+    meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+    meshIO.io.d.valid := true.B
+    meshIO.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
 
-      when(fired_all_rows) {
-        preload_zeros := false.B
-        feed_state := idle
-        cmd.ready := true.B
-        blocks_fired.inc()
-      }
+    meshIO.io.tag_in.valid := true.B
+    meshIO.io.s.valid := true.B
+    meshIO.io.tag_in.bits := 0xFFFFFFFFL.U //if this is 0xFFFFFF then don't output
+    meshIO.io.s.bits := in_s
+  }
+  }
+
+
+  when(perform_single_preload){
+    when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
+      fired_all_rows := fire_counter.inc()
+      meshIO.io.a.valid := true.B
+      meshIO.io.a.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+      meshIO.io.b.valid := true.B
+      meshIO.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+      meshIO.io.d.valid := true.B
+      meshIO.io.d.bits := Mux(
+        preload_zeros,
+        (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type))),
+        dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+      )
+      meshIO.io.tag_in.valid := true.B
+      meshIO.io.s.valid := true.B
+      meshIO.io.tag_in.bits := c_address_rs2 //if this is 0xFFFFFF then don't output
+      meshIO.io.s.bits := in_s
+    }
+
+    when(fired_all_rows) {
+      cmd.ready := true.B
     }
   }
 
@@ -213,77 +271,34 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   when(meshIO.io.out.fire() && !meshIO.io.tag_out===0xFFFFFFFFL.U) {
     start_array_outputting := true.B
-    outputed_all_rows := output_counter.inc()
   }
-when(outputed_all_rows) {blocks_outputed.inc()}
-
-
-//        when(DoComputeOnly){
-//
-//        }
-//        }.elsewhen(DoComputeAndWrite){
-//          compute_state := write_output
-//          mesh.io.out.ready := true.B
-//
-//        }
-//      }
-//    }
-//    is(write_output) {
-//      sp_c.io.write.en := true.B
-//      mesh.io.out.ready := true.B
-//      when(mesh.io.out.fire()) {
-//        wrap = fire_counter.inc()
-//        rd := rd + 1.U
-//        sp_c.io.write.wdata := mesh.io.out.bits
-//      }
-//      when(wrap) {
-//        compute_state := idle
-//        cmd.deq.ready := true.B
-//
-//        }
-//      }
-//    }
 
 
   spad.module.io.dma.req.valid := false.B
 
-  switch(DRAM_to_SRAM_state){
-    is(idle_load) {
-      when (DoLoad && cmd.valid && spad.module.io.dma.req.ready && blocks_fired.value === blocks_outputed.value){
+
+  when (perform_load && spad.module.io.dma.req.ready){
         spad.module.io.dma.req.valid := true.B
         spad.module.io.dma.req.bits.vaddr := rs1
         spad.module.io.dma.req.bits.spbank := rs2(rs2.getWidth-1,rs2.getWidth-log2Ceil(sp_banks))
         spad.module.io.dma.req.bits.spaddr := rs2(rs2.getWidth-log2Ceil(sp_banks)-1,0)
-        spad.module.io.dma.req.bits.write := true.B
-        DRAM_to_SRAM_state := start_load_to_SRAM
-      }
-    }
-    is(start_load_to_SRAM){
-      when(spad.module.io.dma.resp.valid){
-        cmd.ready := true.B
-        DRAM_to_SRAM_state := idle
-      }
-    }
+        spad.module.io.dma.req.bits.write := false.B
+        when(spad.module.io.dma.resp.valid){
+          cmd.ready := true.B
+        }
   }
+
   spad.module.io.dma.resp.ready := true.B
 
-  switch(SRAM_to_DRAM_state){
-    is(idle_store) {
-      when (DoStore && cmd.valid && spad.module.io.dma.req.ready && blocks_fired.value === blocks_outputed.value){
-        spad.module.io.dma.req.valid := true.B
-        spad.module.io.dma.req.bits.vaddr := rs2
-        spad.module.io.dma.req.bits.spbank := rs1(rs1.getWidth-1,rs1.getWidth-log2Ceil(sp_banks))
-        spad.module.io.dma.req.bits.spaddr := rs1(rs1.getWidth-log2Ceil(sp_banks)-1,0)
-        spad.module.io.dma.req.bits.write := false.B
-        SRAM_to_DRAM_state := start_store_to_DRAM
 
-      }
-    }
-    is(start_store_to_DRAM){
-      when(spad.module.io.dma.resp.valid){ // assumes no page faults occur
-        cmd.ready := true.B
-        DRAM_to_SRAM_state := idle
-      }
+  when (perform_store && spad.module.io.dma.req.ready) {
+    spad.module.io.dma.req.valid := true.B
+    spad.module.io.dma.req.bits.vaddr := rs2
+    spad.module.io.dma.req.bits.spbank := rs1(rs1.getWidth - 1, rs1.getWidth - log2Ceil(sp_banks))
+    spad.module.io.dma.req.bits.spaddr := rs1(rs1.getWidth - log2Ceil(sp_banks) - 1, 0)
+    spad.module.io.dma.req.bits.write := true.B
+    when(spad.module.io.dma.resp.valid) { // assumes no page faults occur
+      cmd.ready := true.B
     }
   }
 }
