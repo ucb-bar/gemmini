@@ -12,6 +12,7 @@ import systolic.Util._
 // TODO Change S to an enum
 // TODO Does it make sense to not pause when the output isn't valid? And is that possible with the current setup anyway?
 // TODO Should I add a reset buffers input?
+// TODO should I add an output_valid counter?
 
 class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dataflow.Value,
                      val tileRows: Int, val tileColumns: Int,
@@ -38,8 +39,15 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
     val out = Decoupled(Output(C_TYPE))
     val out_s = Output(S_TYPE)
 
-    // val flush = Input(Bool())
+    // TODO
+    val flush = new Bundle {
+      val ready = Output(Bool())
+      val valid = Input(Bool())
+    }
   })
+
+  // TODO
+  io.flush.ready := true.B
 
   assert(meshRows*tileRows == meshColumns*tileColumns && meshRows*tileRows == sramEntries)
 
@@ -75,7 +83,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
   val compute_stalling = compute_done && RegNext(compute_done) // TODO this also seems inelegant...
 
-  val buffering_done = a_buf.io.full && b_buf.io.full && d_buf.io.full /* && s_next_written && tag_written */
+  val buffering_done = a_buf.io.full && b_buf.io.full && d_buf.io.full && s_next_written && tag_written
 
   val flip = compute_done && buffering_done // When the double-buffers flip roles
   val pause = (compute_stalling || !io.out.ready) // && !io.flush
@@ -121,10 +129,30 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   io.out.valid := out_is_valid
 
   // Tags
-  val tag_queue = Module(new TagQueue(5, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
+  val tag_queue = Module(new TagQueue(100, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
   tag_queue.io.in.bits := io.tag_in.bits
-  tag_queue.io.out.next := io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))
   tag_queue.io.garbage := Cat(Seq.fill(tagWidth)(1.U(1.W)))
+
+  val tag_id_reg = RegInit(0.U(1.W)) // Used to keep track of when we should increment
+  val tag_id = WireInit(tag_id_reg)
+  val tag_id_delayed = ShiftRegister(tag_id, meshRows*meshColumns + S_TYPE.size-1, !pause)
+
+  val first_s_flip_reg = RegInit(false.B)
+  val first_s_flip = WireInit(first_s_flip_reg)
+  when (io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))) {
+    first_s_flip_reg := true.B
+    first_s_flip := true.B
+  }
+
+  val output_rows_counter = RegInit(0.U((log2Ceil(meshRows*tileRows) max 1).W))
+  val next_output_rows_counter = WireInit(wrappingAdd(output_rows_counter, 1.U, meshRows*tileRows))
+
+  when (io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))) {
+    next_output_rows_counter := 0.U
+  }
+  output_rows_counter := next_output_rows_counter
+
+  tag_queue.io.out.next := tag_id_delayed =/= RegNext(tag_id_delayed) // next_output_rows_counter === 0.U && first_s_flip
 
   when (io.tag_in.fire()) { tag_written := true.B }
   io.tag_in.ready := !tag_written
@@ -132,13 +160,12 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
   io.tag_out := tag_queue.io.out.bits(Mux(io.m === Dataflow.OS.id.U, 0.U, 1.U))
 
-  /*
   printf(p"     active: $active,     compute_done: $compute_done,    buffering_done: $buffering_done,    s_buf(active): ${s_bufs(active)}\n")
+  printf(p"     io.s.bits: ${io.s.bits}, io.s.ready: ${io.s.ready}, io.s.valid: ${io.s.valid}")
   printf(p"     io.a: ${io.a.bits}, a_read: ${a_buf.io.out}\n")
   printf(p"     io.b: ${io.b.bits}, b_read: ${b_buf.io.out}\n")
   printf(p"     io.d: ${io.d.bits}, d_read: ${d_buf.io.out}\n")
-  printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (s: ${io.out_s(0)(0)}) (tag: ${io.tag_out})\n")
-  */
+  printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (out_s: ${io.out_s(0)(0)}) (tag: ${io.tag_out})\n")
 
   // Control logic for buffers
   when(io.s.fire() && !flip) {
@@ -159,12 +186,15 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
     io.tag_in.ready := true.B
     tag_written := io.tag_in.fire()
 
-    // printf(p"     Done!   (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    tag_id_reg := (~tag_id_reg).asUInt()
+    // tag_id := (~tag_id_reg).asUInt()
+
+    printf(p"     Done!   (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.elsewhen(!compute_done) {
-    // printf(p"     Computing!  (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    printf(p"     Computing!  (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.otherwise {
     // Pause systolic array
-    // printf(p"     PAUSING  (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    printf(p"     PAUSING  (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }
 }
 
@@ -206,8 +236,9 @@ class InputBuffer[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module 
   bufs.zip(bufs.reverse).foreach { case (b1, b2) => b1.ren_other := b2.ren }
 
   val buffering_started = RegInit(false.B)
+  // val output_started = RegInit(false.B)
   val buffering_done = buffering_started && addrs(write_into) === 0.U
-  val output_done = addrs(read_from) === 0.U
+  val output_done = /*output_started &&*/ addrs(read_from) === 0.U
 
   io.ready := !buffering_done
   io.full := buffering_done
@@ -223,6 +254,10 @@ class InputBuffer[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module 
     bufs(write_into).wen := true.B
     buffering_started := true.B
   }
+
+  /*when (!io.pause) {
+    output_started := true.B
+  }*/
 
   when (buffering_done && io.fire) {
     read_from := write_into
@@ -315,7 +350,7 @@ class TagQueue[T <: Data](len: Int, t: T) extends Module {
 
   val regs = RegInit(VecInit(Seq.fill(len)(io.garbage)))
   val raddr = RegInit(0.U((log2Ceil(len) max 1).W))
-  val waddr = RegInit(3.U((log2Ceil(len) max 1).W))
+  val waddr = RegInit(1.U((log2Ceil(len) max 1).W))
 
   val raddr_inc = wrappingAdd(raddr, 1.U, len)
   val raddr_inc2 = wrappingAdd(raddr, 2.U, len)

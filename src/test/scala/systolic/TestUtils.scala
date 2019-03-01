@@ -6,6 +6,7 @@ object TestUtils {
 
   def rows[T](m: Matrix[T]) = m.length
   def cols[T](m: Matrix[T]) = m.head.length
+  def dims[T](m: Matrix[T]) = (rows(m), cols(m))
 
   def mult[A](a: Matrix[A], b: Matrix[A])(implicit n: Numeric[A]): Matrix[A] = {
     import n._
