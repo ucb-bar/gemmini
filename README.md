@@ -52,7 +52,7 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 ## Dataflow Mode
 ### `setmode` set the mode to weight/output stationary
 **Format:** `setmode rs1`
-- `rs1` = the lsb of rs1 will determine if weight (0.U) or output (1.U) stationary.
+- `rs1` = the lsb of rs1 will determine if output (0.U) or weight (1.U) stationary.
 
  **-- funct field should be set to 9**
  
