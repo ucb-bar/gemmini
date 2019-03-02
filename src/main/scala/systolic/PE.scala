@@ -28,18 +28,14 @@ class PE[T <: Data](innerType: T, df: Dataflow.Value, pass_through: Boolean = tr
     val pause = Input(Bool())
   })
 
-  val a  = if (pass_through) Wire(innerType) else Reg(innerType)
-  val b  = if (pass_through) Wire(innerType.doubleWidth) else Reg(innerType.doubleWidth)
-  val d  = if (pass_through) Wire(innerType.doubleWidth) else Reg(innerType.doubleWidth)
+  val a  = if (pass_through) WireInit(io.in_a) else RegNext(io.in_a)
+  val b  = if (pass_through) WireInit(io.in_b) else RegNext(io.in_b)
+  val d  = if (pass_through) WireInit(io.in_d) else RegNext(io.in_d)
   // TODO: potential for overflow in internal accumulators (add assertion) (use explicit width)
   val c1 = Reg(innerType.doubleWidth)
   val c2 = Reg(innerType.doubleWidth)
-  val s  = if (pass_through) Wire(UInt(2.W)) else Reg(UInt(2.W))
+  val s  = if (pass_through) WireInit(io.in_s) else RegNext(io.in_s)
 
-  a := io.in_a
-  b := io.in_b
-  d := io.in_d
-  s := io.in_s
   io.out_s := s
   io.out_a := a
 
@@ -54,7 +50,9 @@ class PE[T <: Data](innerType: T, df: Dataflow.Value, pass_through: Boolean = tr
   val COMPUTE = 0.U(1.W)
   val PROPAGATE = 1.U(1.W)
 
-  def add_os_conditions() = {
+  val supports_os = (df == Dataflow.OS || df == Dataflow.BOTH).B
+
+  when (mode === OUTPUT_STATIONARY && supports_os) {
     when(select === PROPAGATE){
       io.out_c := c1
       io.out_b := b
@@ -66,9 +64,7 @@ class PE[T <: Data](innerType: T, df: Dataflow.Value, pass_through: Boolean = tr
       c1 := (a*b) + c1
       c2 := d
     }
-  }
-
-  def add_ws_conditions() = {
+  }.otherwise {
     when(select === PROPAGATE){
       io.out_c := c1
       io.out_b := (a*c2) + b
@@ -77,18 +73,6 @@ class PE[T <: Data](innerType: T, df: Dataflow.Value, pass_through: Boolean = tr
       io.out_c := c2
       io.out_b := (a*c1) + b
       c2 := d
-    }
-  }
-
-  if (df == Dataflow.OS) {
-    add_os_conditions()
-  } else if (df == Dataflow.WS) {
-    add_ws_conditions()
-  } else { // if (df == Dataflow.BOTH) {
-    when (mode === OUTPUT_STATIONARY) {
-      add_os_conditions()
-    }.otherwise {
-      add_ws_conditions()
     }
   }
 

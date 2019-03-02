@@ -8,6 +8,7 @@ import systolic.Util._
 
 // TODO add a flush option
 // TODO add option to shift output with SRAM banking instead
+// TODO change banks to support non-space tiles
 // TODO Handle matrices where N1 =/= N2 =/= N3
 // TODO Change S to an enum
 // TODO Does it make sense to not pause when the output isn't valid? And is that possible with the current setup anyway?
@@ -58,7 +59,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   val a_buf = Module(new InputBuffer(sramEntries, A_TYPE, banks))
   val b_buf = Module(new InputBuffer(sramEntries, B_TYPE, banks))
   val d_buf = Module(new InputBuffer(meshRows*tileRows, D_TYPE, banks))
-  val s_bufs = RegInit(VecInit(1.U, 0.U)) // TODO find a better name for this
+  val s_bufs = RegInit(VecInit(0.U, 1.U)) // TODO find a better name for this
 
   val s_next_written = RegInit(false.B)
   val tag_written = RegInit(false.B)
@@ -133,26 +134,25 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   tag_queue.io.in.bits := io.tag_in.bits
   tag_queue.io.garbage := Cat(Seq.fill(tagWidth)(1.U(1.W)))
 
-  val tag_id_reg = RegInit(0.U(1.W)) // Used to keep track of when we should increment
-  val tag_id = WireInit(tag_id_reg)
-  val tag_id_delayed = ShiftRegister(tag_id, meshRows*meshColumns + S_TYPE.size-1, !pause)
+  val tag_id = RegInit(0.U(1.W)) // Used to keep track of when we should increment
+  val tag_id_delayed = ShiftRegister(tag_id, meshRows + S_TYPE.size-1, 0.U, !pause)
 
-  val first_s_flip_reg = RegInit(false.B)
+  /*val first_s_flip_reg = RegInit(false.B)
   val first_s_flip = WireInit(first_s_flip_reg)
   when (io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))) {
     first_s_flip_reg := true.B
     first_s_flip := true.B
-  }
+  }*/
 
-  val output_rows_counter = RegInit(0.U((log2Ceil(meshRows*tileRows) max 1).W))
-  val next_output_rows_counter = WireInit(wrappingAdd(output_rows_counter, 1.U, meshRows*tileRows))
+  // val output_rows_counter = RegInit(0.U((log2Ceil(meshRows*tileRows) max 1).W))
+  // val next_output_rows_counter = WireInit(wrappingAdd(output_rows_counter, 1.U, meshRows*tileRows))
 
-  when (io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))) {
+  /*when (io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))) {
     next_output_rows_counter := 0.U
   }
-  output_rows_counter := next_output_rows_counter
+  output_rows_counter := next_output_rows_counter*/
 
-  tag_queue.io.out.next := tag_id_delayed =/= RegNext(tag_id_delayed) // next_output_rows_counter === 0.U && first_s_flip
+  tag_queue.io.out.next := (tag_id_delayed =/= RegNext(tag_id_delayed, 0.U)) // next_output_rows_counter === 0.U && first_s_flip
 
   when (io.tag_in.fire()) { tag_written := true.B }
   io.tag_in.ready := !tag_written
@@ -160,12 +160,13 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
   io.tag_out := tag_queue.io.out.bits(Mux(io.m === Dataflow.OS.id.U, 0.U, 1.U))
 
-  printf(p"     active: $active,     compute_done: $compute_done,    buffering_done: $buffering_done,    s_buf(active): ${s_bufs(active)}\n")
-  printf(p"     io.s.bits: ${io.s.bits}, io.s.ready: ${io.s.ready}, io.s.valid: ${io.s.valid}")
-  printf(p"     io.a: ${io.a.bits}, a_read: ${a_buf.io.out}\n")
-  printf(p"     io.b: ${io.b.bits}, b_read: ${b_buf.io.out}\n")
-  printf(p"     io.d: ${io.d.bits}, d_read: ${d_buf.io.out}\n")
-  printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (out_s: ${io.out_s(0)(0)}) (tag: ${io.tag_out})\n")
+  // printf(p"     active: $active,     compute_done: $compute_done,    buffering_done: $buffering_done,    s_buf(active): ${s_bufs(active)}\n")
+  // printf(p"     io.s.bits: ${io.s.bits}, io.s.ready: ${io.s.ready}, io.s.valid: ${io.s.valid}")
+  // printf(p"     io.a: ${io.a.bits}, a_read: ${a_buf.io.out}\n")
+  // printf(p"     io.b: ${io.b.bits}, b_read: ${b_buf.io.out}\n")
+  // printf(p"     io.d: ${io.d.bits}, d_read: ${d_buf.io.out}\n")
+  // printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (out_s: ${io.out_s(0)(0)}) (tag: ${io.tag_out})\n")
+  // printf(p"     tag_queue.io.out.next: ${tag_queue.io.out.next}\n")
 
   // Control logic for buffers
   when(io.s.fire() && !flip) {
@@ -186,15 +187,14 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
     io.tag_in.ready := true.B
     tag_written := io.tag_in.fire()
 
-    tag_id_reg := (~tag_id_reg).asUInt()
-    // tag_id := (~tag_id_reg).asUInt()
+    tag_id := (~tag_id).asUInt()
 
-    printf(p"     Done!   (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    // printf(p"     Done!   (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.elsewhen(!compute_done) {
-    printf(p"     Computing!  (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    // printf(p"     Computing!  (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.otherwise {
     // Pause systolic array
-    printf(p"     PAUSING  (stalling: ${compute_stalling}) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    // printf(p"     PAUSING  (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }
 }
 
@@ -350,7 +350,7 @@ class TagQueue[T <: Data](len: Int, t: T) extends Module {
 
   val regs = RegInit(VecInit(Seq.fill(len)(io.garbage)))
   val raddr = RegInit(0.U((log2Ceil(len) max 1).W))
-  val waddr = RegInit(1.U((log2Ceil(len) max 1).W))
+  val waddr = RegInit(2.U((log2Ceil(len) max 1).W))
 
   val raddr_inc = wrappingAdd(raddr, 1.U, len)
   val raddr_inc2 = wrappingAdd(raddr, 2.U, len)
