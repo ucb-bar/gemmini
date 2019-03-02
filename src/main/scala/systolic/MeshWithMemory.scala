@@ -40,15 +40,14 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
     val out = Decoupled(Output(C_TYPE))
     val out_s = Output(S_TYPE)
 
-    // TODO
+    // TODO make this a decoupled
     val flush = new Bundle {
       val ready = Output(Bool())
       val valid = Input(Bool())
+
+      def fire() = ready && valid
     }
   })
-
-  // TODO
-  io.flush.ready := true.B
 
   assert(meshRows*tileRows == meshColumns*tileColumns && meshRows*tileRows == sramEntries)
 
@@ -59,7 +58,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   val a_buf = Module(new InputBuffer(sramEntries, A_TYPE, banks))
   val b_buf = Module(new InputBuffer(sramEntries, B_TYPE, banks))
   val d_buf = Module(new InputBuffer(meshRows*tileRows, D_TYPE, banks))
-  val s_bufs = RegInit(VecInit(0.U, 1.U)) // TODO find a better name for this
+  val s_bufs = RegInit(VecInit(0.U, 0.U)) // TODO find a better name for this
 
   val s_next_written = RegInit(false.B)
   val tag_written = RegInit(false.B)
@@ -86,8 +85,10 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
   val buffering_done = a_buf.io.full && b_buf.io.full && d_buf.io.full && s_next_written && tag_written
 
+  val flushing = RegInit(false.B)
+
   val flip = compute_done && buffering_done // When the double-buffers flip roles
-  val pause = (compute_stalling || !io.out.ready) // && !io.flush
+  val pause = compute_stalling || !io.out.ready
 
   a_buf.io.fire := flip
   b_buf.io.fire := flip
@@ -97,9 +98,9 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   b_buf.io.pause := pause
   d_buf.io.pause := pause
 
-  /*a_buf.io.flush := io.flush
-  b_buf.io.flush := io.flush
-  d_buf.io.flush := io.flush*/
+  a_buf.io.flush := (flushing || io.flush.fire())
+  b_buf.io.flush := (flushing || io.flush.fire())
+  d_buf.io.flush := (flushing || io.flush.fire())
 
   io.s.ready := !s_next_written
 
@@ -130,35 +131,49 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   io.out.valid := out_is_valid
 
   // Tags
-  val tag_queue = Module(new TagQueue(100, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
+  val tag_garbage = Cat(Seq.fill(tagWidth)(1.U(1.W)))
+  val tag_queue = Module(new TagQueue(5, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
   tag_queue.io.in.bits := io.tag_in.bits
-  tag_queue.io.garbage := Cat(Seq.fill(tagWidth)(1.U(1.W)))
+  tag_queue.io.garbage := tag_garbage
 
   val tag_id = RegInit(0.U(1.W)) // Used to keep track of when we should increment
   val tag_id_delayed = ShiftRegister(tag_id, meshRows + S_TYPE.size-1, 0.U, !pause)
 
-  /*val first_s_flip_reg = RegInit(false.B)
-  val first_s_flip = WireInit(first_s_flip_reg)
-  when (io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))) {
-    first_s_flip_reg := true.B
-    first_s_flip := true.B
-  }*/
-
-  // val output_rows_counter = RegInit(0.U((log2Ceil(meshRows*tileRows) max 1).W))
-  // val next_output_rows_counter = WireInit(wrappingAdd(output_rows_counter, 1.U, meshRows*tileRows))
-
-  /*when (io.out_s(0)(0)(0) =/= RegNext(io.out_s(0)(0)(0))) {
-    next_output_rows_counter := 0.U
-  }
-  output_rows_counter := next_output_rows_counter*/
-
-  tag_queue.io.out.next := (tag_id_delayed =/= RegNext(tag_id_delayed, 0.U)) // next_output_rows_counter === 0.U && first_s_flip
+  tag_queue.io.out.next := tag_id_delayed =/= RegNext(tag_id_delayed, 0.U)
 
   when (io.tag_in.fire()) { tag_written := true.B }
   io.tag_in.ready := !tag_written
   tag_queue.io.in.valid := io.tag_in.fire()
 
   io.tag_out := tag_queue.io.out.bits(Mux(io.m === Dataflow.OS.id.U, 0.U, 1.U))
+
+  // Flushing logic
+  val flush_counter = Reg(UInt(3.W))
+
+  io.flush.ready := !flushing
+
+  when (io.flush.fire()) {
+    flushing := true.B
+    flush_counter := 3.U
+  }
+
+  when (flushing) {
+    Seq(io.a.ready, io.b.ready, io.d.ready, io.s.ready, io.tag_in.ready).foreach(_ := false.B)
+
+    s_bufs(not_active) := ~s_bufs(active)
+    s_next_written := true.B
+
+    tag_written := true.B
+
+    when (buffering_done) {
+      flush_counter := flush_counter - 1.U
+
+      when (flush_counter === 0.U) {
+        flushing := false.B
+        Seq(a_buf.io.flush, b_buf.io.flush, d_buf.io.flush).foreach(_ := false.B)
+      }
+    }
+  }
 
   // printf(p"     active: $active,     compute_done: $compute_done,    buffering_done: $buffering_done,    s_buf(active): ${s_bufs(active)}\n")
   // printf(p"     io.s.bits: ${io.s.bits}, io.s.ready: ${io.s.ready}, io.s.valid: ${io.s.valid}")
@@ -167,8 +182,9 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   // printf(p"     io.d: ${io.d.bits}, d_read: ${d_buf.io.out}\n")
   // printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (out_s: ${io.out_s(0)(0)}) (tag: ${io.tag_out})\n")
   // printf(p"     tag_queue.io.out.next: ${tag_queue.io.out.next}\n")
+  // printf(p"     flushing: $flushing\n")
 
-  // Control logic for buffers
+  // Control logic
   when(io.s.fire() && !flip) {
     s_bufs(not_active) := io.s.bits ^ s_bufs(active)
     s_next_written := true.B
@@ -211,13 +227,13 @@ class InputBuffer[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module 
     val emptied = Output(Bool()) // Refers to the buffer for the current computation
 
     val pause = Input(Bool()) // Pauses the output, not the input
+    val flush = Input(Bool())
 
     // TODO add ability to fire without switching SRAMs
     val fire = Input(Bool())
-    // val flush = Input(Bool())
   })
 
-  val in_fire = (io.ready && io.valid) // || io.flush
+  val in_fire = io.ready && (io.valid || io.flush)
 
   val addrs = RegInit(VecInit(Seq.fill(2)(0.U((log2Ceil(n) max 1).W))))
 
@@ -255,11 +271,7 @@ class InputBuffer[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module 
     buffering_started := true.B
   }
 
-  /*when (!io.pause) {
-    output_started := true.B
-  }*/
-
-  when (buffering_done && io.fire) {
+  when (/*buffering_done &&*/ io.fire) {
     read_from := write_into
 
     bufs(write_into).ren := true.B
@@ -276,9 +288,9 @@ class InputBuffer[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module 
     addrs(read_from) := Mux(addrs(read_from) === (n-1).U, 0.U, addrs(read_from) + 1.U)
   }
 
-  /*when (io.flush) {
+  when (io.flush) {
     bufs.foreach(_.wen := false.B)
-  }*/
+  }
 
   // assert(!(io.pause && io.fire), "fired when paused") // TODO add this back when possible
 }
@@ -332,6 +344,7 @@ class BankedMem[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module {
   assert(!(io.ren && io.ren_other), "both banks are being read from at the same time")
 }
 
+// TODO make this output garbage when it's empty
 class TagQueue[T <: Data](len: Int, t: T) extends Module {
   val io = IO(new Bundle {
     val in = new Bundle {

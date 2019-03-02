@@ -68,10 +68,11 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
     }
   }
 
-  def flush(getOut: Boolean = true, flip: Boolean = true): Unit = {
+  def startup(getOut: Boolean): Unit = {
+    reset()
     pokeAllInputValids(true)
     poke(c.io.out.ready, 1)
-    poke(c.io.s.bits, flip)
+    poke(c.io.s.bits, false)
     for (i <- 1 to 4) {
       do {
         step(1)
@@ -79,16 +80,14 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
           updateOutput()
       } while (peek(c.io.s.ready) == 0)
     }
+    reset()
   }
 
   def formatMs(ms: Seq[MeshTesterInput]): Seq[MeshInput]
   def formatOut(outs: Seq[Matrix[Int]], tags: Seq[Int]): Seq[MeshOutput]
   def goldResults(ms: Seq[MeshTesterInput]): Seq[Matrix[Int]]
 
-  reset()
-  // flush(true)
-  flush(false, false)
-  reset()
+  startup(false)
   poke(c.io.out.ready, true)
 
   // Input all matrices
@@ -138,8 +137,14 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
     }
   }
 
-  // Pass in garbage data till all the results are read out
-  flush(true)
+  // Flush out the final results
+  poke(c.io.out.ready, 1)
+  poke(c.io.flush.valid, 1)
+  do {
+    step(1)
+    poke(c.io.flush.valid, 0)
+    updateOutput()
+  } while (peek(c.io.flush.ready) == 0)
 
   /*
   println("Mesh output:")
@@ -301,12 +306,12 @@ class MeshWithMemoryTester extends ChiselFlatSpec
 
   "SimpleMeshWithMemoryTester" should "work" in {
     // This is really just here to help with debugging
-    val dim = 3
+    val dim = 2
 
     iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
       () => new MeshWithMemory(SInt(16.W), 32, Dataflow.BOTH, 1, 1, dim, dim, dim, 1)) {
       // () => new MeshWithMemory(SInt(16.W), 32, Dataflow.BOTH, dim, dim, 1, 1, dim, 1)) {
-        c => new WSMeshWithMemoryUnitTest(c, Seq(MeshTesterInput(identity(dim), identity(dim), identity(dim), true), MeshTesterInput(identity(dim), identity(dim), zero(dim), true)), () => 0, () => 0)
+        c => new OSMeshWithMemoryUnitTest(c, Seq(MeshTesterInput(identity(dim), identity(dim), identity(dim), true), MeshTesterInput(identity(dim), identity(dim), zero(dim), true)), () => 0, () => 0)
     } should be(true)
   }
 
