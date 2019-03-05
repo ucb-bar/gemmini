@@ -91,9 +91,9 @@ The preload command is encoded to funct field #8.
 - If you set the preload command's rd value to 1 it will automatically preload zeros.
 - If you set the preload command's C value to 0xFFFFFFFF the systolic array will assume the output will remain in the systolic array and won't be read out.
 The `matmul.compute` command is encoded to funct fields #4 and #5.
-- `matmul.compute` associated with funct field #4 will compute on the value preloaded (D) <!---
+- `matmul.compute.preloaded` associated with funct field #4 will compute on the value preloaded (D) <!---
 in the PREVIOUS `matmul` instruction.-->
-- `matmul.compute` associated with funct field #5 will accumulate on top of the previously computed results <!---of the PREVIOUS `matmul` instruction.-->
+- `matmul.compute.accumulate` associated with funct field #5 will accumulate on top of the previously computed results <!---of the PREVIOUS `matmul` instruction.-->
 
 <!---
 ### Preloading
