@@ -218,7 +218,7 @@ class Scratchpad(
 
     val rowBuffer = Reg(Vec(nBeats, UInt(dataBits.W)))
     val bufAddr = Reg(UInt(rowAddrBits.W))
-    val bufIdx = bufAddr(rowAddrBits-1, byteAddrBits)
+    val bufIdx = bufAddr >> byteAddrBits.U//bufAddr(rowAddrBits-1, byteAddrBits)
     val bufDone = Reg(Bool())
 
     val (rowData, rowKeep) = {
