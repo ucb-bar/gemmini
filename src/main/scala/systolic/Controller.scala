@@ -46,7 +46,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   cmd.ready := false.B
   io.busy := cmd.valid
 
-
   //aliases of cmd
   val mydataflow = RegInit(Dataflow.OS.id.U)
   val rs1 = cmd.bits.rs1
@@ -90,7 +89,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   assert(sp_width == meshRows*tileRows*inner_type.getWidth)
   assert(block_size == meshRows*tileRows)
 
-
   //SRAM scratchpad
   val a_read_bank_number = a_address_rs1(rs1.getWidth - 1, rs1.getWidth-log2Ceil(sp_banks))
   val b_read_bank_number = b_address_rs2(rs2.getWidth - 1, rs2.getWidth-log2Ceil(sp_banks))
@@ -102,7 +100,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   meshIO.io.s.valid := false.B
   meshIO.io.tag_in.valid := false.B
   meshIO.io.flush.valid := false.B
-
 
   meshIO.io.a.bits := DontCare
   meshIO.io.b.bits := DontCare
@@ -137,7 +134,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val dataA = readData(RegNext(a_read_bank_number))
   val dataB = readData(RegNext(b_read_bank_number))
   val dataD = readData(RegNext(d_read_bank_number))
-
 
   switch(control_state){
     is(decode){
@@ -191,7 +187,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     }
   }
 
-
   when(perform_mul_pre){
     when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
       fired_all_rows := fire_counter.inc()
@@ -214,22 +209,21 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   when(perform_single_mul){
     when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
-    fired_all_rows := fire_counter.inc()
+      fired_all_rows := fire_counter.inc()
 
-    meshIO.io.a.valid := true.B
-    meshIO.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
-    meshIO.io.b.valid := true.B
-    meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-    meshIO.io.d.valid := true.B
-    meshIO.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+      meshIO.io.a.valid := true.B
+      meshIO.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
+      meshIO.io.b.valid := true.B
+      meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+      meshIO.io.d.valid := true.B
+      meshIO.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
 
-    meshIO.io.tag_in.valid := true.B
-    meshIO.io.s.valid := true.B
-    meshIO.io.tag_in.bits := 0xFFFFFFFFL.U //if this is 0xFFFFFF then don't output
-    meshIO.io.s.bits := in_s
+      meshIO.io.tag_in.valid := true.B
+      meshIO.io.s.valid := true.B
+      meshIO.io.tag_in.bits := 0xFFFFFFFFL.U //if this is 0xFFFFFF then don't output
+      meshIO.io.s.bits := in_s
+    }
   }
-  }
-
 
   when(perform_single_preload){
     when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
@@ -273,27 +267,26 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     start_array_outputting := true.B
   }
 
-
   spad.module.io.dma.req.valid := false.B
-
-
-  when (perform_load && spad.module.io.dma.req.ready){
-        spad.module.io.dma.req.valid := true.B
-        spad.module.io.dma.req.bits.vaddr := rs1
-        spad.module.io.dma.req.bits.spbank := rs2(rs2.getWidth-1,rs2.getWidth-log2Ceil(sp_banks))
-        spad.module.io.dma.req.bits.spaddr := rs2(rs2.getWidth-log2Ceil(sp_banks)-1,0)
-        spad.module.io.dma.req.bits.write := false.B
-        when(spad.module.io.dma.resp.valid){
-          cmd.ready := true.B
-        }
-  }
-
   spad.module.io.dma.resp.ready := true.B
 
+  // TODO: spad.module.io.dma.req.valid should be asserted before waiting for ready (potential deadlock)
+  when (perform_load && spad.module.io.dma.req.ready){
+    spad.module.io.dma.req.valid := true.B
+    spad.module.io.dma.req.bits.vaddr := rs1
+    spad.module.io.dma.req.bits.spbank := rs2(rs2.getWidth-1,rs2.getWidth-log2Ceil(sp_banks))
+    spad.module.io.dma.req.bits.spaddr := rs2(rs2.getWidth-log2Ceil(sp_banks)-1,0)
+    spad.module.io.dma.req.bits.write := false.B
+  }
+
+  when (perform_load && spad.module.io.dma.resp.valid) {
+    cmd.ready := true.B
+  }
 
   when (perform_store && spad.module.io.dma.req.ready) {
     spad.module.io.dma.req.valid := true.B
     spad.module.io.dma.req.bits.vaddr := rs2
+    // TODO: these assignments are reversed rs1/rs2 for loads/stores unnecessarily, ought to change the ISA spec
     spad.module.io.dma.req.bits.spbank := rs1(rs1.getWidth - 1, rs1.getWidth - log2Ceil(sp_banks))
     spad.module.io.dma.req.bits.spaddr := rs1(rs1.getWidth - log2Ceil(sp_banks) - 1, 0)
     spad.module.io.dma.req.bits.write := true.B
