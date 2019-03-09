@@ -25,9 +25,9 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 ### `mvin` Move Data From L2/DRAM to Scratchpad
 **Format:** `mvin rs1, rs2`
 - `rs1` = virtual DRAM address to load into scratchpad
-- `rs2` = local scratchpad address (the highest bits of rs2 determine the bank number and the lowests bits determine the entry)
+- `rs2` = local scratchpad address (the highest bits of `rs2` determine the bank number and the lowests bits determine the entry)
+- `funct` = 2
 
- **-- funct field should be set to 2**
 **Action:** Scratchpad[rs2] <= DRAM[Translate[rs1]]
 - Loads a fixed amount of data into the scratchpad = `tileRows x meshRows x dataBytes` corresponding to the Mesh's parameterization
 - Load is sequential from the rs1/rs2 base address. Any stride or skip operation is implemented in software
@@ -38,10 +38,9 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 
 ### `mvout` Move Data from Scratchpad to L2/DRAM
 **Format:** `mvout rs1, rs2`
-- rs1 = local scratchpad address (the highest bits of rs1 determine the bank number and the lowests bits determine the entry)
-- rs2 = virtual DRAM address to write to 
-
- **-- funct field should be set to 3**
+- `rs1` = virtual DRAM address to write to
+- `rs2` = local scratchpad address (the highest bits of `rs2` determine the bank number and the lowests bits determine the entry)
+- `funct` = 3
 
 **Action:** DRAM[Translate[rs2]] <= Scratchpad[rs1]
 - Stores a fixed amount of data from the scratchpad to L2/DRAM = `tileRows x meshRows x dataBytes`
@@ -53,9 +52,8 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 ### `setmode` set the mode to weight/output stationary
 **Format:** `setmode rs1`
 - `rs1` = the lsb of rs1 will determine if output (0.U) or weight (1.U) stationary.
+- `funct` = 9
 
- **-- funct field should be set to 9**
- 
 **Action:** mode <= rs1(0)
 
 ## Core Matmul Sequences
@@ -64,7 +62,7 @@ Every single matrix multiply operation is a combination of matmul.preload and ma
 Example:
 ```
 //// first matmul ////
-// rs1 = InputD 
+// rs1 = InputD
 // rs2 = OutputC
 // rs3 = InputA
 // rs4 = InputB

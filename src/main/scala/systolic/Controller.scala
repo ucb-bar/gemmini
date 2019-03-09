@@ -45,6 +45,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val cmd = Queue(io.cmd, queue_length)
   cmd.ready := false.B
   io.busy := cmd.valid
+  // io.cmd.valid implies io.cmd.bits.inst.xd = 0
+  assert(!io.cmd.valid || io.cmd.bits.inst.xd === false.B, "This controller doesn't support rd instructions due to unconnected RoCC resp")
 
   //aliases of cmd
   val mydataflow = RegInit(Dataflow.OS.id.U)
@@ -267,31 +269,28 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     start_array_outputting := true.B
   }
 
-  spad.module.io.dma.req.valid := false.B
-  spad.module.io.dma.resp.ready := true.B
+  spad.module.io.dma.resp.ready := true.B // The controller discards DMA responses
+  // For both mvin and mvout, rs1 = DRAM address, rs2 = scratchpad address
+  spad.module.io.dma.req.bits.vaddr := rs1
+  spad.module.io.dma.req.bits.spbank := rs2(rs2.getWidth-1,rs2.getWidth-log2Ceil(sp_banks))
+  spad.module.io.dma.req.bits.spaddr := rs2(rs2.getWidth-log2Ceil(sp_banks)-1,0)
 
+  spad.module.io.dma.req.valid := false.B
+  spad.module.io.dma.req.bits.write := false.B
   // TODO: spad.module.io.dma.req.valid should be asserted before waiting for ready (potential deadlock)
   when (perform_load && spad.module.io.dma.req.ready){
     spad.module.io.dma.req.valid := true.B
-    spad.module.io.dma.req.bits.vaddr := rs1
-    spad.module.io.dma.req.bits.spbank := rs2(rs2.getWidth-1,rs2.getWidth-log2Ceil(sp_banks))
-    spad.module.io.dma.req.bits.spaddr := rs2(rs2.getWidth-log2Ceil(sp_banks)-1,0)
     spad.module.io.dma.req.bits.write := false.B
   }
-
   when (perform_load && spad.module.io.dma.resp.valid) {
     cmd.ready := true.B
   }
 
   when (perform_store && spad.module.io.dma.req.ready) {
     spad.module.io.dma.req.valid := true.B
-    spad.module.io.dma.req.bits.vaddr := rs2
-    // TODO: these assignments are reversed rs1/rs2 for loads/stores unnecessarily, ought to change the ISA spec
-    spad.module.io.dma.req.bits.spbank := rs1(rs1.getWidth - 1, rs1.getWidth - log2Ceil(sp_banks))
-    spad.module.io.dma.req.bits.spaddr := rs1(rs1.getWidth - log2Ceil(sp_banks) - 1, 0)
     spad.module.io.dma.req.bits.write := true.B
-    when(spad.module.io.dma.resp.valid) { // assumes no page faults occur
-      cmd.ready := true.B
-    }
+  }
+  when (perform_store && spad.module.io.dma.resp.valid) { // assumes no page faults occur
+    cmd.ready := true.B
   }
 }
