@@ -6,9 +6,8 @@ import chisel3.util._
 
 import systolic.Util._
 
-// TODO add a flush option
 // TODO add option to shift output with SRAM banking instead
-// TODO change banks to support non-space tiles
+// TODO change banks to support non-square tiles
 // TODO Handle matrices where N1 =/= N2 =/= N3
 // TODO Change S to an enum
 // TODO Does it make sense to not pause when the output isn't valid? And is that possible with the current setup anyway?
@@ -58,22 +57,12 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   val a_buf = Module(new InputBuffer(sramEntries, A_TYPE, banks))
   val b_buf = Module(new InputBuffer(sramEntries, B_TYPE, banks))
   val d_buf = Module(new InputBuffer(meshRows*tileRows, D_TYPE, banks))
+  val mat_bufs = Seq(a_buf, b_buf, d_buf)
+
   val s_bufs = RegInit(VecInit(0.U, 0.U)) // TODO find a better name for this
 
   val s_next_written = RegInit(false.B)
   val tag_written = RegInit(false.B)
-
-  a_buf.io.in := io.a.bits
-  b_buf.io.in := io.b.bits
-  d_buf.io.in := io.d.bits
-
-  a_buf.io.valid := io.a.valid
-  b_buf.io.valid := io.b.valid
-  d_buf.io.valid := io.d.valid
-
-  io.a.ready := a_buf.io.ready
-  io.b.ready := b_buf.io.ready
-  io.d.ready := d_buf.io.ready
 
   // TODO this seems inelegant...
   val last_output_retrieved = RegInit(false.B)
@@ -90,17 +79,14 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   val flip = compute_done && buffering_done // When the double-buffers flip roles
   val pause = compute_stalling || !io.out.ready
 
-  a_buf.io.fire := flip
-  b_buf.io.fire := flip
-  d_buf.io.fire := flip
-
-  a_buf.io.pause := pause
-  b_buf.io.pause := pause
-  d_buf.io.pause := pause
-
-  a_buf.io.flush := (flushing || io.flush.fire())
-  b_buf.io.flush := (flushing || io.flush.fire())
-  d_buf.io.flush := (flushing || io.flush.fire())
+  mat_bufs.zip(Seq(io.a, io.b, io.d)).foreach { case (b, mio) =>
+      b.io.in := mio.bits
+      b.io.valid := mio.valid
+      mio.ready := b.io.ready
+      b.io.fire := flip
+      b.io.pause := pause
+      b.io.flush := (flushing || io.flush.fire())
+  }
 
   io.s.ready := !s_next_written
 
@@ -170,7 +156,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
       when (flush_counter === 0.U) {
         flushing := false.B
-        Seq(a_buf.io.flush, b_buf.io.flush, d_buf.io.flush).foreach(_ := false.B)
+        mat_bufs.foreach(_.io.flush := false.B)
       }
     }
   }
@@ -195,7 +181,6 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
     io.s.ready := true.B
     s_next_written := io.s.fire()
-    // when (io.flush) { s_bufs(not_active) := ~s_bufs(active) }.elsewhen(io.s.fire()) { s_bufs(active) := io.s.bits }
     when(io.s.fire()) { s_bufs(active) := io.s.bits ^ s_bufs(not_active) }
 
     last_output_retrieved := false.B
