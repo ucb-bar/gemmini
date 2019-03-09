@@ -3,26 +3,22 @@ package systolic
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.config._
-import freechips.rocketchip.subsystem._
 import freechips.rocketchip.diplomacy._
-import freechips.rocketchip.rocket._
-import freechips.rocketchip.tilelink._
-import freechips.rocketchip.util.InOrderArbiter
 import freechips.rocketchip.tile._
 
 case class SystolicArrayConfig(
-                                val tileRows: Int,
-                                val tileColumns: Int,
-                                val meshRows: Int,
-                                val meshColumns: Int,
-                                val queue_length: Int,
-                                val block_size: Int,
-                                val sp_banks: Int,
-                                val sp_bank_entries: Int,
-                                val sp_width: Int,
-                                val InternalSramEntries: Int,
-                                val InternalSramBanks: Int
-                              )
+  tileRows: Int,
+  tileColumns: Int,
+  meshRows: Int,
+  meshColumns: Int,
+  queue_length: Int,
+  block_size: Int,
+  sp_banks: Int,
+  sp_bank_entries: Int,
+  sp_width: Int,
+  InternalSramEntries: Int,
+  InternalSramBanks: Int
+)
 case object SystolicArrayKey extends Field[SystolicArrayConfig]
 
 class SystolicArray[T <: Data: Arithmetic](dtype: T, opcodes: OpcodeSet)(implicit p: Parameters) extends LazyRoCC (
@@ -46,7 +42,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   cmd.ready := false.B
   io.busy := cmd.valid
   // io.cmd.valid implies io.cmd.bits.inst.xd = 0
-  assert(!io.cmd.valid || io.cmd.bits.inst.xd === false.B, "This controller doesn't support rd instructions due to unconnected RoCC resp")
+  assert(!io.cmd.valid || io.cmd.bits.inst.xd === false.B,
+    "This controller doesn't support rd instructions due to unconnected RoCC resp")
 
   //aliases of cmd
   val mydataflow = RegInit(Dataflow.OS.id.U)
@@ -125,11 +122,16 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   for(i <- 0 until sp_banks){
     spad.module.io.read(i).en := start_sram_feeding &&
-      ((a_read_bank_number === i.U && !perform_single_preload)  || (b_read_bank_number === i.U && !perform_single_preload) || (d_read_bank_number === i.U && !preload_zeros))
+      ((a_read_bank_number === i.U && !perform_single_preload) ||
+       (b_read_bank_number === i.U && !perform_single_preload) ||
+       (d_read_bank_number === i.U && !preload_zeros))
     spad.module.io.read(i).addr := MuxCase(0.U,
-      Seq((a_read_bank_number === i.U && !perform_single_preload) -> (a_address_rs1 + fire_counter.value),
-      (b_read_bank_number === i.U && !perform_single_preload) -> (b_address_rs2 + fire_counter.value),
-        (d_read_bank_number === i.U && !preload_zeros) -> (d_address_rs1+fire_counter.value)))
+      Seq(
+        (a_read_bank_number === i.U && !perform_single_preload) -> (a_address_rs1 + fire_counter.value),
+        (b_read_bank_number === i.U && !perform_single_preload) -> (b_address_rs2 + fire_counter.value),
+        (d_read_bank_number === i.U && !preload_zeros) -> (d_address_rs1+fire_counter.value)
+      )
+    )
   }
 
   val readData = VecInit(spad.module.io.read.map(_.data))
@@ -273,7 +275,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   // For both mvin and mvout, rs1 = DRAM address, rs2 = scratchpad address
   spad.module.io.dma.req.bits.vaddr := rs1
   spad.module.io.dma.req.bits.spbank := rs2(rs2.getWidth-1,rs2.getWidth-log2Ceil(sp_banks))
-  spad.module.io.dma.req.bits.spaddr := rs2(rs2.getWidth-log2Ceil(sp_banks)-1,0)
+  spad.module.io.dma.req.bits.spaddr := (rs2 >> log2Ceil(sp_width/8))(log2Ceil(sp_bank_entries)-1,0)
 
   spad.module.io.dma.req.valid := false.B
   spad.module.io.dma.req.bits.write := false.B
