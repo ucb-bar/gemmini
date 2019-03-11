@@ -275,7 +275,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   // For both mvin and mvout, rs1 = DRAM address, rs2 = scratchpad address
   spad.module.io.dma.req.bits.vaddr := rs1
   spad.module.io.dma.req.bits.spbank := rs2(rs2.getWidth-1,rs2.getWidth-log2Ceil(sp_banks))
-  spad.module.io.dma.req.bits.spaddr := (rs2 >> log2Ceil(sp_width/8))(log2Ceil(sp_bank_entries)-1,0)
+  spad.module.io.dma.req.bits.spaddr := rs2(log2Ceil(sp_bank_entries)-1,0)
 
   spad.module.io.dma.req.valid := false.B
   spad.module.io.dma.req.bits.write := false.B

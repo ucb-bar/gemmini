@@ -318,7 +318,7 @@ class MeshWithMemoryTester extends ChiselFlatSpec
   // Fully combinational
   "MeshWithMemoryTest" should "work fully combinationally with no delays" in {
     for (df <- dataflow_testers) {
-      iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+      iotesters.Driver.execute(Array("--backend-name", "treadle"),
         () => new MeshWithMemory(SInt(16.W), 32, Dataflow.BOTH, 8, 8, 1, 1, 8, 1)) {
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8, 8), rand(8, 8), rand(8, 8), true)), () => 0, () => 0)
       } should be(true)
@@ -327,7 +327,7 @@ class MeshWithMemoryTester extends ChiselFlatSpec
 
   it should "work fully combinationally with random delays" in {
     for (df <- dataflow_testers) {
-      iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+      iotesters.Driver.execute(Array("--backend-name", "treadle"),
         () => new MeshWithMemory(SInt(16.W), 32, Dataflow.BOTH, 8, 8, 1, 1, 8, 1)) {
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8, 8), rand(8, 8), rand(8, 8), true)), () => scala.util.Random.nextInt(5), () => scala.util.Random.nextInt(5))
       } should be(true)
@@ -337,7 +337,7 @@ class MeshWithMemoryTester extends ChiselFlatSpec
   // Fully pipelined
   it should "work fully pipelined with no delays" in {
     for (df <- dataflow_testers) {
-      iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+      iotesters.Driver.execute(Array("--backend-name", "treadle"),
         () => new MeshWithMemory(SInt(16.W), 32, Dataflow.BOTH, 1, 1, 8, 8, 8, 1)) {
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8, 8), rand(8, 8), rand(8, 8), true)), () => 0, () => 0)
       } should be(true)
@@ -346,7 +346,7 @@ class MeshWithMemoryTester extends ChiselFlatSpec
 
   it should "work fully pipelined with random delays" in {
     for (df <- dataflow_testers) {
-      iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+      iotesters.Driver.execute(Array("--backend-name", "treadle"),
         () => new MeshWithMemory(SInt(16.W), 32, Dataflow.BOTH, 1, 1, 8, 8, 8, 1)) {
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8, 8), rand(8, 8), rand(8, 8), true)), () => scala.util.Random.nextInt(5), () => scala.util.Random.nextInt(5))
       } should be(true)
@@ -377,7 +377,7 @@ class MeshWithMemoryTester extends ChiselFlatSpec
           val df_testers = df_with_tester._2
 
           for (dft <- df_testers) {
-            iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
+            iotesters.Driver.execute(Array("--backend-name", "treadle"),
               () => new MeshWithMemory(SInt(32.W), 32, df, tile_dim, tile_dim, mesh_dim, mesh_dim, sram_entries, 1)) {
               c =>
                 dft(c, Seq.fill(8)(MeshTesterInput(rand(matrix_dim, matrix_dim), rand(matrix_dim, matrix_dim),
