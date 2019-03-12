@@ -35,9 +35,16 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     (outer: SystolicArray[T], val inner_type: T)
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
+
+
   import outer.config._
   import outer.spad
 
+  val rs_translate = new Bundle {
+    val junk = UInt((xLen-log2Ceil(sp_bank_entries)-log2Ceil(sp_banks)).W)
+    val spbank = UInt(log2Ceil(sp_banks).W)
+    val spaddr = UInt(log2Ceil(sp_bank_entries).W)
+  }
   val cmd = Queue(io.cmd, queue_length)
   cmd.ready := false.B
   io.busy := cmd.valid
@@ -49,11 +56,11 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val mydataflow = RegInit(Dataflow.OS.id.U)
   val rs1 = cmd.bits.rs1
   val rs2 = cmd.bits.rs2
-  val a_address_rs1 = Reg(UInt(xLen.W))
-  val b_address_rs2 = Reg(UInt(xLen.W))
+  val a_address_rs1 = Reg(rs_translate)
+  val b_address_rs2 = Reg(rs_translate)
 
-  val d_address_rs1 = cmd.bits.rs1 //SRAM_D_Address
-  val c_address_rs2 = cmd.bits.rs2 //SRAM_C_Address
+  val d_address_rs1 = cmd.bits.rs1.asTypeOf(rs_translate) //SRAM_D_Address
+  val c_address_rs2 = cmd.bits.rs2.asTypeOf(rs_translate) //SRAM_C_Address
 
   val funct = cmd.bits.inst.funct
   val DoLoad = funct === 2.U
@@ -89,9 +96,10 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   assert(block_size == meshRows*tileRows)
 
   //SRAM scratchpad
-  val a_read_bank_number = a_address_rs1(rs1.getWidth - 1, rs1.getWidth-log2Ceil(sp_banks))
-  val b_read_bank_number = b_address_rs2(rs2.getWidth - 1, rs2.getWidth-log2Ceil(sp_banks))
-  val d_read_bank_number = d_address_rs1(d_address_rs1.getWidth - 1, d_address_rs1.getWidth-log2Ceil(sp_banks))
+  val a_read_bank_number = a_address_rs1.spbank
+  val b_read_bank_number = b_address_rs2.spbank
+  val d_read_bank_number = d_address_rs1.spbank
+
 
   meshIO.io.a.valid := false.B
   meshIO.io.b.valid := false.B
@@ -127,9 +135,9 @@ class SystolicArrayModule[T <: Data: Arithmetic]
        (d_read_bank_number === i.U && !preload_zeros))
     spad.module.io.read(i).addr := MuxCase(0.U,
       Seq(
-        (a_read_bank_number === i.U && !perform_single_preload) -> (a_address_rs1 + fire_counter.value),
-        (b_read_bank_number === i.U && !perform_single_preload) -> (b_address_rs2 + fire_counter.value),
-        (d_read_bank_number === i.U && !preload_zeros) -> (d_address_rs1+fire_counter.value)
+        (a_read_bank_number === i.U && !perform_single_preload) -> (a_address_rs1.spaddr + fire_counter.value),
+        (b_read_bank_number === i.U && !perform_single_preload) -> (b_address_rs2.spaddr + fire_counter.value),
+        (d_read_bank_number === i.U && !preload_zeros) -> (d_address_rs1.spaddr+fire_counter.value)
       )
     )
   }
@@ -159,8 +167,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
         start_sram_feeding := true.B
       }
       when(cmd.valid && (DoComputeAndFlip || DoComputeAndStay)){
-        a_address_rs1 := rs1
-        b_address_rs2 := rs2
+        a_address_rs1 := rs1.asTypeOf(rs_translate)
+        b_address_rs2 := rs2.asTypeOf(rs_translate)
         in_s := Mux(DoComputeAndFlip,~in_s,in_s)
         control_state := compute
         cmd.ready := true.B
@@ -206,7 +214,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
       )
       meshIO.io.tag_in.valid := true.B
       meshIO.io.s.valid := true.B
-      meshIO.io.tag_in.bits := c_address_rs2 //if this is 0xFFFFFF then don't output
+      meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
       meshIO.io.s.bits := in_s
     }
   }
@@ -244,7 +252,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
       )
       meshIO.io.tag_in.valid := true.B
       meshIO.io.s.valid := true.B
-      meshIO.io.tag_in.bits := c_address_rs2 //if this is 0xFFFFFF then don't output
+      meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
       meshIO.io.s.bits := in_s
     }
 
@@ -255,27 +263,28 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   meshIO.io.out.ready := true.B
 
-  val w_address = meshIO.io.tag_out
-  val w_bank_number = w_address(w_address.getWidth-1,w_address.getWidth-log2Ceil(sp_banks))
-  val w_bank_address = w_address(w_address.getWidth-log2Ceil(sp_banks)-1,0)
+  val w_address = meshIO.io.tag_out.asTypeOf(rs_translate)
+  val w_bank_number = w_address.spbank
+  val w_bank_address = w_address.spaddr
 
   for(i <- 0 until sp_banks){
     spad.module.io.write(i).en := start_array_outputting && w_bank_number === i.U
     spad.module.io.write(i).addr := MuxCase(0.U,
-      Seq((w_bank_number === i.U && start_array_outputting) -> w_bank_address))
+      Seq((w_bank_number === i.U && start_array_outputting) -> (w_bank_address+output_counter.value)))
     spad.module.io.write(i).data := MuxCase(0.U,
       Seq((w_bank_number === i.U && start_array_outputting) -> meshIO.io.out.bits.asUInt()))
   }
 
   when(meshIO.io.out.fire() && !meshIO.io.tag_out===0xFFFFFFFFL.U) {
+    output_counter.inc()
     start_array_outputting := true.B
   }
 
   spad.module.io.dma.resp.ready := true.B // The controller discards DMA responses
   // For both mvin and mvout, rs1 = DRAM address, rs2 = scratchpad address
   spad.module.io.dma.req.bits.vaddr := rs1
-  spad.module.io.dma.req.bits.spbank := rs2(rs2.getWidth-1,rs2.getWidth-log2Ceil(sp_banks))
-  spad.module.io.dma.req.bits.spaddr := rs2(log2Ceil(sp_bank_entries)-1,0)
+  spad.module.io.dma.req.bits.spbank := rs2.asTypeOf(rs_translate).spbank
+  spad.module.io.dma.req.bits.spaddr := rs2.asTypeOf(rs_translate).spaddr
 
   spad.module.io.dma.req.valid := false.B
   spad.module.io.dma.req.bits.write := false.B
