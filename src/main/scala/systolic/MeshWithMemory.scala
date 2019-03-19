@@ -118,8 +118,8 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
   // Tags
   val tag_garbage = Cat(Seq.fill(tagWidth)(1.U(1.W)))
-  val tag_queue = Module(new TagQueue(5, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
-  tag_queue.io.in.bits := io.tag_in.bits
+  val tag_queue = Module(new TagQueue(7, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
+  tag_queue.io.in.bits := Mux(flushing, tag_garbage, io.tag_in.bits)
   tag_queue.io.garbage := tag_garbage
 
   val tag_id = RegInit(0.U(1.W)) // Used to keep track of when we should increment
@@ -161,14 +161,14 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
     }
   }
 
-  // printf(p"     active: $active,     compute_done: $compute_done,    buffering_done: $buffering_done,    s_buf(active): ${s_bufs(active)}\n")
-  // printf(p"     io.s.bits: ${io.s.bits}, io.s.ready: ${io.s.ready}, io.s.valid: ${io.s.valid}")
-  // printf(p"     io.a: ${io.a.bits}, a_read: ${a_buf.io.out}\n")
-  // printf(p"     io.b: ${io.b.bits}, b_read: ${b_buf.io.out}\n")
-  // printf(p"     io.d: ${io.d.bits}, d_read: ${d_buf.io.out}\n")
-  // printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (out_s: ${io.out_s(0)(0)}) (tag: ${io.tag_out})\n")
-  // printf(p"     tag_queue.io.out.next: ${tag_queue.io.out.next}\n")
-  // printf(p"     flushing: $flushing\n")
+  printf(p"     active: $active,     compute_done: $compute_done,    buffering_done: $buffering_done,    s_buf(active): ${s_bufs(active)}\n")
+  printf(p"     io.s.bits: ${io.s.bits}, io.s.ready: ${io.s.ready}, io.s.valid: ${io.s.valid}")
+  printf(p"     io.a: ${io.a.bits}, a_read: ${a_buf.io.out}\n")
+  printf(p"     io.b: ${io.b.bits}, b_read: ${b_buf.io.out}\n")
+  printf(p"     io.d: ${io.d.bits}, d_read: ${d_buf.io.out}\n")
+  printf(p"     io.out: ${io.out.bits} (valid: ${io.out.valid}) (out_s: ${io.out_s(0)(0)}) (tag: ${io.tag_out})\n")
+  printf(p"     tag_queue.io.out.next: ${tag_queue.io.out.next}, tag_id: $tag_id\n")
+  printf(p"     flushing: $flushing\n")
 
   // Control logic
   when(io.s.fire() && !flip) {
@@ -190,12 +190,12 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
     tag_id := (~tag_id).asUInt()
 
-    // printf(p"     Done!   (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    printf(p"     Done!   (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.elsewhen(!compute_done) {
-    // printf(p"     Computing!  (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    printf(p"     Computing!  (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }.otherwise {
     // Pause systolic array
-    // printf(p"     PAUSING  (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    printf(p"     PAUSING  (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
   }
 }
 
@@ -348,7 +348,7 @@ class TagQueue[T <: Data](len: Int, t: T) extends Module {
 
   val regs = RegInit(VecInit(Seq.fill(len)(io.garbage)))
   val raddr = RegInit(0.U((log2Ceil(len) max 1).W))
-  val waddr = RegInit(2.U((log2Ceil(len) max 1).W))
+  val waddr = RegInit(4.U((log2Ceil(len) max 1).W))
 
   val raddr_inc = wrappingAdd(raddr, 1.U, len)
   val raddr_inc2 = wrappingAdd(raddr, 2.U, len)

@@ -26,7 +26,7 @@ def javacOptionsVersion(scalaVersion: String): Seq[String] = {
   }
 }
 
-name := "systolic array"
+name := "systolic"
 
 version := "3.1.0"
 

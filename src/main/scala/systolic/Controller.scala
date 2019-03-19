@@ -36,7 +36,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
 
-
   import outer.config._
   import outer.spad
 
@@ -78,7 +77,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     InternalSramEntries, InternalSramBanks)) 
 
   // STATE defines
-  val decode :: compute ::flush :: Nil = Enum(3)
+  val decode :: compute :: flush :: flushing :: Nil = Enum(4)
   val control_state = RegInit(decode)
 
   ////////
@@ -99,7 +98,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val a_read_bank_number = a_address_rs1.spbank
   val b_read_bank_number = b_address_rs2.spbank
   val d_read_bank_number = d_address_rs1.spbank
-
 
   meshIO.io.a.valid := false.B
   meshIO.io.b.valid := false.B
@@ -152,6 +150,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
       when(cmd.valid && DoStore){
         perform_store := true.B
       }
+
       when(cmd.valid && DoLoad){
         perform_load := true.B
       }
@@ -181,7 +180,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
         preload_zeros := true.B
         when(fired_all_rows){
           control_state := flush
-          meshIO.io.flush.valid := true.B
         }
       }
       when(cmd.valid && DoPreLoad) {
@@ -192,8 +190,14 @@ class SystolicArrayModule[T <: Data: Arithmetic]
         }
       }
     }
-    is(flush){
-      when(meshIO.io.flush.ready){
+    is (flush) {
+      when(meshIO.io.flush.ready) {
+        meshIO.io.flush.valid := true.B
+        control_state := flushing
+      }
+    }
+    is (flushing) {
+      when(meshIO.io.flush.ready) {
         control_state := decode
       }
     }
@@ -267,7 +271,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val w_bank_number = w_address.spbank
   val w_bank_address = w_address.spaddr
 
-  for(i <- 0 until sp_banks){
+  for(i <- 0 until sp_banks) {
     spad.module.io.write(i).en := start_array_outputting && w_bank_number === i.U
     spad.module.io.write(i).addr := MuxCase(0.U,
       Seq((w_bank_number === i.U && start_array_outputting) -> (w_bank_address+output_counter.value)))
@@ -275,7 +279,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
       Seq((w_bank_number === i.U && start_array_outputting) -> meshIO.io.out.bits.asUInt()))
   }
 
-  when(meshIO.io.out.fire() && !meshIO.io.tag_out===0xFFFFFFFFL.U) {
+  when(meshIO.io.out.fire() && meshIO.io.tag_out =/= 0xFFFFFFFFL.U) {
     output_counter.inc()
     start_array_outputting := true.B
   }
