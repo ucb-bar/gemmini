@@ -5,6 +5,7 @@ import chisel3.util._
 import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
+import Util._
 
 case class SystolicArrayConfig(
   tileRows: Int,
@@ -74,11 +75,11 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   val meshIO = Module(new MeshWithMemory(inner_type, xLen, Dataflow.BOTH, tileRows,
     tileColumns, meshRows, meshColumns,
-    InternalSramEntries, InternalSramBanks)) 
+    InternalSramEntries, InternalSramBanks))
 
   // STATE defines
   // TODO these need to be cleaned up
-  val decode :: compute :: flush :: flushing :: before_flush :: Nil = Enum(5)
+  val decode :: compute :: flush :: flushing :: Nil = Enum(4)
   val control_state = RegInit(decode)
 
   ////////
@@ -127,9 +128,22 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val performing_mul_pre = RegNext(perform_mul_pre)
 
   val fired_all_rows = WireInit(false.B)
-  val fire_counter = new Counter(block_size) // TODO replace this with a UInt later
+  val fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
+  val fire_count_started = Reg(Bool())
   val output_counter = new Counter(block_size)
-  val in_s = RegInit(0.U)
+
+  fire_counter := 0.U
+  fire_count_started := perform_mul_pre || perform_single_preload || performing_single_mul
+
+  // TODO should this be a wire to change immediately?
+  val in_s = Reg(Bool())
+  when (cmd.valid && DoComputeAndFlip) {
+    in_s := true.B
+  }.elsewhen (cmd.valid && DoComputeAndStay) {
+    in_s := false.B
+  }
+
+  val tag_garbage = Cat(Seq.fill(xLen)(1.U(1.W)))
 
   for(i <- 0 until sp_banks){
     spad.module.io.read(i).en := start_sram_feeding &&
@@ -138,9 +152,9 @@ class SystolicArrayModule[T <: Data: Arithmetic]
        (d_read_bank_number === i.U && !preload_zeros))
     spad.module.io.read(i).addr := MuxCase(0.U,
       Seq(
-        (a_read_bank_number === i.U && !perform_single_preload) -> (a_address_rs1.spaddr + fire_counter.value),
-        (b_read_bank_number === i.U && !perform_single_preload) -> (b_address_rs2.spaddr + fire_counter.value),
-        (d_read_bank_number === i.U && !preload_zeros) -> (d_address_rs1.spaddr + block_size.U - 1.U - fire_counter.value)
+        (a_read_bank_number === i.U && !perform_single_preload) -> (a_address_rs1.spaddr + fire_counter),
+        (b_read_bank_number === i.U && !perform_single_preload) -> (b_address_rs2.spaddr + fire_counter),
+        (d_read_bank_number === i.U && !preload_zeros) -> (d_address_rs1.spaddr + block_size.U - 1.U - fire_counter)
       )
     )
   }
@@ -164,30 +178,30 @@ class SystolicArrayModule[T <: Data: Arithmetic]
         val data_mode = rs1(0) //0 is output stationary, 1 is weight
         mydataflow := data_mode
         cmd.ready := true.B
-
       }
-      when(cmd.valid && DoPreLoad){
+
+      when(cmd.valid && DoPreLoad) {
         perform_single_preload := true.B
         start_sram_feeding := true.B
       }
-      when(cmd.valid && (DoComputeAndFlip || DoComputeAndStay)){
+
+      when(cmd.valid && (DoComputeAndFlip || DoComputeAndStay)) {
         a_address_rs1 := rs1.asTypeOf(rs_translate)
         b_address_rs2 := rs2.asTypeOf(rs_translate)
-        in_s := Mux(DoComputeAndFlip,~in_s,in_s)
         control_state := compute
         cmd.ready := true.B
       }
     }
     is(compute){
-      when(cmd.valid && !DoPreLoad) {
+      // TODO Flush when no valid command is waiting
+      when (cmd.valid && !DoPreLoad) {
         perform_single_mul := true.B
         start_sram_feeding := true.B
         preload_zeros := true.B
         when(fired_all_rows) {
-          control_state := before_flush
+          control_state := flush
         }
-      }
-      when(cmd.valid && DoPreLoad) {
+      }.elsewhen (cmd.valid && DoPreLoad) {
         start_sram_feeding := true.B
         perform_mul_pre := true.B
         when(fired_all_rows){
@@ -206,16 +220,12 @@ class SystolicArrayModule[T <: Data: Arithmetic]
         control_state := decode
       }
     }
-    is (before_flush) {
-      control_state := flush
-    }
   }
 
   when(perform_mul_pre){
     when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
-      // fired_all_rows := fire_counter.inc()
-      fire_counter.inc()
-      fired_all_rows := fire_counter.value === 0.U
+      fire_counter := wrappingAdd(fire_counter, 1.U, block_size)
+      fired_all_rows := fire_counter === 0.U && fire_count_started
     }
   }
 
@@ -234,13 +244,16 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     meshIO.io.s.valid := true.B
     meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
     meshIO.io.s.bits := in_s
+
+    when (fired_all_rows) {
+      performing_mul_pre := false.B
+    }
   }
 
   when(perform_single_mul){
     when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
-      // fired_all_rows := fire_counter.inc()
-      fire_counter.inc()
-      fired_all_rows := fire_counter.value === 0.U
+      fire_counter := wrappingAdd(fire_counter, 1.U, block_size)
+      fired_all_rows := fire_counter === 0.U && fire_count_started
     }
   }
 
@@ -254,15 +267,19 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
     meshIO.io.tag_in.valid := true.B
     meshIO.io.s.valid := true.B
-    meshIO.io.tag_in.bits := 0xFFFFFFFFL.U //if this is 0xFFFFFF then don't output
+    meshIO.io.tag_in.bits := tag_garbage //if this is 0xFFFFFF then don't output
     meshIO.io.s.bits := in_s
+
+    // TODO ugly
+    when (fired_all_rows) {
+      performing_single_mul := false.B
+    }
   }
 
   when(perform_single_preload){
     when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
-      // fired_all_rows := fire_counter.inc()
-      fire_counter.inc()
-      fired_all_rows := fire_counter.value === 0.U
+      fire_counter := wrappingAdd(fire_counter, 1.U, block_size)
+      fired_all_rows := fire_counter === 0.U && fire_count_started
     }
   }
 
@@ -303,7 +320,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
       Seq((w_bank_number === i.U && start_array_outputting) -> meshIO.io.out.bits.asUInt()))
   }
 
-  when(meshIO.io.out.fire() && meshIO.io.tag_out =/= 0xFFFFFFFFL.U) {
+  when(meshIO.io.out.fire() && meshIO.io.tag_out =/= tag_garbage) {
     output_counter.inc()
     start_array_outputting := true.B
   }

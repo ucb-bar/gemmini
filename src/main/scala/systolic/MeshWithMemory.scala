@@ -33,8 +33,8 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
     val s = Flipped(Decoupled(UInt(1.W)))
     val m = Input(UInt(1.W))
 
-    val tag_in = Flipped(Decoupled(UInt(32.W)))
-    val tag_out = Output(UInt(32.W))
+    val tag_in = Flipped(Decoupled(UInt(tagWidth.W)))
+    val tag_out = Output(UInt(tagWidth.W))
 
     val out = Decoupled(Output(C_TYPE))
     val out_s = Output(S_TYPE)
@@ -99,6 +99,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
   mesh.io.in_s_vec.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_ := ShiftRegister(Cat(io.m, s_bufs(active)), i, !pause))
+    // ss.foreach(_ := ShiftRegister(Cat(io.m, s_bufs(not_active)), i, !pause)) // We need the LAST value of S
   }
   mesh.io.pause := pause
 
@@ -118,7 +119,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
   // Tags
   val tag_garbage = Cat(Seq.fill(tagWidth)(1.U(1.W)))
-  val tag_queue = Module(new TagQueue(6, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
+  val tag_queue = Module(new TagQueue(5, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
   tag_queue.io.in.bits := Mux(flushing, tag_garbage, io.tag_in.bits)
   tag_queue.io.garbage := tag_garbage
 
@@ -137,6 +138,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   val flush_counter = Reg(UInt(3.W))
 
   io.flush.ready := !flushing
+  assert(!(io.flush.valid && !buffering_done)) // TODO get rid of this once we get the ability to ignore D
 
   when (io.flush.fire()) {
     flushing := true.B
@@ -153,6 +155,8 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
     when (buffering_done) {
       flush_counter := flush_counter - 1.U
+
+      tag_queue.io.in.valid := true.B
 
       when (flush_counter === 0.U) {
         flushing := false.B
