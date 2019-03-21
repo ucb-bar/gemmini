@@ -77,7 +77,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     InternalSramEntries, InternalSramBanks)) 
 
   // STATE defines
-  val decode :: compute :: flush :: flushing :: Nil = Enum(4)
+  // TODO these need to be cleaned up
+  val decode :: compute :: flush :: flushing :: before_flush :: Nil = Enum(5)
   val control_state = RegInit(decode)
 
   ////////
@@ -120,9 +121,13 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val perform_single_preload = WireInit(false.B)
   val perform_single_mul = WireInit(false.B)
   val perform_mul_pre = WireInit(false.B)
+  // TODO these are confusingly named
+  val performing_single_preload = RegNext(perform_single_preload)
+  val performing_single_mul = RegNext(perform_single_mul)
+  val performing_mul_pre = RegNext(perform_mul_pre)
 
   val fired_all_rows = WireInit(false.B)
-  val fire_counter = new Counter(block_size)
+  val fire_counter = new Counter(block_size) // TODO replace this with a UInt later
   val output_counter = new Counter(block_size)
   val in_s = RegInit(0.U)
 
@@ -135,7 +140,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
       Seq(
         (a_read_bank_number === i.U && !perform_single_preload) -> (a_address_rs1.spaddr + fire_counter.value),
         (b_read_bank_number === i.U && !perform_single_preload) -> (b_address_rs2.spaddr + fire_counter.value),
-        (d_read_bank_number === i.U && !preload_zeros) -> (d_address_rs1.spaddr+fire_counter.value)
+        (d_read_bank_number === i.U && !preload_zeros) -> (d_address_rs1.spaddr + block_size.U - 1.U - fire_counter.value)
       )
     )
   }
@@ -178,8 +183,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
         perform_single_mul := true.B
         start_sram_feeding := true.B
         preload_zeros := true.B
-        when(fired_all_rows){
-          control_state := flush
+        when(fired_all_rows) {
+          control_state := before_flush
         }
       }
       when(cmd.valid && DoPreLoad) {
@@ -201,67 +206,86 @@ class SystolicArrayModule[T <: Data: Arithmetic]
         control_state := decode
       }
     }
+    is (before_flush) {
+      control_state := flush
+    }
   }
 
   when(perform_mul_pre){
     when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
-      fired_all_rows := fire_counter.inc()
-      meshIO.io.a.valid := true.B
-      meshIO.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
-      meshIO.io.b.valid := true.B
-      meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-      meshIO.io.d.valid := true.B
-      meshIO.io.d.bits := Mux(
-        preload_zeros,
-        (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type))),
-        dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-      )
-      meshIO.io.tag_in.valid := true.B
-      meshIO.io.s.valid := true.B
-      meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
-      meshIO.io.s.bits := in_s
+      // fired_all_rows := fire_counter.inc()
+      fire_counter.inc()
+      fired_all_rows := fire_counter.value === 0.U
     }
+  }
+
+  when (performing_mul_pre) {
+    meshIO.io.a.valid := true.B
+    meshIO.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
+    meshIO.io.b.valid := true.B
+    meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+    meshIO.io.d.valid := true.B
+    meshIO.io.d.bits := Mux(
+      preload_zeros,
+      (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type))),
+      dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+    )
+    meshIO.io.tag_in.valid := true.B
+    meshIO.io.s.valid := true.B
+    meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
+    meshIO.io.s.bits := in_s
   }
 
   when(perform_single_mul){
     when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
-      fired_all_rows := fire_counter.inc()
-
-      meshIO.io.a.valid := true.B
-      meshIO.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
-      meshIO.io.b.valid := true.B
-      meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-      meshIO.io.d.valid := true.B
-      meshIO.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-
-      meshIO.io.tag_in.valid := true.B
-      meshIO.io.s.valid := true.B
-      meshIO.io.tag_in.bits := 0xFFFFFFFFL.U //if this is 0xFFFFFF then don't output
-      meshIO.io.s.bits := in_s
+      // fired_all_rows := fire_counter.inc()
+      fire_counter.inc()
+      fired_all_rows := fire_counter.value === 0.U
     }
+  }
+
+  when(performing_single_mul) {
+    meshIO.io.a.valid := true.B
+    meshIO.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
+    meshIO.io.b.valid := true.B
+    meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+    meshIO.io.d.valid := true.B
+    meshIO.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+
+    meshIO.io.tag_in.valid := true.B
+    meshIO.io.s.valid := true.B
+    meshIO.io.tag_in.bits := 0xFFFFFFFFL.U //if this is 0xFFFFFF then don't output
+    meshIO.io.s.bits := in_s
   }
 
   when(perform_single_preload){
     when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready) {
-      fired_all_rows := fire_counter.inc()
-      meshIO.io.a.valid := true.B
-      meshIO.io.a.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-      meshIO.io.b.valid := true.B
-      meshIO.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-      meshIO.io.d.valid := true.B
-      meshIO.io.d.bits := Mux(
-        preload_zeros,
-        (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type))),
-        dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-      )
-      meshIO.io.tag_in.valid := true.B
-      meshIO.io.s.valid := true.B
-      meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
-      meshIO.io.s.bits := in_s
+      // fired_all_rows := fire_counter.inc()
+      fire_counter.inc()
+      fired_all_rows := fire_counter.value === 0.U
     }
+  }
 
-    when(fired_all_rows) {
+  when (performing_single_preload) {
+    meshIO.io.a.valid := true.B
+    meshIO.io.a.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+    meshIO.io.b.valid := true.B
+    meshIO.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+    meshIO.io.d.valid := true.B
+    meshIO.io.d.bits := Mux(
+      preload_zeros,
+      (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type))),
+      dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+    )
+    meshIO.io.tag_in.valid := true.B
+    meshIO.io.s.valid := true.B
+    meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
+    meshIO.io.s.bits := in_s
+
+    // TODO ugly
+    when (fired_all_rows) {
       cmd.ready := true.B
+      performing_single_preload := false.B
     }
   }
 
@@ -274,7 +298,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   for(i <- 0 until sp_banks) {
     spad.module.io.write(i).en := start_array_outputting && w_bank_number === i.U
     spad.module.io.write(i).addr := MuxCase(0.U,
-      Seq((w_bank_number === i.U && start_array_outputting) -> (w_bank_address+output_counter.value)))
+      Seq((w_bank_number === i.U && start_array_outputting) -> (w_bank_address + block_size.U - 1.U - output_counter.value)))
     spad.module.io.write(i).data := MuxCase(0.U,
       Seq((w_bank_number === i.U && start_array_outputting) -> meshIO.io.out.bits.asUInt()))
   }
