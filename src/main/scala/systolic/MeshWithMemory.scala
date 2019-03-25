@@ -6,6 +6,7 @@ import chisel3.util._
 
 import systolic.Util._
 
+// TODO fix output ready. It doesn't work when banking, and it seems to assume that SRAM outputs stay steady when ren is low
 // TODO add option to shift output with SRAM banking instead
 // TODO change banks to support non-square tiles
 // TODO Handle matrices where N1 =/= N2 =/= N3
@@ -138,7 +139,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   val flush_counter = Reg(UInt(3.W))
 
   io.flush.ready := !flushing
-  assert(!(io.flush.valid && !buffering_done)) // TODO get rid of this once we get the ability to ignore D
+  // assert(!(io.flush.valid && !buffering_done)) // TODO get rid of this once we get the ability to ignore D
 
   when (io.flush.fire()) {
     flushing := true.B
@@ -166,7 +167,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   }
 
   /*printf(p"     active: $active,     compute_done: $compute_done,    buffering_done: $buffering_done,    s_buf(active): ${s_bufs(active)}\n")
-  printf(p"     io.s.bits: ${io.s.bits}, io.s.ready: ${io.s.ready}, io.s.valid: ${io.s.valid}")
+  printf(p"     io.s.bits: ${io.s.bits}, io.s.ready: ${io.s.ready}, io.s.valid: ${io.s.valid}\n")
   printf(p"     io.a: ${io.a.bits}, a_read: ${a_buf.io.out}\n")
   printf(p"     io.b: ${io.b.bits}, b_read: ${b_buf.io.out}\n")
   printf(p"     io.d: ${io.d.bits}, d_read: ${d_buf.io.out}\n")
@@ -233,7 +234,8 @@ class InputBuffer[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module 
   val bufs = VecInit(Seq.fill(2)(Module(new BankedMem(n, t, banks)).io))
   bufs.foreach { b =>
     b.wdata := io.in
-    b.ren := false.B; b.wen := false.B
+    b.ren := false.B
+    b.wen := false.B
   }
 
   bufs.zip(addrs).foreach { case (b, a) => b.addr := a }
@@ -275,7 +277,9 @@ class InputBuffer[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module 
   }.elsewhen(!output_done && !io.pause) {
     bufs(read_from).ren := true.B
     addrs(read_from) := Mux(addrs(read_from) === (n-1).U, 0.U, addrs(read_from) + 1.U)
-  }
+  }/*.elsewhen(!output_done) {
+    bufs(read_from).ren := true.B
+  }*/
 
   when (io.flush) {
     bufs.foreach(_.wen := false.B)
@@ -300,8 +304,9 @@ class BankedMem[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module {
 
   assert(t.size % banks == 0, "banks must be divisible")
 
-  val banked_t = Vec(t.size / banks, t.head.cloneType)
-  val banked_mems = Seq.fill(banks)(SinglePortedSyncMem(n, banked_t).io)
+  val banked_t_width = t.size / banks
+  val banked_t = Vec(banked_t_width, t.head.cloneType)
+  val banked_mems = for (i <- 1 to banks) yield SplitSinglePortedSyncMem(n, banked_t, i).io // TODO We don't have to split so aggressively
 
   // TODO better names
   val wdata_banked = io.wdata.grouped(io.wdata.size / banks).toSeq
@@ -309,20 +314,19 @@ class BankedMem[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module {
   val valid_banked = io.valid.grouped(io.valid.size / banks).toSeq
 
   banked_mems.zipWithIndex.foreach { case (b, i) =>
-    b.ren := /*!io.wen && */((io.ren && io.addr >= i.U) || (io.ren_other && io.addr_other < i.U))
+    val thresh = i * banked_t_width
+
+    b.ren := ((io.ren && io.addr >= thresh.U) || (io.ren_other && io.addr_other < thresh.U))
     b.wen := io.wen
     b.wdata := wdata_banked(i)
 
-    assert(!(b.ren && b.wen), "trying to read and write into buffer at same time") // TODO may be redundant
+    b.waddr := io.addr
+    b.raddr := DontCare
 
-    b.addr := DontCare
-    when (io.wen) {
-      b.addr := io.addr
-    }.elsewhen (io.ren) {
-      b.addr := io.addr - i.U
+    when (io.ren) {
+      b.raddr := wrappingSub(io.addr, thresh.U, n)
     }.elsewhen(io.ren_other) {
-      // b.addr := io.addr_other + (banks - i).U
-      b.addr := (n - i).U + io.addr_other
+      b.raddr := io.addr_other + (n - thresh).U
     }
   }
 
@@ -331,45 +335,9 @@ class BankedMem[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module {
   }
 
   valid_banked.zipWithIndex.foreach { case (v, i) =>
-    v.foreach(_ := RegNext(io.addr >= i.U)) // We delay by one cycle since memory is synchronous
+    val thresh = i * banked_t_width
+    v.foreach(_ := RegNext(io.addr >= thresh.U)) // We delay by one cycle since memory is synchronous
   }
 
   assert(!(io.ren && io.ren_other), "both banks are being read from at the same time")
-}
-
-// TODO make this output garbage when it's empty
-class TagQueue[T <: Data](len: Int, t: T) extends Module {
-  val io = IO(new Bundle {
-    val in = new Bundle {
-      val valid = Input(Bool())
-      val bits = Input(t)
-    }
-
-    val out = new Bundle {
-      val next = Input(Bool())
-      val bits = Output(Vec(2, t))
-    }
-
-    // This should really be a constructor parameter, but Chisel errors out when it is
-    val garbage = Input(t)
-  })
-
-  val regs = RegInit(VecInit(Seq.fill(len)(io.garbage)))
-  val raddr = RegInit(0.U((log2Ceil(len) max 1).W))
-  val waddr = RegInit(3.U((log2Ceil(len) max 1).W))
-
-  val raddr_inc = wrappingAdd(raddr, 1.U, len)
-  val raddr_inc2 = wrappingAdd(raddr, 2.U, len)
-
-  io.out.bits(0) := Mux(io.out.next, regs(raddr_inc), regs(raddr))
-  io.out.bits(1) := Mux(io.out.next, regs(raddr_inc2), regs(raddr_inc))
-
-  when (io.in.valid) {
-    waddr := wrappingAdd(waddr, 1.U, len)
-    regs(waddr) := io.in.bits
-  }
-
-  when (io.out.next) {
-    raddr := wrappingAdd(raddr, 1.U, len)
-  }
 }
