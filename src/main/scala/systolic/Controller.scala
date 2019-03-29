@@ -43,6 +43,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val InternalSramEntries = meshRows * tileRows // TODO change when square requirement is lifted
   assert(meshRows*tileRows == meshColumns*tileColumns) // TODO remove when square requirement is lifted
 
+  val tag_garbage = Cat(Seq.fill(xLen)(1.U(1.W)))
+
   val spaddr = new Bundle {
     val junk = UInt((xLen-log2Ceil(sp_bank_entries)-log2Ceil(sp_banks)).W)
     val spbank = UInt(log2Ceil(sp_banks).W)
@@ -51,8 +53,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   val (cmd, cmd_q_full) = MultiHeadedQueue(io.cmd, queue_length, 4)
   cmd.pop := 0.U
-  // io.busy := cmd.valid(0) // TODO
-  io.busy := cmd_q_full
+  io.busy := false.B // cmd.valid(0) // TODO
   // io.cmd.valid implies io.cmd.bits.inst.xd = 0
   /*assert(!io.cmd.valid(0) || io.cmd.bits.inst.xd === false.B,
     "This controller doesn't support rd instructions due to unconnected RoCC resp")*/ // TODO
@@ -85,7 +86,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val d_address_rs1 = WireInit(cmd.bits(preload_cmd_place).rs1.asTypeOf(spaddr))
   val c_address_rs2 = WireInit(cmd.bits(preload_cmd_place).rs2.asTypeOf(spaddr))
 
-  val preload_zeros = WireInit(cmd.bits(preload_cmd_place).inst.rd === 1.U) // when rd number is 1 it means to preload zeros
+  val preload_zeros = WireInit(d_address_rs1.asUInt() === tag_garbage)
 
   // Instantiate the actual mesh
   val meshIO = Module(new MeshWithMemory(inner_type, xLen, Dataflow.BOTH, tileRows,
@@ -152,16 +153,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     fire_counter := wrappingAdd(fire_counter, 1.U, block_size)
   }
 
-  // TODO should this be a wire to change immediately?
-  /*val in_s = Reg(Bool())
-  when (cmd.valid(0) && DoComputeAndFlip) {
-    in_s := true.B
-  }.elsewhen (cmd.valid(0) && DoComputeAndStay) {
-    in_s := false.B
-  }*/
   val in_s = DoComputeAndFlip
-
-  val tag_garbage = Cat(Seq.fill(xLen)(1.U(1.W)))
 
   // Scratchpad reads
   for(i <- 0 until sp_banks){
@@ -234,6 +226,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
           start_inputting_d := true.B
 
           when(fired_all_rows) {
+            perform_single_preload := false.B
+
             start_inputting_d := false.B
 
             fire_count_started := false.B
@@ -273,6 +267,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
           fire_count_started := true.B
 
           when(fired_all_rows) {
+            perform_mul_pre := false.B
+
             start_inputting_ab := false.B
             start_inputting_d := false.B
 
@@ -280,7 +276,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
             cmd.pop := 2.U
 
             // Can we immediately launch into a mulpre?
-            when(cmd.valid(2) && DoPreloadThird && cmd.valid(3) && DoComputeThird) {
+            when(cmd.valid(2) && DoComputeThird && cmd.valid(3) && DoPreloadFourth) {
               start_inputting_ab := true.B
               start_inputting_d := true.B
 
@@ -315,6 +311,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
           fire_count_started := true.B
 
           when(fired_all_rows) {
+            perform_single_mul := false.B
+
             start_inputting_ab := false.B
 
             fire_count_started := false.B
@@ -349,10 +347,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     meshIO.io.s.valid := true.B
     meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
     meshIO.io.s.bits := in_s
-
-    when (fired_all_rows) {
-      perform_mul_pre := false.B
-    }
   }
 
   when(perform_single_mul){
@@ -362,15 +356,10 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
     meshIO.io.d.valid := true.B
     meshIO.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-
     meshIO.io.tag_in.valid := true.B
     meshIO.io.s.valid := true.B
     meshIO.io.tag_in.bits := tag_garbage //if this is 0xFFFFFF then don't output
     meshIO.io.s.bits := in_s
-
-    when (fired_all_rows) {
-      perform_single_mul := false.B
-    }
   }
 
   when(perform_single_preload){
@@ -384,10 +373,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     meshIO.io.s.valid := true.B
     meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
     meshIO.io.s.bits := in_s
-
-    when (fired_all_rows) {
-      perform_single_preload := false.B
-    }
   }
 
   // Scratchpad writes
