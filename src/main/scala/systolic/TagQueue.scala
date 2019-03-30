@@ -23,7 +23,7 @@ class TagQueue[T <: Data](len: Int, t: T) extends Module {
 
   val regs = RegInit(VecInit(Seq.fill(len)(io.garbage)))
   val raddr = RegInit(0.U((log2Ceil(len) max 1).W))
-  val waddr = RegInit(3.U((log2Ceil(len) max 1).W))
+  val waddr = RegInit(2.U((log2Ceil(len) max 1).W))
 
   val raddr_inc = wrappingAdd(raddr, 1.U, len)
   val raddr_inc2 = wrappingAdd(raddr, 2.U, len)

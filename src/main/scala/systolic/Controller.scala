@@ -16,7 +16,7 @@ case class SystolicArrayConfig(
   sp_banks: Int,
   sp_bank_entries: Int,
   sp_width: Int,
-  InternalSramBanks: Int
+  shifter_banks: Int
 )
 case object SystolicArrayKey extends Field[SystolicArrayConfig]
 
@@ -40,7 +40,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   // Parameters
   val block_size = meshRows*tileRows
-  val InternalSramEntries = meshRows * tileRows // TODO change when square requirement is lifted
   assert(meshRows*tileRows == meshColumns*tileColumns) // TODO remove when square requirement is lifted
 
   val tag_garbage = Cat(Seq.fill(xLen)(1.U(1.W)))
@@ -90,8 +89,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   // Instantiate the actual mesh
   val meshIO = Module(new MeshWithMemory(inner_type, xLen, Dataflow.BOTH, tileRows,
-    tileColumns, meshRows, meshColumns,
-    InternalSramEntries, InternalSramBanks))
+    tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
 
   meshIO.io.a.valid := false.B
   meshIO.io.b.valid := false.B
@@ -121,8 +119,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   ///////
   //asserts
   assert(meshRows*tileRows == meshColumns*tileColumns) // this also assumes symmetric systolic array
-  assert(meshRows*tileRows == InternalSramEntries)
-  assert(InternalSramEntries == sp_bank_entries)
   assert(sp_width == meshRows*tileRows*inner_type.getWidth)
   assert(block_size == meshRows*tileRows)
 
