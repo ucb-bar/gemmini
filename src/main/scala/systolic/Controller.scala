@@ -376,8 +376,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   }
 
   // Scratchpad writes
-  meshIO.io.out.ready := true.B
-
   val w_address = meshIO.io.tag_out.asTypeOf(spaddr)
   val w_bank_number = w_address.spbank
   val w_bank_address = w_address.sprow

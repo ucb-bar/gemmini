@@ -13,7 +13,7 @@ class SinglePortedSyncMemIO[T <: Data](n: Int, t: T) extends Bundle {
   override def cloneType = (new SinglePortedSyncMemIO(n, t)).asInstanceOf[this.type]
 }
 
-class SinglePortedSyncMem[T <: Data](n: Int, t: T) extends Module {
+class SinglePortSyncMem[T <: Data](n: Int, t: T) extends Module {
   val io = IO(new SinglePortedSyncMemIO(n, t))
 
   assert(!(io.ren && io.wen), "undefined behavior in single-ported SRAM")
@@ -28,7 +28,7 @@ class SinglePortedSyncMem[T <: Data](n: Int, t: T) extends Module {
   }
 }
 
-class DualPortedSyncMem[T <: Data](n: Int, t: T) extends Module {
+class TwoPortSyncMem[T <: Data](n: Int, t: T) extends Module {
   val io = IO(new Bundle {
     val waddr = Input(UInt((log2Ceil(n) max 1).W))
     val raddr = Input(UInt((log2Ceil(n) max 1).W))
@@ -49,7 +49,7 @@ class DualPortedSyncMem[T <: Data](n: Int, t: T) extends Module {
   }
 }
 
-class SplitSinglePortedSyncMem[T <: Data](n: Int, t: T, splits: Int) extends Module {
+class SplitSinglePortSyncMem[T <: Data](n: Int, t: T, splits: Int) extends Module {
   val io = IO(new Bundle {
     val waddr = Input(UInt((log2Ceil(n) max 1).W))
     val raddr = Input(UInt((log2Ceil(n) max 1).W))
@@ -73,7 +73,7 @@ class SplitSinglePortedSyncMem[T <: Data](n: Int, t: T, splits: Int) extends Mod
     addr - (i*lens).U
   }
 
-  val srams = Seq.fill(splits-1)(SinglePortedSyncMem(lens, t).io) :+ SinglePortedSyncMem(last_len, t).io
+  val srams = Seq.fill(splits-1)(SinglePortSyncMem(lens, t).io) :+ SinglePortSyncMem(last_len, t).io
 
   val output_split = Reg(UInt((log2Ceil(splits) max 1).W))
   io.rdata := DontCare
@@ -95,14 +95,14 @@ class SplitSinglePortedSyncMem[T <: Data](n: Int, t: T, splits: Int) extends Mod
   }
 }
 
-object SinglePortedSyncMem {
-  def apply[T <: Data](n: Int, t: T): SinglePortedSyncMem[T] = Module(new SinglePortedSyncMem(n, t))
+object SinglePortSyncMem {
+  def apply[T <: Data](n: Int, t: T): SinglePortSyncMem[T] = Module(new SinglePortSyncMem(n, t))
 }
 
-object DualPortedSyncMem {
-  def apply[T <: Data](n: Int, t: T): DualPortedSyncMem[T] = Module(new DualPortedSyncMem(n, t))
+object TwoPortSyncMem {
+  def apply[T <: Data](n: Int, t: T): TwoPortSyncMem[T] = Module(new TwoPortSyncMem(n, t))
 }
 
-object SplitSinglePortedSyncMem {
-  def apply[T <: Data](n: Int, t: T, splits: Int): SplitSinglePortedSyncMem[T] = Module(new SplitSinglePortedSyncMem(n, t, splits))
+object SplitSinglePortSyncMem {
+  def apply[T <: Data](n: Int, t: T, splits: Int): SplitSinglePortSyncMem[T] = Module(new SplitSinglePortSyncMem(n, t, splits))
 }

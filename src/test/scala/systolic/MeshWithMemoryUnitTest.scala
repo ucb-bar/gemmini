@@ -69,7 +69,6 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
   def startup(getOut: Boolean): Unit = {
     reset()
     pokeAllInputValids(true)
-    poke(c.io.out.ready, 1)
     poke(c.io.s.bits, false)
     for (i <- 1 to 4) {
       do {
@@ -86,7 +85,6 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
   def goldResults(ms: Seq[MeshTesterInput]): Seq[Matrix[Int]]
 
   startup(false)
-  poke(c.io.out.ready, true)
 
   // Input all matrices
   val meshInputs = formatMs(ms)
@@ -127,16 +125,10 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
 
       } while (!allMatrixInputsAreReady() // Wait for the systolic array to be ready for more inputs
         || garbage_cycles > 0)
-
-      // Now, refuse to read out data
-      poke(c.io.out.ready, false)
-      step(outputGarbageCycles())
-      poke(c.io.out.ready, true)
     }
   }
 
   // Flush out the final results
-  poke(c.io.out.ready, 1)
   poke(c.io.flush.valid, 1)
   do {
     step(1)
@@ -373,7 +365,7 @@ class MeshWithMemoryTester extends ChiselFlatSpec
           val df_testers = df_with_tester._2
 
           for (dft <- df_testers) {
-            println(s"\n\nBankings $banks\nPipeline depth: $pipeline_depth\n\n")
+            // println(s"\n\nBankings $banks\nPipeline depth: $pipeline_depth\n\n")
 
             iotesters.Driver.execute(Array("--backend-name", "treadle"),
               () => new MeshWithMemory(SInt(32.W), 32, df, tile_dim, tile_dim, mesh_dim, mesh_dim, sram_entries, banks)) {

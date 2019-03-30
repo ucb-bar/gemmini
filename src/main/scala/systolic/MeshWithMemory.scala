@@ -6,14 +6,11 @@ import chisel3.util._
 
 import systolic.Util._
 
-// TODO fix output ready. It doesn't work when banking, and it seems to assume that SRAM outputs stay steady when ren is low
+// TODO Add io.out.ready back in. Before it was removed, it didn't work when banking, and it seemed to assume that SRAM outputs stay steady when ren is low
 // TODO add option to shift output with SRAM banking instead
 // TODO change banks to support non-square tiles
 // TODO Handle matrices where N1 =/= N2 =/= N3
 // TODO Change S to an enum
-// TODO Does it make sense to not pause when the output isn't valid? And is that possible with the current setup anyway?
-// TODO Should I add a reset buffers input?
-// TODO should I add an output_valid counter?
 
 class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dataflow.Value,
                      val tileRows: Int, val tileColumns: Int,
@@ -37,7 +34,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
     val tag_in = Flipped(Decoupled(UInt(tagWidth.W)))
     val tag_out = Output(UInt(tagWidth.W))
 
-    val out = Decoupled(Output(C_TYPE))
+    val out = Valid(C_TYPE) // TODO make this ready-valid
     val out_s = Output(S_TYPE)
 
     // TODO make this a decoupled
@@ -68,8 +65,8 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   // TODO this seems inelegant...
   val last_output_retrieved = RegInit(false.B)
   val all_emptied = a_buf.io.emptied && b_buf.io.emptied && d_buf.io.emptied
-  val compute_done = (all_emptied && io.out.ready) || (all_emptied && last_output_retrieved)
-  when (compute_done && io.out.ready) { last_output_retrieved := true.B }
+  val compute_done = all_emptied || (all_emptied && last_output_retrieved)
+  when (compute_done) { last_output_retrieved := true.B }
 
   val compute_stalling = compute_done && RegNext(compute_done) // TODO this also seems inelegant...
 
@@ -78,7 +75,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   val flushing = RegInit(false.B)
 
   val flip = compute_done && buffering_done // When the double-buffers flip roles
-  val pause = compute_stalling || !io.out.ready
+  val pause = compute_stalling
 
   mat_bufs.zip(Seq(io.a, io.b, io.d)).foreach { case (b, mio) =>
       b.io.in := mio.bits
@@ -100,7 +97,6 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
   mesh.io.in_s_vec.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_ := ShiftRegister(Cat(io.m, s_bufs(active)), i, !pause))
-    // ss.foreach(_ := ShiftRegister(Cat(io.m, s_bufs(not_active)), i, !pause)) // We need the LAST value of S
   }
   mesh.io.pause := pause
 
@@ -195,12 +191,12 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
     tag_id := (~tag_id).asUInt()
 
-    // printf(p"     Done!   (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    // printf(p"     Done!   (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready})\n\n")
   }.elsewhen(!compute_done) {
-    // printf(p"     Computing!  (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    // printf(p"     Computing!  (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready})\n\n")
   }.otherwise {
     // Pause systolic array
-    // printf(p"     PAUSING  (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready}) (out.ready: ${io.out.ready})\n\n")
+    // printf(p"     PAUSING  (stalling: $compute_stalling) (a.valid: ${io.a.valid}) (a.ready: ${io.a.ready})\n\n")
   }
 }
 
@@ -306,7 +302,7 @@ class BankedMem[T <: Data](n: Int, t: Vec[Vec[T]], banks: Int) extends Module {
 
   val banked_t_width = t.size / banks
   val banked_t = Vec(banked_t_width, t.head.cloneType)
-  val banked_mems = for (i <- 1 to banks) yield SplitSinglePortedSyncMem(n, banked_t, i).io // TODO We don't have to split so aggressively
+  val banked_mems = for (i <- 1 to banks) yield SplitSinglePortSyncMem(n, banked_t, i).io // TODO We don't have to split so aggressively
 
   // TODO better names
   val wdata_banked = io.wdata.grouped(io.wdata.size / banks).toSeq
