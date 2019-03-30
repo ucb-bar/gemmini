@@ -94,7 +94,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   meshIO.io.a.valid := false.B
   meshIO.io.b.valid := false.B
   meshIO.io.d.valid := false.B
-  meshIO.io.s.valid := false.B
   meshIO.io.tag_in.valid := false.B
   meshIO.io.flush.valid := false.B
 
@@ -102,7 +101,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   meshIO.io.b.bits := DontCare
   meshIO.io.d.bits := DontCare
   meshIO.io.tag_in.bits := DontCare
-  meshIO.io.s.bits := DontCare
+  meshIO.io.s := DontCare
   meshIO.io.m := current_dataflow
 
   // STATE defines
@@ -340,9 +339,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     meshIO.io.d.valid := true.B
     meshIO.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
     meshIO.io.tag_in.valid := true.B
-    meshIO.io.s.valid := true.B
     meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
-    meshIO.io.s.bits := in_s
+    meshIO.io.s := in_s
   }
 
   when(perform_single_mul){
@@ -353,9 +351,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     meshIO.io.d.valid := true.B
     meshIO.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
     meshIO.io.tag_in.valid := true.B
-    meshIO.io.s.valid := true.B
     meshIO.io.tag_in.bits := tag_garbage //if this is 0xFFFFFF then don't output
-    meshIO.io.s.bits := in_s
+    meshIO.io.s := in_s
   }
 
   when(perform_single_preload){
@@ -366,9 +363,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     meshIO.io.d.valid := true.B
     meshIO.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
     meshIO.io.tag_in.valid := true.B
-    meshIO.io.s.valid := true.B
     meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
-    meshIO.io.s.bits := in_s
+    meshIO.io.s := in_s
   }
 
   // Scratchpad writes

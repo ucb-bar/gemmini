@@ -9,6 +9,8 @@ import systolic.Util._
 // TODO Add io.out.ready back in. Before it was removed, it didn't work when banking, and it seemed to assume that SRAM outputs stay steady when ren is low
 // TODO Handle matrices where N1 =/= N2 =/= N3
 // TODO Change S to an enum
+// TODO cleanup tags to be like S
+// TODO do we flush for one cycle more than necessary?
 
 class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dataflow.Value,
                      val tileRows: Int, val tileColumns: Int,
@@ -22,7 +24,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(2.W)))
 
   def shifted[T <: Data](x: Vec[Vec[T]], banks: Int, reverse: Boolean = false) = {
-    assert(x.size % banks == 0)
+    assert(x.size % banks == 0, "cannot bank without clean divisors")
 
     val banked_len = x.size / banks
     val banked_x = x.grouped(banked_len).toSeq
@@ -49,7 +51,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
     val b = Flipped(Decoupled(B_TYPE))
     val d = Flipped(Decoupled(D_TYPE))
 
-    val s = Flipped(Decoupled(UInt(1.W)))
+    val s = Input(UInt(1.W))
     val m = Input(UInt(1.W))
 
     val tag_in = Flipped(Decoupled(UInt(tagWidth.W)))
@@ -76,23 +78,21 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   val flushing = RegInit(false.B)
   val flushing_or_about_to = flushing || io.flush.fire()
 
-  val fire_started = RegInit(false.B)
   val fire_counter = RegInit(0.U((log2Ceil(block_size) max 1).W))
 
   val a_buf = RegEnable(io.a.bits, io.a.fire())
   val b_buf = RegEnable(io.b.bits, io.b.fire())
   val d_buf = RegEnable(io.d.bits, io.d.fire())
 
-  val s_bufs = RegInit(VecInit(0.U, 0.U)) // TODO find a better name for this
+  val in_s = Reg(UInt(1.W))
 
   val a_written = RegInit(false.B)
   val b_written = RegInit(false.B)
   val d_written = RegInit(false.B)
 
-  val s_next_written = RegInit(false.B)
   val tag_written = RegInit(false.B)
 
-  val buffering_done = fire_counter === 0.U && s_next_written && tag_written && fire_started
+  val buffering_done = fire_counter === 0.U && tag_written
   val waiting_on_non_matrix_inputs = fire_counter === 0.U && !buffering_done
 
   when (io.a.fire()) {
@@ -115,14 +115,11 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
     d_written := false.B
 
     fire_counter := wrappingAdd(fire_counter, 1.U, block_size)
-    fire_started := true.B
   }
 
   io.a.ready := !a_written
   io.b.ready := !b_written
   io.d.ready := !d_written
-
-  io.s.ready := !s_next_written
 
   val pause = (waiting_on_non_matrix_inputs || !next_row_input) && !flushing_or_about_to
 
@@ -134,17 +131,13 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   mesh.io.in_d_vec := shifted(d_buf, upBanks)
 
   mesh.io.in_s_vec.zipWithIndex.foreach { case (ss, i) =>
-    ss.foreach(_ := ShiftRegister(Cat(io.m, s_bufs(active)), i, !pause))
+    ss.foreach(_ := ShiftRegister(Cat(io.m, in_s), i, !pause))
   }
   mesh.io.pause := pause
 
   // We want to output C when we're output-stationary, but B when we're weight-stationary
-  val bottom_mesh_io = (mesh.io.out_b_vec, mesh.io.out_c_vec, mesh.io.out_s_vec).zipped.toSeq
-  /*io.out.bits := bottom_mesh_io.zip(bottom_mesh_io.indices.reverse).map { case ((bs, cs, ss), i) =>
-    // TODO these would actually overlap when we switch from output-stationary to weight-stationary
-    // TODO should we use io.m, or the mode output of the mesh?
-    ShiftRegister(Mux(io.m === Dataflow.OS.id.U, cs, bs), i, !pause)
-  }*/
+  // TODO these would actually overlap when we switch from output-stationary to weight-stationary
+  // TODO should we use io.m, or the mode output of the mesh?
   io.out.bits := shifted(Mux(io.m === Dataflow.OS.id.U, mesh.io.out_c_vec, mesh.io.out_b_vec), outBanks, true)
   io.out_s := mesh.io.out_s_vec.zip(mesh.io.out_s_vec.indices.reverse).map{case (s, i) => ShiftRegister(s, i, !pause)}
 
@@ -152,7 +145,7 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
   // Tags
   val tag_garbage = Cat(Seq.fill(tagWidth)(1.U(1.W)))
-  val tag_queue = Module(new TagQueue(4, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
+  val tag_queue = Module(new TagQueue(5, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
   tag_queue.io.in.bits := Mux(flushing, tag_garbage, io.tag_in.bits)
   tag_queue.io.garbage := tag_garbage
 
@@ -161,11 +154,23 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
   tag_queue.io.out.next := tag_id_delayed =/= RegNext(tag_id_delayed, 0.U)
 
-  when (io.tag_in.fire()) { tag_written := true.B }
+  when (io.tag_in.fire()) { tag_written := true.B; tag_id := ~tag_id }
   io.tag_in.ready := !tag_written
   tag_queue.io.in.valid := io.tag_in.fire()
 
   io.tag_out := tag_queue.io.out.bits(Mux(io.m === Dataflow.OS.id.U, 0.U, 1.U))
+
+  // Flipping logic
+  when(buffering_done && (next_row_input || flushing_or_about_to)) {
+    active := not_active
+
+    io.tag_in.ready := true.B
+    tag_written := io.tag_in.fire()
+
+    tag_id := ~tag_id
+
+    in_s := Mux(io.flush.fire(), ~in_s, io.s ^ in_s)
+  }
 
   // Flushing logic
   val flush_counter = Reg(UInt(3.W))
@@ -179,42 +184,22 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   }
 
   when (flushing) {
-    Seq(io.a.ready, io.b.ready, io.d.ready, io.s.ready, io.tag_in.ready).foreach(_ := false.B)
-
-    s_bufs(not_active) := ~s_bufs(active)
-    s_next_written := true.B
+    Seq(io.a.ready, io.b.ready, io.d.ready, io.tag_in.ready).foreach(_ := false.B)
 
     tag_written := true.B
 
     when (buffering_done) {
       flush_counter := flush_counter - 1.U
 
+      in_s := ~in_s
+
       tag_queue.io.in.valid := true.B
 
       when (flush_counter === 0.U) {
+        tag_id := tag_id // TODO really inelegant...
+        fire_counter := 0.U
         flushing := false.B
       }
     }
-  }
-
-  // Control logic
-  when(io.s.fire() && !buffering_done) {
-    s_bufs(not_active) := io.s.bits ^ s_bufs(active)
-    s_next_written := true.B
-  }
-
-  when(buffering_done && (next_row_input || flushing_or_about_to)) {
-    active := not_active
-
-    io.s.ready := true.B
-    s_next_written := io.s.fire()
-    when(io.s.fire()) { s_bufs(active) := io.s.bits ^ s_bufs(not_active) }
-
-    io.tag_in.ready := true.B
-    tag_written := io.tag_in.fire()
-
-    tag_id := (~tag_id).asUInt()
-
-    // fire_started := false.B // TODO why was this not needed? Do I really understand fire_started?
   }
 }

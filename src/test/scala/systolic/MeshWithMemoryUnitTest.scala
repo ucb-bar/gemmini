@@ -32,7 +32,7 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
   }
 
   def pokeAllInputValids(v: Boolean): Unit = {
-    val valids = Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid, c.io.s.valid, c.io.tag_in.valid)
+    val valids = Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid, c.io.s, c.io.tag_in.valid)
     valids.foreach(vpin => poke(vpin, v))
   }
 
@@ -68,15 +68,13 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
 
   def startup(getOut: Boolean): Unit = {
     reset()
-    pokeAllInputValids(true)
-    poke(c.io.s.bits, false)
-    for (i <- 1 to 4) {
-      do {
-        step(1)
-        if (getOut)
-          updateOutput()
-      } while (peek(c.io.s.ready) == 0)
-    }
+    poke(c.io.flush.valid, 1)
+    do {
+      step(1)
+      poke(c.io.flush.valid, 0)
+      if (getOut)
+        updateOutput()
+    } while (peek(c.io.flush.ready) == 0)
     reset()
   }
 
@@ -100,7 +98,7 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
     print2DArray(meshIn.D)
     */
 
-    poke(c.io.s.bits, meshIn.S)
+    poke(c.io.s, meshIn.S)
     poke(c.io.m, meshIn.M)
     poke(c.io.tag_in.bits, meshIn.tag)
 
@@ -136,10 +134,10 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
     updateOutput()
   } while (peek(c.io.flush.ready) == 0)
 
-  /*println("Mesh output:")
+  println("Mesh output:")
   print2DArray(raw_mesh_output.map{case (seq, i, j) => seq.map((_, i, j))})
   println("Mesh output (without tags):")
-  print2DArray(raw_mesh_output.map{case (seq, i, _) => seq.map((_, i))})*/
+  print2DArray(raw_mesh_output.map{case (seq, i, _) => seq.map((_, i))})
 
   // Extract the results from the output
   var output_matrices = Seq(Seq(raw_mesh_output.head._1))
@@ -169,7 +167,7 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
   val golds = goldResults(ms)
 
   // Compare the gold results to the systolic array's outputs
-  /*for ((MeshOutput(out, tag), gold) <- results zip golds) {
+  for ((MeshOutput(out, tag), gold) <- results zip golds) {
     println(s"Tag: $tag")
     println("Result:")
     print2DArray(out)
@@ -188,10 +186,10 @@ abstract class MeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTeste
     print2DArray(gold)
     println()
   }
-  Console.flush()*/
+  Console.flush()
 
   assert(results.map(_.C) == golds, "Array output is not correct")
-  assert(results.map(_.tag) == meshInputs.init.map(_.tag), "Array tags are not correct") // TODO add this back in
+  assert(results.map(_.tag) == meshInputs.tail.map(_.tag), "Array tags are not correct") // TODO add this back in
 }
 
 class OSMeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTesterInput],
@@ -213,7 +211,7 @@ class OSMeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTesterInput]
 
   override def formatOut(outs: Seq[Matrix[Int]], tags: Seq[Int])= {
     // TODO
-    val initial_garbage = 2
+    val initial_garbage = 3
     (outs zip tags).dropRight(initial_garbage).takeRight(ms.length). // Drop initial garbage data from startup
       map(t => (t._1 take dim, t._2)).
       reverse.
@@ -262,7 +260,7 @@ class WSMeshWithMemoryUnitTest(c: MeshWithMemory[SInt], ms: Seq[MeshTesterInput]
 
   override def formatOut(outs: Seq[Matrix[Int]], tags: Seq[Int]) = {
     // TODO
-    val initial_garbage = 1
+    val initial_garbage = 2
     (outs zip tags).dropRight(initial_garbage).takeRight(ms.length). // Drop initial garbage data from startup
       map(t => (t._1.reverse, t._2)). // Reverse the rows
       reverse.
@@ -292,10 +290,10 @@ class MeshWithMemoryTester extends ChiselFlatSpec
 
   "SimpleMeshWithMemoryTester" should "work" in {
     // This is really just here to help with debugging
-    val dim = 2
+    val dim = 3
 
     iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-      () => new MeshWithMemory(SInt(16.W), 32, Dataflow.BOTH, 1, 1, dim, dim,1, 1)) {
+      () => new MeshWithMemory(SInt(16.W), 32, Dataflow.BOTH, dim, dim,1, 1, 1, 1)) {
         c => new OSMeshWithMemoryUnitTest(c, Seq.fill(2)(MeshTesterInput(identity(dim), identity(dim), zero(dim), true)), () => 0)
     } should be(true)
   }
@@ -338,16 +336,19 @@ class MeshWithMemoryTester extends ChiselFlatSpec
     }
   }
 
-  // Partly pipelined
+  // Arbitrarily pipelined
   it should "work arbitrarily pipelined with no delays, as well as with random delays, with all possible dataflows, with all possible banking strategies, with many different array sizes" in {
     for (matrix_dim <- 8 to 8) { // TODO test more sizes later
       val factors = (1 to matrix_dim).filter(matrix_dim % _ == 0)
 
       val delay_functions = Seq(() => 0, () => scala.util.Random.nextInt(5))
 
-      val dataflows = Seq((Dataflow.OS, Seq((c: MeshWithMemory[SInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int) => new OSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles))),
+      // TODO add these back in
+      /*val dataflows = Seq((Dataflow.OS, Seq((c: MeshWithMemory[SInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int) => new OSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles))),
         (Dataflow.WS, Seq((c: MeshWithMemory[SInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int) => new WSMeshWithMemoryUnitTest(c, ms, inputGarbageCyles))),
-        (Dataflow.BOTH, dataflow_testers))
+        (Dataflow.BOTH, dataflow_testers))*/
+
+      val dataflows = Seq((Dataflow.BOTH, dataflow_testers))
 
       for (tile_height <- factors; tile_width <- factors) {
         val mesh_height = matrix_dim / tile_height
@@ -356,13 +357,13 @@ class MeshWithMemoryTester extends ChiselFlatSpec
         val left_bankings = (1 to mesh_height).filter(mesh_height % _ == 0)
         val up_bankings = (1 to mesh_width).filter(mesh_width % _ == 0)
 
-        for (in_delay <- delay_functions; out_delay <- delay_functions; left_banks <- left_bankings; up_banks <- up_bankings; out_banks <- up_bankings; df_with_tester <- dataflows) {
+        for (in_delay <- delay_functions; left_banks <- left_bankings; up_banks <- up_bankings; out_banks <- up_bankings; df_with_tester <- dataflows) {
           val df = df_with_tester._1
           val df_testers = df_with_tester._2
 
           for (dft <- df_testers) {
             iotesters.Driver.execute(Array("--backend-name", "treadle"),
-              () => new MeshWithMemory(SInt(32.W), 32, df, tile_width, tile_height, mesh_width, mesh_height, left_banks, up_banks, out_banks)) {
+              () => new MeshWithMemory(SInt(32.W), 32, df, tile_height, tile_width, mesh_height, mesh_width, left_banks, up_banks, out_banks)) {
               c =>
                 dft(c, Seq.fill(8)(MeshTesterInput(rand(matrix_dim), rand(matrix_dim),
                   rand(matrix_dim), true)), in_delay)
