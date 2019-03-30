@@ -75,10 +75,8 @@ Example:
 
 ### Preloading
 **Format:** `matmul.preload rs1, rs2`
-- `rs1` = local scratchpad address (systolic array single-axis addressed) of D matrix
+- `rs1` = local scratchpad address (systolic array single-axis addressed) of D matrix. If this is set to all high bits, then D will be a 0 matrix
 - `rs2` = local scratchpad address (systolic array single-axis addressed) of C matrix
-- `rd` = if `rd` is set to 1 the systolic array will automatically preload zeros
-    - **TODO**: If `rd` is set then `xd = 1` which means a RoCC response is required
 - `funct` = 8
 
 **Commit Behavior:** This instruction commits on the cycle after the systolic array receives it. The systolic array remains idle until the subsequent OS/WS specific instructions are seen.
