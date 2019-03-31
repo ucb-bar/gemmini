@@ -195,11 +195,19 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
       tag_queue.io.in.valid := true.B
 
-      when (flush_counter === 0.U) {
+      /*when (flush_counter === 0.U) {
         tag_id := tag_id // TODO really inelegant...
         fire_counter := 0.U
         flushing := false.B
-      }
+      }*/
+    }
+
+    val about_to_finish_flushing = flush_counter === 0.U && fire_counter === (block_size-1).U // TODO change when non-square requirement lifted
+    when (about_to_finish_flushing) {
+      fire_counter := 0.U
+      in_s := ~in_s
+      tag_queue.io.in.valid := true.B
+      flushing := false.B
     }
   }
 }
