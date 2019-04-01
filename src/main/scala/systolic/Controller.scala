@@ -5,6 +5,7 @@ import chisel3.util._
 import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
+import SystolicISA._
 import Util._
 
 case class SystolicArrayConfig(
@@ -20,6 +21,24 @@ case class SystolicArrayConfig(
 )
 case object SystolicArrayKey extends Field[SystolicArrayConfig]
 
+class SystolicCmdWithDependencies(implicit p: Parameters) extends Bundle {
+  val cmd = new RoCCCommand
+  val pushStore = Bool()
+  val pushLoad = Bool()
+  val pushEx = Bool()
+  val pullStore = Bool()
+  val pullLoad = Bool()
+  val pullEx = Bool()
+}
+
+class SPAddr(xLen: Int, sp_banks: Int, sp_bank_entries: Int) extends Bundle {
+  val junk = UInt((xLen-log2Ceil(sp_bank_entries)-log2Ceil(sp_banks)).W)
+  val spbank = UInt(log2Ceil(sp_banks).W)
+  val sprow = UInt(log2Ceil(sp_bank_entries).W)
+
+  override def cloneType: SPAddr.this.type = new SPAddr(xLen, sp_banks, sp_bank_entries).asInstanceOf[this.type]
+}
+
 class SystolicArray[T <: Data: Arithmetic](dtype: T, opcodes: OpcodeSet)(implicit p: Parameters) extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
     nPTWPorts = 1) {
@@ -30,6 +49,7 @@ class SystolicArray[T <: Data: Arithmetic](dtype: T, opcodes: OpcodeSet)(implici
   override val tlNode = spad.node
 }
 
+// TODO add WS support
 class SystolicArrayModule[T <: Data: Arithmetic]
     (outer: SystolicArray[T], val inner_type: T)
     extends LazyRoCCModuleImp(outer)
@@ -44,13 +64,9 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   val tag_garbage = Cat(Seq.fill(xLen)(1.U(1.W)))
 
-  val spaddr = new Bundle {
-    val junk = UInt((xLen-log2Ceil(sp_bank_entries)-log2Ceil(sp_banks)).W)
-    val spbank = UInt(log2Ceil(sp_banks).W)
-    val sprow = UInt(log2Ceil(sp_bank_entries).W)
-  }
+  val spaddr = new SPAddr(xLen, sp_banks, sp_bank_entries)
 
-  val (cmd, cmd_q_full) = MultiHeadedQueue(io.cmd, queue_length, 4)
+  val cmd = MultiHeadedQueue(io.cmd, queue_length, 4)
   cmd.pop := 0.U
   io.busy := false.B // cmd.valid(0) // TODO
   // io.cmd.valid implies io.cmd.bits.inst.xd = 0
@@ -64,24 +80,24 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val rs2 = cmd.bits(0).rs2
   val funct = cmd.bits(0).inst.funct
 
-  val DoLoad = funct === 2.U
-  val DoStore = funct === 3.U
-  val DoSetMode = funct === 9.U
+  val DoLoad = funct === LOAD_CMD
+  val DoStore = funct === STORE_CMD
+  val DoSetMode = funct === MODE_CMD
   // TODO clean these names up. Maybe use a function instead
-  val DoComputeAndFlip = funct === 4.U
-  val DoComputeAndStay = funct === 5.U
-  val DoComputeSecond = cmd.bits(1).inst.funct === 4.U || cmd.bits(1).inst.funct === 5.U
-  val DoComputeThird = cmd.bits(2).inst.funct === 4.U || cmd.bits(2).inst.funct === 5.U
-  val DoPreLoad = funct === 8.U
-  val DoPreloadSecond = cmd.bits(1).inst.funct === 8.U
-  val DoPreloadThird = cmd.bits(2).inst.funct === 8.U
-  val DoPreloadFourth = cmd.bits(3).inst.funct === 8.U
+  val DoComputeAndFlip = funct === COMPUTE_AND_FLIP_CMD
+  val DoComputeAndStay = funct === COMPUTE_AND_STAY_CMD
+  val DoComputeSecond = cmd.bits(1).inst.funct === COMPUTE_AND_FLIP_CMD || cmd.bits(1).inst.funct === COMPUTE_AND_STAY_CMD
+  val DoComputeThird = cmd.bits(2).inst.funct === COMPUTE_AND_FLIP_CMD || cmd.bits(2).inst.funct === COMPUTE_AND_STAY_CMD
+  val DoPreload = funct === PRELOAD_CMD
+  val DoPreloadSecond = cmd.bits(1).inst.funct === PRELOAD_CMD
+  val DoPreloadThird = cmd.bits(2).inst.funct === PRELOAD_CMD
+  val DoPreloadFourth = cmd.bits(3).inst.funct === PRELOAD_CMD
 
-  val preload_cmd_place = Mux(DoPreLoad, 0.U, 1.U)
+  val preload_cmd_place = Mux(DoPreload, 0.U, 1.U)
 
   // SRAM addresses of matmul operands
-  val a_address_rs1 = WireInit(cmd.bits(0.U).rs1.asTypeOf(spaddr))
-  val b_address_rs2 = WireInit(cmd.bits(0.U).rs2.asTypeOf(spaddr))
+  val a_address_rs1 = WireInit(cmd.bits(0).rs1.asTypeOf(spaddr))
+  val b_address_rs2 = WireInit(cmd.bits(0).rs2.asTypeOf(spaddr))
   val d_address_rs1 = WireInit(cmd.bits(preload_cmd_place).rs1.asTypeOf(spaddr))
   val c_address_rs2 = WireInit(cmd.bits(preload_cmd_place).rs2.asTypeOf(spaddr))
 
@@ -119,6 +135,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   //asserts
   assert(meshRows*tileRows == meshColumns*tileColumns) // this also assumes symmetric systolic array
   assert(sp_width == meshRows*tileRows*inner_type.getWidth)
+  assert(sp_bank_entries % block_size == 0)
   assert(block_size == meshRows*tileRows)
 
   //SRAM scratchpad
@@ -204,7 +221,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
           cmd.pop := 1.U
         }
 
-        .elsewhen(DoPreLoad) {
+        .elsewhen(DoPreload) {
           perform_single_preload := true.B
           start_inputting_d := true.B
           fire_count_started := true.B
@@ -217,7 +234,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     is (compute) {
       when (cmd.valid(0)) {
         // Only preloading
-        when(DoPreLoad) {
+        when(DoPreload) {
           start_inputting_d := true.B
 
           when(fired_all_rows) {

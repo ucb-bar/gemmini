@@ -53,7 +53,7 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 ### `setmode` set the mode to weight/output stationary
 **Format:** `setmode rs1`
 - `rs1` = the lsb of rs1 will determine if output (0.U) or weight (1.U) stationary.
-- `funct` = 9
+- `funct` = 0
 
 **Action:** mode <= rs1(0)
 
@@ -77,7 +77,7 @@ Example:
 **Format:** `matmul.preload rs1, rs2`
 - `rs1` = local scratchpad address (systolic array single-axis addressed) of D matrix. If this is set to all high bits, then D will be a 0 matrix
 - `rs2` = local scratchpad address (systolic array single-axis addressed) of C matrix
-- `funct` = 8
+- `funct` = 6
 
 **Commit Behavior:** This instruction commits on the cycle after the systolic array receives it. The systolic array remains idle until the subsequent OS/WS specific instructions are seen.
 

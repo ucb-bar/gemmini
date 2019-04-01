@@ -14,8 +14,6 @@ class MultiHeadedQueue[T <: Data](gen: T, entries: Int, heads: Int) extends Modu
       val bits = Output(Vec(heads, gen))
       val pop = Input(UInt(2.W))
     }
-
-    val full = Output(Bool())
   })
 
   assert(heads >= 1)
@@ -27,7 +25,6 @@ class MultiHeadedQueue[T <: Data](gen: T, entries: Int, heads: Int) extends Modu
   val len = RegInit(0.U(log2Ceil(entries+1).W))
 
   io.enq.ready := len < entries.U
-  io.full := len === entries.U
 
   for (i <- 0 until heads) {
     io.deq.valid(i) := len > i.U
@@ -57,6 +54,6 @@ object MultiHeadedQueue {
   def apply[T <: Data](src: ReadyValidIO[T], entries: Int, heads: Int) = {
     val q = Module(new MultiHeadedQueue(src.bits.cloneType, entries, heads: Int))
     q.io.enq <> src
-    (q.io.deq, q.io.full)
+    q.io.deq
   }
 }
