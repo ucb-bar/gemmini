@@ -29,6 +29,8 @@ class SystolicCmdWithDependencies(implicit p: Parameters) extends Bundle {
   val pullStore = Bool()
   val pullLoad = Bool()
   val pullEx = Bool()
+
+  override def cloneType: SystolicCmdWithDependencies.this.type = (new SystolicCmdWithDependencies).asInstanceOf[this.type]
 }
 
 class SPAddr(xLen: Int, sp_banks: Int, sp_bank_entries: Int) extends Bundle {
@@ -58,7 +60,101 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   import outer.config._
   import outer.spad
 
-  // Parameters
+  val sp_addr = new SPAddr(xLen, sp_banks, sp_bank_entries)
+  val funct_t = new Bundle {
+    val push1 = UInt(1.W)
+    val pop1 = UInt(1.W)
+    val push2 = UInt(1.W)
+    val pop2 = UInt(1.W)
+    val funct = UInt(3.W)
+  }
+
+  // TLB
+  implicit val edge = outer.tlNode.edges.out.head
+  val tlb = Module(new FrontendTLB(1, 4))
+  tlb.io.clients(0) <> outer.spad.module.io.tlb
+  io.ptw.head <> tlb.io.ptw
+
+  // Controller
+  val cmd = Queue(io.cmd, queue_length)
+
+  cmd.ready := false.B
+  io.busy := false.B
+
+  val funct = cmd.bits.inst.funct.asTypeOf(funct_t).funct
+  val push1 = cmd.bits.inst.funct.asTypeOf(funct_t).push1
+  val pop1 = cmd.bits.inst.funct.asTypeOf(funct_t).pop1
+  val push2 = cmd.bits.inst.funct.asTypeOf(funct_t).push2
+  val pop2 = cmd.bits.inst.funct.asTypeOf(funct_t).pop2
+
+  val load_controller = Module(new LoadController(outer.config, sp_addr))
+  val store_controller = Module(new StoreController(outer.config, sp_addr))
+
+  val dma_arbiter = Module(new DMAArbiter(sp_banks, sp_bank_entries))
+
+  val load_to_store_depq = Queue(load_controller.io.pushStore, 256)
+  val load_to_ex_depq = Queue(load_controller.io.pushEx, 256)
+  val store_to_load_depq = Queue(store_controller.io.pushLoad, 256)
+  val store_to_ex_depq = Queue(store_controller.io.pushEx, 256)
+
+  // Wire up commands to controllers
+  load_controller.io.cmd.valid := false.B
+  load_controller.io.cmd.bits.cmd := cmd.bits
+  load_controller.io.cmd.bits.cmd.inst.funct := funct
+  load_controller.io.cmd.bits.pushLoad := false.B
+  load_controller.io.cmd.bits.pullLoad := false.B
+  load_controller.io.cmd.bits.pushStore := push1
+  load_controller.io.cmd.bits.pullStore := pop1
+  load_controller.io.cmd.bits.pushEx := push2
+  load_controller.io.cmd.bits.pullEx := pop2
+
+  store_controller.io.cmd.valid := false.B
+  store_controller.io.cmd.bits.cmd := cmd.bits
+  store_controller.io.cmd.bits.cmd.inst.funct := funct
+  store_controller.io.cmd.bits.pushLoad := push1
+  store_controller.io.cmd.bits.pullLoad := pop1
+  store_controller.io.cmd.bits.pushStore := false.B
+  store_controller.io.cmd.bits.pullStore := false.B
+  store_controller.io.cmd.bits.pushEx := push2
+  store_controller.io.cmd.bits.pullEx := pop2
+
+  // Wire up scratchpad to controllers
+  spad.module.io.dma <> dma_arbiter.io.dma
+  dma_arbiter.io.load <> load_controller.io.dma
+  dma_arbiter.io.store <> store_controller.io.dma
+
+  // Wire up controllers to dependency queues
+  load_controller.io.pullStore <> store_to_load_depq
+  store_controller.io.pullLoad <> load_to_store_depq
+
+  // Issue commands to controllers
+  when (cmd.valid) {
+    when (funct === LOAD_CMD) {
+      load_controller.io.cmd.valid := true.B
+
+      when (load_controller.io.cmd.fire()) {
+        cmd.ready := true.B
+      }
+    }
+
+    .elsewhen (funct === STORE_CMD) {
+      store_controller.io.cmd.valid := true.B
+
+      when (store_controller.io.cmd.fire()) {
+        cmd.ready := true.B
+      }
+    }
+  }
+
+  // TODO Execute stuff
+  load_controller.io.pullEx.valid := false.B
+  load_controller.io.pullEx.bits := DontCare
+  store_controller.io.pullEx.valid := false.B
+  store_controller.io.pullEx.bits := DontCare
+  load_to_ex_depq.ready := true.B
+  store_to_ex_depq.ready := true.B
+
+/*  // Parameters
   val block_size = meshRows*tileRows
   assert(meshRows*tileRows == meshColumns*tileColumns) // TODO remove when square requirement is lifted
 
@@ -156,7 +252,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
   val fire_count_started = RegInit(false.B)
   val fired_all_rows = fire_counter === 0.U && fire_count_started
-  val keep_firing = WireInit(false.B)
   val output_counter = new Counter(block_size)
 
   fire_counter := 0.U
@@ -425,5 +520,5 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   }
   when (perform_store && spad.module.io.dma.resp.valid) { // assumes no page faults occur
     cmd.pop := 1.U
-  }
+  }*/
 }
