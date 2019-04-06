@@ -4,20 +4,20 @@ import chisel3._
 import chisel3.util._
 import Util._
 
-// TODO Only supports popping up to two elements at a time
-class MultiHeadedQueue[T <: Data](gen: T, entries: Int, heads: Int) extends Module {
+class MultiHeadedQueue[T <: Data](gen: T, entries: Int, heads: Int, maxpop: Int = 2) extends Module {
   val io = IO(new Bundle {
     val enq = Flipped(Decoupled(gen))
 
     val deq = new Bundle {
       val valid = Output(Vec(heads, Bool()))
       val bits = Output(Vec(heads, gen))
-      val pop = Input(UInt(2.W))
+      val pop = Input(UInt(log2Ceil((entries min maxpop) + 1).W))
     }
+
+    val len = Output(UInt(log2Ceil(entries+1).W))
   })
 
   assert(heads >= 1)
-  assert(io.deq.pop <= 2.U, "cannot pop more than two elements at a time for now (TODO)")
 
   val regs = Reg(Vec(entries, gen))
   val raddr = RegInit(0.U((log2Ceil(entries) max 1).W))
@@ -25,6 +25,7 @@ class MultiHeadedQueue[T <: Data](gen: T, entries: Int, heads: Int) extends Modu
   val len = RegInit(0.U(log2Ceil(entries+1).W))
 
   io.enq.ready := len < entries.U
+  io.len := len
 
   for (i <- 0 until heads) {
     io.deq.valid(i) := len > i.U
@@ -39,21 +40,18 @@ class MultiHeadedQueue[T <: Data](gen: T, entries: Int, heads: Int) extends Modu
   }
 
   // Popping
-  when (io.deq.valid(0) && io.deq.valid(1) && io.deq.pop =/= 0.U) {
-    val maxpop = Mux(io.deq.pop <= 2.U, io.deq.pop, 2.U)
-    raddr := wrappingAdd(raddr, maxpop, entries)
-    len := len - maxpop + io.enq.fire()
-  }.elsewhen (io.deq.valid(0) && io.deq.pop =/= 0.U) {
-    val maxpop = Mux(io.deq.pop <= 1.U, io.deq.pop, 1.U)
-    raddr := wrappingAdd(raddr, maxpop, entries)
-    len := len - maxpop + io.enq.fire()
+  when(io.deq.pop > 0.U) {
+    raddr := wrappingAdd(raddr, io.deq.pop, entries)
+    len := len - io.deq.pop + io.enq.fire()
   }
+
+  assert(io.deq.pop <= len && io.deq.pop <= heads.U && io.deq.pop <= maxpop.U)
 }
 
 object MultiHeadedQueue {
   def apply[T <: Data](src: ReadyValidIO[T], entries: Int, heads: Int) = {
     val q = Module(new MultiHeadedQueue(src.bits.cloneType, entries, heads: Int))
     q.io.enq <> src
-    q.io.deq
+    (q.io.deq, q.io.len)
   }
 }

@@ -6,27 +6,41 @@ import SystolicISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
+// TODO handle reads from the same bank
+// TODO handle reads from addresses that haven't been written yet
 class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayConfig, spaddr: SPAddr, inner_type: T)
                                               (implicit p: Parameters) extends Module {
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new SystolicCmdWithDependencies))
+    val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
 
-    val read  = Flipped(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
-    val write = Flipped(Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width)))
+    val read  = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
+    val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width))
 
     // TODO what's a better way to express no bits?
     val pushLoad = Decoupled(UInt(1.W))
     val pullLoad = Flipped(Decoupled(UInt(1.W)))
     val pushStore = Decoupled(UInt(1.W))
     val pullStore = Flipped(Decoupled(UInt(1.W)))
+
+    val pushLoadLeft = Input(UInt(log2Ceil(depq_len+1).W))
+    val pushStoreLeft = Input(UInt(log2Ceil(depq_len+1).W))
   })
 
   val block_size = meshRows*tileRows
-  val tag_garbage = Cat(Seq.fill(xLen)(1.U(1.W)))
+  assert(ex_queue_length >= 6)
 
-  val cmd = MultiHeadedQueue(io.cmd, queue_length, 4)
+  val tagWidth = 32
+  val tag_garbage = Cat(Seq.fill(tagWidth)(1.U(1.W)))
+  val tag_with_deps = new Bundle {
+    val pushLoad = Bool()
+    val pushStore = Bool()
+    val tag = UInt(tagWidth.W)
+  }
+
+  val cmd_q_heads = 4
+  val (cmd, _) = MultiHeadedQueue(io.cmd, ex_queue_length, cmd_q_heads)
   cmd.pop := 0.U
 
   val current_dataflow = RegInit(Dataflow.OS.id.U)
@@ -36,14 +50,15 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val rs2s = VecInit(cmd.bits.map(_.cmd.rs2))
 
   val DoSetMode = functs(0) === MODE_CMD
-  val DoComputeAndFlip = functs(0) === COMPUTE_AND_FLIP_CMD
-  val DoComputeAndStay = functs(0) === COMPUTE_AND_STAY_CMD
+  val DoComputeAndFlips = functs.map(_ === COMPUTE_AND_FLIP_CMD)
+  val DoComputeAndStays = functs.map(_ === COMPUTE_AND_STAY_CMD)
   val DoComputes = functs.map(f => f === COMPUTE_AND_FLIP_CMD || f === COMPUTE_AND_STAY_CMD)
   val DoPreloads = functs.map(_ === PRELOAD_CMD)
 
   val preload_cmd_place = Mux(DoPreloads(0), 0.U, 1.U)
 
-  val in_s = DoComputeAndFlip
+  val in_s = DoComputeAndFlips(0)
+  val in_s_flush = Reg(Bool())
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = WireInit(rs1s(0).asTypeOf(spaddr))
@@ -51,31 +66,61 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val d_address_rs1 = WireInit(rs1s(preload_cmd_place).asTypeOf(spaddr))
   val c_address_rs2 = WireInit(rs2s(preload_cmd_place).asTypeOf(spaddr))
 
-  val preload_zeros = WireInit(d_address_rs1.asUInt() === tag_garbage)
+  val preload_zeros = WireInit(d_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage)
+
+  // Dependency stuff
+  val pushLoads = cmd.bits.map(_.deps.pushLoad)
+  val pullLoads = cmd.bits.map(_.deps.pullLoad)
+  val pushStores = cmd.bits.map(_.deps.pushStore)
+  val pullStores = cmd.bits.map(_.deps.pullStore)
+  val pushDeps = (pushLoads zip pushStores).map { case (pl, ps) => pl || ps }
+  val pullDeps = (pullLoads zip pullStores).map { case (pl, ps) => pl || ps }
+
+  val pull_deps_ready = (pullDeps, pullLoads, pullStores).zipped.map { case (pullDep, pullLoad, pullStore) =>
+    !pullDep || (pullLoad && !pullStore && io.pullLoad.valid) ||
+      (pullStore && !pullLoad && io.pullStore.valid) ||
+      (pullLoad && pullStore && io.pullLoad.valid && io.pullStore.valid)
+  }
+
+  val push_deps_ready = (pushDeps, pushLoads, pushStores).zipped.map { case (pushDep, pushLoad, pushStore) =>
+    !pushDep || (pushLoad && !pushStore && io.pushLoadLeft >= 3.U) ||
+      (pushStore && !pushLoad && io.pushStoreLeft >= 3.U) ||
+      (pushStore && pushLoad && io.pushLoadLeft >= 3.U && io.pushStoreLeft >= 3.U)
+  }
+
+  io.pushLoad.valid := false.B
+  io.pushLoad.bits := DontCare
+  io.pushStore.valid := false.B
+  io.pushStore.bits := DontCare
+
+  io.pullLoad.ready := false.B
+  io.pullStore.ready := false.B
 
   // Instantiate the actual mesh
-  val meshIO = Module(new MeshWithMemory(inner_type, xLen, Dataflow.BOTH, tileRows,
+  val mesh = Module(new MeshWithMemory(inner_type, tag_with_deps, Dataflow.BOTH, tileRows,
     tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
 
-  meshIO.io.a.valid := false.B
-  meshIO.io.b.valid := false.B
-  meshIO.io.d.valid := false.B
-  meshIO.io.tag_in.valid := false.B
-  meshIO.io.flush.valid := false.B
+  mesh.io.a.valid := false.B
+  mesh.io.b.valid := false.B
+  mesh.io.d.valid := false.B
+  mesh.io.tag_in.valid := false.B
+  mesh.io.tag_garbage.pushLoad := false.B
+  mesh.io.tag_garbage.pushStore := false.B
+  mesh.io.tag_garbage.tag := tag_garbage
+  mesh.io.flush.valid := false.B
 
-  meshIO.io.a.bits := DontCare
-  meshIO.io.b.bits := DontCare
-  meshIO.io.d.bits := DontCare
-  meshIO.io.tag_in.bits := DontCare
-  meshIO.io.s := DontCare
-  meshIO.io.m := current_dataflow
+  mesh.io.a.bits := DontCare
+  mesh.io.b.bits := DontCare
+  mesh.io.d.bits := DontCare
+  mesh.io.tag_in.bits := DontCare
+  mesh.io.s := DontCare
+  mesh.io.m := current_dataflow
 
   // STATE defines
-  // TODO these need to be cleaned up
-  val waiting_for_preload :: compute :: flush :: flushing :: Nil = Enum(4)
-  val control_state = RegInit(waiting_for_preload)
+  val waiting_for_cmd :: compute :: flush :: flushing :: Nil = Enum(4)
+  val control_state = RegInit(waiting_for_cmd)
 
-  //SRAM scratchpad
+  // SRAM scratchpad
   val a_read_bank_number = a_address_rs1.spbank
   val b_read_bank_number = b_address_rs2.spbank
   val d_read_bank_number = d_address_rs1.spbank
@@ -94,7 +139,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val output_counter = new Counter(block_size)
 
   fire_counter := 0.U
-  when(meshIO.io.a.ready && meshIO.io.b.ready && meshIO.io.d.ready &&
+  when (mesh.io.a.ready && mesh.io.b.ready && mesh.io.d.ready &&
     (start_inputting_ab || start_inputting_d)) {
     fire_counter := wrappingAdd(fire_counter, 1.U, block_size)
   }
@@ -125,7 +170,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   }.elsewhen (perform_mul_pre) {
     dataAbank := rs1s(0).asTypeOf(spaddr).spbank
     dataBbank := rs2s(0).asTypeOf(spaddr).spbank
-    dataDbank := rs1s(0).asTypeOf(spaddr).spbank
+    dataDbank := rs1s(1).asTypeOf(spaddr).spbank
   }.elsewhen (perform_single_mul) {
     dataAbank := rs1s(0).asTypeOf(spaddr).spbank
     dataBbank := rs2s(0).asTypeOf(spaddr).spbank
@@ -136,24 +181,37 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val dataD = Mux(RegNext(preload_zeros), 0.U, readData(dataDbank))
 
   // FSM logic
-  switch(control_state){
-    is (waiting_for_preload) {
-      when(cmd.valid(0)) {
+  // TODO clean this up by taking the issue command logic out of the "compute" state
+  switch (control_state) {
+    is (waiting_for_cmd) {
+      when(cmd.valid(0) && pull_deps_ready(0) && push_deps_ready(0)) {
 
         when(DoSetMode) {
           val data_mode = rs1s(0)(0)
           current_dataflow := data_mode
+
+          io.pullLoad.ready := cmd.bits(0).deps.pullLoad
+          io.pullStore.ready := cmd.bits(0).deps.pullStore
+          // TODO add support for pushing dependencies on the set-mode command
+          assert(!pushDeps(0))
+
           cmd.pop := 1.U
         }
 
         .elsewhen(DoPreloads(0)) {
           perform_single_preload := true.B
           start_inputting_d := true.B
+
+          io.pullLoad.ready := cmd.bits(0).deps.pullLoad
+          io.pullStore.ready := cmd.bits(0).deps.pullStore
+
+          in_s_flush := rs2s(0)(tagWidth-1, 0) =/= tag_garbage
+
           fire_count_started := true.B
           control_state := compute
         }
 
-        assert(!DoComputes(0), "compute came before preload")
+        assert(!DoComputes(0), "compute arrived before preload")
       }
     }
     is (compute) {
@@ -171,11 +229,14 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
             cmd.pop := 1.U
 
             // Can we immediately launch into a mulpre?
-            when(cmd.valid(1) && DoComputes(1) && cmd.valid(2) && DoPreloads(2)) {
+            when(cmd.valid(1) && DoComputes(1) && cmd.valid(2) && DoPreloads(2) && pull_deps_ready(2) && push_deps_ready(2)) {
               start_inputting_ab := true.B
               start_inputting_d := true.B
 
               perform_mul_pre := true.B
+
+              io.pullLoad.ready := cmd.bits(2).deps.pullLoad
+              io.pullStore.ready := cmd.bits(2).deps.pullStore
 
               a_address_rs1 := rs1s(1).asTypeOf(spaddr)
               b_address_rs2 := rs2s(1).asTypeOf(spaddr)
@@ -183,7 +244,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
               c_address_rs2 := rs2s(2).asTypeOf(spaddr)
             }
             // Can we immediately launch into a mul?
-            .elsewhen(cmd.valid(1) && DoComputes(1) && cmd.valid(2) && !DoPreloads(2)) {
+            .elsewhen(cmd.valid(1) && DoComputes(1)) { // && cmd.valid(2) && !DoPreloads(2)) {
               start_inputting_ab := true.B
               preload_zeros := true.B
 
@@ -195,13 +256,22 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
           }
         }
 
-          // Overlapping
-        .elsewhen(cmd.valid(1) && DoPreloads(1) && !perform_single_mul) {
+        // Overlapping
+        .elsewhen(cmd.valid(1) && DoPreloads(1) && !perform_single_mul &&
+          (perform_mul_pre || (pull_deps_ready(1) && push_deps_ready(1))))
+        {
           perform_mul_pre := true.B
           start_inputting_ab := true.B
           start_inputting_d := true.B
 
+          in_s_flush := rs2s(1)(tagWidth-1, 0) =/= tag_garbage
+
           fire_count_started := true.B
+
+          when (!perform_mul_pre) { // When we first launch into the mulpre
+            io.pullLoad.ready := cmd.bits(1).deps.pullLoad
+            io.pullStore.ready := cmd.bits(1).deps.pullStore
+          }
 
           when(fired_all_rows) {
             perform_mul_pre := false.B
@@ -213,11 +283,14 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
             cmd.pop := 2.U
 
             // Can we immediately launch into a mulpre?
-            when(cmd.valid(2) && DoComputes(2) && cmd.valid(3) && DoPreloads(3)) {
+            when(cmd.valid(2) && DoComputes(2) && cmd.valid(3) && DoPreloads(3) && pull_deps_ready(3) && push_deps_ready(3)) {
               start_inputting_ab := true.B
               start_inputting_d := true.B
 
               perform_mul_pre := true.B
+
+              io.pullLoad.ready := cmd.bits(3).deps.pullLoad
+              io.pullStore.ready := cmd.bits(3).deps.pullStore
 
               a_address_rs1 := rs1s(2).asTypeOf(spaddr)
               b_address_rs2 := rs2s(2).asTypeOf(spaddr)
@@ -225,7 +298,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
               c_address_rs2 := rs2s(3).asTypeOf(spaddr)
             }
             // Can we immediately launch into a mul?
-            .elsewhen(cmd.valid(2) && DoComputes(2) && cmd.valid(3) && !DoPreloads(3)) {
+            .elsewhen(cmd.valid(2) && DoComputes(2) && (!cmd.valid(3) || (cmd.valid(3) && !DoPreloads(3)))) {
               start_inputting_ab := true.B
               preload_zeros := true.B
 
@@ -238,7 +311,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
         }
 
         // Only compute
-        .elsewhen(cmd.valid(1) && !DoPreloads(1)) {
+        .elsewhen(cmd.valid(0) && DoComputes(0)) { // .elsewhen(cmd.valid(1) && !DoPreloads(1)) {
           perform_single_mul := true.B
           start_inputting_ab := true.B
           start_inputting_d := false.B
@@ -259,57 +332,53 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
       }
     }
     is (flush) {
-      when(meshIO.io.flush.ready) {
-        meshIO.io.flush.valid := true.B
+      when(mesh.io.flush.ready) {
+        mesh.io.flush.valid := true.B
+        mesh.io.s := in_s_flush
         control_state := flushing
       }
     }
     is (flushing) {
-      when(meshIO.io.flush.ready) {
-        control_state := waiting_for_preload
+      when(mesh.io.flush.ready) {
+        control_state := waiting_for_cmd
       }
     }
   }
 
   // Computing logic
-  when(perform_mul_pre){
-    meshIO.io.a.valid := true.B
-    meshIO.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
-    meshIO.io.b.valid := true.B
-    meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-    meshIO.io.d.valid := true.B
-    meshIO.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-    meshIO.io.tag_in.valid := true.B
-    meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
-    meshIO.io.s := in_s
+  when (perform_mul_pre || perform_single_mul || perform_single_preload) {
+    // Default inputs
+    mesh.io.a.valid := true.B
+    mesh.io.b.valid := true.B
+    mesh.io.d.valid := true.B
+    mesh.io.tag_in.valid := true.B
+
+    mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
+    mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+    mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+
+    mesh.io.tag_in.bits.pushLoad := VecInit(pushLoads take 2)(preload_cmd_place)
+    mesh.io.tag_in.bits.pushStore := VecInit(pushStores take 2)(preload_cmd_place)
+    mesh.io.tag_in.bits.tag := c_address_rs2.asUInt()
+
+    mesh.io.s := in_s
   }
 
-  when(perform_single_mul){
-    meshIO.io.a.valid := true.B
-    meshIO.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
-    meshIO.io.b.valid := true.B
-    meshIO.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-    meshIO.io.d.valid := true.B
-    meshIO.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-    meshIO.io.tag_in.valid := true.B
-    meshIO.io.tag_in.bits := tag_garbage //if this is 0xFFFFFF then don't output
-    meshIO.io.s := in_s
+  when (perform_single_preload) {
+    mesh.io.a.bits := (0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
+    mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
   }
 
-  when(perform_single_preload){
-    meshIO.io.a.valid := true.B
-    meshIO.io.a.bits := (0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
-    meshIO.io.b.valid := true.B
-    meshIO.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-    meshIO.io.d.valid := true.B
-    meshIO.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-    meshIO.io.tag_in.valid := true.B
-    meshIO.io.tag_in.bits := c_address_rs2.asUInt() //if this is 0xFFFFFF then don't output
-    meshIO.io.s := in_s
+  when (perform_single_mul) {
+    mesh.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+
+    mesh.io.tag_in.bits.pushLoad := false.B
+    mesh.io.tag_in.bits.pushStore := false.B
+    mesh.io.tag_in.bits.tag := tag_garbage
   }
 
   // Scratchpad writes
-  val w_address = meshIO.io.tag_out.asTypeOf(spaddr)
+  val w_address = mesh.io.tag_out.tag.asTypeOf(spaddr)
   val w_bank_number = w_address.spbank
   val w_bank_address = w_address.sprow
 
@@ -318,11 +387,17 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
     io.write(i).addr := MuxCase(0.U,
       Seq((w_bank_number === i.U && start_array_outputting) -> (w_bank_address + block_size.U - 1.U - output_counter.value)))
     io.write(i).data := MuxCase(0.U,
-      Seq((w_bank_number === i.U && start_array_outputting) -> meshIO.io.out.bits.asUInt()))
+      Seq((w_bank_number === i.U && start_array_outputting) -> mesh.io.out.bits.asUInt()))
   }
 
-  when(meshIO.io.out.fire() && meshIO.io.tag_out =/= tag_garbage) {
-    output_counter.inc()
+  when(mesh.io.out.fire() && mesh.io.tag_out.tag =/= tag_garbage) {
+    when(output_counter.inc()) {
+      io.pushLoad.valid := mesh.io.tag_out.pushLoad
+      io.pushStore.valid := mesh.io.tag_out.pushStore
+
+      assert(!mesh.io.tag_out.pushLoad || io.pushLoad.ready)
+      assert(!mesh.io.tag_out.pushStore || io.pushStore.ready)
+    }
     start_array_outputting := true.B
   }
 }

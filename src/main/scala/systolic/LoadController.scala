@@ -9,7 +9,7 @@ class LoadController(config: SystolicArrayConfig, spaddr: SPAddr)(implicit p: Pa
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new SystolicCmdWithDependencies))
+    val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
 
     val dma = new ScratchpadMemIO(sp_banks, sp_bank_entries)
 
@@ -24,16 +24,16 @@ class LoadController(config: SystolicArrayConfig, spaddr: SPAddr)(implicit p: Pa
   val control_state = RegInit(waiting_for_command)
 
   // TODO make separate queue lengths for each controller
-  val cmd = Queue(io.cmd, queue_length)
+  val cmd = Queue(io.cmd, ld_str_queue_length)
   val rs1 = cmd.bits.cmd.rs1
   val rs2 = cmd.bits.cmd.rs2
 
   cmd.ready := false.B
 
-  val pullEx = cmd.bits.pullEx
-  val pushEx = cmd.bits.pushEx
-  val pullStore = cmd.bits.pullStore
-  val pushStore = cmd.bits.pushStore
+  val pullEx = cmd.bits.deps.pullEx
+  val pushEx = cmd.bits.deps.pushEx
+  val pullStore = cmd.bits.deps.pullStore
+  val pushStore = cmd.bits.deps.pushStore
   val pullDep = pullEx || pullStore
   val pushDep = pushEx || pushStore
 

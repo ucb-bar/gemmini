@@ -10,7 +10,7 @@ class StoreController(config: SystolicArrayConfig, spaddr: SPAddr)(implicit p: P
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new SystolicCmdWithDependencies))
+    val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
 
     val dma = new ScratchpadMemIO(sp_banks, sp_bank_entries)
 
@@ -25,16 +25,16 @@ class StoreController(config: SystolicArrayConfig, spaddr: SPAddr)(implicit p: P
   val control_state = RegInit(waiting_for_command)
 
   // TODO make separate queue lengths for each controller
-  val cmd = Queue(io.cmd, queue_length)
+  val cmd = Queue(io.cmd, ld_str_queue_length)
   val rs1 = cmd.bits.cmd.rs1
   val rs2 = cmd.bits.cmd.rs2
 
   cmd.ready := false.B
 
-  val pullEx = cmd.bits.pullEx
-  val pushEx = cmd.bits.pushEx
-  val pullLoad = cmd.bits.pullLoad
-  val pushLoad = cmd.bits.pushLoad
+  val pullEx = cmd.bits.deps.pullEx
+  val pushEx = cmd.bits.deps.pushEx
+  val pullLoad = cmd.bits.deps.pullLoad
+  val pushLoad = cmd.bits.deps.pushLoad
   val pullDep = pullEx || pullLoad
   val pushDep = pushEx || pushLoad
 

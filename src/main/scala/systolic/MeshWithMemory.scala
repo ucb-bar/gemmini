@@ -11,17 +11,41 @@ import systolic.Util._
 // TODO Change S to an enum
 // TODO cleanup tags to be like S
 // TODO do we flush for one cycle more than necessary?
+// TODO give the ability to flush for less than 3 time steps
 
-class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dataflow.Value,
-                     val tileRows: Int, val tileColumns: Int,
-                     val meshRows: Int, val meshColumns: Int,
-                     val leftBanks: Int, val upBanks: Int, val outBanks: Int = 1) extends Module {
+class MeshWithMemory[T <: Data: Arithmetic, U <: Data](innerType: T, tagType: U, df: Dataflow.Value,
+                      val tileRows: Int, val tileColumns: Int, val meshRows: Int, val meshColumns: Int,
+                      val leftBanks: Int, val upBanks: Int, val outBanks: Int = 1) extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, innerType))
   val B_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
   val C_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
   val D_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(2.W)))
+
+  val io = IO(new Bundle {
+    val a = Flipped(Decoupled(A_TYPE))
+    val b = Flipped(Decoupled(B_TYPE))
+    val d = Flipped(Decoupled(D_TYPE))
+
+    val s = Input(UInt(1.W))
+    val m = Input(UInt(1.W))
+
+    val tag_in = Flipped(Decoupled(tagType))
+    val tag_out = Output(tagType)
+    val tag_garbage = Input(tagType) // TODO make this a constructor parameter instead
+
+    val out = Valid(C_TYPE) // TODO make this ready-valid
+    val out_s = Output(S_TYPE)
+
+    // TODO make this a decoupled
+    val flush = new Bundle {
+      val ready = Output(Bool())
+      val valid = Input(Bool())
+
+      def fire() = ready && valid
+    }
+  })
 
   def shifted[T <: Data](x: Vec[Vec[T]], banks: Int, reverse: Boolean = false) = {
     assert(x.size % banks == 0, "cannot bank without clean divisors")
@@ -45,29 +69,6 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
       RegShifted
     }
   }
-
-  val io = IO(new Bundle {
-    val a = Flipped(Decoupled(A_TYPE))
-    val b = Flipped(Decoupled(B_TYPE))
-    val d = Flipped(Decoupled(D_TYPE))
-
-    val s = Input(UInt(1.W))
-    val m = Input(UInt(1.W))
-
-    val tag_in = Flipped(Decoupled(UInt(tagWidth.W)))
-    val tag_out = Output(UInt(tagWidth.W))
-
-    val out = Valid(C_TYPE) // TODO make this ready-valid
-    val out_s = Output(S_TYPE)
-
-    // TODO make this a decoupled
-    val flush = new Bundle {
-      val ready = Output(Bool())
-      val valid = Input(Bool())
-
-      def fire() = ready && valid
-    }
-  })
 
   assert(meshRows*tileRows == meshColumns*tileColumns)
   val block_size = meshRows*tileRows
@@ -144,10 +145,9 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   io.out.valid := !pause
 
   // Tags
-  val tag_garbage = Cat(Seq.fill(tagWidth)(1.U(1.W)))
-  val tag_queue = Module(new TagQueue(5, UInt(tagWidth.W))) // TODO understand the actual required size better. It seems there may be a bug with it
-  tag_queue.io.in.bits := Mux(flushing, tag_garbage, io.tag_in.bits)
-  tag_queue.io.garbage := tag_garbage
+  val tag_queue = Module(new TagQueue(5, tagType)) // TODO understand the actual required size better. It seems there may be a bug with it
+  tag_queue.io.in.bits := Mux(flushing, io.tag_garbage, io.tag_in.bits)
+  tag_queue.io.garbage := io.tag_garbage
 
   val tag_id = RegInit(0.U(1.W)) // Used to keep track of when we should increment
   val tag_id_delayed = ShiftRegister(tag_id, meshRows + S_TYPE.size-1, 0.U, !pause)
@@ -169,7 +169,8 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
 
     tag_id := ~tag_id
 
-    in_s := Mux(io.flush.fire(), ~in_s, io.s ^ in_s)
+    // in_s := Mux(io.flush.fire(), ~in_s, io.s ^ in_s)
+    when (!flushing) { in_s := io.s ^ in_s }
   }
 
   // Flushing logic
@@ -181,6 +182,10 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
   when (io.flush.fire()) {
     flushing := true.B
     flush_counter := 2.U
+
+    // Avoid overwriting accumulated values
+    a_buf := 0.U.asTypeOf(A_TYPE)
+    b_buf := 0.U.asTypeOf(B_TYPE)
   }
 
   when (flushing) {
@@ -191,21 +196,15 @@ class MeshWithMemory[T <: Data: Arithmetic](innerType: T, tagWidth: Int, df: Dat
     when (buffering_done) {
       flush_counter := flush_counter - 1.U
 
-      in_s := ~in_s
+      // in_s := ~in_s
 
       tag_queue.io.in.valid := true.B
-
-      /*when (flush_counter === 0.U) {
-        tag_id := tag_id // TODO really inelegant...
-        fire_counter := 0.U
-        flushing := false.B
-      }*/
     }
 
     val about_to_finish_flushing = flush_counter === 0.U && fire_counter === (block_size-1).U // TODO change when non-square requirement lifted
     when (about_to_finish_flushing) {
       fire_counter := 0.U
-      in_s := ~in_s
+      // in_s := ~in_s
       tag_queue.io.in.valid := true.B
       flushing := false.B
     }
