@@ -4,40 +4,46 @@ package systolic
 import chisel3._
 import chisel3.util._
 
+// TODO update documentation
 /**
   * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
   * @param width Data width of operands
-  * @param pass_through If false, the PE pipelines in_a, in_b, in_d, in_s for 1 cycle
   */
-class PE[T <: Data](innerType: T, df: Dataflow.Value, pass_through: Boolean = true,
-         should_print: Boolean = false, r:Int = 0, c: Int = 0)(implicit ev: Arithmetic[T]) extends Module { // Debugging variables
+class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
+                   (implicit ev: Arithmetic[T]) extends Module { // Debugging variables
   import ev._
 
   val io = IO(new Bundle {
-    val in_a =   Input(innerType)
-    val out_a =  Output(innerType)
-    // TODO: why is in_b 2*width and not width
-    val in_b =   Input(innerType.doubleWidth)
-    val out_b =  Output(innerType.doubleWidth)
-    val in_s =   Input(UInt(2.W))
-    val out_s =  Output(UInt(2.W))
-    val in_d =   Input(innerType.doubleWidth)
-    val out_c =  Output(innerType.doubleWidth)
+    val in_a = Input(inputType)
+    val in_b = Input(outputType)
+    val in_d = Input(outputType)
+    val in_s = Input(UInt(2.W))
+    val out_a = Output(inputType)
+    val out_b = Output(outputType)
+    val out_c = Output(outputType)
+    val out_s = Output(UInt(2.W))
+
+    val in_shift = Input(UInt((accType.getWidth - outputType.getWidth).W))
+    val out_shift = Output(UInt(log2Ceil(accType.getWidth - outputType.getWidth + 1).W))
 
     // Global signals
     val pause = Input(Bool())
   })
 
-  val a  = if (pass_through) WireInit(io.in_a) else RegNext(io.in_a)
-  val b  = if (pass_through) WireInit(io.in_b) else RegNext(io.in_b)
-  val d  = if (pass_through) WireInit(io.in_d) else RegNext(io.in_d)
-  // TODO: potential for overflow in internal accumulators (add assertion) (use explicit width)
-  val c1 = Reg(innerType.doubleWidth)
-  val c2 = Reg(innerType.doubleWidth)
-  val s  = if (pass_through) WireInit(io.in_s) else RegNext(io.in_s)
+  val a  = io.in_a
+  val b  = io.in_b
+  val d  = io.in_d
+  val c1 = Reg(accType)
+  val c2 = Reg(accType)
+  val s  = io.in_s
+
+  val last_s = RegEnable(s, !io.pause)
+  val flip = last_s =/= s
+  val shift_offset = Mux(flip, io.in_shift, 0.U)
 
   io.out_s := s
   io.out_a := a
+  io.out_shift := io.in_shift
 
   val select = s(0)
   val mode = s(1)
@@ -54,43 +60,30 @@ class PE[T <: Data](innerType: T, df: Dataflow.Value, pass_through: Boolean = tr
 
   when (mode === OUTPUT_STATIONARY && supports_os) {
     when(select === PROPAGATE){
-      io.out_c := c1
+      io.out_c := c1 >> shift_offset
       io.out_b := b
       c2 := (a*b) + c2
       c1 := d
     }.otherwise {
-      io.out_c := c2
+      io.out_c := c2 >> shift_offset
       io.out_b := b
       c1 := (a*b) + c1
       c2 := d
     }
   }.otherwise {
     when(select === PROPAGATE){
-      io.out_c := c1
+      io.out_c := c1 >> shift_offset
       io.out_b := (a*c2) + b
       c1 := d
     }.otherwise {
-      io.out_c := c2
+      io.out_c := c2 >> shift_offset
       io.out_b := (a*c1) + b
       c2 := d
     }
   }
 
   when (io.pause) {
-    if (!pass_through) {
-      a := a
-      b := b
-      d := d
-      s := s
-    }
-
     c1 := c1
     c2 := c2
-  }
-
-  if (should_print) {
-    when(!io.pause) {
-      printf(p"($r, $c) a=$a, b=$b, c1=$c1, c2=$c2, out_c=${io.out_c}, io.d=${io.in_d}, in_s=${io.in_s(0)}, pause=${io.pause}\n")
-    }
   }
 }

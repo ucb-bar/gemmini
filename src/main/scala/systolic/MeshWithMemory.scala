@@ -13,14 +13,17 @@ import systolic.Util._
 // TODO do we flush for one cycle more than necessary?
 // TODO give the ability to flush for less than 3 time steps
 
-class MeshWithMemory[T <: Data: Arithmetic, U <: Data](innerType: T, tagType: U, df: Dataflow.Value,
-                      val tileRows: Int, val tileColumns: Int, val meshRows: Int, val meshColumns: Int,
-                      val leftBanks: Int, val upBanks: Int, val outBanks: Int = 1) extends Module {
+class MeshWithMemory[T <: Data: Arithmetic, U <: Data](inputType: T, val outputType: T, accType: T, tagType: U,
+                                                       df: Dataflow.Value,
+                                                       val tileRows: Int, val tileColumns: Int,
+                                                       val meshRows: Int, val meshColumns: Int,
+                                                       val leftBanks: Int, val upBanks: Int, val outBanks: Int = 1)
+  extends Module {
 
-  val A_TYPE = Vec(meshRows, Vec(tileRows, innerType))
-  val B_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
-  val C_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
-  val D_TYPE = Vec(meshColumns, Vec(tileColumns, innerType))
+  val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
+  val B_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
+  val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType))
+  val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(2.W)))
 
   val io = IO(new Bundle {
@@ -30,6 +33,7 @@ class MeshWithMemory[T <: Data: Arithmetic, U <: Data](innerType: T, tagType: U,
 
     val s = Input(UInt(1.W))
     val m = Input(UInt(1.W))
+    val shift = Input(UInt(log2Ceil(accType.getWidth - outputType.getWidth + 1).W))
 
     val tag_in = Flipped(Decoupled(tagType))
     val tag_out = Output(tagType)
@@ -125,22 +129,25 @@ class MeshWithMemory[T <: Data: Arithmetic, U <: Data](innerType: T, tagType: U,
   val pause = (waiting_on_non_matrix_inputs || !next_row_input) && !flushing_or_about_to
 
   // Wire up mesh's IO to this module's IO
-  val mesh = Module(new Mesh(innerType, df, tileRows, tileColumns, meshRows, meshColumns))
+  val mesh = Module(new Mesh(inputType, outputType, accType, df, tileRows, tileColumns, meshRows, meshColumns))
 
-  mesh.io.in_a_vec := shifted(a_buf, leftBanks)
-  mesh.io.in_b_vec := shifted(b_buf, upBanks)
-  mesh.io.in_d_vec := shifted(d_buf, upBanks)
+  mesh.io.in_a := shifted(a_buf, leftBanks)
+  mesh.io.in_b := shifted(b_buf, upBanks)
+  mesh.io.in_d := shifted(d_buf, upBanks)
 
-  mesh.io.in_s_vec.zipWithIndex.foreach { case (ss, i) =>
+  mesh.io.in_s.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_ := ShiftRegister(Cat(io.m, in_s), i, !pause))
+  }
+  mesh.io.in_shift.zipWithIndex.foreach { case (shs, i) =>
+    shs.foreach(_ := ShiftRegister(io.shift, i, !pause))
   }
   mesh.io.pause := pause
 
   // We want to output C when we're output-stationary, but B when we're weight-stationary
   // TODO these would actually overlap when we switch from output-stationary to weight-stationary
   // TODO should we use io.m, or the mode output of the mesh?
-  io.out.bits := shifted(Mux(io.m === Dataflow.OS.id.U, mesh.io.out_c_vec, mesh.io.out_b_vec), outBanks, true)
-  io.out_s := mesh.io.out_s_vec.zip(mesh.io.out_s_vec.indices.reverse).map{case (s, i) => ShiftRegister(s, i, !pause)}
+  io.out.bits := shifted(Mux(io.m === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
+  io.out_s := mesh.io.out_s.zip(mesh.io.out_s.indices.reverse).map{case (s, i) => ShiftRegister(s, i, !pause)}
 
   io.out.valid := !pause
 

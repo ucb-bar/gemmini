@@ -2,7 +2,7 @@
 package systolic
 
 import chisel3._
-import chisel3.util.RegEnable
+import chisel3.util._
 
 /**
   * A Grid is a 2D array of Tile modules with registers in between each tile and
@@ -13,71 +13,81 @@ import chisel3.util.RegEnable
   * @param meshRows
   * @param meshColumns
   */
-class Mesh[T <: Data](innerType: T, df: Dataflow.Value, val tileRows: Int, val tileColumns: Int,
-           val meshRows: Int, val meshColumns: Int)(implicit ev: Arithmetic[T]) extends Module {
+class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
+                      df: Dataflow.Value,
+                      val tileRows: Int, val tileColumns: Int,
+                      val meshRows: Int, val meshColumns: Int)(implicit ev: Arithmetic[T]) extends Module {
   import ev._
-  
+
   val io = IO(new Bundle {
-    val in_a_vec   = Input(Vec(meshRows, Vec(tileRows, innerType)))
-    val in_b_vec   = Input(Vec(meshColumns, Vec(tileColumns, innerType.doubleWidth)))
-    val in_d_vec   = Input(Vec(meshColumns, Vec(tileColumns, innerType.doubleWidth)))
-    val in_s_vec   = Input(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
-    val out_b_vec  = Output(Vec(meshColumns, Vec(tileColumns, innerType.doubleWidth)))
-    val out_c_vec  = Output(Vec(meshColumns, Vec(tileColumns, innerType.doubleWidth)))
-    val out_s_vec  = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
+    val in_a   = Input(Vec(meshRows, Vec(tileRows, inputType)))
+    val in_b   = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
+    val in_d   = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
+    val in_s   = Input(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
+    val out_b  = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
+    val out_c  = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
+    val out_s  = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
+
+    val in_shift = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Ceil(accType.getWidth - outputType.getWidth + 1).W))))
 
     val pause = Input(Bool())
   })
 
   // mesh(r)(c) => Tile at row r, column c
-  // val mesh: Seq[Seq[Tile]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(width, tileRows, tileColumns)))
-  val mesh = for (r <- 0 until meshRows) yield
-    for (c <- 0 until meshColumns) yield
-      Module(new Tile(innerType, df, tileRows, tileColumns, should_print = false, rId = r, cId = c))
+  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, tileRows, tileColumns)))
   val meshT = mesh.transpose
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   for (r <- 0 until meshRows) {
-    mesh(r).foldLeft(io.in_a_vec(r)) {
+    mesh(r).foldLeft(io.in_a(r)) {
       case (in_a, tile) =>
-        tile.io.in_a_vec := RegEnable(in_a, !io.pause)
-        tile.io.out_a_vec
+        tile.io.in_a := RegEnable(in_a, !io.pause)
+        tile.io.out_a
     }
   }
 
   // Chain tile_out_b -> tile_b_in (pipeline b across each column)
   for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_b_vec(c)) {
+    meshT(c).foldLeft(io.in_b(c)) {
       case (in_b, tile) =>
-        tile.io.in_b_vec := RegEnable(in_b, !io.pause)
-        tile.io.out_b_vec
+        tile.io.in_b := RegEnable(in_b, !io.pause)
+        tile.io.out_b
     }
   }
 
   // Chain tile_out -> tile_propag (pipeline output across each column)
   for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_d_vec(c)) {
+    meshT(c).foldLeft(io.in_d(c)) {
       case (in_propag, tile) =>
-        tile.io.in_d_vec := RegEnable(in_propag, !io.pause)
-        tile.io.out_c_vec
+        tile.io.in_d := RegEnable(in_propag, !io.pause)
+        tile.io.out_c
     }
   }
 
   // Chain s (pipeline s across each column)
   for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_s_vec(c)) {
+    meshT(c).foldLeft(io.in_s(c)) {
       case (in_s, tile) =>
-        tile.io.in_s_vec := RegEnable(in_s, !io.pause)
-        tile.io.out_s_vec
+        tile.io.in_s := RegEnable(in_s, !io.pause)
+        tile.io.out_s
+    }
+  }
+
+  // Chain in_shift (pipeline across each column)
+  for (c <- 0 until meshColumns) {
+    meshT(c).foldLeft(io.in_shift(c)) {
+      case (in_sh, tile) =>
+        tile.io.in_shift := RegEnable(in_sh, !io.pause)
+        tile.io.out_shift
     }
   }
 
   // Capture out_vec and out_s_vec (connect IO to bottom row of mesh)
   // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple4)
-  for (((b, c), (s, tile)) <- (io.out_b_vec zip io.out_c_vec) zip (io.out_s_vec zip mesh.last)) {
-    b := tile.io.out_b_vec
-    c := tile.io.out_c_vec
-    s := tile.io.out_s_vec
+  for (((b, c), (s, tile)) <- (io.out_b zip io.out_c) zip (io.out_s zip mesh.last)) {
+    b := tile.io.out_b
+    c := tile.io.out_c
+    s := tile.io.out_s
   }
 
   // Connect global pause signals

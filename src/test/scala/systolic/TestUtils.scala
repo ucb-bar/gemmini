@@ -33,7 +33,7 @@ object TestUtils {
 
   def zero(dim: Int): Matrix[Int] = Seq.fill(dim, dim)(0)
 
-  def rand(dim: Int, max: Int = 8): Matrix[Int] = Seq.fill(dim, dim)(scala.util.Random.nextInt(max))
+  def rand(dim: Int, max: Int = 32): Matrix[Int] = Seq.fill(dim, dim)(scala.util.Random.nextInt(max))
 
   def print2DArray[A](a: Matrix[A]): Unit = {
     a.foreach {

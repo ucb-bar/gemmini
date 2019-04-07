@@ -47,19 +47,20 @@ class SPAddr(xLen: Int, sp_banks: Int, sp_bank_entries: Int) extends Bundle {
   override def cloneType: SPAddr.this.type = new SPAddr(xLen, sp_banks, sp_bank_entries).asInstanceOf[this.type]
 }
 
-class SystolicArray[T <: Data: Arithmetic](dtype: T, opcodes: OpcodeSet)(implicit p: Parameters) extends LazyRoCC (
+class SystolicArray[T <: Data: Arithmetic](inputType: T, outputType: T, accType: T, opcodes: OpcodeSet)
+                                          (implicit p: Parameters) extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
     nPTWPorts = 1) {
   val config = p(SystolicArrayKey)
   val spad = LazyModule(new Scratchpad(
     config.sp_banks, config.sp_bank_entries, config.sp_width))
-  override lazy val module = new SystolicArrayModule(this, dtype)
+  override lazy val module = new SystolicArrayModule(this, inputType, outputType, accType)
   override val tlNode = spad.node
 }
 
 // TODO add WS support
 class SystolicArrayModule[T <: Data: Arithmetic]
-    (outer: SystolicArray[T], val inner_type: T)
+    (outer: SystolicArray[T], inputType: T, outputType: T, accType: T)
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
 
@@ -95,7 +96,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   val load_controller = Module(new LoadController(outer.config, sp_addr))
   val store_controller = Module(new StoreController(outer.config, sp_addr))
-  val ex_controller = Module(new ExecuteController(xLen, outer.config, sp_addr, inner_type))
+  val ex_controller = Module(new ExecuteController(xLen, outer.config, sp_addr, inputType, outputType, accType))
     
   val dma_arbiter = Module(new DMAArbiter(sp_banks, sp_bank_entries))
 

@@ -12,7 +12,7 @@ abstract class Arithmetic[T <: Data] {
 abstract class ArithmeticOps[T <: Data](self: T) {
   def +(t: T): T
   def *(t: T): T
-  def doubleWidth: T
+  def >>(u: UInt): T
 }
 
 object Arithmetic {
@@ -20,7 +20,7 @@ object Arithmetic {
     implicit def cast(self: UInt) = new ArithmeticOps(self) {
       def +(t: UInt) = self + t
       def *(t: UInt) = self * t
-      def doubleWidth = UInt((self.getWidth * 2).W)
+      def >>(u: UInt) = (self >> u).asUInt()
     }
   }
 
@@ -28,7 +28,7 @@ object Arithmetic {
     implicit def cast(self: SInt) = new ArithmeticOps(self) {
       def +(t: SInt) = self + t
       def *(t: SInt) = self * t
-      def doubleWidth = SInt((self.getWidth * 2).W)
+      def >>(u: UInt) = (self >> u).asSInt()
     }
   }
 }

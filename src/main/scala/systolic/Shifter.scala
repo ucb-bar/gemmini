@@ -5,6 +5,7 @@ import chisel3.util._
 
 import systolic.Util._
 
+// TODO add SinglePort SRAM option
 class ShiftSRAM[T <: Data](n: Int, t: T) extends Module {
   val io = IO(new Bundle {
     val in = Input(t)
@@ -40,7 +41,7 @@ object Shifter {
     if (!useSRAM) {
       ShiftRegister(in, n, en)
     } else if (n < 2) {
-      println("Had to use shift registers instead of SRAM, because the delay is too small")
+      // println("Had to use shift registers instead of SRAM, because the delay is too small")
       ShiftRegister(in, n, en)
     } else {
       val shifter = Module(new ShiftSRAM(n, in.cloneType))

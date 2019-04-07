@@ -8,7 +8,8 @@ import freechips.rocketchip.config.Parameters
 
 // TODO handle reads from the same bank
 // TODO handle reads from addresses that haven't been written yet
-class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayConfig, spaddr: SPAddr, inner_type: T)
+class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayConfig, spaddr: SPAddr,
+                                               inputType: T, outputType: T, accType: T)
                                               (implicit p: Parameters) extends Module {
   import config._
 
@@ -60,6 +61,8 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val in_s = DoComputeAndFlips(0)
   val in_s_flush = Reg(Bool())
 
+  val in_shift = RegInit(0.U((accType.getWidth - outputType.getWidth).W))
+
   // SRAM addresses of matmul operands
   val a_address_rs1 = WireInit(rs1s(0).asTypeOf(spaddr))
   val b_address_rs2 = WireInit(rs2s(0).asTypeOf(spaddr))
@@ -97,7 +100,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   io.pullStore.ready := false.B
 
   // Instantiate the actual mesh
-  val mesh = Module(new MeshWithMemory(inner_type, tag_with_deps, Dataflow.BOTH, tileRows,
+  val mesh = Module(new MeshWithMemory(inputType, outputType, accType, tag_with_deps, Dataflow.BOTH, tileRows,
     tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
 
   mesh.io.a.valid := false.B
@@ -113,8 +116,9 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   mesh.io.b.bits := DontCare
   mesh.io.d.bits := DontCare
   mesh.io.tag_in.bits := DontCare
-  mesh.io.s := DontCare
+  mesh.io.s := in_s
   mesh.io.m := current_dataflow
+  mesh.io.shift := in_shift
 
   // STATE defines
   val waiting_for_cmd :: compute :: flush :: flushing :: Nil = Enum(4)
@@ -189,6 +193,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
         when(DoSetMode) {
           val data_mode = rs1s(0)(0)
           current_dataflow := data_mode
+          in_shift := rs2s(0)
 
           io.pullLoad.ready := cmd.bits(0).deps.pullLoad
           io.pullStore.ready := cmd.bits(0).deps.pullStore
@@ -311,7 +316,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
         }
 
         // Only compute
-        .elsewhen(cmd.valid(0) && DoComputes(0)) { // .elsewhen(cmd.valid(1) && !DoPreloads(1)) {
+        .elsewhen(cmd.valid(0) && DoComputes(0)) {
           perform_single_mul := true.B
           start_inputting_ab := true.B
           start_inputting_d := false.B
@@ -353,24 +358,22 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
     mesh.io.d.valid := true.B
     mesh.io.tag_in.valid := true.B
 
-    mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
-    mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
-    mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+    mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+    mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
+    mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
     mesh.io.tag_in.bits.pushLoad := VecInit(pushLoads take 2)(preload_cmd_place)
     mesh.io.tag_in.bits.pushStore := VecInit(pushStores take 2)(preload_cmd_place)
     mesh.io.tag_in.bits.tag := c_address_rs2.asUInt()
-
-    mesh.io.s := in_s
   }
 
   when (perform_single_preload) {
-    mesh.io.a.bits := (0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inner_type)))
-    mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+    mesh.io.a.bits := (0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+    mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
   }
 
   when (perform_single_mul) {
-    mesh.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inner_type)))
+    mesh.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
     mesh.io.tag_in.bits.pushLoad := false.B
     mesh.io.tag_in.bits.pushStore := false.B
