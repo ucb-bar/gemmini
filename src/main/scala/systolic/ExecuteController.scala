@@ -40,7 +40,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
     val tag = UInt(tagWidth.W)
   }
 
-  val cmd_q_heads = 4
+  val cmd_q_heads = 2
   val (cmd, _) = MultiHeadedQueue(io.cmd, ex_queue_length, cmd_q_heads)
   cmd.pop := 0.U
 
@@ -73,7 +73,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val c_address_rs2 = WireInit(rs2s(preload_cmd_place).asTypeOf(spaddr))
 
   val preload_zeros = WireInit(d_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage)
-  val input_d_zeros = WireInit(b_address_rs2.asUInt()(tagWidth-1, 0) === tag_garbage)
+  val accumulate_zeros = WireInit(b_address_rs2.asUInt()(tagWidth-1, 0) === tag_garbage)
 
   // Dependency stuff
   val pushLoads = cmd.bits.map(_.deps.pushLoad)
@@ -140,11 +140,13 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val perform_single_preload = RegInit(false.B)
   val perform_single_mul = RegInit(false.B)
   val perform_mul_pre = RegInit(false.B)
+  val starting_new_mul_pre = WireInit(false.B) // TODO a little inelegant
 
+  val output_counter = new Counter(block_size)
   val fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
   val fire_count_started = RegInit(false.B)
   val fired_all_rows = fire_counter === 0.U && fire_count_started
-  val output_counter = new Counter(block_size)
+  val about_to_fire_all_rows = fire_counter === (block_size-1).U && mesh.io.a.ready && mesh.io.b.ready && mesh.io.d.ready // TODO change when square requirement lifted
 
   fire_counter := 0.U
   when (mesh.io.a.ready && mesh.io.b.ready && mesh.io.d.ready &&
@@ -156,7 +158,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   for(i <- 0 until sp_banks){
     io.read(i).en :=
       ((a_read_bank_number === i.U && start_inputting_ab) ||
-        (b_read_bank_number === i.U && start_inputting_ab && !input_d_zeros) ||
+        (b_read_bank_number === i.U && start_inputting_ab && !accumulate_zeros) ||
         (d_read_bank_number === i.U && start_inputting_d && !preload_zeros))
     io.read(i).addr := MuxCase(a_address_rs1.sprow + fire_counter,
       Seq(
@@ -172,20 +174,9 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val dataBbank = WireInit(b_read_bank_number)
   val dataDbank = WireInit(d_read_bank_number)
 
-  when (perform_single_preload) {
-    dataDbank := rs1s(0).asTypeOf(spaddr).spbank
-  }.elsewhen (perform_mul_pre) {
-    dataAbank := rs1s(0).asTypeOf(spaddr).spbank
-    dataBbank := rs2s(0).asTypeOf(spaddr).spbank
-    dataDbank := rs1s(1).asTypeOf(spaddr).spbank
-  }.elsewhen (perform_single_mul) {
-    dataAbank := rs1s(0).asTypeOf(spaddr).spbank
-    dataBbank := rs2s(0).asTypeOf(spaddr).spbank
-  }
-
-  val dataA = readData(dataAbank)
-  val dataB = Mux(RegNext(input_d_zeros), 0.U, readData(dataBbank))
-  val dataD = Mux(RegNext(preload_zeros), 0.U, readData(dataDbank))
+  val dataA = readData(RegNext(dataAbank))
+  val dataB = Mux(RegNext(accumulate_zeros), 0.U, readData(RegNext(dataBbank)))
+  val dataD = Mux(RegNext(preload_zeros), 0.U, readData(RegNext(dataDbank)))
 
   // FSM logic
   // TODO clean this up by taking the issue command logic out of the "compute" state
@@ -225,45 +216,13 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
       }
     }
     is (compute) {
-      // TODO clean this up. We can pop one cycle early, and look only 2 instructions ahead, instead of looking 4 instructions ahead
       when (cmd.valid(0)) {
         // Only preloading
         when(DoPreloads(0)) {
           start_inputting_d := true.B
 
-          when(fired_all_rows) {
-            perform_single_preload := false.B
-
-            start_inputting_d := false.B
-
-            fire_count_started := false.B
+          when (about_to_fire_all_rows) {
             cmd.pop := 1.U
-
-            // Can we immediately launch into a mulpre?
-            when(cmd.valid(1) && DoComputes(1) && cmd.valid(2) && DoPreloads(2) && pull_deps_ready(2) && push_deps_ready(2)) {
-              start_inputting_ab := true.B
-              start_inputting_d := true.B
-
-              perform_mul_pre := true.B
-
-              io.pullLoad.ready := cmd.bits(2).deps.pullLoad
-              io.pullStore.ready := cmd.bits(2).deps.pullStore
-
-              a_address_rs1 := rs1s(1).asTypeOf(spaddr)
-              b_address_rs2 := rs2s(1).asTypeOf(spaddr)
-              d_address_rs1 := rs1s(2).asTypeOf(spaddr)
-              c_address_rs2 := rs2s(2).asTypeOf(spaddr)
-            }
-            // Can we immediately launch into a mul?
-            .elsewhen(cmd.valid(1) && DoComputes(1)) { // && cmd.valid(2) && !DoPreloads(2)) {
-              start_inputting_ab := true.B
-              preload_zeros := true.B
-
-              perform_single_mul := true.B
-
-              a_address_rs1 := rs1s(1).asTypeOf(spaddr)
-              b_address_rs2 := rs2s(1).asTypeOf(spaddr)
-            }
           }
         }
 
@@ -271,7 +230,9 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
         .elsewhen(cmd.valid(1) && DoPreloads(1) && !perform_single_mul &&
           (perform_mul_pre || (pull_deps_ready(1) && push_deps_ready(1))))
         {
+          starting_new_mul_pre := true.B
           perform_mul_pre := true.B
+
           start_inputting_ab := true.B
           start_inputting_d := true.B
 
@@ -281,45 +242,13 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
 
           fire_count_started := true.B
 
-          when (!perform_mul_pre) { // When we first launch into the mulpre
+          when (fire_counter === 0.U) { // When we first launch into the mulpre
             io.pullLoad.ready := cmd.bits(1).deps.pullLoad
             io.pullStore.ready := cmd.bits(1).deps.pullStore
           }
 
-          when(fired_all_rows) {
-            perform_mul_pre := false.B
-
-            start_inputting_ab := false.B
-            start_inputting_d := false.B
-
-            fire_count_started := false.B
+          when (about_to_fire_all_rows) {
             cmd.pop := 2.U
-
-            // Can we immediately launch into a mulpre?
-            when(cmd.valid(2) && DoComputes(2) && cmd.valid(3) && DoPreloads(3) && pull_deps_ready(3) && push_deps_ready(3)) {
-              start_inputting_ab := true.B
-              start_inputting_d := true.B
-
-              perform_mul_pre := true.B
-
-              io.pullLoad.ready := cmd.bits(3).deps.pullLoad
-              io.pullStore.ready := cmd.bits(3).deps.pullStore
-
-              a_address_rs1 := rs1s(2).asTypeOf(spaddr)
-              b_address_rs2 := rs2s(2).asTypeOf(spaddr)
-              d_address_rs1 := rs1s(3).asTypeOf(spaddr)
-              c_address_rs2 := rs2s(3).asTypeOf(spaddr)
-            }
-            // Can we immediately launch into a mul?
-            .elsewhen(cmd.valid(2) && DoComputes(2) && (!cmd.valid(3) || (cmd.valid(3) && !DoPreloads(3)))) {
-              start_inputting_ab := true.B
-              preload_zeros := true.B
-
-              perform_single_mul := true.B
-
-              a_address_rs1 := rs1s(2).asTypeOf(spaddr)
-              b_address_rs2 := rs2s(2).asTypeOf(spaddr)
-            }
           }
         }
 
@@ -327,12 +256,12 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
         .elsewhen(cmd.valid(0) && DoComputes(0)) {
           perform_single_mul := true.B
           start_inputting_ab := true.B
-          start_inputting_d := false.B
-          preload_zeros := true.B
+          // start_inputting_d := false.B
+          // preload_zeros := true.B
 
           fire_count_started := true.B
 
-          when(fired_all_rows) {
+          when(fired_all_rows && perform_single_mul) { // TODO the (... && perform_single_mul) is a little inelegant
             perform_single_mul := false.B
 
             start_inputting_ab := false.B
@@ -373,11 +302,24 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
     mesh.io.tag_in.bits.pushLoad := VecInit(pushLoads take 2)(preload_cmd_place)
     mesh.io.tag_in.bits.pushStore := VecInit(pushStores take 2)(preload_cmd_place)
     mesh.io.tag_in.bits.tag := c_address_rs2.asUInt()
+
+    // TODO I thing these "when(fired_all_rows)" parts can be done more elegantly
+    when(fired_all_rows) {
+      fire_count_started := false.B
+    }
   }
 
   when (perform_single_preload) {
     mesh.io.a.bits := (0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
+
+    when(fired_all_rows) {
+      perform_single_preload := false.B
+    }
+  }
+
+  when (perform_mul_pre && fired_all_rows && !starting_new_mul_pre) {
+    perform_mul_pre := false.B
   }
 
   when (perform_single_mul) {

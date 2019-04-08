@@ -23,8 +23,8 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
     val out_c = Output(outputType)
     val out_s = Output(UInt(2.W))
 
-    val in_shift = Input(UInt((accType.getWidth - outputType.getWidth).W))
-    val out_shift = Output(UInt(log2Ceil(accType.getWidth - outputType.getWidth + 1).W))
+    val in_shift = Input(UInt((accType.getWidth - inputType.getWidth).W))
+    val out_shift = Output(UInt(log2Ceil(accType.getWidth - inputType.getWidth + 1).W))
 
     // Global signals
     val pause = Input(Bool())
