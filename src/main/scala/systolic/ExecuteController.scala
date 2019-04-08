@@ -51,14 +51,12 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val rs2s = VecInit(cmd.bits.map(_.cmd.rs2))
 
   val DoSetMode = functs(0) === MODE_CMD
-  val DoComputeAndFlips = functs.map(_ === COMPUTE_AND_FLIP_CMD)
-  val DoComputeAndStays = functs.map(_ === COMPUTE_AND_STAY_CMD)
   val DoComputes = functs.map(f => f === COMPUTE_AND_FLIP_CMD || f === COMPUTE_AND_STAY_CMD)
   val DoPreloads = functs.map(_ === PRELOAD_CMD)
 
   val preload_cmd_place = Mux(DoPreloads(0), 0.U, 1.U)
 
-  val in_s = DoComputeAndFlips(0)
+  val in_s = functs(0) === COMPUTE_AND_FLIP_CMD
   val in_s_flush = Reg(Bool())
   when (current_dataflow === Dataflow.WS.id.U) {
     in_s_flush := 0.U
@@ -140,7 +138,6 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val perform_single_preload = RegInit(false.B)
   val perform_single_mul = RegInit(false.B)
   val perform_mul_pre = RegInit(false.B)
-  val starting_new_mul_pre = WireInit(false.B) // TODO a little inelegant
 
   val output_counter = new Counter(block_size)
   val fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
@@ -179,11 +176,16 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val dataD = Mux(RegNext(preload_zeros), 0.U, readData(RegNext(dataDbank)))
 
   // FSM logic
-  // TODO clean this up by taking the issue command logic out of the "compute" state
   switch (control_state) {
     is (waiting_for_cmd) {
-      when(cmd.valid(0) && pull_deps_ready(0) && push_deps_ready(0)) {
+      // Default state
+      perform_single_preload := false.B
+      perform_mul_pre := false.B
+      perform_single_mul := false.B
+      fire_count_started := false.B
 
+      when(cmd.valid(0) && pull_deps_ready(0) && push_deps_ready(0))
+      {
         when(DoSetMode) {
           val data_mode = rs1s(0)(0)
           current_dataflow := data_mode
@@ -197,6 +199,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
           cmd.pop := 1.U
         }
 
+        // Preload
         .elsewhen(DoPreloads(0)) {
           perform_single_preload := true.B
           start_inputting_d := true.B
@@ -212,64 +215,68 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
           control_state := compute
         }
 
-        assert(!DoComputes(0), "compute arrived before preload")
-      }
-    }
-    is (compute) {
-      when (cmd.valid(0)) {
-        // Only preloading
-        when(DoPreloads(0)) {
-          start_inputting_d := true.B
-
-          when (about_to_fire_all_rows) {
-            cmd.pop := 1.U
-          }
-        }
-
-        // Overlapping
-        .elsewhen(cmd.valid(1) && DoPreloads(1) && !perform_single_mul &&
-          (perform_mul_pre || (pull_deps_ready(1) && push_deps_ready(1))))
-        {
-          starting_new_mul_pre := true.B
+        // Overlap compute and preload
+        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && pull_deps_ready(1) && push_deps_ready(1)) {
           perform_mul_pre := true.B
-
           start_inputting_ab := true.B
           start_inputting_d := true.B
+
+          io.pullLoad.ready := cmd.bits(1).deps.pullLoad
+          io.pullStore.ready := cmd.bits(1).deps.pullStore
 
           when (current_dataflow === Dataflow.OS.id.U) {
             in_s_flush := rs2s(1)(tagWidth - 1, 0) =/= tag_garbage
           }
 
           fire_count_started := true.B
-
-          when (fire_counter === 0.U) { // When we first launch into the mulpre
-            io.pullLoad.ready := cmd.bits(1).deps.pullLoad
-            io.pullStore.ready := cmd.bits(1).deps.pullStore
-          }
-
-          when (about_to_fire_all_rows) {
-            cmd.pop := 2.U
-          }
+          control_state := compute
         }
 
-        // Only compute
-        .elsewhen(cmd.valid(0) && DoComputes(0)) {
+        // Single mul
+        .elsewhen(DoComputes(0)) {
           perform_single_mul := true.B
           start_inputting_ab := true.B
-          // start_inputting_d := false.B
-          // preload_zeros := true.B
 
           fire_count_started := true.B
+          control_state := compute
+        }
+      }
+    }
+    is (compute) {
+      // Only preloading
+      when(perform_single_preload) {
+        start_inputting_d := true.B
 
-          when(fired_all_rows && perform_single_mul) { // TODO the (... && perform_single_mul) is a little inelegant
-            perform_single_mul := false.B
+        when (about_to_fire_all_rows) {
+          cmd.pop := 1.U
+          control_state := waiting_for_cmd
+        }
+      }
 
-            start_inputting_ab := false.B
+      // Overlapping
+      .elsewhen(perform_mul_pre)
+      {
+        start_inputting_ab := true.B
+        start_inputting_d := true.B
 
-            fire_count_started := false.B
-            cmd.pop := 1.U
-            control_state := flush
-          }
+        when (about_to_fire_all_rows) {
+          cmd.pop := 2.U
+          control_state := waiting_for_cmd
+        }
+      }
+
+      // Only compute
+      .elsewhen(perform_single_mul) {
+        start_inputting_ab := true.B
+
+        when(fired_all_rows) {
+          perform_single_mul := false.B
+
+          start_inputting_ab := false.B
+
+          fire_count_started := false.B
+          cmd.pop := 1.U
+          control_state := flush
         }
       }
     }
@@ -302,24 +309,11 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
     mesh.io.tag_in.bits.pushLoad := VecInit(pushLoads take 2)(preload_cmd_place)
     mesh.io.tag_in.bits.pushStore := VecInit(pushStores take 2)(preload_cmd_place)
     mesh.io.tag_in.bits.tag := c_address_rs2.asUInt()
-
-    // TODO I thing these "when(fired_all_rows)" parts can be done more elegantly
-    when(fired_all_rows) {
-      fire_count_started := false.B
-    }
   }
 
   when (perform_single_preload) {
     mesh.io.a.bits := (0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
-
-    when(fired_all_rows) {
-      perform_single_preload := false.B
-    }
-  }
-
-  when (perform_mul_pre && fired_all_rows && !starting_new_mul_pre) {
-    perform_mul_pre := false.B
   }
 
   when (perform_single_mul) {
