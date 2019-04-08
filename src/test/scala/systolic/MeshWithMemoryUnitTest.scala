@@ -302,7 +302,8 @@ class MeshWithMemoryTester extends ChiselFlatSpec
 
     iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
       () => new MeshWithMemory(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.BOTH, dim, dim,1, 1,1, 1)) {
-        c => new OSMeshWithMemoryUnitTest(c, Seq.fill(1)(MeshTesterInput(identity(dim), identity(dim), identity(dim).map(_.map(_*2)), true)), () => 0, shift = 1, verbose = true)
+        c => new OSMeshWithMemoryUnitTest(c, Seq.fill(8)(MeshTesterInput(rand(dim), rand(dim), rand(dim), true)), () => 0, shift = 1, verbose = true)
+        // c => new WSMeshWithMemoryUnitTest(c, Seq.fill(1)(MeshTesterInput(rand(dim), rand(dim), rand(dim), true)), () => 0, verbose = true)
     } should be(true)
   }
 
@@ -310,7 +311,7 @@ class MeshWithMemoryTester extends ChiselFlatSpec
   "MeshWithMemoryTest" should "work fully combinationally with no delays" in {
     for (df <- dataflow_testers) {
       iotesters.Driver.execute(Array("--backend-name", "treadle"),
-        () => new MeshWithMemory(SInt(16.W), SInt(32.W), SInt(64.W), UInt(32.W), Dataflow.BOTH, 8, 8, 1, 1, 1, 1)) {
+        () => new MeshWithMemory(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.BOTH, 8, 8, 1, 1, 1, 1)) {
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8), rand(8), rand(8), true)), () => 0, 0)
       } should be(true)
     }
@@ -319,7 +320,7 @@ class MeshWithMemoryTester extends ChiselFlatSpec
   it should "work fully combinationally with random delays" in {
     for (df <- dataflow_testers) {
       iotesters.Driver.execute(Array("--backend-name", "treadle"),
-        () => new MeshWithMemory(SInt(16.W), SInt(32.W), SInt(64.W), UInt(32.W), Dataflow.BOTH, 8, 8, 1, 1, 1, 1)) {
+        () => new MeshWithMemory(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.BOTH, 8, 8, 1, 1, 1, 1)) {
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8), rand(8), rand(8), true)), () => scala.util.Random.nextInt(5), 0)
       } should be(true)
     }
@@ -329,7 +330,7 @@ class MeshWithMemoryTester extends ChiselFlatSpec
   it should "work fully pipelined with no delays" in {
     for (df <- dataflow_testers) {
       iotesters.Driver.execute(Array("--backend-name", "treadle"),
-        () => new MeshWithMemory(SInt(16.W), SInt(32.W), SInt(64.W), UInt(32.W), Dataflow.BOTH, 1, 1, 8, 8, 1, 1)) {
+        () => new MeshWithMemory(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.BOTH, 1, 1, 8, 8, 1, 1)) {
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8), rand(8), rand(8), true)), () => 0, 0)
       } should be(true)
     }
@@ -338,7 +339,7 @@ class MeshWithMemoryTester extends ChiselFlatSpec
   it should "work fully pipelined with random delays" in {
     for (df <- dataflow_testers) {
       iotesters.Driver.execute(Array("--backend-name", "treadle"),
-        () => new MeshWithMemory(SInt(16.W), SInt(32.W), SInt(64.W), UInt(32.W), Dataflow.BOTH, 1, 1, 8, 8, 1, 1)) {
+        () => new MeshWithMemory(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.BOTH, 1, 1, 8, 8, 1, 1)) {
         c => df(c, Seq.fill(8)(MeshTesterInput(rand(8), rand(8), rand(8), true)), () => scala.util.Random.nextInt(5), 0)
       } should be(true)
     }

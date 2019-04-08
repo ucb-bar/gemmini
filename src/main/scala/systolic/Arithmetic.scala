@@ -13,6 +13,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def +(t: T): T
   def *(t: T): T
   def >>(u: UInt): T
+  def withWidthOf(t: T): T
 }
 
 object Arithmetic {
@@ -21,6 +22,7 @@ object Arithmetic {
       def +(t: UInt) = self + t
       def *(t: UInt) = self * t
       def >>(u: UInt) = (self >> u).asUInt()
+      def withWidthOf(t: UInt) = self(t.getWidth-1, 0)
     }
   }
 
@@ -29,6 +31,7 @@ object Arithmetic {
       def +(t: SInt) = self + t
       def *(t: SInt) = self * t
       def >>(u: UInt) = (self >> u).asSInt()
+      def withWidthOf(t: SInt) = self(t.getWidth-1, 0).asSInt()
     }
   }
 }

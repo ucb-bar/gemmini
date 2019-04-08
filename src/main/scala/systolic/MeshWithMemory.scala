@@ -152,7 +152,7 @@ class MeshWithMemory[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   io.out.valid := !pause
 
   // Tags
-  val tag_queue = Module(new TagQueue(5, tagType)) // TODO understand the actual required size better. It seems there may be a bug with it
+  val tag_queue = Module(new TagQueue(4, tagType)) // TODO understand the actual required size better. It seems there may be a bug with it
   tag_queue.io.in.bits := Mux(flushing, io.tag_garbage, io.tag_in.bits)
   tag_queue.io.garbage := io.tag_garbage
 
@@ -176,7 +176,6 @@ class MeshWithMemory[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
 
     tag_id := ~tag_id
 
-    // in_s := Mux(io.flush.fire(), ~in_s, io.s ^ in_s)
     when (!flushing) { in_s := io.s ^ in_s }
   }
 
@@ -202,16 +201,12 @@ class MeshWithMemory[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
 
     when (buffering_done) {
       flush_counter := flush_counter - 1.U
-
-      // in_s := ~in_s
-
       tag_queue.io.in.valid := true.B
     }
 
     val about_to_finish_flushing = flush_counter === 0.U && fire_counter === (block_size-1).U // TODO change when non-square requirement lifted
     when (about_to_finish_flushing) {
       fire_counter := 0.U
-      // in_s := ~in_s
       tag_queue.io.in.valid := true.B
       flushing := false.B
     }

@@ -60,6 +60,9 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
 
   val in_s = DoComputeAndFlips(0)
   val in_s_flush = Reg(Bool())
+  when (current_dataflow === Dataflow.WS.id.U) {
+    in_s_flush := 0.U
+  }
 
   val in_shift = RegInit(0.U((accType.getWidth - outputType.getWidth).W))
 
@@ -70,6 +73,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val c_address_rs2 = WireInit(rs2s(preload_cmd_place).asTypeOf(spaddr))
 
   val preload_zeros = WireInit(d_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage)
+  val input_d_zeros = WireInit(b_address_rs2.asUInt()(tagWidth-1, 0) === tag_garbage)
 
   // Dependency stuff
   val pushLoads = cmd.bits.map(_.deps.pushLoad)
@@ -152,11 +156,10 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   for(i <- 0 until sp_banks){
     io.read(i).en :=
       ((a_read_bank_number === i.U && start_inputting_ab) ||
-        (b_read_bank_number === i.U && start_inputting_ab) ||
+        (b_read_bank_number === i.U && start_inputting_ab && !input_d_zeros) ||
         (d_read_bank_number === i.U && start_inputting_d && !preload_zeros))
-    io.read(i).addr := MuxCase(0.U,
+    io.read(i).addr := MuxCase(a_address_rs1.sprow + fire_counter,
       Seq(
-        (a_read_bank_number === i.U && start_inputting_ab) -> (a_address_rs1.sprow + fire_counter),
         (b_read_bank_number === i.U && start_inputting_ab) -> (b_address_rs2.sprow + fire_counter),
         (d_read_bank_number === i.U && start_inputting_d) -> (d_address_rs1.sprow + block_size.U - 1.U - fire_counter)
       )
@@ -181,7 +184,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   }
 
   val dataA = readData(dataAbank)
-  val dataB = readData(dataBbank)
+  val dataB = Mux(RegNext(input_d_zeros), 0.U, readData(dataBbank))
   val dataD = Mux(RegNext(preload_zeros), 0.U, readData(dataDbank))
 
   // FSM logic
@@ -210,7 +213,9 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
           io.pullLoad.ready := cmd.bits(0).deps.pullLoad
           io.pullStore.ready := cmd.bits(0).deps.pullStore
 
-          in_s_flush := rs2s(0)(tagWidth-1, 0) =/= tag_garbage
+          when (current_dataflow === Dataflow.OS.id.U) {
+            in_s_flush := rs2s(0)(tagWidth-1, 0) =/= tag_garbage
+          }
 
           fire_count_started := true.B
           control_state := compute
@@ -220,6 +225,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
       }
     }
     is (compute) {
+      // TODO clean this up. We can pop one cycle early, and look only 2 instructions ahead, instead of looking 4 instructions ahead
       when (cmd.valid(0)) {
         // Only preloading
         when(DoPreloads(0)) {
@@ -269,7 +275,9 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
           start_inputting_ab := true.B
           start_inputting_d := true.B
 
-          in_s_flush := rs2s(1)(tagWidth-1, 0) =/= tag_garbage
+          when (current_dataflow === Dataflow.OS.id.U) {
+            in_s_flush := rs2s(1)(tagWidth - 1, 0) =/= tag_garbage
+          }
 
           fire_count_started := true.B
 
@@ -373,8 +381,6 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   }
 
   when (perform_single_mul) {
-    mesh.io.d.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
-
     mesh.io.tag_in.bits.pushLoad := false.B
     mesh.io.tag_in.bits.pushStore := false.B
     mesh.io.tag_in.bits.tag := tag_garbage
@@ -384,13 +390,13 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val w_address = mesh.io.tag_out.tag.asTypeOf(spaddr)
   val w_bank_number = w_address.spbank
   val w_bank_address = w_address.sprow
+  val current_w_bank_address = Mux(current_dataflow === Dataflow.WS.id.U, w_bank_address + output_counter.value,
+    w_bank_address + block_size.U - 1.U - output_counter.value)
 
   for(i <- 0 until sp_banks) {
     io.write(i).en := start_array_outputting && w_bank_number === i.U
-    io.write(i).addr := MuxCase(0.U,
-      Seq((w_bank_number === i.U && start_array_outputting) -> (w_bank_address + block_size.U - 1.U - output_counter.value)))
-    io.write(i).data := MuxCase(0.U,
-      Seq((w_bank_number === i.U && start_array_outputting) -> mesh.io.out.bits.asUInt()))
+    io.write(i).addr := current_w_bank_address
+    io.write(i).data := mesh.io.out.bits.asUInt()
   }
 
   when(mesh.io.out.fire() && mesh.io.tag_out.tag =/= tag_garbage) {
