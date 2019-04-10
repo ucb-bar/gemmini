@@ -19,7 +19,8 @@ case class SystolicArrayConfig(
                                 sp_bank_entries: Int,
                                 sp_width: Int,
                                 shifter_banks: Int,
-                                depq_len: Int
+                                depq_len: Int,
+                                dataflow: Dataflow.Value
 )
 case object SystolicArrayKey extends Field[SystolicArrayConfig]
 

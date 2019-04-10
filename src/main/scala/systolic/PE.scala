@@ -60,12 +60,12 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
 
   when (mode === OUTPUT_STATIONARY && supports_os) {
     when(select === PROPAGATE){
-      io.out_c := c1 >> shift_offset
+      io.out_c := (c1 >> shift_offset).clippedToWidthOf(outputType)
       io.out_b := b
       c2 := (a * b.withWidthOf(inputType)) + c2
       c1 := d
     }.otherwise {
-      io.out_c := c2 >> shift_offset
+      io.out_c := (c2 >> shift_offset).clippedToWidthOf(outputType)
       io.out_b := b
       c1 := (a * b.withWidthOf(inputType)) + c1
       c2 := d

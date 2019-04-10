@@ -102,7 +102,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   io.pullStore.ready := false.B
 
   // Instantiate the actual mesh
-  val mesh = Module(new MeshWithMemory(inputType, outputType, accType, tag_with_deps, Dataflow.BOTH, tileRows,
+  val mesh = Module(new MeshWithMemory(inputType, outputType, accType, tag_with_deps, dataflow, tileRows,
     tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
 
   mesh.io.a.valid := false.B
