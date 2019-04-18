@@ -27,11 +27,13 @@ object Arithmetic {
       def >>(u: UInt) = (self >> u).asUInt()
 
       def withWidthOf(t: UInt) = self(t.getWidth-1, 0)
+
       def clippedToWidthOf(t: UInt) = {
         val sat = Cat(Seq.fill(t.getWidth)(1.U(1.W)))
-        Mux(self > sat, sat, self)
+        Mux(self > sat, sat, self)(t.getWidth-1, 0)
       }
-      override def relu: UInt = Mux(self > 0.U, self, 0.U)
+
+      override def relu: UInt = self
     }
   }
 
@@ -42,12 +44,14 @@ object Arithmetic {
       def >>(u: UInt) = (self >> u).asSInt()
 
       def withWidthOf(t: SInt) = self(t.getWidth-1, 0).asSInt()
+
       override def clippedToWidthOf(t: SInt): SInt = {
-        val sat = Cat(0.U(1.W), Seq.fill(t.getWidth-1)(1.U(1.W)):_*).asSInt()
-        Mux(self > sat, sat, self)
+        val maxsat = Cat(0.U(1.W), Seq.fill(t.getWidth-1)(1.U(1.W)):_*).asSInt()
+        val minsat = Cat(1.U(1.W), Seq.fill(t.getWidth-1)(0.U(1.W)):_*).asSInt()
+        MuxCase(self, Seq((self > maxsat) -> maxsat, (self < minsat) -> minsat))(t.getWidth-1, 0).asSInt()
       }
 
-      override def relu: SInt = Mux(self > 0.S, self, 0.S)
+      override def relu: SInt = Mux(self >= 0.S, self, 0.S)
     }
   }
 }

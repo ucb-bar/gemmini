@@ -130,10 +130,13 @@ class ScratchpadBank(n: Int, w: Int) extends Module {
   io.read.data := mem.read(io.read.addr, io.read.en)
 }
 
-class Scratchpad(
-    nBanks: Int, nRows: Int, w: Int,
+// TODO replace the SRAM types with Vec[Vec[inputType]], rather than just simple UInts
+class Scratchpad[T <: Data: Arithmetic](
+    nBanks: Int, nRows: Int, w: Int, accType: T, config: SystolicArrayConfig,
     val maxBytes: Int = 64, val dataBits: Int = 64)
     (implicit p: Parameters) extends LazyModule {
+
+  import config._
 
   val dataBytes = dataBits / 8
   val outFlits = w / dataBits
@@ -153,6 +156,10 @@ class Scratchpad(
       val read  = Flipped(Vec(nBanks, new ScratchpadReadIO(nRows, w)))
       val write = Flipped(Vec(nBanks, new ScratchpadWriteIO(nRows, w)))
       val tlb = new FrontendTLBIO
+
+      // Accumulator ports // TODO add a store DMA for accumulator
+      val acc_read = Flipped(new AccumulatorReadIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType))))
+      val acc_write = Flipped(new AccumulatorWriteIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType))))
     })
 
     require(reader.module.dataBits == dataBits)
@@ -264,6 +271,16 @@ class Scratchpad(
       bank.io.write.addr := Mux(bankwen, req.spaddr, write.addr)
       bank.io.write.data := Mux(bankwen, rowBuffer.asUInt, write.data)
     }
+
+    val accumulator = Module(new AccumulatorMem(acc_rows, Vec(meshColumns, Vec(tileColumns, accType))))
+    // TODO add dma requests
+    accumulator.io.read.en := io.acc_read.en
+    accumulator.io.read.addr := io.acc_read.addr
+    io.acc_read.data := accumulator.io.read.data
+    accumulator.io.write.addr := io.acc_write.addr
+    accumulator.io.write.data := io.acc_write.data
+    accumulator.io.write.en := io.acc_write.en
+    accumulator.io.write.acc := io.acc_write.acc
 
     when (io.dma.req.fire()) {
       req := io.dma.req.bits

@@ -44,8 +44,8 @@ class LoadController(config: SystolicArrayConfig, spaddr: SPAddr)(implicit p: Pa
 
   io.dma.req.valid := control_state === waiting_for_command && cmd.valid && pull_deps_ready
   io.dma.req.bits.vaddr := rs1
-  io.dma.req.bits.spbank := rs2.asTypeOf(spaddr).spbank
-  io.dma.req.bits.spaddr := rs2.asTypeOf(spaddr).sprow
+  io.dma.req.bits.spbank := rs2.asTypeOf(spaddr).bank
+  io.dma.req.bits.spaddr := rs2.asTypeOf(spaddr).row
   io.dma.req.bits.write := false.B
   io.dma.resp.ready := true.B
 

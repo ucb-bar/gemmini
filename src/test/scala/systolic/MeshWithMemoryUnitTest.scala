@@ -4,6 +4,7 @@ package systolic
 import chisel3._
 import chisel3.iotesters._
 import TestUtils._
+import scala.util.Random.shuffle
 
 // TODO add test for randomly choosing S
 // TODO add test for inputting in different orders
@@ -361,14 +362,19 @@ class MeshWithMemoryTester extends ChiselFlatSpec
     for (matrix_dim <- 8 to 8) { // TODO test more sizes later
       val factors = (1 to matrix_dim).filter(matrix_dim % _ == 0)
 
-      for (tile_height <- factors; tile_width <- factors) {
+      // The for loops in here are written very strangely, mainly just so they can be parallelized
+      // for (tile_height <- factors; tile_width <- factors) {
+      shuffle(for (tile_height <- factors; tile_width <- factors) yield (tile_height, tile_width)).par.foreach { case (tile_height, tile_width) =>
         val mesh_height = matrix_dim / tile_height
         val mesh_width = matrix_dim / tile_width
 
         val left_bankings = (1 to mesh_height).filter(mesh_height % _ == 0)
         val up_bankings = (1 to mesh_width).filter(mesh_width % _ == 0)
 
-        for (in_delay <- delay_functions; left_banks <- left_bankings; up_banks <- up_bankings; out_banks <- up_bankings; df_with_tester <- dataflows; shift <- shifts) {
+        // for (in_delay <- delay_functions; left_banks <- left_bankings; up_banks <- up_bankings; out_banks <- up_bankings; df_with_tester <- dataflows; shift <- shifts) {
+        shuffle(for (in_delay <- delay_functions; left_banks <- left_bankings; up_banks <- up_bankings; out_banks <- up_bankings; df_with_tester <- dataflows; shift <- shifts)
+          yield (in_delay, left_banks, up_banks, out_banks, df_with_tester, shift)).par.foreach { case (in_delay, left_banks, up_banks, out_banks, df_with_tester, shift) =>
+
           val df = df_with_tester._1
           val df_testers = df_with_tester._2
 

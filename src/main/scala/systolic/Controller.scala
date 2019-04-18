@@ -20,8 +20,9 @@ case class SystolicArrayConfig(
                                 sp_width: Int,
                                 shifter_banks: Int,
                                 depq_len: Int,
-                                dataflow: Dataflow.Value
-)
+                                dataflow: Dataflow.Value,
+                                acc_rows: Int = 32,
+                              )
 case object SystolicArrayKey extends Field[SystolicArrayConfig]
 
 class SystolicDeps extends Bundle {
@@ -42,8 +43,8 @@ class SystolicCmdWithDeps(implicit p: Parameters) extends Bundle {
 
 class SPAddr(xLen: Int, sp_banks: Int, sp_bank_entries: Int) extends Bundle {
   val junk = UInt((xLen-log2Ceil(sp_bank_entries)-log2Ceil(sp_banks)).W)
-  val spbank = UInt(log2Ceil(sp_banks).W)
-  val sprow = UInt(log2Ceil(sp_bank_entries).W)
+  val bank = UInt(log2Ceil(sp_banks).W)
+  val row = UInt(log2Ceil(sp_bank_entries).W)
 
   override def cloneType: SPAddr.this.type = new SPAddr(xLen, sp_banks, sp_bank_entries).asInstanceOf[this.type]
 }
@@ -54,7 +55,7 @@ class SystolicArray[T <: Data: Arithmetic](inputType: T, outputType: T, accType:
     nPTWPorts = 1) {
   val config = p(SystolicArrayKey)
   val spad = LazyModule(new Scratchpad(
-    config.sp_banks, config.sp_bank_entries, config.sp_width))
+    config.sp_banks, config.sp_bank_entries, config.sp_width, accType, config))
   override lazy val module = new SystolicArrayModule(this, inputType, outputType, accType)
   override val tlNode = spad.node
 }
@@ -83,7 +84,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   tlb.io.clients(0) <> outer.spad.module.io.tlb
   io.ptw.head <> tlb.io.ptw
 
-  // Controller
+  // Controllers
   val cmd = Queue(io.cmd, ld_str_queue_length)
 
   cmd.ready := false.B
@@ -147,6 +148,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   dma_arbiter.io.store <> store_controller.io.dma
   ex_controller.io.read <> spad.module.io.read
   ex_controller.io.write <> spad.module.io.write
+  ex_controller.io.acc_read <> spad.module.io.acc_read
+  ex_controller.io.acc_write <> spad.module.io.acc_write
 
   // Wire up controllers to dependency queues
   load_controller.io.pullStore <> store_to_load_depq

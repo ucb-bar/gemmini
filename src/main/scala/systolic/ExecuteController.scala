@@ -8,16 +8,20 @@ import freechips.rocketchip.config.Parameters
 
 // TODO handle reads from the same bank
 // TODO handle reads from addresses that haven't been written yet
-class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayConfig, spaddr: SPAddr,
+class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spaddr: SPAddr,
                                                inputType: T, outputType: T, accType: T)
-                                              (implicit p: Parameters) extends Module {
+                                              (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
   import config._
+  import ev._
 
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
 
     val read  = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
     val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width))
+
+    val acc_read = new AccumulatorReadIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)))
+    val acc_write = new AccumulatorWriteIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)))
 
     // TODO what's a better way to express no bits?
     val pushLoad = Decoupled(UInt(1.W))
@@ -38,6 +42,14 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
     val pushLoad = Bool()
     val pushStore = Bool()
     val tag = UInt(tagWidth.W)
+  }
+
+  val acc_addr = new Bundle {
+    val junk = UInt((xLen - tagWidth - log2Ceil(acc_rows)).W)
+    val is_acc_addr = Bool()
+    val acc = Bool()
+    val junk2 = UInt((tagWidth - log2Ceil(acc_rows)-2).W)
+    val row = UInt(log2Ceil(acc_rows).W)
   }
 
   val cmd_q_heads = 2
@@ -127,9 +139,13 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
   val control_state = RegInit(waiting_for_cmd)
 
   // SRAM scratchpad
-  val a_read_bank_number = a_address_rs1.spbank
-  val b_read_bank_number = b_address_rs2.spbank
-  val d_read_bank_number = d_address_rs1.spbank
+  val a_read_bank_number = a_address_rs1.bank
+  val b_read_bank_number = b_address_rs2.bank
+  val d_read_bank_number = d_address_rs1.bank
+  
+  val a_read_from_acc = a_address_rs1.asTypeOf(acc_addr).is_acc_addr
+  val b_read_from_acc = b_address_rs2.asTypeOf(acc_addr).is_acc_addr
+  val d_read_from_acc = d_address_rs1.asTypeOf(acc_addr).is_acc_addr
 
   val start_inputting_ab = WireInit(false.B)
   val start_inputting_d = WireInit(false.B)
@@ -153,27 +169,42 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
 
   // Scratchpad reads
   for(i <- 0 until sp_banks){
-    io.read(i).en :=
-      ((a_read_bank_number === i.U && start_inputting_ab) ||
-        (b_read_bank_number === i.U && start_inputting_ab && !accumulate_zeros) ||
-        (d_read_bank_number === i.U && start_inputting_d && !preload_zeros))
-    io.read(i).addr := MuxCase(a_address_rs1.sprow + fire_counter,
-      Seq(
-        (b_read_bank_number === i.U && start_inputting_ab) -> (b_address_rs2.sprow + fire_counter),
-        (d_read_bank_number === i.U && start_inputting_d) -> (d_address_rs1.sprow + block_size.U - 1.U - fire_counter)
-      )
+    val read_a = !a_read_from_acc && a_read_bank_number === i.U && start_inputting_ab
+    val read_b = !b_read_from_acc && b_read_bank_number === i.U && start_inputting_ab && !accumulate_zeros
+    val read_d = !d_read_from_acc && d_read_bank_number === i.U && start_inputting_d && !preload_zeros
+
+    io.read(i).en := read_a || read_b || read_d
+    io.read(i).addr := MuxCase(a_address_rs1.row + fire_counter,
+      Seq(read_b -> (b_address_rs2.row + fire_counter),
+        read_d -> (d_address_rs1.row + block_size.U - 1.U - fire_counter))
     )
   }
 
-  val readData = VecInit(io.read.map(_.data))
+  // Accumulator read // TODO can only handle one acc read for now
+  {
+    val read_a_from_acc = a_read_from_acc && start_inputting_ab
+    val read_b_from_acc = b_read_from_acc && start_inputting_ab && !accumulate_zeros
+    val read_d_from_acc = d_read_from_acc && start_inputting_d && !preload_zeros
 
+    io.acc_read.en := read_a_from_acc || read_b_from_acc || read_d_from_acc
+
+    io.acc_read.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr).row + fire_counter,
+      Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr).row + fire_counter),
+        read_d_from_acc -> (d_address_rs1.asTypeOf(acc_addr).row + block_size.U - 1.U - fire_counter)))
+  }
+
+  val readData = VecInit(io.read.map(_.data))
+  val accReadData = VecInit(io.acc_read.data.map(v => VecInit(v.map(e => (e >> in_shift).relu.clippedToWidthOf(inputType))))).asUInt // TODO make relu optional
+  
   val dataAbank = WireInit(a_read_bank_number)
   val dataBbank = WireInit(b_read_bank_number)
   val dataDbank = WireInit(d_read_bank_number)
 
-  val dataA = readData(RegNext(dataAbank))
-  val dataB = Mux(RegNext(accumulate_zeros), 0.U, readData(RegNext(dataBbank)))
-  val dataD = Mux(RegNext(preload_zeros), 0.U, readData(RegNext(dataDbank)))
+  val dataA = Mux(RegNext(a_read_from_acc), accReadData, readData(RegNext(dataAbank)))
+  val dataB = MuxCase(readData(RegNext(dataBbank)),
+    Seq(RegNext(accumulate_zeros) -> 0.U, RegNext(b_read_from_acc) -> accReadData))
+  val dataD = MuxCase(readData(RegNext(dataDbank)),
+    Seq(RegNext(preload_zeros) -> 0.U, RegNext(d_read_from_acc) -> accReadData))
 
   // FSM logic
   switch (control_state) {
@@ -194,7 +225,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
           io.pullLoad.ready := cmd.bits(0).deps.pullLoad
           io.pullStore.ready := cmd.bits(0).deps.pullStore
           // TODO add support for pushing dependencies on the set-mode command
-          assert(!pushDeps(0))
+          assert(!pushDeps(0), "pushing depenencies on setmode not supported")
 
           cmd.pop := 1.U
         }
@@ -269,6 +300,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
       .elsewhen(perform_single_mul) {
         start_inputting_ab := true.B
 
+        // TODO do we waste a cycle here?
         when(fired_all_rows) {
           perform_single_mul := false.B
 
@@ -276,6 +308,7 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
 
           fire_count_started := false.B
           cmd.pop := 1.U
+          // TODO don't go straight to flush if avoidable
           control_state := flush
         }
       }
@@ -324,18 +357,37 @@ class ExecuteController[T <: Data: Arithmetic](xLen: Int, config: SystolicArrayC
 
   // Scratchpad writes
   val w_address = mesh.io.tag_out.tag.asTypeOf(spaddr)
-  val w_bank_number = w_address.spbank
-  val w_bank_address = w_address.sprow
-  val current_w_bank_address = Mux(current_dataflow === Dataflow.WS.id.U, w_bank_address + output_counter.value,
-    w_bank_address + block_size.U - 1.U - output_counter.value)
+  val w_address_acc = mesh.io.tag_out.tag.asTypeOf(acc_addr)
 
+  val write_to_acc = w_address_acc.is_acc_addr
+
+  val w_bank = w_address.bank
+  val w_row = Mux(write_to_acc, w_address_acc.row, w_address.row)
+
+  val current_w_bank_address = Mux(current_dataflow === Dataflow.WS.id.U, w_row + output_counter.value,
+    w_row + block_size.U - 1.U - output_counter.value)
+
+  val is_garbage_addr = mesh.io.tag_out.tag === tag_garbage
+
+  // Write to normal scratchpad
   for(i <- 0 until sp_banks) {
-    io.write(i).en := start_array_outputting && w_bank_number === i.U
+    // TODO make relu optional
+    val activated_wdata = VecInit(mesh.io.out.bits.map(v => VecInit(v.map(_.relu.clippedToWidthOf(inputType)))))
+
+    io.write(i).en := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr
     io.write(i).addr := current_w_bank_address
-    io.write(i).data := mesh.io.out.bits.asUInt()
+    io.write(i).data := activated_wdata.asUInt()
   }
 
-  when(mesh.io.out.fire() && mesh.io.tag_out.tag =/= tag_garbage) {
+  // Write to accumulator
+  {
+    io.acc_write.en := start_array_outputting && write_to_acc && !is_garbage_addr
+    io.acc_write.addr := current_w_bank_address
+    io.acc_write.data := mesh.io.out.bits
+    io.acc_write.acc := w_address_acc.acc
+  }
+
+  when(mesh.io.out.fire() && !is_garbage_addr) {
     when(output_counter.inc()) {
       io.pushLoad.valid := mesh.io.tag_out.pushLoad
       io.pushStore.valid := mesh.io.tag_out.pushStore

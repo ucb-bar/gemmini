@@ -12,6 +12,7 @@ import systolic.Util._
 // TODO cleanup tags to be like S
 // TODO do we flush for one cycle more than necessary?
 // TODO give the ability to flush for less than 3 time steps
+// TODO rename this to MeshWithDelays or something
 
 class MeshWithMemory[T <: Data: Arithmetic, U <: Data](inputType: T, val outputType: T, accType: T, tagType: U,
                                                        df: Dataflow.Value,
