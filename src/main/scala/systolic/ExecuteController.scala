@@ -19,9 +19,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
     val read  = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
     val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width))
-
-    val acc_read = new AccumulatorReadIO(acc_rows, accType.getWidth-inputType.getWidth, Vec(meshColumns, Vec(tileColumns, inputType)))
-    val acc_write = new AccumulatorWriteIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)))
+    val acc = Flipped(new AccumulatorMemIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType))))
 
     // TODO what's a better way to express no bits?
     val pushLoad = Decoupled(UInt(1.W))
@@ -36,7 +34,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   })
 
   val block_size = meshRows*tileRows
-  assert(ex_queue_length >= 6)
+  assert(ex_queue_length >= 2)
 
   val tag_garbage = Cat(Seq.fill(tagWidth)(1.U(1.W)))
   val tag_with_deps = new Bundle {
@@ -181,16 +179,16 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     val read_b_from_acc = b_read_from_acc && start_inputting_ab && !accumulate_zeros
     val read_d_from_acc = d_read_from_acc && start_inputting_d && !preload_zeros
 
-    io.acc_read.en := read_a_from_acc || read_b_from_acc || read_d_from_acc
-    io.acc_read.shift := in_shift
+    io.acc.read.en := read_a_from_acc || read_b_from_acc || read_d_from_acc
+    io.acc.read.shift := in_shift
 
-    io.acc_read.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr).row + fire_counter,
+    io.acc.read.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr).row + fire_counter,
         Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr).row + fire_counter),
           read_d_from_acc -> (d_address_rs1.asTypeOf(acc_addr).row + block_size.U - 1.U - fire_counter)))
   }
 
   val readData = VecInit(io.read.map(_.data))
-  val accReadData = io.acc_read.data.asUInt()
+  val accReadData = io.acc.read.data.asUInt()
 
   val dataAbank = WireInit(a_read_bank_number)
   val dataBbank = WireInit(b_read_bank_number)
@@ -377,10 +375,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   // Write to accumulator
   {
-    io.acc_write.en := start_array_outputting && write_to_acc && !is_garbage_addr
-    io.acc_write.addr := current_w_bank_address
-    io.acc_write.data := mesh.io.out.bits
-    io.acc_write.acc := w_address_acc.acc
+    io.acc.write.en := start_array_outputting && write_to_acc && !is_garbage_addr
+    io.acc.write.addr := current_w_bank_address
+    io.acc.write.data := mesh.io.out.bits
+    io.acc.write.acc := w_address_acc.acc
   }
 
   when(mesh.io.out.fire() && !is_garbage_addr) {

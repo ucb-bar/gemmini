@@ -163,9 +163,8 @@ class Scratchpad[T <: Data](
       val write = Flipped(Vec(nBanks, new ScratchpadWriteIO(nRows, w)))
       val tlb = new FrontendTLBIO
 
-      // Accumulator ports // TODO add a store DMA for accumulator
-      val acc_read = Flipped(new AccumulatorReadIO(acc_rows, accType.getWidth - inputType.getWidth, Vec(meshColumns, Vec(tileColumns, inputType))))
-      val acc_write = Flipped(new AccumulatorWriteIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType))))
+      // Accumulator ports
+      val acc = new AccumulatorMemIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType)))
     })
 
     require(reader.module.dataBits == dataBits)
@@ -280,12 +279,12 @@ class Scratchpad[T <: Data](
 
     val accumulator = Module(new AccumulatorMem(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType))))
     val accbankren = dmaren && io.dma.req.bits.is_acc
-    accumulator.io.read.en := accbankren || io.acc_read.en
-    accumulator.io.read.addr := Mux(accbankren, io.dma.req.bits.accaddr, io.acc_read.addr)
-    accumulator.io.read.shift := io.acc_read.shift
-    io.acc_read.data := accumulator.io.read.data
+    accumulator.io.read.en := accbankren || io.acc.read.en
+    accumulator.io.read.addr := Mux(accbankren, io.dma.req.bits.accaddr, io.acc.read.addr)
+    accumulator.io.read.shift := io.acc.read.shift
+    io.acc.read.data := accumulator.io.read.data
     when (req.is_acc) { dmardata := accumulator.io.read.data.asUInt() }
-    accumulator.io.write <> io.acc_write
+    accumulator.io.write <> io.acc.write
 
     when (io.dma.req.fire()) {
       req := io.dma.req.bits

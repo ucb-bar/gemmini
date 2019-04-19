@@ -24,6 +24,8 @@ class AccumulatorWriteIO[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends 
 class AccumulatorMemIO [T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]], rdata: Vec[Vec[T]]) extends Bundle {
   val read = Flipped(new AccumulatorReadIO(n, t.head.head.getWidth - rdata.head.head.getWidth, rdata))
   val write = Flipped(new AccumulatorWriteIO(n, t))
+
+  override def cloneType: this.type = new AccumulatorMemIO(n, t, rdata).asInstanceOf[this.type]
 }
 
 class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]])(implicit ev: Arithmetic[T]) extends Module {

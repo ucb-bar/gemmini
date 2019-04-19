@@ -159,8 +159,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   dma_arbiter.io.store <> store_controller.io.dma
   ex_controller.io.read <> spad.module.io.read
   ex_controller.io.write <> spad.module.io.write
-  ex_controller.io.acc_read <> spad.module.io.acc_read
-  ex_controller.io.acc_write <> spad.module.io.acc_write
+  ex_controller.io.acc <> spad.module.io.acc
 
   // Wire up controllers to dependency queues
   load_controller.io.pullStore <> store_to_load_depq
