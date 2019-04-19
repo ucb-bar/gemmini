@@ -38,7 +38,7 @@ class SystolicCmdWithDeps(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val deps = new SystolicDeps
 
-  override def cloneType: SystolicCmdWithDeps.this.type = (new SystolicCmdWithDeps).asInstanceOf[this.type]
+  override def cloneType: this.type = (new SystolicCmdWithDeps).asInstanceOf[this.type]
 }
 
 class SPAddr(xLen: Int, sp_banks: Int, sp_bank_entries: Int) extends Bundle {
@@ -46,7 +46,17 @@ class SPAddr(xLen: Int, sp_banks: Int, sp_bank_entries: Int) extends Bundle {
   val bank = UInt(log2Ceil(sp_banks).W)
   val row = UInt(log2Ceil(sp_bank_entries).W)
 
-  override def cloneType: SPAddr.this.type = new SPAddr(xLen, sp_banks, sp_bank_entries).asInstanceOf[this.type]
+  override def cloneType: this.type = new SPAddr(xLen, sp_banks, sp_bank_entries).asInstanceOf[this.type]
+}
+
+class AccAddr(xLen: Int, acc_rows: Int, tagWidth: Int) extends Bundle {
+  val junk = UInt((xLen - tagWidth - log2Ceil(acc_rows)).W)
+  val is_acc_addr = Bool()
+  val acc = Bool()
+  val junk2 = UInt((tagWidth - log2Ceil(acc_rows)-2).W)
+  val row = UInt(log2Ceil(acc_rows).W)
+
+  override def cloneType: this.type = new AccAddr(xLen, acc_rows, tagWidth).asInstanceOf[this.type]
 }
 
 class SystolicArray[T <: Data: Arithmetic](inputType: T, outputType: T, accType: T, opcodes: OpcodeSet)
@@ -55,7 +65,7 @@ class SystolicArray[T <: Data: Arithmetic](inputType: T, outputType: T, accType:
     nPTWPorts = 1) {
   val config = p(SystolicArrayKey)
   val spad = LazyModule(new Scratchpad(
-    config.sp_banks, config.sp_bank_entries, config.sp_width, accType, config))
+    config.sp_banks, config.sp_bank_entries, config.sp_width, inputType, accType, config))
   override lazy val module = new SystolicArrayModule(this, inputType, outputType, accType)
   override val tlNode = spad.node
 }
@@ -78,6 +88,9 @@ class SystolicArrayModule[T <: Data: Arithmetic]
     val funct = UInt(3.W)
   }
 
+  val tagWidth = 32
+  val acc_addr = new AccAddr(xLen, acc_rows, tagWidth)
+
   // TLB
   implicit val edge = outer.tlNode.edges.out.head
   val tlb = Module(new FrontendTLB(1, 4))
@@ -95,10 +108,10 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val pop2 = cmd.bits.inst.funct.asTypeOf(funct_t).pop2
 
   val load_controller = Module(new LoadController(outer.config, xLen, sp_addr))
-  val store_controller = Module(new StoreController(outer.config, xLen, sp_addr))
-  val ex_controller = Module(new ExecuteController(xLen, outer.config, sp_addr, inputType, outputType, accType))
+  val store_controller = Module(new StoreController(outer.config, xLen, sp_addr, acc_addr))
+  val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config, sp_addr, acc_addr, inputType, outputType, accType))
 
-  val dma_arbiter = Module(new DMAArbiter(sp_banks, sp_bank_entries))
+  val dma_arbiter = Module(new DMAArbiter(sp_banks, sp_bank_entries, acc_rows))
 
   val load_to_store_depq = Queue(load_controller.io.pushStore, depq_len)
   val load_to_ex_depq = Queue(load_controller.io.pushEx, depq_len)

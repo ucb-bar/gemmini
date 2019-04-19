@@ -7,13 +7,13 @@ import Util._
 import freechips.rocketchip.config.Parameters
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
-class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr)(implicit p: Parameters) extends Module {
+class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, acc_addr: AccAddr)(implicit p: Parameters) extends Module {
   import config._
 
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
 
-    val dma = new ScratchpadMemIO(sp_banks, sp_bank_entries)
+    val dma = new ScratchpadMemIO(sp_banks, sp_bank_entries, acc_rows)
 
     // TODO what's a better way to express no bits?
     val pushLoad = Decoupled(UInt(1.W))
@@ -29,13 +29,14 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr)(i
 
   val stride = RegInit((sp_width / 8).U(xLen.W))
   val block_rows = meshRows * tileRows
-  val sp_row_offset = RegInit(0.U(log2Ceil(block_rows).W))
+  val sp_row_offset = RegInit(0.U(log2Ceil(block_rows).W)) // Used for anything in the scratchpad, INCLUDING the accumulator
   val vaddr_offset = RegInit(0.U(xLen.W))
 
   val done_storing = sp_row_offset === 0.U
 
   val cmd = Queue(io.cmd, ld_str_queue_length)
   val vaddr = cmd.bits.cmd.rs1
+  val accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr)
   val spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr)
   val config_stride = cmd.bits.cmd.rs2
 
@@ -62,6 +63,8 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr)(i
   io.dma.req.bits.vaddr := vaddr + vaddr_offset
   io.dma.req.bits.spbank := spaddr.bank
   io.dma.req.bits.spaddr := spaddr.row + sp_row_offset
+  io.dma.req.bits.accaddr := accaddr.row + sp_row_offset
+  io.dma.req.bits.is_acc := accaddr.is_acc_addr
   io.dma.req.bits.write := true.B
   io.dma.resp.ready := true.B
 

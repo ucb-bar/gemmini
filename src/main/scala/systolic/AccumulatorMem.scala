@@ -3,12 +3,13 @@ package systolic
 import chisel3._
 import chisel3.util._
 
-class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
+class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, shift_width: Int, rdataType: Vec[Vec[T]]) extends Bundle {
   val en = Output(Bool())
   val addr = Output(UInt(log2Ceil(n).W))
-  val data = Input(t)
+  val data = Input(rdataType)
+  val shift = Output(UInt(shift_width.W))
 
-  override def cloneType: this.type = new AccumulatorReadIO(n, t).asInstanceOf[this.type]
+  override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType).asInstanceOf[this.type]
 }
 
 class AccumulatorWriteIO[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
@@ -20,16 +21,16 @@ class AccumulatorWriteIO[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends 
   override def cloneType: this.type = new AccumulatorWriteIO(n, t).asInstanceOf[this.type]
 }
 
-class AccumulatorMemIO [T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
-  val read = Flipped(new AccumulatorReadIO(n, t))
+class AccumulatorMemIO [T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]], rdata: Vec[Vec[T]]) extends Bundle {
+  val read = Flipped(new AccumulatorReadIO(n, t.head.head.getWidth - rdata.head.head.getWidth, rdata))
   val write = Flipped(new AccumulatorWriteIO(n, t))
 }
 
-class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]])(implicit ev: Arithmetic[T]) extends Module {
+class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]])(implicit ev: Arithmetic[T]) extends Module {
   import ev._
 
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t))
+  val io = IO(new AccumulatorMemIO(n, t, rdataType))
 
   val mem = TwoPortSyncMem(n, t)
 
@@ -48,7 +49,8 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]])(implicit ev: Arithmetic[
 
   mem.io.raddr := Mux(io.write.en && io.write.acc, io.write.addr, io.read.addr)
   mem.io.ren := io.read.en || (io.write.en && io.write.acc)
-  io.read.data := mem.io.rdata
+  val activated_rdata = VecInit(mem.io.rdata.map(v => VecInit(v.map(e => (e >> io.read.shift).relu.clippedToWidthOf(rdataType.head.head))))) // TODO make relu optional
+  io.read.data := activated_rdata
 
   assert(!(io.read.en && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
   assert(!(io.read.en && io.write.en && io.read.addr === io.write.addr), "reading from and writing to same address is not supported") // TODO

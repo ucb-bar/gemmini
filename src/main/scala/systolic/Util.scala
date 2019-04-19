@@ -1,4 +1,3 @@
-
 package systolic
 
 import chisel3._

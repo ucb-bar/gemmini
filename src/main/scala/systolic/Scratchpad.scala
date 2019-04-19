@@ -87,11 +87,16 @@ class FrontendTLB(nClients: Int, entries: Int)
   }
 }
 
-class ScratchpadMemRequest(val nBanks: Int, val nRows: Int)
+class ScratchpadMemRequest(val nBanks: Int, val nRows: Int, val acc_rows: Int)
     (implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
+
   val spbank = UInt(log2Ceil(nBanks).W)
   val spaddr = UInt(log2Ceil(nRows).W)
+
+  val accaddr = UInt(log2Ceil(acc_rows).W)
+  val is_acc = Bool()
+
   val write = Bool()
 }
 
@@ -99,9 +104,9 @@ class ScratchpadMemResponse extends Bundle {
   val error = Bool()
 }
 
-class ScratchpadMemIO(val nBanks: Int, val nRows: Int)
+class ScratchpadMemIO(val nBanks: Int, val nRows: Int, val acc_rows: Int)
     (implicit p: Parameters) extends CoreBundle {
-  val req = Decoupled(new ScratchpadMemRequest(nBanks, nRows))
+  val req = Decoupled(new ScratchpadMemRequest(nBanks, nRows, acc_rows))
   val resp = Flipped(Decoupled(new ScratchpadMemResponse))
 }
 
@@ -131,12 +136,13 @@ class ScratchpadBank(n: Int, w: Int) extends Module {
 }
 
 // TODO replace the SRAM types with Vec[Vec[inputType]], rather than just simple UInts
-class Scratchpad[T <: Data: Arithmetic](
-    nBanks: Int, nRows: Int, w: Int, accType: T, config: SystolicArrayConfig,
+class Scratchpad[T <: Data](
+    nBanks: Int, nRows: Int, w: Int, inputType: T, accType: T, config: SystolicArrayConfig,
     val maxBytes: Int = 64, val dataBits: Int = 64)
-    (implicit p: Parameters) extends LazyModule {
+    (implicit p: Parameters, ev: Arithmetic[T]) extends LazyModule {
 
   import config._
+  import ev._
 
   val dataBytes = dataBits / 8
   val outFlits = w / dataBits
@@ -152,13 +158,13 @@ class Scratchpad[T <: Data: Arithmetic](
 
   lazy val module = new LazyModuleImp(this) with HasCoreParameters {
     val io = IO(new Bundle {
-      val dma = Flipped(new ScratchpadMemIO(nBanks, nRows))
+      val dma = Flipped(new ScratchpadMemIO(nBanks, nRows, acc_rows))
       val read  = Flipped(Vec(nBanks, new ScratchpadReadIO(nRows, w)))
       val write = Flipped(Vec(nBanks, new ScratchpadWriteIO(nRows, w)))
       val tlb = new FrontendTLBIO
 
       // Accumulator ports // TODO add a store DMA for accumulator
-      val acc_read = Flipped(new AccumulatorReadIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType))))
+      val acc_read = Flipped(new AccumulatorReadIO(acc_rows, accType.getWidth - inputType.getWidth, Vec(meshColumns, Vec(tileColumns, inputType))))
       val acc_write = Flipped(new AccumulatorWriteIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType))))
     })
 
@@ -181,7 +187,7 @@ class Scratchpad[T <: Data: Arithmetic](
     val rowAddrBits = log2Ceil(rowBytes)
     val byteAddrBits = log2Ceil(dataBytes)
 
-    val req = Reg(new ScratchpadMemRequest(nBanks, nRows))
+    val req = Reg(new ScratchpadMemRequest(nBanks, nRows, acc_rows))
     val reqVpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
     val reqOffset = req.vaddr(pgIdxBits-1, 0)
     val reqPpn = Reg(UInt(ppnBits.W))
@@ -259,28 +265,27 @@ class Scratchpad[T <: Data: Arithmetic](
       val bank = banks(i)
       val read = io.read(i)
       val write = io.write(i)
-      val bankren = dmaren && io.dma.req.bits.spbank === i.U
-      val bankwen = dmawen && req.spbank === i.U
+      val bankren = dmaren && io.dma.req.bits.spbank === i.U && !io.dma.req.bits.is_acc
+      val bankwen = dmawen && req.spbank === i.U && !req.is_acc
 
       bank.io.read.en := bankren || read.en
       bank.io.read.addr := Mux(bankren, io.dma.req.bits.spaddr, read.addr)
       read.data := bank.io.read.data
-      when (req.spbank === i.U) { dmardata := bank.io.read.data }
+      when (req.spbank === i.U && !req.is_acc) { dmardata := bank.io.read.data }
 
       bank.io.write.en := bankwen || write.en
       bank.io.write.addr := Mux(bankwen, req.spaddr, write.addr)
       bank.io.write.data := Mux(bankwen, rowBuffer.asUInt, write.data)
     }
 
-    val accumulator = Module(new AccumulatorMem(acc_rows, Vec(meshColumns, Vec(tileColumns, accType))))
-    // TODO add dma requests
-    accumulator.io.read.en := io.acc_read.en
-    accumulator.io.read.addr := io.acc_read.addr
+    val accumulator = Module(new AccumulatorMem(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType))))
+    val accbankren = dmaren && io.dma.req.bits.is_acc
+    accumulator.io.read.en := accbankren || io.acc_read.en
+    accumulator.io.read.addr := Mux(accbankren, io.dma.req.bits.accaddr, io.acc_read.addr)
+    accumulator.io.read.shift := io.acc_read.shift
     io.acc_read.data := accumulator.io.read.data
-    accumulator.io.write.addr := io.acc_write.addr
-    accumulator.io.write.data := io.acc_write.data
-    accumulator.io.write.en := io.acc_write.en
-    accumulator.io.write.acc := io.acc_write.acc
+    when (req.is_acc) { dmardata := accumulator.io.read.data.asUInt() }
+    accumulator.io.write <> io.acc_write
 
     when (io.dma.req.fire()) {
       req := io.dma.req.bits

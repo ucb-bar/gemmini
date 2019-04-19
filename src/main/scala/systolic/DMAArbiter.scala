@@ -5,12 +5,13 @@ import chisel3.util._
 import Util._
 import freechips.rocketchip.config.Parameters
 
-class DMAArbiter(val nBanks: Int, val nRows: Int)
+// TODO move striding here
+class DMAArbiter(nBanks: Int, nRows: Int, acc_rows: Int)
                 (implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
-    val load = Flipped(new ScratchpadMemIO(nBanks, nRows))
-    val store = Flipped(new ScratchpadMemIO(nBanks, nRows))
-    val dma = new ScratchpadMemIO(nBanks, nRows)
+    val load = Flipped(new ScratchpadMemIO(nBanks, nRows, acc_rows))
+    val store = Flipped(new ScratchpadMemIO(nBanks, nRows, acc_rows))
+    val dma = new ScratchpadMemIO(nBanks, nRows, acc_rows)
   })
 
   assert(!(io.load.req.valid && io.load.req.bits.write), "writing on load port")
@@ -19,7 +20,7 @@ class DMAArbiter(val nBanks: Int, val nRows: Int)
   val waiting_for_cmd :: waiting_for_load_resp :: waiting_for_store_resp :: waiting_for_store_req_ready :: Nil = Enum(4)
   val control_state = RegInit(waiting_for_cmd)
 
-  val backed_up_store_init = Wire(Valid(new ScratchpadMemRequest(nBanks, nRows)))
+  val backed_up_store_init = Wire(Valid(new ScratchpadMemRequest(nBanks, nRows, acc_rows)))
   backed_up_store_init.bits := DontCare
   backed_up_store_init.valid := false.B
 

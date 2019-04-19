@@ -12,7 +12,7 @@ class LoadController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr)(im
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
 
-    val dma = new ScratchpadMemIO(sp_banks, sp_bank_entries)
+    val dma = new ScratchpadMemIO(sp_banks, sp_bank_entries, acc_rows)
 
     // TODO what's a better way to express no bits?
     val pushStore = Decoupled(UInt(1.W))
@@ -61,6 +61,8 @@ class LoadController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr)(im
   io.dma.req.bits.vaddr := vaddr + vaddr_offset
   io.dma.req.bits.spbank := spaddr.bank
   io.dma.req.bits.spaddr := spaddr.row + sp_row_offset
+  io.dma.req.bits.accaddr := DontCare
+  io.dma.req.bits.is_acc := false.B
   io.dma.req.bits.write := false.B
   io.dma.resp.ready := true.B
 

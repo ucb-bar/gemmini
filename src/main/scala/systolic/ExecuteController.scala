@@ -8,8 +8,8 @@ import freechips.rocketchip.config.Parameters
 
 // TODO handle reads from the same bank
 // TODO handle reads from addresses that haven't been written yet
-class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spaddr: SPAddr,
-                                               inputType: T, outputType: T, accType: T)
+class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArrayConfig, sp_addr: SPAddr, acc_addr: AccAddr,
+                                   inputType: T, outputType: T, accType: T)
                                               (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
   import config._
   import ev._
@@ -20,7 +20,7 @@ class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spadd
     val read  = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
     val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width))
 
-    val acc_read = new AccumulatorReadIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)))
+    val acc_read = new AccumulatorReadIO(acc_rows, accType.getWidth-inputType.getWidth, Vec(meshColumns, Vec(tileColumns, inputType)))
     val acc_write = new AccumulatorWriteIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)))
 
     // TODO what's a better way to express no bits?
@@ -38,7 +38,6 @@ class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spadd
   val block_size = meshRows*tileRows
   assert(ex_queue_length >= 6)
 
-  val tagWidth = 32
   val tag_garbage = Cat(Seq.fill(tagWidth)(1.U(1.W)))
   val tag_with_deps = new Bundle {
     val pushLoad = Bool()
@@ -46,19 +45,11 @@ class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spadd
     val tag = UInt(tagWidth.W)
   }
 
-  val acc_addr = new Bundle {
-    val junk = UInt((xLen - tagWidth - log2Ceil(acc_rows)).W)
-    val is_acc_addr = Bool()
-    val acc = Bool()
-    val junk2 = UInt((tagWidth - log2Ceil(acc_rows)-2).W)
-    val row = UInt(log2Ceil(acc_rows).W)
-  }
-
   val cmd_q_heads = 2
   val (cmd, _) = MultiHeadedQueue(io.cmd, ex_queue_length, cmd_q_heads)
   cmd.pop := 0.U
 
-  io.busy := cmd.valid
+  io.busy := cmd.valid(0)
 
   val current_dataflow = RegInit(Dataflow.OS.id.U)
 
@@ -78,13 +69,13 @@ class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spadd
     in_s_flush := 0.U
   }
 
-  val in_shift = RegInit(0.U((accType.getWidth - outputType.getWidth).W))
+  val in_shift = RegInit(0.U((accType.getWidth - inputType.getWidth).W))
 
   // SRAM addresses of matmul operands
-  val a_address_rs1 = WireInit(rs1s(0).asTypeOf(spaddr))
-  val b_address_rs2 = WireInit(rs2s(0).asTypeOf(spaddr))
-  val d_address_rs1 = WireInit(rs1s(preload_cmd_place).asTypeOf(spaddr))
-  val c_address_rs2 = WireInit(rs2s(preload_cmd_place).asTypeOf(spaddr))
+  val a_address_rs1 = WireInit(rs1s(0).asTypeOf(sp_addr))
+  val b_address_rs2 = WireInit(rs2s(0).asTypeOf(sp_addr))
+  val d_address_rs1 = WireInit(rs1s(preload_cmd_place).asTypeOf(sp_addr))
+  val c_address_rs2 = WireInit(rs2s(preload_cmd_place).asTypeOf(sp_addr))
 
   val preload_zeros = WireInit(d_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage)
   val accumulate_zeros = WireInit(b_address_rs2.asUInt()(tagWidth-1, 0) === tag_garbage)
@@ -191,14 +182,15 @@ class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spadd
     val read_d_from_acc = d_read_from_acc && start_inputting_d && !preload_zeros
 
     io.acc_read.en := read_a_from_acc || read_b_from_acc || read_d_from_acc
+    io.acc_read.shift := in_shift
 
     io.acc_read.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr).row + fire_counter,
-      Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr).row + fire_counter),
-        read_d_from_acc -> (d_address_rs1.asTypeOf(acc_addr).row + block_size.U - 1.U - fire_counter)))
+        Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr).row + fire_counter),
+          read_d_from_acc -> (d_address_rs1.asTypeOf(acc_addr).row + block_size.U - 1.U - fire_counter)))
   }
 
   val readData = VecInit(io.read.map(_.data))
-  val accReadData = VecInit(io.acc_read.data.map(v => VecInit(v.map(e => (e >> in_shift).relu.clippedToWidthOf(inputType))))).asUInt // TODO make relu optional
+  val accReadData = io.acc_read.data.asUInt()
 
   val dataAbank = WireInit(a_read_bank_number)
   val dataBbank = WireInit(b_read_bank_number)
@@ -360,7 +352,7 @@ class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spadd
   }
 
   // Scratchpad writes
-  val w_address = mesh.io.tag_out.tag.asTypeOf(spaddr)
+  val w_address = mesh.io.tag_out.tag.asTypeOf(sp_addr)
   val w_address_acc = mesh.io.tag_out.tag.asTypeOf(acc_addr)
 
   val write_to_acc = w_address_acc.is_acc_addr
