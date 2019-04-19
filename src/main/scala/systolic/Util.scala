@@ -10,6 +10,12 @@ object Util {
     Mux(u >= max.U - n + 1.U && n =/= 0.U, n - (max.U - u) - 1.U, u + n)
   }
 
+  def wrappingAdd(u: UInt, n: UInt, max_plus_one: UInt): UInt = {
+    val max = max_plus_one - 1.U
+    assert(n <= max, "cannot wrapAdd when n is larger than max")
+    Mux(u >= max - n + 1.U && n =/= 0.U, n - (max - u) - 1.U, u + n)
+  }
+
   def wrappingSub(u: UInt, n: UInt, max_plus_one: Int): UInt = {
     val max = max_plus_one - 1
     assert(n <= max.U, "cannot wrapSub when n is larger than max")

@@ -85,10 +85,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   io.ptw.head <> tlb.io.ptw
 
   // Controllers
-  val cmd = Queue(io.cmd, ld_str_queue_length)
-
+  val cmd = io.cmd
   cmd.ready := false.B
-  io.busy := false.B
 
   val funct = cmd.bits.inst.funct.asTypeOf(funct_t).funct
   val push1 = cmd.bits.inst.funct.asTypeOf(funct_t).push1
@@ -96,10 +94,10 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val push2 = cmd.bits.inst.funct.asTypeOf(funct_t).push2
   val pop2 = cmd.bits.inst.funct.asTypeOf(funct_t).pop2
 
-  val load_controller = Module(new LoadController(outer.config, sp_addr))
-  val store_controller = Module(new StoreController(outer.config, sp_addr))
+  val load_controller = Module(new LoadController(outer.config, xLen, sp_addr))
+  val store_controller = Module(new StoreController(outer.config, xLen, sp_addr))
   val ex_controller = Module(new ExecuteController(xLen, outer.config, sp_addr, inputType, outputType, accType))
-    
+
   val dma_arbiter = Module(new DMAArbiter(sp_banks, sp_bank_entries))
 
   val load_to_store_depq = Queue(load_controller.io.pushStore, depq_len)
@@ -165,9 +163,17 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   ex_controller.io.pullLoad <> load_to_ex_depq
   ex_controller.io.pullStore <> store_to_ex_depq
 
+  // Wire up busy signals
+  io.busy := load_controller.io.busy || store_controller.io.busy || ex_controller.io.busy
+
   // Issue commands to controllers
   when (cmd.valid) {
-    when (funct === LOAD_CMD) {
+    val config_cmd_type = cmd.bits.rs1(1,0)
+
+    val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
+    val is_store = (funct === STORE_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
+
+    when (is_load) {
       load_controller.io.cmd.valid := true.B
 
       when (load_controller.io.cmd.fire()) {
@@ -175,7 +181,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
       }
     }
 
-    .elsewhen (funct === STORE_CMD) {
+    .elsewhen (is_store) {
       store_controller.io.cmd.valid := true.B
 
       when (store_controller.io.cmd.fire()) {

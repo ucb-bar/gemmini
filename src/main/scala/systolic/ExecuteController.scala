@@ -31,6 +31,8 @@ class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spadd
 
     val pushLoadLeft = Input(UInt(log2Ceil(depq_len+1).W))
     val pushStoreLeft = Input(UInt(log2Ceil(depq_len+1).W))
+
+    val busy = Output(Bool())
   })
 
   val block_size = meshRows*tileRows
@@ -56,13 +58,15 @@ class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spadd
   val (cmd, _) = MultiHeadedQueue(io.cmd, ex_queue_length, cmd_q_heads)
   cmd.pop := 0.U
 
+  io.busy := cmd.valid
+
   val current_dataflow = RegInit(Dataflow.OS.id.U)
 
   val functs = cmd.bits.map(_.cmd.inst.funct)
   val rs1s = VecInit(cmd.bits.map(_.cmd.rs1))
   val rs2s = VecInit(cmd.bits.map(_.cmd.rs2))
 
-  val DoSetMode = functs(0) === MODE_CMD
+  val DoConfig = functs(0) === CONFIG_CMD
   val DoComputes = functs.map(f => f === COMPUTE_AND_FLIP_CMD || f === COMPUTE_AND_STAY_CMD)
   val DoPreloads = functs.map(_ === PRELOAD_CMD)
 
@@ -142,7 +146,7 @@ class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spadd
   val a_read_bank_number = a_address_rs1.bank
   val b_read_bank_number = b_address_rs2.bank
   val d_read_bank_number = d_address_rs1.bank
-  
+
   val a_read_from_acc = a_address_rs1.asTypeOf(acc_addr).is_acc_addr
   val b_read_from_acc = b_address_rs2.asTypeOf(acc_addr).is_acc_addr
   val d_read_from_acc = d_address_rs1.asTypeOf(acc_addr).is_acc_addr
@@ -195,7 +199,7 @@ class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spadd
 
   val readData = VecInit(io.read.map(_.data))
   val accReadData = VecInit(io.acc_read.data.map(v => VecInit(v.map(e => (e >> in_shift).relu.clippedToWidthOf(inputType))))).asUInt // TODO make relu optional
-  
+
   val dataAbank = WireInit(a_read_bank_number)
   val dataBbank = WireInit(b_read_bank_number)
   val dataDbank = WireInit(d_read_bank_number)
@@ -217,15 +221,15 @@ class ExecuteController[T <: Data](xLen: Int, config: SystolicArrayConfig, spadd
 
       when(cmd.valid(0) && pull_deps_ready(0) && push_deps_ready(0))
       {
-        when(DoSetMode) {
-          val data_mode = rs1s(0)(0)
+        when(DoConfig) {
+          val data_mode = rs1s(0)(2)
           current_dataflow := data_mode
           in_shift := rs2s(0)
 
           io.pullLoad.ready := cmd.bits(0).deps.pullLoad
           io.pullStore.ready := cmd.bits(0).deps.pullStore
-          // TODO add support for pushing dependencies on the set-mode command
-          assert(!pushDeps(0), "pushing depenencies on setmode not supported")
+          io.pushLoad.valid := cmd.bits(0).deps.pushLoad
+          io.pushStore.valid := cmd.bits(0).deps.pushStore
 
           cmd.pop := 1.U
         }

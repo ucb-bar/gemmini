@@ -27,14 +27,12 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 **Format:** `mvin rs1, rs2`
 - `rs1` = virtual DRAM address (byte addressed) to load into scratchpad
 - `rs2` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
-    - the highest bits of `rs2` determine the bank number and the lowests bits determine the entry in the scratchpad
+    - the highest bits of `rs2` determine the bank number and the lowest bits determine the entry in the scratchpad
 - `funct` = 2
 
 **Action:** Scratchpad[rs2] <= DRAM[Translate[rs1]]
-- Loads a fixed amount of data (`tileColumns x meshColumns x dataBytes` bytes) into the scratchpad
-- Load is sequential from the rs1/rs2 base addresses. Any stride or skip operation is implemented in software
-
-**Commit Behavior:** This instruction is synchronous and will stall Rocket's pipeline until all the DRAM data is resident in the scratchpad
+- Loads a fixed amount of data (`tileColumns x meshColumns x tileRows x meshRows x dataBytes` bytes) into the scratchpad
+- Load is sequential from the rs1/rs2 base addresses. Stride must be set by the `config_mvin` command
 
 ### `mvout` Move Data from Scratchpad to L2/DRAM
 **Format:** `mvout rs1, rs2`
@@ -44,21 +42,36 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 - `funct` = 3
 
 **Action:** DRAM[Translate[rs2]] <= Scratchpad[rs1]
-- Stores a fixed amount of data (`tileColumns x meshColumns x dataBytes` bytes) from the scratchpad to L2/DRAM
-- Store is sequential from the rs1/rs2 base addresses. Strides in software.
+- Stores a fixed amount of data (`tileColumns x meshColumns x tileRows x meshRows x dataBytes` bytes) from the scratchpad to L2/DRAM
+- Store is sequential from the rs1/rs2 base addresses. Stride must be set by the `config_mvout` command
 
-**Commit Behavior:** Identical to `mvin`, synchronous and will stall until all scratchpad data has been flushed into the L2
-
-## Dataflow Mode
-### `setmode` set the mode to weight/output stationary
-**Format:** `setmode rs1`
-- `rs1` = the lsb of rs1 will determine if output (0.U) or weight (1.U) stationary.
+## Configuration
+### `config_ex` configures the Execute pipeline
+**Format:** `config_ex rs1 rs2`
+- `rs1` = `rs1[0:1]` must be `00`. `rs1[2]` will determine if output (0) or weight (1) stationary.
+- `rs2` = the number of bits by which the accumulated result of a matmul is right-shifted
 - `funct` = 0
 
-**Action:** mode <= rs1(0)
+**Action:** mode <= rs1(2); shift <= rs2
+
+### `config_mvin` configures the Load pipeline
+**Format:** `config_mvin rs1 rs2`
+- `rs1` = `rs1[0:1]` must be `01`
+- `rs2` = the stride in bytes
+- `funct` = 0
+
+**Action:** stride <= rs2
+
+### `config_mvout` configures the Store pipeline
+**Format:** `config_mvout rs1 rs2`
+- `rs1` = `rs1[0:1]` must be `10`
+- `rs2` = the stride in bytes
+- `funct` = 0
+
+**Action:** stride <= rs2
 
 ## Core Matmul Sequences
-Every single matrix multiply operation is a combination of matmul.preload and matmul.compute (due to the length of a single instruction it was split into two instructions). matmul.preload should preceed the matmul.compute.
+Every single matrix multiply operation is a combination of `matmul.preload` and `matmul.compute` (due to the length of a single instruction it was split into two instructions). `matmul.preload` should precede the `matmul.compute`.
 
 Example:
 ```
@@ -73,10 +86,14 @@ Example:
 ```
 **Action:** Scratchpad[rs2] <= Scratchpad[rs3] \* Scratchpad[rs4] + Scratchpad[rs1]
 
+**Notes on addressing:**
+- For B or D, the address can be replaced with all high bits to input a 0 matrix instead.
+- If the 32nd bit of any address is high, it will point to the accumulator's memory space.
+
 ### Preloading
 **Format:** `matmul.preload rs1, rs2`
-- `rs1` = local scratchpad address (systolic array single-axis addressed) of D matrix. If this is set to all high bits, then D will be a 0 matrix
-- `rs2` = local scratchpad address (systolic array single-axis addressed) of C matrix
+- `rs1` = local scratchpad address (systolic array single-axis addressed) of D matrix (when output-stationary), or B matrix (when weight-stationary)
+- `rs2` = local scratchpad address (systolic array single-axis addressed) of C matrix. If this is set to all high bits, then C will not be written to the scratchpad. If the 32nd _and_ 31st bits are high, the result will be accumulated on top of the previous result pointed to by this address in the accumulator
 - `funct` = 6
 
 **Commit Behavior:** This instruction commits on the cycle after the systolic array receives it. The systolic array remains idle until the subsequent OS/WS specific instructions are seen.
@@ -85,15 +102,16 @@ Example:
 #### Explicitly Preloaded
 **Format:** `matmul.compute.preloaded rs1, rs2`
 - `rs1` = local scratchpad address (systolic array single-axis addressed) of A matrix
-- `rs2` = local scratchpad address (systolic array single-axis addressed) of B matrix
+- `rs2` = local scratchpad address (systolic array single-axis addressed) of B matrix (when output-stationary), or D matrix (when weight-stationary)
 - `funct` = 4
-- This instruction will compute on the value preloaded (D)
+- This instruction will compute on the value preloaded (D if output-stationary, or B if weight-stationary)
 
 #### Accumulate on Previous Computation
 **Format:** `matmul.compute.accumulated rs1, rs2`
 - `funct` = 5
 - `rs1` and `rs2` have the same encoding as the `matmul.compute.preloaded` encoding
-- This instruction will compute on the previously computed values in the systolic array
+- If output-stationary, this instruction will compute on the previously computed result (C) in the systolic array
+- If weight-stationary, this instruction will compute on the previously preloaded weights (B) in the systolic array
 
 # Semantics
 ## Instruction Dependency Management
