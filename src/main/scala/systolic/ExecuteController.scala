@@ -68,6 +68,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   }
 
   val in_shift = RegInit(0.U((accType.getWidth - inputType.getWidth).W))
+  val relu = RegInit(false.B)
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = WireInit(rs1s(0).asTypeOf(sp_addr))
@@ -181,6 +182,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
     io.acc.read.en := read_a_from_acc || read_b_from_acc || read_d_from_acc
     io.acc.read.shift := in_shift
+    io.acc.read.relu := relu
 
     io.acc.read.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr).row + fire_counter,
         Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr).row + fire_counter),
@@ -212,8 +214,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       when(cmd.valid(0) && pull_deps_ready(0) && push_deps_ready(0))
       {
         when(DoConfig) {
-          val data_mode = rs1s(0)(2)
-          current_dataflow := data_mode
+          current_dataflow := rs1s(0)(2)
+          relu := rs1s(0)(3)
           in_shift := rs2s(0)
 
           io.pullLoad.ready := cmd.bits(0).deps.pullLoad
@@ -365,8 +367,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   // Write to normal scratchpad
   for(i <- 0 until sp_banks) {
-    // TODO make relu optional
-    val activated_wdata = VecInit(mesh.io.out.bits.map(v => VecInit(v.map(_.relu.clippedToWidthOf(inputType)))))
+    val activated_wdata = VecInit(mesh.io.out.bits.map(v => VecInit(v.map(e => Mux(relu, e.relu, e).clippedToWidthOf(inputType)))))
 
     io.write(i).en := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr
     io.write(i).addr := current_w_bank_address

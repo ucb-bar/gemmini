@@ -282,6 +282,7 @@ class Scratchpad[T <: Data](
     accumulator.io.read.en := accbankren || io.acc.read.en
     accumulator.io.read.addr := Mux(accbankren, io.dma.req.bits.accaddr, io.acc.read.addr)
     accumulator.io.read.shift := io.acc.read.shift
+    accumulator.io.read.relu := io.acc.read.relu
     io.acc.read.data := accumulator.io.read.data
     when (req.is_acc) { dmardata := accumulator.io.read.data.asUInt() }
     accumulator.io.write <> io.acc.write

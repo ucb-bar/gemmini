@@ -8,6 +8,7 @@ class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, shift_width: Int, rdataTy
   val addr = Output(UInt(log2Ceil(n).W))
   val data = Input(rdataType)
   val shift = Output(UInt(shift_width.W))
+  val relu = Output(Bool())
 
   override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType).asInstanceOf[this.type]
 }
@@ -51,7 +52,7 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]])(
 
   mem.io.raddr := Mux(io.write.en && io.write.acc, io.write.addr, io.read.addr)
   mem.io.ren := io.read.en || (io.write.en && io.write.acc)
-  val activated_rdata = VecInit(mem.io.rdata.map(v => VecInit(v.map(e => (e >> io.read.shift).relu.clippedToWidthOf(rdataType.head.head))))) // TODO make relu optional
+  val activated_rdata = VecInit(mem.io.rdata.map(v => VecInit(v.map(e => (Mux(io.read.relu, e.relu, e) >> io.read.shift).clippedToWidthOf(rdataType.head.head)))))
   io.read.data := activated_rdata
 
   assert(!(io.read.en && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
