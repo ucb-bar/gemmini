@@ -12,9 +12,8 @@ import systolic.Util._
 // TODO cleanup tags to be like S
 // TODO do we flush for one cycle more than necessary?
 // TODO give the ability to flush for less than 3 time steps
-// TODO rename this to MeshWithDelays or something
 
-class MeshWithMemory[T <: Data: Arithmetic, U <: Data](inputType: T, val outputType: T, accType: T, tagType: U,
+class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputType: T, accType: T, tagType: U,
                                                        df: Dataflow.Value,
                                                        val tileRows: Int, val tileColumns: Int,
                                                        val meshRows: Int, val meshColumns: Int,
@@ -27,6 +26,8 @@ class MeshWithMemory[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(2.W)))
 
+  val tagqlen = 4
+
   val io = IO(new Bundle {
     val a = Flipped(Decoupled(A_TYPE))
     val b = Flipped(Decoupled(B_TYPE))
@@ -38,6 +39,7 @@ class MeshWithMemory[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
 
     val tag_in = Flipped(Decoupled(tagType))
     val tag_out = Output(tagType)
+    val tags_in_progress = Output(Vec(tagqlen, tagType))
     val tag_garbage = Input(tagType) // TODO make this a constructor parameter instead
 
     val out = Valid(C_TYPE) // TODO make this ready-valid
@@ -153,7 +155,7 @@ class MeshWithMemory[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   io.out.valid := !pause
 
   // Tags
-  val tag_queue = Module(new TagQueue(4, tagType)) // TODO understand the actual required size better. It seems there may be a bug with it
+  val tag_queue = Module(new TagQueue(tagqlen, tagType)) // TODO understand the actual required size better. It seems there may be a bug with it
   tag_queue.io.in.bits := Mux(flushing, io.tag_garbage, io.tag_in.bits)
   tag_queue.io.garbage := io.tag_garbage
 
@@ -167,6 +169,7 @@ class MeshWithMemory[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   tag_queue.io.in.valid := io.tag_in.fire()
 
   io.tag_out := tag_queue.io.out.bits(Mux(io.m === Dataflow.OS.id.U, 0.U, 1.U))
+  io.tags_in_progress := tag_queue.io.out.all
 
   // Flipping logic
   when(buffering_done && (next_row_input || flushing_or_about_to)) {

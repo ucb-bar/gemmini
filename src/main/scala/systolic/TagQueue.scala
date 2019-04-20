@@ -15,6 +15,7 @@ class TagQueue[T <: Data](len: Int, t: T) extends Module {
     val out = new Bundle {
       val next = Input(Bool())
       val bits = Output(Vec(2, t))
+      val all = Output(Vec(len, t))
     }
 
     // This should really be a constructor parameter, but Chisel errors out when it is
@@ -30,6 +31,7 @@ class TagQueue[T <: Data](len: Int, t: T) extends Module {
 
   io.out.bits(0) := Mux(io.out.next, regs(raddr_inc), regs(raddr))
   io.out.bits(1) := Mux(io.out.next, regs(raddr_inc2), regs(raddr_inc))
+  io.out.all := regs
 
   when (io.in.valid) {
     waddr := wrappingAdd(waddr, 1.U, len)

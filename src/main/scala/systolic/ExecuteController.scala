@@ -108,7 +108,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   io.pullStore.ready := false.B
 
   // Instantiate the actual mesh
-  val mesh = Module(new MeshWithMemory(inputType, outputType, accType, tag_with_deps, dataflow, tileRows,
+  val mesh = Module(new MeshWithDelays(inputType, outputType, accType, tag_with_deps, dataflow, tileRows,
     tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
 
   mesh.io.a.valid := false.B
@@ -127,6 +127,22 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   mesh.io.s := in_s
   mesh.io.m := current_dataflow
   mesh.io.shift := in_shift
+
+  // Hazards // TODO allow "compute" operands to be same as C
+  val mulpre_raw_hazard = mesh.io.tags_in_progress.map { t =>
+    val is_garbage = t.tag === tag_garbage
+    val mul_raw_haz = t.tag === rs1s(0) || t.tag === rs2s(0)
+    val pre_raw_haz = t.tag === rs1s(1)
+
+    !is_garbage && (mul_raw_haz || pre_raw_haz)
+  }.reduce(_ || _)
+
+  val mul_raw_hazard = mesh.io.tags_in_progress.map { t =>
+    val is_garbage = t.tag === tag_garbage
+    val mul_raw_haz = t.tag === rs1s(0) || t.tag === rs2s(0)
+
+    !is_garbage && mul_raw_haz
+  }.reduce(_ || _)
 
   // STATE defines
   val waiting_for_cmd :: compute :: flush :: flushing :: Nil = Enum(4)
@@ -243,7 +259,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         }
 
         // Overlap compute and preload
-        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && pull_deps_ready(1) && push_deps_ready(1)) {
+        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && pull_deps_ready(1) && push_deps_ready(1) && !mulpre_raw_hazard) {
           perform_mul_pre := true.B
           start_inputting_ab := true.B
           start_inputting_d := true.B
@@ -260,12 +276,17 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         }
 
         // Single mul
-        .elsewhen(DoComputes(0)) {
+        .elsewhen(DoComputes(0) && !mul_raw_hazard) {
           perform_single_mul := true.B
           start_inputting_ab := true.B
 
           fire_count_started := true.B
           control_state := compute
+        }
+
+        // RAW hazard blocking execution
+        .elsewhen(DoComputes(0)) {
+          control_state := flush
         }
       }
     }
