@@ -11,7 +11,6 @@ import systolic.Util._
 // TODO Change S to an enum
 // TODO cleanup tags to be like S
 // TODO do we flush for one cycle more than necessary?
-// TODO give the ability to flush for less than 3 time steps
 
 class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputType: T, accType: T, tagType: U,
                                                        df: Dataflow.Value,
@@ -45,13 +44,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
     val out = Valid(C_TYPE) // TODO make this ready-valid
     val out_s = Output(S_TYPE)
 
-    // TODO make this a decoupled
-    val flush = new Bundle {
-      val ready = Output(Bool())
-      val valid = Input(Bool())
-
-      def fire() = ready && valid
-    }
+    val flush = Flipped(Decoupled(UInt(2.W)))
   })
 
   def shifted[T <: Data](x: Vec[Vec[T]], banks: Int, reverse: Boolean = false) = {
@@ -184,14 +177,15 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   }
 
   // Flushing logic
-  val flush_counter = Reg(UInt(3.W))
+  val flush_counter = Reg(UInt(2.W))
 
   io.flush.ready := !flushing
   // assert(!(io.flush.valid && !buffering_done)) // TODO get rid of this once we get the ability to ignore D
 
   when (io.flush.fire()) {
     flushing := true.B
-    flush_counter := 2.U
+    // flush_counter := 2.U
+    flush_counter := io.flush.bits
 
     // Avoid overwriting accumulated values
     a_buf := 0.U.asTypeOf(A_TYPE)

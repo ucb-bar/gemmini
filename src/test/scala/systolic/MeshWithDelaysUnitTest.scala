@@ -72,6 +72,7 @@ abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[Mes
   def startup(getOut: Boolean): Unit = {
     poke(c.io.tag_garbage, -1)
     poke(c.io.shift, shift)
+    poke(c.io.flush.bits, 2)
     reset()
     poke(c.io.flush.valid, 1)
     do {

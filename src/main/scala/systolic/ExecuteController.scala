@@ -49,7 +49,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   io.busy := cmd.valid(0)
 
-  val current_dataflow = RegInit(Dataflow.OS.id.U)
+  val current_dataflow = Reg(UInt(1.W))
 
   val functs = cmd.bits.map(_.cmd.inst.funct)
   val rs1s = VecInit(cmd.bits.map(_.cmd.rs1))
@@ -67,8 +67,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     in_s_flush := 0.U
   }
 
-  val in_shift = RegInit(0.U((accType.getWidth - inputType.getWidth).W))
-  val relu = RegInit(false.B)
+  val in_shift = Reg(UInt((accType.getWidth - inputType.getWidth).W))
+  val relu = Reg(Bool())
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = WireInit(rs1s(0).asTypeOf(sp_addr))
@@ -127,15 +127,26 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   mesh.io.s := in_s
   mesh.io.m := current_dataflow
   mesh.io.shift := in_shift
+  mesh.io.flush.bits := 0.U
 
   // Hazards
-  val raw_hazard = mesh.io.tags_in_progress.map { t =>
+  val raw_hazard_pre = mesh.io.tags_in_progress.map { t =>
+    val is_garbage = t.tag === tag_garbage
+    val pre_raw_haz = t.tag === rs1s(0)(tagWidth-1, 0)
+    val mul_raw_haz = t.tag === rs1s(1)(tagWidth-1, 0) || t.tag === rs2s(1)(tagWidth-1, 0)
+
+    !is_garbage && (pre_raw_haz || mul_raw_haz)
+  }.reduce(_ || _)
+
+  val raw_hazard_mulpre = mesh.io.tags_in_progress.map { t =>
     val is_garbage = t.tag === tag_garbage
     val pre_raw_haz = t.tag === rs1s(1)(tagWidth-1, 0)
     val mul_raw_haz = t.tag === rs1s(2)(tagWidth-1, 0) || t.tag === rs2s(2)(tagWidth-1, 0)
 
     !is_garbage && (mul_raw_haz || pre_raw_haz)
   }.reduce(_ || _)
+
+  val matmul_in_progress = mesh.io.tags_in_progress.map(_.tag =/= tag_garbage).reduce(_ || _)
 
   // STATE defines
   val waiting_for_cmd :: compute :: flush :: flushing :: Nil = Enum(4)
@@ -232,7 +243,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         }
 
         // Preload
-        .elsewhen(DoPreloads(0)) {
+        .elsewhen(DoPreloads(0) && cmd.valid(1) && !raw_hazard_pre) {
           perform_single_preload := true.B
           start_inputting_d := true.B
 
@@ -248,7 +259,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         }
 
         // Overlap compute and preload
-        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && pull_deps_ready(1) && push_deps_ready(1) && cmd.valid(2) && !raw_hazard) {
+        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && pull_deps_ready(1) && push_deps_ready(1) && cmd.valid(2) && !raw_hazard_mulpre) {
           perform_mul_pre := true.B
           start_inputting_ab := true.B
           start_inputting_d := true.B
@@ -272,6 +283,14 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
           fire_count_started := true.B
           control_state := compute
         }
+
+        // Flush
+        .elsewhen(matmul_in_progress) {
+          control_state := flush
+        }
+      }.elsewhen(matmul_in_progress) {
+        // TODO code duplication
+        control_state := flush
       }
     }
     is (compute) {
@@ -301,16 +320,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       .elsewhen(perform_single_mul) {
         start_inputting_ab := true.B
 
-        // TODO do we waste a cycle here?
-        when(fired_all_rows) {
-          perform_single_mul := false.B
-
-          start_inputting_ab := false.B
-
-          fire_count_started := false.B
+        when (about_to_fire_all_rows) {
           cmd.pop := 1.U
-          // TODO don't go straight to flush if avoidable
-          control_state := flush
+          control_state := waiting_for_cmd
         }
       }
     }
@@ -323,6 +335,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     }
     is (flushing) {
       when(mesh.io.flush.ready) {
+        // TODO we waste a cycle here if it was better to continue with the flush
         control_state := waiting_for_cmd
       }
     }
@@ -348,6 +361,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   when (perform_single_preload) {
     mesh.io.a.bits := (0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
+    mesh.io.s := RegNext(in_s_flush) // TODO create a new in_s_preload
   }
 
   when (perform_single_mul) {
