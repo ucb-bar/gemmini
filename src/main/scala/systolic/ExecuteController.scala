@@ -7,7 +7,7 @@ import Util._
 import freechips.rocketchip.config.Parameters
 
 // TODO handle reads from the same bank
-// TODO handle reads from addresses that haven't been written yet
+// TODO don't flush all 4 time steps when shorter flushes will work
 class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArrayConfig, sp_addr: SPAddr, acc_addr: AccAddr,
                                    inputType: T, outputType: T, accType: T)
                                               (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
@@ -34,7 +34,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   })
 
   val block_size = meshRows*tileRows
-  assert(ex_queue_length >= 2)
 
   val tag_garbage = Cat(Seq.fill(tagWidth)(1.U(1.W)))
   val tag_with_deps = new Bundle {
@@ -43,7 +42,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     val tag = UInt(tagWidth.W)
   }
 
-  val cmd_q_heads = 2
+  val cmd_q_heads = 3
+  assert(ex_queue_length >= cmd_q_heads)
   val (cmd, _) = MultiHeadedQueue(io.cmd, ex_queue_length, cmd_q_heads)
   cmd.pop := 0.U
 
@@ -128,20 +128,13 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   mesh.io.m := current_dataflow
   mesh.io.shift := in_shift
 
-  // Hazards // TODO allow "compute" operands to be same as C
-  val mulpre_raw_hazard = mesh.io.tags_in_progress.map { t =>
+  // Hazards
+  val raw_hazard = mesh.io.tags_in_progress.map { t =>
     val is_garbage = t.tag === tag_garbage
-    val mul_raw_haz = t.tag === rs1s(0) || t.tag === rs2s(0)
-    val pre_raw_haz = t.tag === rs1s(1)
+    val pre_raw_haz = t.tag === rs1s(1)(tagWidth-1, 0)
+    val mul_raw_haz = t.tag === rs1s(2)(tagWidth-1, 0) || t.tag === rs2s(2)(tagWidth-1, 0)
 
     !is_garbage && (mul_raw_haz || pre_raw_haz)
-  }.reduce(_ || _)
-
-  val mul_raw_hazard = mesh.io.tags_in_progress.map { t =>
-    val is_garbage = t.tag === tag_garbage
-    val mul_raw_haz = t.tag === rs1s(0) || t.tag === rs2s(0)
-
-    !is_garbage && mul_raw_haz
   }.reduce(_ || _)
 
   // STATE defines
@@ -149,9 +142,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val control_state = RegInit(waiting_for_cmd)
 
   // SRAM scratchpad
-  val a_read_bank_number = a_address_rs1.bank
-  val b_read_bank_number = b_address_rs2.bank
-  val d_read_bank_number = d_address_rs1.bank
+  val dataAbank = a_address_rs1.bank
+  val dataBbank = b_address_rs2.bank
+  val dataDbank = d_address_rs1.bank
 
   val a_read_from_acc = a_address_rs1.asTypeOf(acc_addr).is_acc_addr
   val b_read_from_acc = b_address_rs2.asTypeOf(acc_addr).is_acc_addr
@@ -179,9 +172,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   // Scratchpad reads
   for(i <- 0 until sp_banks){
-    val read_a = !a_read_from_acc && a_read_bank_number === i.U && start_inputting_ab
-    val read_b = !b_read_from_acc && b_read_bank_number === i.U && start_inputting_ab && !accumulate_zeros
-    val read_d = !d_read_from_acc && d_read_bank_number === i.U && start_inputting_d && !preload_zeros
+    val read_a = !a_read_from_acc && dataAbank === i.U && start_inputting_ab
+    val read_b = !b_read_from_acc && dataBbank === i.U && start_inputting_ab && !accumulate_zeros
+    val read_d = !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros
 
     io.read(i).en := read_a || read_b || read_d
     io.read(i).addr := MuxCase(a_address_rs1.row + fire_counter,
@@ -207,10 +200,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   val readData = VecInit(io.read.map(_.data))
   val accReadData = io.acc.read.data.asUInt()
-
-  val dataAbank = WireInit(a_read_bank_number)
-  val dataBbank = WireInit(b_read_bank_number)
-  val dataDbank = WireInit(d_read_bank_number)
 
   val dataA = Mux(RegNext(a_read_from_acc), accReadData, readData(RegNext(dataAbank)))
   val dataB = MuxCase(readData(RegNext(dataBbank)),
@@ -259,7 +248,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         }
 
         // Overlap compute and preload
-        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && pull_deps_ready(1) && push_deps_ready(1) && !mulpre_raw_hazard) {
+        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && pull_deps_ready(1) && push_deps_ready(1) && cmd.valid(2) && !raw_hazard) {
           perform_mul_pre := true.B
           start_inputting_ab := true.B
           start_inputting_d := true.B
@@ -276,17 +265,12 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         }
 
         // Single mul
-        .elsewhen(DoComputes(0) && !mul_raw_hazard) {
+        .elsewhen(DoComputes(0)) {
           perform_single_mul := true.B
           start_inputting_ab := true.B
 
           fire_count_started := true.B
           control_state := compute
-        }
-
-        // RAW hazard blocking execution
-        .elsewhen(DoComputes(0)) {
-          control_state := flush
         }
       }
     }

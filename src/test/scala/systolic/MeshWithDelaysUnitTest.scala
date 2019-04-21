@@ -7,7 +7,7 @@ import TestUtils._
 import scala.util.Random.shuffle
 
 // TODO add test for randomly choosing S
-// TODO add test for inputting in different orders
+// TODO add test for inputting A, B, and D in different orders
 // TODO add test for switching dataflow at runtime
 // TODO get a better initialization strategy
 

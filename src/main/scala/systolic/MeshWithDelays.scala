@@ -155,7 +155,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   io.out.valid := !pause
 
   // Tags
-  val tag_queue = Module(new TagQueue(tagqlen, tagType)) // TODO understand the actual required size better. It seems there may be a bug with it
+  val tag_queue = Module(new TagQueue(tagqlen, tagType)) // TODO understand the actual required size better
   tag_queue.io.in.bits := Mux(flushing, io.tag_garbage, io.tag_in.bits)
   tag_queue.io.garbage := io.tag_garbage
 
