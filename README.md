@@ -86,10 +86,9 @@ Example:
 ```
 **Action:** Scratchpad[rs2] <= Scratchpad[rs3] \* Scratchpad[rs4] + Scratchpad[rs1]
 
-**Notes:**
+**Notes on addressing:**
 - For B or D, the address can be replaced with all high bits to input a 0 matrix instead.
 - If the 32nd bit of any address is high, it will point to the accumulator's memory space.
-- Neither of the operands in the `matmul.compute` command can be the same as C.
 
 ### Preloading
 **Format:** `matmul.preload rs1, rs2`
