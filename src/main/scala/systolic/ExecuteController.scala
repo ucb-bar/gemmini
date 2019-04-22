@@ -170,19 +170,68 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val perform_mul_pre = RegInit(false.B)
 
   val output_counter = new Counter(block_size)
-  val fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
-  val fire_count_started = RegInit(false.B)
-  val fired_all_rows = fire_counter === 0.U && fire_count_started
-  val about_to_fire_all_rows = fire_counter === (block_size-1).U && mesh.io.a.ready && mesh.io.b.ready && mesh.io.d.ready // TODO change when square requirement lifted
+  // val fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
+  // val about_to_fire_all_rows = fire_counter === (block_size-1).U && mesh.io.a.ready && mesh.io.b.ready && mesh.io.d.ready // TODO change when square requirement lifted
 
-  fire_counter := 0.U
+  /*fire_counter := 0.U
   when (mesh.io.a.ready && mesh.io.b.ready && mesh.io.d.ready &&
     (start_inputting_ab || start_inputting_d)) {
     fire_counter := wrappingAdd(fire_counter, 1.U, block_size)
+  }*/
+
+  // Fire counters which resolve same-bank accesses
+  val a_fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
+  val b_fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
+  val d_fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
+
+  def same_bank(addr1: SPAddr, addr2: SPAddr, start_inputting1: Bool, start_inputting2: Bool): Bool = {
+    val addr1_read_from_acc = addr1.asTypeOf(acc_addr).is_acc_addr
+    val addr2_read_from_acc = addr2.asTypeOf(acc_addr).is_acc_addr
+
+    val is_garbage = addr1.asUInt()(tagWidth-1, 0) === tag_garbage || addr2.asUInt()(tagWidth-1, 0) === tag_garbage ||
+      !start_inputting1 || !start_inputting2
+
+    !is_garbage && ((addr1_read_from_acc && addr2_read_from_acc) || (!addr1_read_from_acc && !addr2_read_from_acc && addr1.bank === addr2.bank))
   }
 
+  // The priority scheme we follow is that A fires first, then B, then D
+  val a_can_fire = a_fire_counter === b_fire_counter && a_fire_counter === d_fire_counter
+  val b_can_fire = (!same_bank(a_address_rs1, b_address_rs2, start_inputting_ab, start_inputting_ab) || a_fire_counter =/= b_fire_counter) && b_fire_counter === d_fire_counter
+  val d_can_fire =
+    ((!same_bank(a_address_rs1, d_address_rs1, start_inputting_ab, start_inputting_d) && !same_bank(b_address_rs2, d_address_rs1, start_inputting_ab, start_inputting_d)) && (b_can_fire || b_fire_counter =/= d_fire_counter)) ||
+      ((same_bank(a_address_rs1, d_address_rs1, start_inputting_ab, start_inputting_d) && !same_bank(b_address_rs2, d_address_rs1, start_inputting_ab, start_inputting_d)) && (a_fire_counter =/= d_fire_counter && (b_can_fire || b_fire_counter =/= d_fire_counter))) ||
+      ((!same_bank(a_address_rs1, d_address_rs1, start_inputting_ab, start_inputting_d) && same_bank(b_address_rs2, d_address_rs1, start_inputting_ab, start_inputting_d)) && b_fire_counter =/= d_fire_counter) ||
+      ((same_bank(a_address_rs1, d_address_rs1, start_inputting_ab, start_inputting_d) && same_bank(b_address_rs2, d_address_rs1, start_inputting_ab, start_inputting_d)) && b_fire_counter =/= d_fire_counter)
+
+  val firing = start_inputting_ab || start_inputting_d
+
+  when (!firing) {
+    a_fire_counter := 0.U
+  }.elsewhen (a_can_fire && firing) {
+    a_fire_counter := wrappingAdd(a_fire_counter, 1.U, block_size)
+  }
+
+  when (!firing) {
+    b_fire_counter := 0.U
+  }.elsewhen (b_can_fire && firing) {
+    b_fire_counter := wrappingAdd(b_fire_counter, 1.U, block_size)
+  }
+
+  when (!firing) {
+    d_fire_counter := 0.U
+  }.elsewhen (d_can_fire && firing) {
+    d_fire_counter := wrappingAdd(d_fire_counter, 1.U, block_size)
+  }
+
+  // The last line in this (long) Boolean is just to make sure that we don't think we're done as soon as we begin firing
+  // TODO change when square requirement lifted
+  val about_to_fire_all_rows = ((a_fire_counter === (block_size-1).U && a_can_fire) || a_fire_counter === 0.U) &&
+                               ((b_fire_counter === (block_size-1).U && b_can_fire) || b_fire_counter === 0.U) &&
+                               ((d_fire_counter === (block_size-1).U && d_can_fire) || d_fire_counter === 0.U) &&
+                               (a_fire_counter =/= 0.U || b_fire_counter =/= 0.U || d_fire_counter =/= 0.U)
+
   // Scratchpad reads
-  for(i <- 0 until sp_banks){
+  /*for(i <- 0 until sp_banks){
     val read_a = !a_read_from_acc && dataAbank === i.U && start_inputting_ab
     val read_b = !b_read_from_acc && dataBbank === i.U && start_inputting_ab && !accumulate_zeros
     val read_d = !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros
@@ -192,10 +241,20 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       Seq(read_b -> (b_address_rs2.row + fire_counter),
         read_d -> (d_address_rs1.row + block_size.U - 1.U - fire_counter))
     )
+  }*/
+  for (i <- 0 until sp_banks) {
+    val read_a = a_can_fire && !a_read_from_acc && dataAbank === i.U && start_inputting_ab
+    val read_b = b_can_fire && !b_read_from_acc && dataBbank === i.U && start_inputting_ab && !accumulate_zeros
+    val read_d = d_can_fire && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros
+
+    io.read(i).en := read_a || read_b || read_d
+    io.read(i).addr := MuxCase(a_address_rs1.row + a_fire_counter,
+      Seq(read_b -> (b_address_rs2.row + b_fire_counter),
+        read_d -> (d_address_rs1.row + block_size.U - 1.U - d_fire_counter)))
   }
 
   // Accumulator read // TODO can only handle one acc read for now
-  {
+  /*{
     val read_a_from_acc = a_read_from_acc && start_inputting_ab
     val read_b_from_acc = b_read_from_acc && start_inputting_ab && !accumulate_zeros
     val read_d_from_acc = d_read_from_acc && start_inputting_d && !preload_zeros
@@ -207,6 +266,19 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     io.acc.read.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr).row + fire_counter,
         Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr).row + fire_counter),
           read_d_from_acc -> (d_address_rs1.asTypeOf(acc_addr).row + block_size.U - 1.U - fire_counter)))
+  }*/
+  {
+    val read_a_from_acc = a_can_fire && a_read_from_acc && start_inputting_ab
+    val read_b_from_acc = b_can_fire && b_read_from_acc && start_inputting_ab && !accumulate_zeros
+    val read_d_from_acc = d_can_fire && d_read_from_acc && start_inputting_d && !preload_zeros
+
+    io.acc.read.en := read_a_from_acc || read_b_from_acc || read_d_from_acc
+    io.acc.read.shift := in_shift
+    io.acc.read.relu := relu
+
+    io.acc.read.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr).row + a_fire_counter,
+      Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr).row + b_fire_counter),
+        read_d_from_acc -> (d_address_rs1.asTypeOf(acc_addr).row + block_size.U - 1.U - d_fire_counter)))
   }
 
   val readData = VecInit(io.read.map(_.data))
@@ -225,11 +297,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       perform_single_preload := false.B
       perform_mul_pre := false.B
       perform_single_mul := false.B
-      fire_count_started := false.B
 
       when(cmd.valid(0) && pull_deps_ready(0) && push_deps_ready(0))
       {
-        when(DoConfig) {
+        when(DoConfig && !matmul_in_progress) {
           current_dataflow := rs1s(0)(2)
           relu := rs1s(0)(3)
           in_shift := rs2s(0)
@@ -254,7 +325,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
             in_s_flush := rs2s(0)(tagWidth-1, 0) =/= tag_garbage
           }
 
-          fire_count_started := true.B
           control_state := compute
         }
 
@@ -271,7 +341,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
             in_s_flush := rs2s(1)(tagWidth - 1, 0) =/= tag_garbage
           }
 
-          fire_count_started := true.B
           control_state := compute
         }
 
@@ -280,7 +349,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
           perform_single_mul := true.B
           start_inputting_ab := true.B
 
-          fire_count_started := true.B
           control_state := compute
         }
 
@@ -344,9 +412,12 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   // Computing logic
   when (perform_mul_pre || perform_single_mul || perform_single_preload) {
     // Default inputs
-    mesh.io.a.valid := true.B
-    mesh.io.b.valid := true.B
-    mesh.io.d.valid := true.B
+    // mesh.io.a.valid := true.B
+    // mesh.io.b.valid := true.B
+    // mesh.io.d.valid := true.B
+    mesh.io.a.valid := RegNext(a_can_fire)
+    mesh.io.b.valid := RegNext(b_can_fire)
+    mesh.io.d.valid := RegNext(d_can_fire)
     mesh.io.tag_in.valid := true.B
 
     mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))

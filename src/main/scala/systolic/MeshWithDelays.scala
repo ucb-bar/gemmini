@@ -85,7 +85,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   val b_buf = RegEnable(io.b.bits, io.b.fire())
   val d_buf = RegEnable(io.d.bits, io.d.fire())
 
-  val in_s = Reg(UInt(1.W))
+  val in_s_reg = Reg(UInt(1.W)) // TODO inelegant
+  val in_s = WireInit(in_s_reg)
 
   val a_written = RegInit(false.B)
   val b_written = RegInit(false.B)
@@ -94,7 +95,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   val tag_written = RegInit(false.B)
 
   val buffering_done = fire_counter === 0.U && tag_written
-  val waiting_on_non_matrix_inputs = fire_counter === 0.U && !buffering_done
+  val waiting_on_non_matrix_inputs = fire_counter === 0.U && !(tag_written || io.tag_in.fire()) // TODO change when more non-matrix inputs are buffered
 
   when (io.a.fire()) {
     a_written := true.B
@@ -127,9 +128,19 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   // Wire up mesh's IO to this module's IO
   val mesh = Module(new Mesh(inputType, outputType, accType, df, tileRows, tileColumns, meshRows, meshColumns))
 
-  mesh.io.in_a := shifted(a_buf, leftBanks)
-  mesh.io.in_b := shifted(b_buf, upBanks)
-  mesh.io.in_d := shifted(d_buf, upBanks)
+  val a_shifter_in = WireInit(Mux(io.a.fire(), io.a.bits, a_buf))
+  val b_shifter_in = WireInit(Mux(io.b.fire(), io.b.bits, b_buf))
+  val d_shifter_in = Mux(io.d.fire(), io.d.bits, d_buf)
+
+//  mesh.io.in_a := shifted(a_buf, leftBanks)
+//  mesh.io.in_b := shifted(b_buf, upBanks)
+//  mesh.io.in_d := shifted(d_buf, upBanks)
+  mesh.io.in_a := shifted(a_shifter_in, leftBanks)
+  mesh.io.in_b := shifted(b_shifter_in, upBanks)
+  mesh.io.in_d := shifted(d_shifter_in, upBanks)
+//  mesh.io.in_a := shifted(Mux((b_written || d_written) && io.a.fire(), io.a.bits, a_buf), leftBanks)
+//  mesh.io.in_b := shifted(Mux((a_written || d_written) && io.b.fire(), io.b.bits, b_buf), upBanks)
+//  mesh.io.in_d := shifted(Mux((a_written || b_written) && io.d.fire(), io.d.bits, d_buf), upBanks)
 
   mesh.io.in_s.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_ := ShiftRegister(Cat(io.m, in_s), i, !pause))
@@ -152,12 +163,18 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   tag_queue.io.in.bits := Mux(flushing, io.tag_garbage, io.tag_in.bits)
   tag_queue.io.garbage := io.tag_garbage
 
-  val tag_id = RegInit(0.U(1.W)) // Used to keep track of when we should increment
+  val tag_id_reg = RegInit(0.U(1.W)) // Used to keep track of when we should increment // TODO inelegant
+  val tag_id = WireInit(tag_id_reg)
   val tag_id_delayed = ShiftRegister(tag_id, meshRows + S_TYPE.size-1, 0.U, !pause)
 
   tag_queue.io.out.next := tag_id_delayed =/= RegNext(tag_id_delayed, 0.U)
 
-  when (io.tag_in.fire()) { tag_written := true.B; tag_id := ~tag_id }
+  // when (io.tag_in.fire()) { tag_written := true.B; tag_id := ~tag_id }
+  when (io.tag_in.fire()) {
+    tag_written := true.B;
+    tag_id := ~tag_id_reg
+    tag_id_reg := tag_id
+  }
   io.tag_in.ready := !tag_written
   tag_queue.io.in.valid := io.tag_in.fire()
 
@@ -171,9 +188,14 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
     io.tag_in.ready := true.B
     tag_written := io.tag_in.fire()
 
-    tag_id := ~tag_id
+    // tag_id := ~tag_id
+    tag_id := ~tag_id_reg
+    tag_id_reg := tag_id
 
-    when (!flushing) { in_s := io.s ^ in_s }
+    when (!flushing) {
+      in_s := io.s ^ in_s_reg
+      in_s_reg := in_s
+    }
   }
 
   // Flushing logic
@@ -188,8 +210,10 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
     flush_counter := io.flush.bits
 
     // Avoid overwriting accumulated values
-    a_buf := 0.U.asTypeOf(A_TYPE)
+    a_buf := 0.U.asTypeOf(A_TYPE) // TODO make 0 an Arithmetic member function
     b_buf := 0.U.asTypeOf(B_TYPE)
+    a_shifter_in := 0.U.asTypeOf(A_TYPE)
+    b_shifter_in := 0.U.asTypeOf(B_TYPE)
   }
 
   when (flushing) {
