@@ -26,8 +26,8 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
     val in_shift = Input(UInt((accType.getWidth - inputType.getWidth).W))
     val out_shift = Output(UInt(log2Ceil(accType.getWidth - inputType.getWidth + 1).W))
 
-    // Global signals
-    val pause = Input(Bool())
+    val in_garbage = Input(Bool())
+    val out_garbage = Output(Bool())
   })
 
   val a  = io.in_a
@@ -37,13 +37,14 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
   val c2 = Reg(accType)
   val s  = io.in_s
 
-  val last_s = RegEnable(s, !io.pause)
+  val last_s = RegEnable(s, !io.in_garbage)
   val flip = last_s =/= s
   val shift_offset = Mux(flip, io.in_shift, 0.U)
 
   io.out_s := s
   io.out_a := a
   io.out_shift := io.in_shift
+  io.out_garbage := io.in_garbage
 
   val select = s(0)
   val mode = s(1)
@@ -82,7 +83,7 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
     }
   }
 
-  when (io.pause) {
+  when (io.in_garbage) {
     c1 := c1
     c2 := c2
   }

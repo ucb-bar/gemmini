@@ -59,11 +59,11 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
       val bxVec = VecInit(bx)
       val sram_shift = i * banked_len
 
-      val SRAMShifted = Shifter(bxVec, sram_shift, !pause, true)
+      val SRAMShifted = Shifter(bxVec, sram_shift, true.B, true)
 
       val indexes = if (reverse) SRAMShifted.indices.reverse else SRAMShifted.indices
       val RegShifted = (SRAMShifted zip indexes).map { case (srs, j) =>
-        ShiftRegister(srs, j, !pause)
+        ShiftRegister(srs, j)
       }
 
       RegShifted
@@ -132,31 +132,27 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   val b_shifter_in = WireInit(Mux(io.b.fire(), io.b.bits, b_buf))
   val d_shifter_in = Mux(io.d.fire(), io.d.bits, d_buf)
 
-//  mesh.io.in_a := shifted(a_buf, leftBanks)
-//  mesh.io.in_b := shifted(b_buf, upBanks)
-//  mesh.io.in_d := shifted(d_buf, upBanks)
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_b := shifted(b_shifter_in, upBanks)
   mesh.io.in_d := shifted(d_shifter_in, upBanks)
-//  mesh.io.in_a := shifted(Mux((b_written || d_written) && io.a.fire(), io.a.bits, a_buf), leftBanks)
-//  mesh.io.in_b := shifted(Mux((a_written || d_written) && io.b.fire(), io.b.bits, b_buf), upBanks)
-//  mesh.io.in_d := shifted(Mux((a_written || b_written) && io.d.fire(), io.d.bits, d_buf), upBanks)
 
   mesh.io.in_s.zipWithIndex.foreach { case (ss, i) =>
-    ss.foreach(_ := ShiftRegister(Cat(io.m, in_s), i, !pause))
+    ss.foreach(_ := ShiftRegister(Cat(io.m, in_s), i))
   }
   mesh.io.in_shift.zipWithIndex.foreach { case (shs, i) =>
-    shs.foreach(_ := ShiftRegister(io.shift, i, !pause))
+    shs.foreach(_ := ShiftRegister(io.shift, i))
   }
-  mesh.io.pause := pause
+
+  val pause_vec = VecInit(Seq.fill(meshColumns)(VecInit(Seq.fill(tileColumns)(pause))))
+  mesh.io.in_garbage := shifted(pause_vec, upBanks)
 
   // We want to output C when we're output-stationary, but B when we're weight-stationary
   // TODO these would actually overlap when we switch from output-stationary to weight-stationary
   // TODO should we use io.m, or the mode output of the mesh?
   io.out.bits := shifted(Mux(io.m === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
-  io.out_s := mesh.io.out_s.zip(mesh.io.out_s.indices.reverse).map{case (s, i) => ShiftRegister(s, i, !pause)}
+  io.out_s := mesh.io.out_s.zip(mesh.io.out_s.indices.reverse).map{case (s, i) => ShiftRegister(s, i)}
 
-  io.out.valid := !pause
+  io.out.valid := !shifted(mesh.io.out_garbage, outBanks, reverse = true)(0)(0)
 
   // Tags
   val tag_queue = Module(new TagQueue(tagqlen, tagType)) // TODO understand the actual required size better
@@ -165,13 +161,12 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
 
   val tag_id_reg = RegInit(0.U(1.W)) // Used to keep track of when we should increment // TODO inelegant
   val tag_id = WireInit(tag_id_reg)
-  val tag_id_delayed = ShiftRegister(tag_id, meshRows + S_TYPE.size-1, 0.U, !pause)
+  val tag_id_delayed = ShiftRegister(tag_id, meshRows + S_TYPE.size-1, 0.U, true.B)
 
   tag_queue.io.out.next := tag_id_delayed =/= RegNext(tag_id_delayed, 0.U)
 
-  // when (io.tag_in.fire()) { tag_written := true.B; tag_id := ~tag_id }
   when (io.tag_in.fire()) {
-    tag_written := true.B;
+    tag_written := true.B
     tag_id := ~tag_id_reg
     tag_id_reg := tag_id
   }
@@ -188,7 +183,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
     io.tag_in.ready := true.B
     tag_written := io.tag_in.fire()
 
-    // tag_id := ~tag_id
     tag_id := ~tag_id_reg
     tag_id_reg := tag_id
 
@@ -206,7 +200,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
 
   when (io.flush.fire()) {
     flushing := true.B
-    // flush_counter := 2.U
     flush_counter := io.flush.bits
 
     // Avoid overwriting accumulated values

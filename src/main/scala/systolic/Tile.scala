@@ -29,8 +29,8 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
     val in_shift = Input(Vec(columns, UInt(log2Ceil(accType.getWidth - inputType.getWidth + 1).W)))
     val out_shift = Output(Vec(columns, UInt(log2Ceil(accType.getWidth - inputType.getWidth + 1).W)))
 
-    // Global signals
-    val pause = Input(Bool())
+    val in_garbage = Input(Vec(columns, Bool()))
+    val out_garbage = Output(Vec(columns, Bool()))
   })
 
   val tile = Seq.fill(rows, columns)(Module(new PE(inputType, outputType, accType, df)))
@@ -82,19 +82,26 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
     }
   }
 
+  // Broadcast 'garbage' vertically across the Tile
+  for (c <- 0 until columns) {
+    tileT(c).foldLeft(io.in_garbage(c)) {
+      case (g, pe) =>
+        pe.io.in_garbage := g
+        pe.io.out_garbage
+    }
+  }
+
   // Drive the Tile's bottom IO
   for (c <- 0 until columns) {
     io.out_c(c) := tile(rows-1)(c).io.out_c
     io.out_b(c) := tile(rows-1)(c).io.out_b
     io.out_s(c) := tile(rows-1)(c).io.out_s
     io.out_shift(c) := tile(rows-1)(c).io.out_shift
+    io.out_garbage(c) := tile(rows-1)(c).io.out_garbage
   }
 
   // Drive the Tile's right IO
   for (r <- 0 until rows) {
     io.out_a(r) := tile(r)(columns-1).io.out_a
   }
-
-  // Connect global pause signals
-  tile.flatten.foreach(_.io.pause := io.pause)
 }

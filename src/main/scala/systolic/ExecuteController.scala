@@ -231,17 +231,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
                                (a_fire_counter =/= 0.U || b_fire_counter =/= 0.U || d_fire_counter =/= 0.U)
 
   // Scratchpad reads
-  /*for(i <- 0 until sp_banks){
-    val read_a = !a_read_from_acc && dataAbank === i.U && start_inputting_ab
-    val read_b = !b_read_from_acc && dataBbank === i.U && start_inputting_ab && !accumulate_zeros
-    val read_d = !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros
-
-    io.read(i).en := read_a || read_b || read_d
-    io.read(i).addr := MuxCase(a_address_rs1.row + fire_counter,
-      Seq(read_b -> (b_address_rs2.row + fire_counter),
-        read_d -> (d_address_rs1.row + block_size.U - 1.U - fire_counter))
-    )
-  }*/
   for (i <- 0 until sp_banks) {
     val read_a = a_can_fire && !a_read_from_acc && dataAbank === i.U && start_inputting_ab
     val read_b = b_can_fire && !b_read_from_acc && dataBbank === i.U && start_inputting_ab && !accumulate_zeros
@@ -254,19 +243,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   }
 
   // Accumulator read // TODO can only handle one acc read for now
-  /*{
-    val read_a_from_acc = a_read_from_acc && start_inputting_ab
-    val read_b_from_acc = b_read_from_acc && start_inputting_ab && !accumulate_zeros
-    val read_d_from_acc = d_read_from_acc && start_inputting_d && !preload_zeros
-
-    io.acc.read.en := read_a_from_acc || read_b_from_acc || read_d_from_acc
-    io.acc.read.shift := in_shift
-    io.acc.read.relu := relu
-
-    io.acc.read.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr).row + fire_counter,
-        Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr).row + fire_counter),
-          read_d_from_acc -> (d_address_rs1.asTypeOf(acc_addr).row + block_size.U - 1.U - fire_counter)))
-  }*/
   {
     val read_a_from_acc = a_can_fire && a_read_from_acc && start_inputting_ab
     val read_b_from_acc = b_can_fire && b_read_from_acc && start_inputting_ab && !accumulate_zeros

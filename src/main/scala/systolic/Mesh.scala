@@ -30,7 +30,8 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
 
     val in_shift = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Ceil(accType.getWidth - outputType.getWidth + 1).W))))
 
-    val pause = Input(Bool())
+    val in_garbage = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
+    val out_garbage = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
   })
 
   // mesh(r)(c) => Tile at row r, column c
@@ -41,7 +42,7 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   for (r <- 0 until meshRows) {
     mesh(r).foldLeft(io.in_a(r)) {
       case (in_a, tile) =>
-        tile.io.in_a := RegEnable(in_a, !io.pause)
+        tile.io.in_a := RegNext(in_a)
         tile.io.out_a
     }
   }
@@ -50,7 +51,7 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_b(c)) {
       case (in_b, tile) =>
-        tile.io.in_b := RegEnable(in_b, !io.pause)
+        tile.io.in_b := RegNext(in_b)
         tile.io.out_b
     }
   }
@@ -59,7 +60,7 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_d(c)) {
       case (in_propag, tile) =>
-        tile.io.in_d := RegEnable(in_propag, !io.pause)
+        tile.io.in_d := RegNext(in_propag)
         tile.io.out_c
     }
   }
@@ -68,7 +69,7 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_s(c)) {
       case (in_s, tile) =>
-        tile.io.in_s := RegEnable(in_s, !io.pause)
+        tile.io.in_s := RegNext(in_s)
         tile.io.out_s
     }
   }
@@ -77,19 +78,26 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_shift(c)) {
       case (in_sh, tile) =>
-        tile.io.in_shift := RegEnable(in_sh, !io.pause)
+        tile.io.in_shift := RegNext(in_sh)
         tile.io.out_shift
+    }
+  }
+
+  // Chain in_garbage (pipeline across each column)
+  for (c <- 0 until meshColumns) {
+    meshT(c).foldLeft(io.in_garbage(c)) {
+      case (in_g, tile) =>
+        tile.io.in_garbage := RegNext(in_g)
+        tile.io.out_garbage
     }
   }
 
   // Capture out_vec and out_s_vec (connect IO to bottom row of mesh)
   // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple4)
-  for (((b, c), (s, tile)) <- (io.out_b zip io.out_c) zip (io.out_s zip mesh.last)) {
+  for (((b, c), (s, g), tile) <- ((io.out_b zip io.out_c), (io.out_s zip io.out_garbage), mesh.last).zipped) {
     b := tile.io.out_b
     c := tile.io.out_c
     s := tile.io.out_s
+    g := tile.io.out_garbage
   }
-
-  // Connect global pause signals
-  mesh.flatten.foreach(_.io.pause := io.pause)
 }
