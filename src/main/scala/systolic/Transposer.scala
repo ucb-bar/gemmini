@@ -34,6 +34,9 @@ class PipelinedTransposer[T <: Data](val dim: Int, val dataType: T) extends Tran
         state := sMoveLeft
         leftCounter := 0.U
       }
+      when(io.outCol.fire()) {
+        leftCounter := leftCounter - 1.U
+      }
     }
     is(sMoveLeft) {
       io.inRow.ready := leftCounter <= dim.U // TODO: this is naive
