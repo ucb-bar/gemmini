@@ -199,7 +199,7 @@ abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[Mes
     Console.flush()
   }
 
-  assert(results.map(_.C) == golds, "Array output is not correct") // TODO
+  assert(results.map(_.C) == golds, "Array output is not correct")
   assert(results.map(_.tag) == meshInputs.init.map(_.tag), "Array tags are not correct")
 }
 
@@ -209,13 +209,13 @@ class OSMeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTester
   extends MeshWithDelaysUnitTest(c, ms, inputGarbageCyles, shift, verbose = verbose)
 {
   override def formatMs(ms: Seq[MeshTesterInput]) = {
-    // Shift the D matrices down so that they are input at the correct time
-    val shifted = (zero(dim), zero(dim), ms.head.D, true) +:
-      (ms.tail zip ms).map { case (MeshTesterInput(_, _, d, _), MeshTesterInput(a, b, _, s)) => (a, b, d, s) } :+
-      (ms.last.A, ms.last.B, zero(dim), ms.last.flipS /* the last value needs to be read out, so we need to flip S */)
+    // Shift the A and D matrices down so that they are input at the correct time
+    val shifted = (ms.head.A, zero(dim), ms.head.D, true) +:
+      (ms.tail zip ms).map { case (MeshTesterInput(a, _, d, _), MeshTesterInput(_, b, _, s)) => (a, b, d, s) } :+
+      (zero(dim), ms.last.B, zero(dim), ms.last.flipS /* the last value needs to be read out, so we need to flip S */)
 
-    // Then, transpose A and reverse the rows of D
-    val mats = shifted.map{case (a, b, d, s) => (a.transpose, b, d.reverse, s)}
+    // Then, reverse the rows of D
+    val mats = shifted.map{case (a, b, d, s) => (a, b, d.reverse, s)}
 
     // Finally, add the S and M parameters
     mats.zipWithIndex.map { case ((m1,m2,m3,s),i) => MeshInput(m1, m2, m3, S=s.toInt, M=0, tag=i)}
@@ -295,16 +295,13 @@ class MeshWithDelaysTester extends ChiselFlatSpec
   val dataflow_testers = Seq((c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int, shift: Int) => new OSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles, shift),
     (c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int, shift: Int) => new WSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles))
 
-  // val dataflow_testers = Seq((c: MeshWithDelays[SInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new OSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles))
-  // val dataflow_testers = Seq((c: MeshWithDelays[SInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int, outputGarbageCyles: () => Int) => new WSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles))
-
   "SimpleMeshWithDelaysTester" should "work" in {
     // This is really just here to help with debugging
     val dim = 2
 
     iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
       () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.BOTH, dim, dim,1, 1,1, 1)) {
-        c => new OSMeshWithDelaysUnitTest(c, Seq.fill(2)(MeshTesterInput(zero(dim), zero(dim), rand(dim), true)), () => 0, shift = 0, verbose = true)
+        c => new OSMeshWithDelaysUnitTest(c, Seq.fill(1)(MeshTesterInput(consecutive(dim), identity(dim), zero(dim), true)), () => 0, shift = 0, verbose = true)
         // c => new WSMeshWithDelaysUnitTest(c, Seq.fill(1)(MeshTesterInput(rand(dim), rand(dim), rand(dim), true)), () => 0, verbose = true)
     } should be(true)
   }

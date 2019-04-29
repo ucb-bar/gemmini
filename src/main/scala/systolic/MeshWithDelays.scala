@@ -125,10 +125,17 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
 
   val pause = (waiting_on_non_matrix_inputs || !next_row_input) && !flushing_or_about_to
 
+  // Transposer
+  val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
+  transposer.io.inRow.valid := !pause
+  transposer.io.inRow.bits := VecInit(Mux(io.a.fire(), io.a.bits, a_buf).flatten)
+  transposer.io.outCol.ready := true.B
+  val a_transposed = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
+
   // Wire up mesh's IO to this module's IO
   val mesh = Module(new Mesh(inputType, outputType, accType, df, tileRows, tileColumns, meshRows, meshColumns))
 
-  val a_shifter_in = WireInit(Mux(io.a.fire(), io.a.bits, a_buf))
+  val a_shifter_in = WireInit(Mux(io.m === Dataflow.OS.id.U, a_transposed, Mux(io.a.fire(), io.a.bits, a_buf)))
   val b_shifter_in = WireInit(Mux(io.b.fire(), io.b.bits, b_buf))
   val d_shifter_in = Mux(io.d.fire(), io.d.bits, d_buf)
 

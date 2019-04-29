@@ -60,6 +60,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val DoPreloads = functs.map(_ === PRELOAD_CMD)
 
   val preload_cmd_place = Mux(DoPreloads(0), 0.U, 1.U)
+  val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
 
   val in_s = functs(0) === COMPUTE_AND_FLIP_CMD
   val in_s_flush = Reg(Bool())
@@ -71,7 +72,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val relu = Reg(Bool())
 
   // SRAM addresses of matmul operands
-  val a_address_rs1 = WireInit(rs1s(0).asTypeOf(sp_addr))
+  val a_address_rs1 = WireInit(rs1s(a_address_place).asTypeOf(sp_addr))
   val b_address_rs2 = WireInit(rs2s(0).asTypeOf(sp_addr))
   val d_address_rs1 = WireInit(rs1s(preload_cmd_place).asTypeOf(sp_addr))
   val c_address_rs2 = WireInit(rs2s(preload_cmd_place).asTypeOf(sp_addr))
@@ -161,7 +162,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val b_read_from_acc = b_address_rs2.asTypeOf(acc_addr).is_acc_addr
   val d_read_from_acc = d_address_rs1.asTypeOf(acc_addr).is_acc_addr
 
-  val start_inputting_ab = WireInit(false.B)
+  val start_inputting_a = WireInit(false.B)
+  val start_inputting_b = WireInit(false.B)
   val start_inputting_d = WireInit(false.B)
   val start_array_outputting = WireInit(false.B)
 
@@ -170,14 +172,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val perform_mul_pre = RegInit(false.B)
 
   val output_counter = new Counter(block_size)
-  // val fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
-  // val about_to_fire_all_rows = fire_counter === (block_size-1).U && mesh.io.a.ready && mesh.io.b.ready && mesh.io.d.ready // TODO change when square requirement lifted
-
-  /*fire_counter := 0.U
-  when (mesh.io.a.ready && mesh.io.b.ready && mesh.io.d.ready &&
-    (start_inputting_ab || start_inputting_d)) {
-    fire_counter := wrappingAdd(fire_counter, 1.U, block_size)
-  }*/
 
   // Fire counters which resolve same-bank accesses
   val a_fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
@@ -196,14 +190,14 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   // The priority scheme we follow is that A fires first, then B, then D
   val a_can_fire = a_fire_counter === b_fire_counter && a_fire_counter === d_fire_counter
-  val b_can_fire = (!same_bank(a_address_rs1, b_address_rs2, start_inputting_ab, start_inputting_ab) || a_fire_counter =/= b_fire_counter) && b_fire_counter === d_fire_counter
+  val b_can_fire = (!same_bank(a_address_rs1, b_address_rs2, start_inputting_a, start_inputting_b) || a_fire_counter =/= b_fire_counter) && b_fire_counter === d_fire_counter
   val d_can_fire =
-    ((!same_bank(a_address_rs1, d_address_rs1, start_inputting_ab, start_inputting_d) && !same_bank(b_address_rs2, d_address_rs1, start_inputting_ab, start_inputting_d)) && (b_can_fire || b_fire_counter =/= d_fire_counter)) ||
-      ((same_bank(a_address_rs1, d_address_rs1, start_inputting_ab, start_inputting_d) && !same_bank(b_address_rs2, d_address_rs1, start_inputting_ab, start_inputting_d)) && (a_fire_counter =/= d_fire_counter && (b_can_fire || b_fire_counter =/= d_fire_counter))) ||
-      ((!same_bank(a_address_rs1, d_address_rs1, start_inputting_ab, start_inputting_d) && same_bank(b_address_rs2, d_address_rs1, start_inputting_ab, start_inputting_d)) && b_fire_counter =/= d_fire_counter) ||
-      ((same_bank(a_address_rs1, d_address_rs1, start_inputting_ab, start_inputting_d) && same_bank(b_address_rs2, d_address_rs1, start_inputting_ab, start_inputting_d)) && b_fire_counter =/= d_fire_counter)
+    ((!same_bank(a_address_rs1, d_address_rs1, start_inputting_a, start_inputting_d) && !same_bank(b_address_rs2, d_address_rs1, start_inputting_b, start_inputting_d)) && (b_can_fire || b_fire_counter =/= d_fire_counter)) ||
+      ((same_bank(a_address_rs1, d_address_rs1, start_inputting_a, start_inputting_d) && !same_bank(b_address_rs2, d_address_rs1, start_inputting_b, start_inputting_d)) && (a_fire_counter =/= d_fire_counter && (b_can_fire || b_fire_counter =/= d_fire_counter))) ||
+      ((!same_bank(a_address_rs1, d_address_rs1, start_inputting_a, start_inputting_d) && same_bank(b_address_rs2, d_address_rs1, start_inputting_b, start_inputting_d)) && b_fire_counter =/= d_fire_counter) ||
+      ((same_bank(a_address_rs1, d_address_rs1, start_inputting_a, start_inputting_d) && same_bank(b_address_rs2, d_address_rs1, start_inputting_b, start_inputting_d)) && b_fire_counter =/= d_fire_counter)
 
-  val firing = start_inputting_ab || start_inputting_d
+  val firing = start_inputting_a || start_inputting_b || start_inputting_d
 
   when (!firing) {
     a_fire_counter := 0.U
@@ -232,8 +226,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   // Scratchpad reads
   for (i <- 0 until sp_banks) {
-    val read_a = a_can_fire && !a_read_from_acc && dataAbank === i.U && start_inputting_ab
-    val read_b = b_can_fire && !b_read_from_acc && dataBbank === i.U && start_inputting_ab && !accumulate_zeros
+    val read_a = a_can_fire && !a_read_from_acc && dataAbank === i.U && start_inputting_a
+    val read_b = b_can_fire && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros
     val read_d = d_can_fire && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros
 
     io.read(i).en := read_a || read_b || read_d
@@ -244,8 +238,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   // Accumulator read // TODO can only handle one acc read for now
   {
-    val read_a_from_acc = a_can_fire && a_read_from_acc && start_inputting_ab
-    val read_b_from_acc = b_can_fire && b_read_from_acc && start_inputting_ab && !accumulate_zeros
+    val read_a_from_acc = a_can_fire && a_read_from_acc && start_inputting_a
+    val read_b_from_acc = b_can_fire && b_read_from_acc && start_inputting_b && !accumulate_zeros
     val read_d_from_acc = d_can_fire && d_read_from_acc && start_inputting_d && !preload_zeros
 
     io.acc.read.en := read_a_from_acc || read_b_from_acc || read_d_from_acc
@@ -292,6 +286,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         // Preload
         .elsewhen(DoPreloads(0) && cmd.valid(1) && !raw_hazard_pre) {
           perform_single_preload := true.B
+          start_inputting_a := current_dataflow === Dataflow.OS.id.U
           start_inputting_d := true.B
 
           io.pullLoad.ready := cmd.bits(0).deps.pullLoad
@@ -307,7 +302,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         // Overlap compute and preload
         .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && pull_deps_ready(1) && push_deps_ready(1) && cmd.valid(2) && !raw_hazard_mulpre) {
           perform_mul_pre := true.B
-          start_inputting_ab := true.B
+          start_inputting_a := true.B
+          start_inputting_b := true.B
           start_inputting_d := true.B
 
           io.pullLoad.ready := cmd.bits(1).deps.pullLoad
@@ -323,7 +319,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         // Single mul
         .elsewhen(DoComputes(0)) {
           perform_single_mul := true.B
-          start_inputting_ab := true.B
+          start_inputting_a := current_dataflow === Dataflow.WS.id.U
+          start_inputting_b := true.B
 
           control_state := compute
         }
@@ -340,6 +337,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     is (compute) {
       // Only preloading
       when(perform_single_preload) {
+        start_inputting_a := current_dataflow === Dataflow.OS.id.U
         start_inputting_d := true.B
 
         when (about_to_fire_all_rows) {
@@ -351,7 +349,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       // Overlapping
       .elsewhen(perform_mul_pre)
       {
-        start_inputting_ab := true.B
+        start_inputting_a := true.B
+        start_inputting_b := true.B
         start_inputting_d := true.B
 
         when (about_to_fire_all_rows) {
@@ -362,7 +361,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
       // Only compute
       .elsewhen(perform_single_mul) {
-        start_inputting_ab := true.B
+        start_inputting_a := current_dataflow === Dataflow.WS.id.U
+        start_inputting_b := true.B
 
         when (about_to_fire_all_rows) {
           cmd.pop := 1.U
@@ -388,9 +388,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   // Computing logic
   when (perform_mul_pre || perform_single_mul || perform_single_preload) {
     // Default inputs
-    // mesh.io.a.valid := true.B
-    // mesh.io.b.valid := true.B
-    // mesh.io.d.valid := true.B
     mesh.io.a.valid := RegNext(a_can_fire)
     mesh.io.b.valid := RegNext(b_can_fire)
     mesh.io.d.valid := RegNext(d_can_fire)
@@ -406,12 +403,13 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   }
 
   when (perform_single_preload) {
-    mesh.io.a.bits := (0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+    mesh.io.a.bits := Mux(current_dataflow === Dataflow.WS.id.U, 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.s := RegNext(in_s_flush) // TODO create a new in_s_preload
   }
 
   when (perform_single_mul) {
+    mesh.io.a.bits := Mux(current_dataflow === Dataflow.OS.id.U, 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.tag_in.bits.pushLoad := false.B
     mesh.io.tag_in.bits.pushStore := false.B
     mesh.io.tag_in.bits.tag := tag_garbage
