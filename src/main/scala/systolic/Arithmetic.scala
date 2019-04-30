@@ -17,6 +17,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def withWidthOf(t: T): T
   def clippedToWidthOf(t: T): T
   def relu: T
+  def relu6: T
 }
 
 object Arithmetic {
@@ -34,6 +35,7 @@ object Arithmetic {
       }
 
       override def relu: UInt = self
+      override def relu6: UInt = Mux(self < 6.U, self, 6.U)
     }
   }
 
@@ -52,6 +54,7 @@ object Arithmetic {
       }
 
       override def relu: SInt = Mux(self >= 0.S, self, 0.S)
+      override def relu6: SInt = MuxCase(self, Seq((self < 0.S) -> 0.S, (self > 6.S) -> 6.S))
     }
   }
 }

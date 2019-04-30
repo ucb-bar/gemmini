@@ -136,13 +136,12 @@ class ScratchpadBank(n: Int, w: Int) extends Module {
 }
 
 // TODO replace the SRAM types with Vec[Vec[inputType]], rather than just simple UInts
-class Scratchpad[T <: Data](
+class Scratchpad[T <: Data: Arithmetic](
     nBanks: Int, nRows: Int, w: Int, inputType: T, accType: T, config: SystolicArrayConfig,
     val maxBytes: Int = 64, val dataBits: Int = 64)
-    (implicit p: Parameters, ev: Arithmetic[T]) extends LazyModule {
+    (implicit p: Parameters) extends LazyModule {
 
   import config._
-  import ev._
 
   val dataBytes = dataBits / 8
   val outFlits = w / dataBits
@@ -277,15 +276,19 @@ class Scratchpad[T <: Data](
       bank.io.write.data := Mux(bankwen, rowBuffer.asUInt, write.data)
     }
 
-    val accumulator = Module(new AccumulatorMem(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType))))
-    val accbankren = dmaren && io.dma.req.bits.is_acc
-    accumulator.io.read.en := accbankren || io.acc.read.en
-    accumulator.io.read.addr := Mux(accbankren, io.dma.req.bits.accaddr, io.acc.read.addr)
-    accumulator.io.read.shift := io.acc.read.shift
-    accumulator.io.read.relu := io.acc.read.relu
-    io.acc.read.data := accumulator.io.read.data
-    when (req.is_acc) { dmardata := accumulator.io.read.data.asUInt() }
-    accumulator.io.write <> io.acc.write
+    {
+      val accumulator = Module(new AccumulatorMem(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType))))
+      val accbankren = dmaren && io.dma.req.bits.is_acc
+
+      accumulator.io.read.en := accbankren || io.acc.read.en
+      accumulator.io.read.addr := Mux(accbankren, io.dma.req.bits.accaddr, io.acc.read.addr)
+      accumulator.io.read.shift := io.acc.read.shift
+      accumulator.io.read.act := io.acc.read.act
+      io.acc.read.data := accumulator.io.read.data
+
+      when(req.is_acc) { dmardata := accumulator.io.read.data.asUInt() }
+      accumulator.io.write <> io.acc.write
+    }
 
     when (io.dma.req.fire()) {
       req := io.dma.req.bits

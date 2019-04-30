@@ -57,9 +57,7 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
   val COMPUTE = 0.U(1.W)
   val PROPAGATE = 1.U(1.W)
 
-  val supports_os = (df == Dataflow.OS || df == Dataflow.BOTH).B
-
-  when (mode === OUTPUT_STATIONARY && supports_os) {
+  when ((df == Dataflow.OS).B || ((df == Dataflow.BOTH).B && mode === OUTPUT_STATIONARY)) {
     when(select === PROPAGATE){
       io.out_c := (c1 >> shift_offset).clippedToWidthOf(outputType)
       io.out_b := b
@@ -71,7 +69,7 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
       c1 := (a * b.withWidthOf(inputType)) + c1
       c2 := d
     }
-  }.otherwise {
+  }.elsewhen ((df == Dataflow.WS).B || ((df == Dataflow.BOTH).B && mode === WEIGHT_STATIONARY)) {
     when(select === PROPAGATE){
       io.out_c := c1
       io.out_b := (a * c2.withWidthOf(inputType)) + b
@@ -81,6 +79,10 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
       io.out_b := (a * c1.withWidthOf(inputType)) + b
       c2 := d
     }
+  }.otherwise {
+    assert(false.B, "unknown dataflow")
+    io.out_c := DontCare
+    io.out_b := DontCare
   }
 
   when (io.in_garbage) {

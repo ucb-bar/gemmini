@@ -300,8 +300,8 @@ class MeshWithDelaysTester extends ChiselFlatSpec
     val dim = 2
 
     iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-      () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.BOTH, dim, dim,1, 1,1, 1)) {
-        c => new OSMeshWithDelaysUnitTest(c, Seq.fill(1)(MeshTesterInput(consecutive(dim), identity(dim), zero(dim), true)), () => 0, shift = 0, verbose = true)
+      () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.WS, dim, dim,1, 1,1, 1)) {
+        c => new WSMeshWithDelaysUnitTest(c, Seq.fill(1)(MeshTesterInput(consecutive(dim), identity(dim), zero(dim), true)), () => 0, verbose = true)
         // c => new WSMeshWithDelaysUnitTest(c, Seq.fill(1)(MeshTesterInput(rand(dim), rand(dim), rand(dim), true)), () => 0, verbose = true)
     } should be(true)
   }
@@ -347,11 +347,11 @@ class MeshWithDelaysTester extends ChiselFlatSpec
   // Arbitrarily pipelined
   it should "work arbitrarily pipelined with no delays, as well as with random delays, with all possible dataflows, with all possible banking strategies, with many different array sizes" in {
     // TODO add these back in
-    /*val dataflows = Seq((Dataflow.OS, Seq((c: MeshWithDelays[SInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int) => new OSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles))),
-      (Dataflow.WS, Seq((c: MeshWithDelays[SInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int) => new WSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles))),
-      (Dataflow.BOTH, dataflow_testers))*/
+    val dataflows = Seq((Dataflow.OS, Seq((c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int, shift: Int) => new OSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles, shift))),
+      (Dataflow.WS, Seq((c: MeshWithDelays[SInt, UInt], ms: Seq[MeshTesterInput], inputGarbageCyles: () => Int, shift: Int) => new WSMeshWithDelaysUnitTest(c, ms, inputGarbageCyles))),
+      (Dataflow.BOTH, dataflow_testers))
 
-    val dataflows = Seq((Dataflow.BOTH, dataflow_testers))
+    // val dataflows = Seq((Dataflow.BOTH, dataflow_testers))
 
     val delay_functions = Seq(() => 0, () => scala.util.Random.nextInt(5))
 

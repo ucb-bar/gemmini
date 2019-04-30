@@ -127,7 +127,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
 
   // Transposer
   val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
-  transposer.io.inRow.valid := !pause
+  transposer.io.inRow.valid := !pause && io.m === Dataflow.OS.id.U
   transposer.io.inRow.bits := VecInit(Mux(io.a.fire(), io.a.bits, a_buf).flatten)
   transposer.io.outCol.ready := true.B
   val a_transposed = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
