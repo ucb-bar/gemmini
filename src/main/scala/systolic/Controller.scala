@@ -107,7 +107,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val push2 = cmd.bits.inst.funct.asTypeOf(funct_t).push2
   val pop2 = cmd.bits.inst.funct.asTypeOf(funct_t).pop2
 
-  val load_controller = Module(new LoadController(outer.config, xLen, sp_addr))
+  val load_controller = Module(new LoadController(outer.config, xLen, sp_addr, acc_addr, inputType, accType))
   val store_controller = Module(new StoreController(outer.config, xLen, sp_addr, acc_addr))
   val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config, sp_addr, acc_addr, inputType, outputType, accType))
 

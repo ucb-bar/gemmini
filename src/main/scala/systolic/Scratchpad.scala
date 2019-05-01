@@ -135,6 +135,7 @@ class ScratchpadBank(n: Int, w: Int) extends Module {
   io.read.data := mem.read(io.read.addr, io.read.en)
 }
 
+// TODO find a more elegant way to move data into accumulator
 // TODO replace the SRAM types with Vec[Vec[inputType]], rather than just simple UInts
 class Scratchpad[T <: Data: Arithmetic](
     nBanks: Int, nRows: Int, w: Int, inputType: T, accType: T, config: SystolicArrayConfig,
@@ -185,12 +186,19 @@ class Scratchpad[T <: Data: Arithmetic](
     val rowAddrBits = log2Ceil(rowBytes)
     val byteAddrBits = log2Ceil(dataBytes)
 
+    // Accumulator-specific copies of above variables
+    val acc_w = meshColumns * tileColumns * accType.getWidth
+    val acc_rowBytes = acc_w / 8
+    val acc_nBeats = (acc_w - 1) / dataBits + 1
+    val acc_rowAddrBits = log2Ceil(acc_rowBytes)
+
     val req = Reg(new ScratchpadMemRequest(nBanks, nRows, acc_rows))
     val reqVpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
     val reqOffset = req.vaddr(pgIdxBits-1, 0)
     val reqPpn = Reg(UInt(ppnBits.W))
     val reqPaddr = Cat(reqPpn, reqOffset)
     val bytesLeft = Reg(UInt(log2Ceil(rowBytes+1).W))
+    val acc_bytesLeft = Reg(UInt(log2Ceil(acc_rowBytes+1).W))
 
     io.tlb.req.valid := state === s_translate_req
     io.tlb.req.bits.vaddr := Cat(reqVpn, 0.U(pgIdxBits.W))
@@ -277,7 +285,10 @@ class Scratchpad[T <: Data: Arithmetic](
     }
 
     {
-      val accumulator = Module(new AccumulatorMem(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType))))
+      val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
+      val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
+
+      val accumulator = Module(new AccumulatorMem(acc_rows, acc_row_t, spad_row_t))
       val accbankren = dmaren && io.dma.req.bits.is_acc
 
       accumulator.io.read.en := accbankren || io.acc.read.en
@@ -285,9 +296,29 @@ class Scratchpad[T <: Data: Arithmetic](
       accumulator.io.read.shift := io.acc.read.shift
       accumulator.io.read.act := io.acc.read.act
       io.acc.read.data := accumulator.io.read.data
-
       when(req.is_acc) { dmardata := accumulator.io.read.data.asUInt() }
-      accumulator.io.write <> io.acc.write
+
+      // TODO find a more elegant way to move data into accumulator
+      val accRowBufferLen = meshColumns * tileColumns * accType.getWidth / w - 1
+      val accRowBuffer = Reg(Vec(accRowBufferLen, UInt(w.W)))
+      val accRowBufferBeatCntr = RegInit(0.U((log2Ceil(accRowBufferLen+1) max 1).W))
+
+      val accRowBufferWen = dmawen && req.is_acc && accRowBufferBeatCntr < accRowBufferLen.U
+      val accbankwen = dmawen && req.is_acc && !accRowBufferWen
+
+      val accRowInput = Cat(rowBuffer.asUInt(), accRowBuffer.asUInt()).asTypeOf(acc_row_t)
+
+      when (accRowBufferWen) {
+        accRowBuffer(accRowBufferBeatCntr) := rowBuffer.asUInt()
+        accRowBufferBeatCntr := accRowBufferBeatCntr + 1.U
+      }.elsewhen(accbankwen) {
+        accRowBufferBeatCntr := 0.U
+      }
+
+      accumulator.io.write.en := accbankwen || io.acc.write.en
+      accumulator.io.write.addr := Mux(accbankwen, req.accaddr, io.acc.write.addr)
+      accumulator.io.write.data := Mux(accbankwen, accRowInput, io.acc.write.data)
+      accumulator.io.write.acc := !accbankwen && io.acc.write.acc // TODO add ability to mvin to accumulating memory space from main memory
     }
 
     when (io.dma.req.fire()) {
