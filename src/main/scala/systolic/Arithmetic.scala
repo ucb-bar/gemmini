@@ -13,7 +13,7 @@ abstract class Arithmetic[T <: Data] {
 abstract class ArithmeticOps[T <: Data](self: T) {
   def +(t: T): T
   def *(t: T): T
-  def >>(u: UInt): T
+  def >>(u: UInt): T // This is a rounding shift! Rounds away from 0
   def withWidthOf(t: T): T
   def clippedToWidthOf(t: T): T
   def relu: T
@@ -25,7 +25,10 @@ object Arithmetic {
     implicit def cast(self: UInt) = new ArithmeticOps(self) {
       def +(t: UInt) = self + t
       def *(t: UInt) = self * t
-      def >>(u: UInt) = (self >> u).asUInt()
+
+      def >>(u: UInt) = {
+        Mux(u === 0.U, self, (self + (1.U << (u-1.U)).asUInt()) >> u).asUInt() // TODO is the mux necessary here? What is (1 << (0.U-1.U))?
+      }
 
       def withWidthOf(t: UInt) = self(t.getWidth-1, 0)
 
@@ -43,7 +46,14 @@ object Arithmetic {
     implicit def cast(self: SInt) = new ArithmeticOps(self) {
       def +(t: SInt) = self + t
       def *(t: SInt) = self * t
-      def >>(u: UInt) = (self >> u).asSInt()
+
+      // TODO is there a more efficient way of doing this rounding shift?
+      def >>(u: UInt) = {
+        val abs = Mux(self >= 0.S, self, 0.S - self)
+        val offset = (1.U << (u-1.U)).asUInt()
+        val abs_result = Mux(u === 0.U, abs, (abs + offset.asSInt()) >> u).asSInt()
+        Mux(self >= 0.S, abs_result, 0.S - abs_result)
+      }
 
       def withWidthOf(t: SInt) = self(t.getWidth-1, 0).asSInt()
 
