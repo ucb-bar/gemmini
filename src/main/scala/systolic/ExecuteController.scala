@@ -49,11 +49,11 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   io.busy := cmd.valid(0)
 
-  val current_dataflow = Reg(UInt(1.W))
+  val current_dataflow = if (dataflow == Dataflow.BOTH) Reg(UInt(1.W)) else dataflow.id.U
 
   val functs = cmd.bits.map(_.cmd.inst.funct)
-  val rs1s = VecInit(cmd.bits.map(_.cmd.rs1))
-  val rs2s = VecInit(cmd.bits.map(_.cmd.rs2))
+  val rs1s = VecInit(cmd.bits.map(_.cmd.rs1(tagWidth-1, 0)))
+  val rs2s = VecInit(cmd.bits.map(_.cmd.rs2(tagWidth-1, 0)))
 
   val DoConfig = functs(0) === CONFIG_CMD
   val DoComputes = functs.map(f => f === COMPUTE_AND_FLIP_CMD || f === COMPUTE_AND_STAY_CMD)
@@ -271,9 +271,11 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       when(cmd.valid(0) && pull_deps_ready(0) && push_deps_ready(0))
       {
         when(DoConfig && !matmul_in_progress) {
-          current_dataflow := rs1s(0)(2)
           activation := rs1s(0)(4, 3)
           in_shift := rs2s(0)
+
+          if (dataflow == Dataflow.BOTH)
+            current_dataflow := rs1s(0)(2)
 
           io.pullLoad.ready := cmd.bits(0).deps.pullLoad
           io.pullStore.ready := cmd.bits(0).deps.pullStore

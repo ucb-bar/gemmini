@@ -27,6 +27,8 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, a
   val waiting_for_command :: waiting_for_dma_resp :: waiting_for_dma_ready :: Nil = Enum(3)
   val control_state = RegInit(waiting_for_command)
 
+  val wait_for_dma_req = WireInit(false.B) // Not really a state on its own, just a trigger for behavior that is shared across states
+
   val stride = RegInit((sp_width / 8).U(xLen.W))
   val block_rows = meshRows * tileRows
   val sp_row_offset = RegInit(0.U(log2Ceil(block_rows).W)) // Used for anything in the scratchpad, INCLUDING the accumulator
@@ -113,19 +115,24 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, a
 
           control_state := waiting_for_command
         }.otherwise {
-          // TODO we may be wasting a cycle here. Do we have to take a detour into waiting_for_dma_ready?
+          io.dma.req.valid := true.B
+          wait_for_dma_req := true.B
           control_state := waiting_for_dma_ready
         }
       }
     }
 
     is (waiting_for_dma_ready) {
-      when (io.dma.req.fire()) {
-        sp_row_offset := wrappingAdd(sp_row_offset, 1.U, block_rows)
-        vaddr_offset := wrappingAdd(vaddr_offset, stride, stride * block_rows.U)
+      wait_for_dma_req := true.B
+    }
+  }
 
-        control_state := waiting_for_dma_resp
-      }
+  when (wait_for_dma_req) {
+    when (io.dma.req.fire()) {
+      sp_row_offset := wrappingAdd(sp_row_offset, 1.U, block_rows)
+      vaddr_offset := wrappingAdd(vaddr_offset, stride, stride * block_rows.U)
+
+      control_state := waiting_for_dma_resp
     }
   }
 }

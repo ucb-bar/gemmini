@@ -186,19 +186,12 @@ class Scratchpad[T <: Data: Arithmetic](
     val rowAddrBits = log2Ceil(rowBytes)
     val byteAddrBits = log2Ceil(dataBytes)
 
-    // Accumulator-specific copies of above variables
-    val acc_w = meshColumns * tileColumns * accType.getWidth
-    val acc_rowBytes = acc_w / 8
-    val acc_nBeats = (acc_w - 1) / dataBits + 1
-    val acc_rowAddrBits = log2Ceil(acc_rowBytes)
-
     val req = Reg(new ScratchpadMemRequest(nBanks, nRows, acc_rows))
     val reqVpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
     val reqOffset = req.vaddr(pgIdxBits-1, 0)
     val reqPpn = Reg(UInt(ppnBits.W))
     val reqPaddr = Cat(reqPpn, reqOffset)
     val bytesLeft = Reg(UInt(log2Ceil(rowBytes+1).W))
-    val acc_bytesLeft = Reg(UInt(log2Ceil(acc_rowBytes+1).W))
 
     io.tlb.req.valid := state === s_translate_req
     io.tlb.req.bits.vaddr := Cat(reqVpn, 0.U(pgIdxBits.W))
@@ -237,7 +230,7 @@ class Scratchpad[T <: Data: Arithmetic](
 
     val rowBuffer = Reg(Vec(nBeats, UInt(dataBits.W)))
     val bufAddr = Reg(UInt(rowAddrBits.W))
-    val bufIdx = bufAddr >> byteAddrBits.U//bufAddr(rowAddrBits-1, byteAddrBits)
+    val bufIdx = (bufAddr >> byteAddrBits.U).asUInt() //bufAddr(rowAddrBits-1, byteAddrBits)
     val bufDone = Reg(Bool())
 
     val (rowData, rowKeep) = {
@@ -245,12 +238,12 @@ class Scratchpad[T <: Data: Arithmetic](
       val rshift = Cat(offset, 0.U(3.W))
       val lshift = Cat(dataBytes.U - offset, 0.U(3.W))
 
-      val first = rowBuffer(bufIdx) >> rshift
-      val second = rowBuffer(bufIdx + 1.U) << lshift
+      val first = (rowBuffer(bufIdx) >> rshift).asUInt()
+      val second = (rowBuffer(bufIdx + 1.U) << lshift).asUInt()
 
       val data = first | second
       val nbytes = bytesToSend(byteAddrBits, 0)
-      val bytemask = (1.U << nbytes) - 1.U
+      val bytemask = (1.U << nbytes).asUInt() - 1.U
 
       (data(dataBits-1, 0), bytemask(dataBytes-1, 0))
     }

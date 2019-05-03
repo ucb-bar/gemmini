@@ -39,6 +39,7 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 - `rs1` = virtual DRAM address (byte addressed) to write to from scratchpad
 - `rs2` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
     - the highest bits of `rs2` determine the bank number and the lowests bits determine the entry in the scratchpad
+    - if the 32nd bit is 1, `rs2` refers the accumulator memory space. In this case, the bitwidth of the elements is the accumulated result bitwidth
 - `funct` = 3
 
 **Action:** DRAM[Translate[rs2]] <= Scratchpad[rs1]

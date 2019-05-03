@@ -28,6 +28,8 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
   val waiting_for_command :: waiting_for_dma_resp :: waiting_for_dma_ready :: Nil = Enum(3)
   val control_state = RegInit(waiting_for_command)
 
+  val wait_for_dma_req = WireInit(false.B) // Not really a state on its own, just a trigger for behavior that is shared across states
+
   val stride = RegInit((sp_width / 8).U(xLen.W))
   val block_rows = meshRows * tileRows
   val sp_row_offset = RegInit(0.U(log2Ceil(block_rows).W))
@@ -128,28 +130,33 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
 
           control_state := waiting_for_command
         }.otherwise {
-          // TODO we may be wasting a cycle here. Do we have to take a detour into waiting_for_dma_ready?
+          io.dma.req.valid := true.B
+          wait_for_dma_req := true.B
           control_state := waiting_for_dma_ready
         }
       }
     }
 
     is (waiting_for_dma_ready) {
-      when (io.dma.req.fire()) {
-        when (accaddr.is_acc_addr) {
-          acc_load_cntr := wrappingAdd(acc_load_cntr, 1.U, acc_load_beats)
-          vaddr_offset := vaddr_offset + acc_load_beat_stride.U
-          done_loading_acc := acc_load_cntr === (acc_load_beats-1).U
-        }
+      wait_for_dma_req := true.B
+    }
+  }
 
-        when (!accaddr.is_acc_addr || done_loading_acc) {
-          sp_row_offset := wrappingAdd(sp_row_offset, 1.U, block_rows)
-          vaddr_offset := Mux(!accaddr.is_acc_addr, vaddr_offset + stride,
-            vaddr_offset + (stride - (acc_load_beat_stride * (acc_load_beats-1)).U))
-        }
-
-        control_state := waiting_for_dma_resp
+  when (wait_for_dma_req) {
+    when (io.dma.req.fire()) {
+      when (accaddr.is_acc_addr) {
+        acc_load_cntr := wrappingAdd(acc_load_cntr, 1.U, acc_load_beats)
+        vaddr_offset := vaddr_offset + acc_load_beat_stride.U
+        done_loading_acc := acc_load_cntr === (acc_load_beats-1).U
       }
+
+      when (!accaddr.is_acc_addr || done_loading_acc) {
+        sp_row_offset := wrappingAdd(sp_row_offset, 1.U, block_rows)
+        vaddr_offset := Mux(!accaddr.is_acc_addr, vaddr_offset + stride,
+          vaddr_offset + (stride - (acc_load_beat_stride * (acc_load_beats-1)).U))
+      }
+
+      control_state := waiting_for_dma_resp
     }
   }
 }
