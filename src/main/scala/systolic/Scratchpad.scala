@@ -303,7 +303,8 @@ class Scratchpad[T <: Data: Arithmetic](
       val accRowInput = (if (accRowBufferLen > 0) Cat(rowBuffer.asUInt(), accRowBuffer.asUInt()) else rowBuffer.asUInt()).asTypeOf(acc_row_t)
 
       when (accRowBufferWen) {
-        accRowBuffer(accRowBufferBeatCntr) := rowBuffer.asUInt()
+        if (accRowBufferLen > 0)
+          accRowBuffer(accRowBufferBeatCntr) := rowBuffer.asUInt()
         accRowBufferBeatCntr := accRowBufferBeatCntr + 1.U
       }.elsewhen(accbankwen) {
         accRowBufferBeatCntr := 0.U
