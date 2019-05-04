@@ -304,12 +304,12 @@ class MeshWithDelaysTester extends ChiselFlatSpec
 
   "SimpleMeshWithDelaysTester" should "work" in {
     // This is really just here to help with debugging
-    val dim = 2
+    val dim = 4
 
     iotesters.Driver.execute(Array("--backend-name", "treadle", "--generate-vcd-output", "on"),
-      () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.OS, dim, dim,1, 1,1, 1)) {
-        c => new OSMeshWithDelaysUnitTest(c, Seq.fill(1)(MeshTesterInput(consecutive(dim), identity(dim), zero(dim), true)), () => 0, shift = 1, verbose = true)
-        // c => new WSMeshWithDelaysUnitTest(c, Seq.fill(1)(MeshTesterInput(rand(dim), rand(dim), rand(dim), true)), () => 0, verbose = true)
+      () => new MeshWithDelays(SInt(8.W), SInt(16.W), SInt(32.W), UInt(32.W), Dataflow.WS, 1, 1, dim, dim,1, 1)) {
+        // c => new OSMeshWithDelaysUnitTest(c, Seq.fill(1)(MeshTesterInput(rand(dim), rand(dim), rand(dim), true)), () => 0, shift = 0, verbose = true)
+        c => new WSMeshWithDelaysUnitTest(c, Seq.fill(1)(MeshTesterInput(rand(dim), rand(dim), rand(dim), true)), () => 0, verbose = true)
     } should be(true)
   }
 

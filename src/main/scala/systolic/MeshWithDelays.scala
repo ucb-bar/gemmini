@@ -25,7 +25,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(2.W)))
 
-  val tagqlen = 4
+  val tagqlen = if (meshColumns == 1) 4 else 5 // TODO change the tag-queue so we can make this 3
 
   val io = IO(new Bundle {
     val a = Flipped(Decoupled(A_TYPE))
@@ -190,8 +190,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
     io.tag_in.ready := true.B
     tag_written := io.tag_in.fire()
 
-    tag_id := ~tag_id_reg
-    tag_id_reg := tag_id
+     tag_id := ~tag_id_reg
+     tag_id_reg := tag_id
 
     when (!flushing) {
       in_s := io.s ^ in_s_reg

@@ -299,7 +299,8 @@ class Scratchpad[T <: Data: Arithmetic](
       val accRowBufferWen = dmawen && req.is_acc && accRowBufferBeatCntr < accRowBufferLen.U
       val accbankwen = dmawen && req.is_acc && !accRowBufferWen
 
-      val accRowInput = Cat(rowBuffer.asUInt(), accRowBuffer.asUInt()).asTypeOf(acc_row_t)
+      // We need a special case here for when accRowBufferLen is 0, since the tools seem to fail with 0 length Vecs
+      val accRowInput = (if (accRowBufferLen > 0) Cat(rowBuffer.asUInt(), accRowBuffer.asUInt()) else rowBuffer.asUInt()).asTypeOf(acc_row_t)
 
       when (accRowBufferWen) {
         accRowBuffer(accRowBufferBeatCntr) := rowBuffer.asUInt()

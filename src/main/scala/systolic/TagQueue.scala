@@ -4,8 +4,7 @@ import chisel3._
 import chisel3.util._
 import Util._
 
-// TODO make this output garbage when it's empty
-class TagQueue[T <: Data](len: Int, t: T) extends Module {
+class TagQueue[T <: Data](entries: Int, t: T) extends Module {
   val io = IO(new Bundle {
     val in = new Bundle {
       val valid = Input(Bool())
@@ -15,30 +14,30 @@ class TagQueue[T <: Data](len: Int, t: T) extends Module {
     val out = new Bundle {
       val next = Input(Bool())
       val bits = Output(Vec(2, t))
-      val all = Output(Vec(len, t))
+      val all = Output(Vec(entries, t))
     }
 
     // This should really be a constructor parameter, but Chisel errors out when it is
     val garbage = Input(t)
   })
 
-  val regs = RegInit(VecInit(Seq.fill(len)(io.garbage)))
-  val raddr = RegInit(0.U((log2Ceil(len) max 1).W))
-  val waddr = RegInit(3.U((log2Ceil(len) max 1).W))
+  val regs = RegInit(VecInit(Seq.fill(entries)(io.garbage)))
+  val raddr = RegInit(0.U((log2Ceil(entries) max 1).W))
+  val waddr = RegInit(3.U((log2Ceil(entries) max 1).W))
 
-  val raddr_inc = wrappingAdd(raddr, 1.U, len)
-  val raddr_inc2 = wrappingAdd(raddr, 2.U, len)
+  val raddr_inc = wrappingAdd(raddr, 1.U, entries)
+  val raddr_inc2 = wrappingAdd(raddr, 2.U, entries)
 
   io.out.bits(0) := Mux(io.out.next, regs(raddr_inc), regs(raddr))
   io.out.bits(1) := Mux(io.out.next, regs(raddr_inc2), regs(raddr_inc))
   io.out.all := regs
 
   when (io.in.valid) {
-    waddr := wrappingAdd(waddr, 1.U, len)
+    waddr := wrappingAdd(waddr, 1.U, entries)
     regs(waddr) := io.in.bits
   }
 
   when (io.out.next) {
-    raddr := wrappingAdd(raddr, 1.U, len)
+    raddr := raddr_inc
   }
 }
