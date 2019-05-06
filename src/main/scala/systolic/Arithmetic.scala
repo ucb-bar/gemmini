@@ -50,10 +50,19 @@ object Arithmetic {
 
       // TODO is there a more efficient way of doing this rounding shift?
       def >>(u: UInt) = {
+        /*
         val abs = Mux(self >= 0.S, self, 0.S - self)
         val offset = (1.U << (u-1.U)).asUInt()
         val abs_result = Mux(u === 0.U, abs, (abs + offset.asSInt()) >> u).asSInt()
         Mux(self >= 0.S, abs_result, 0.S - abs_result)
+        */
+
+        val pos_offset = (1.U << (u-1.U)).asUInt()
+        val neg_offset = ~((-1.S) << (u-1.U))
+        val pos_sum = self + pos_offset.asSInt()
+        val neg_sum = self + neg_offset.asSInt()
+        Mux(u === 0.U, self,
+            (Mux(self >= 0.S, pos_sum, neg_sum) >> u).asSInt)
       }
 
       def withWidthOf(t: SInt) = self(t.getWidth-1, 0).asSInt()
