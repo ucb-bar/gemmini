@@ -139,7 +139,7 @@ class ScratchpadBank(n: Int, w: Int) extends Module {
 // TODO replace the SRAM types with Vec[Vec[inputType]], rather than just simple UInts
 class Scratchpad[T <: Data: Arithmetic](
     nBanks: Int, nRows: Int, w: Int, inputType: T, accType: T, config: SystolicArrayConfig,
-    val maxBytes: Int = 64, val dataBits: Int = 64)
+    val maxBytes: Int = 128, val dataBits: Int = 128)
     (implicit p: Parameters) extends LazyModule {
 
   import config._
