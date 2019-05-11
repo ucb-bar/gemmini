@@ -45,38 +45,106 @@ object Arithmetic {
 
   implicit object SIntArithmetic extends Arithmetic[SInt] {
     implicit def cast(self: SInt) = new ArithmeticOps(self) {
-      def +(t: SInt) = self + t
-      def *(t: SInt) = self * t
+      // def +(t: SInt) = self + t
+      // def *(t: SInt) = self * t
 
-      // TODO is there a more efficient way of doing this rounding shift?
-      def >>(u: UInt) = {
-        /*
-        val abs = Mux(self >= 0.S, self, 0.S - self)
-        val offset = (1.U << (u-1.U)).asUInt()
-        val abs_result = Mux(u === 0.U, abs, (abs + offset.asSInt()) >> u).asSInt()
-        Mux(self >= 0.S, abs_result, 0.S - abs_result)
-        */
+      override def +(t: SInt) = {
+        val adder = Module(new AddWrapper(self.getWidth, t.getWidth))
+        adder.io.x := self
+        adder.io.y := t
+        adder.io.out
+      }
 
+      override def *(t: SInt) = {
+        val mult = Module(new MultiplyWrapper(self.getWidth, t.getWidth))
+        mult.io.x := self
+        mult.io.y := t
+        mult.io.out
+      }
+
+      /*def >>(u: UInt) = {
         val pos_offset = (1.U << (u-1.U)).asUInt()
-        val neg_offset = ~((-1.S) << (u-1.U))
+        val neg_offset = ~((-1).S << (u-1.U))
         val pos_sum = self + pos_offset.asSInt()
         val neg_sum = self + neg_offset.asSInt()
         Mux(u === 0.U, self,
             (Mux(self >= 0.S, pos_sum, neg_sum) >> u).asSInt)
+      }*/
+
+      override def >>(u: UInt) = {
+        val shifter = Module(new ShiftWrapper(self.getWidth, u.getWidth))
+        shifter.io.x := self
+        shifter.io.y := u
+        shifter.io.out
       }
 
-      def withWidthOf(t: SInt) = self(t.getWidth-1, 0).asSInt()
+      override def withWidthOf(t: SInt) = self(t.getWidth-1, 0).asSInt()
 
-      override def clippedToWidthOf(t: SInt): SInt = {
-        // val maxsat = Cat(0.U(1.W), Seq.fill(t.getWidth-1)(1.U(1.W)):_*).asSInt()
-        // val minsat = Cat(1.U(1.W), Seq.fill(t.getWidth-1)(0.U(1.W)):_*).asSInt()
+      /*override def clippedToWidthOf(t: SInt): SInt = {
         val maxsat = ((1 << (t.getWidth-1))-1).S
         val minsat = (-(1 << (t.getWidth-1))).S
         MuxCase(self, Seq((self > maxsat) -> maxsat, (self < minsat) -> minsat))(t.getWidth-1, 0).asSInt()
+      }*/
+
+      override def clippedToWidthOf(t: SInt): SInt = {
+        val clipper = Module(new ClippedWrapper(self.getWidth, t.getWidth))
+        clipper.io.x := self
+        clipper.io.out
       }
 
       override def relu: SInt = Mux(self >= 0.S, self, 0.S)
       override def relu6: SInt = MuxCase(self, Seq((self < 0.S) -> 0.S, (self > 6.S) -> 6.S))
     }
   }
+}
+
+class MultiplyWrapper(w1: Int, w2: Int) extends Module {
+  val io = IO(new Bundle {
+    val x = Input(SInt(w1.W))
+    val y = Input(SInt(w2.W))
+    val out = Output(SInt((w1 + w2).W))
+  })
+
+  io.out := io.x * io.y
+}
+
+class AddWrapper(w1: Int, w2: Int) extends Module {
+  val io = IO(new Bundle {
+    val x = Input(SInt(w1.W))
+    val y = Input(SInt(w2.W))
+    val out = Output(SInt((w1 max w2).W))
+  })
+
+  io.out := io.x + io.y
+}
+
+class ShiftWrapper(w1: Int, w2: Int) extends Module {
+  val io = IO(new Bundle {
+    val x = Input(SInt(w1.W))
+    val y = Input(UInt(w2.W))
+    val out = Output(SInt(w1.W))
+  })
+
+  val u = io.y
+  val self = io.x
+
+  val pos_offset = (1.U << (u-1.U)).asUInt()
+  val neg_offset = ~((-1).S << (u-1.U))
+  val pos_sum = self + pos_offset.asSInt()
+  val neg_sum = self + neg_offset.asSInt()
+  io.out := Mux(u === 0.U, self,
+    (Mux(self >= 0.S, pos_sum, neg_sum) >> u).asSInt)
+}
+
+class ClippedWrapper(w1: Int, w2: Int) extends Module {
+  val io = IO(new Bundle {
+    val x = Input(SInt(w1.W))
+    val out = Output(SInt(w2.W))
+  })
+
+  val self = io.x
+
+  val maxsat = ((1 << (w2-1))-1).S
+  val minsat = (-(1 << (w2-1))).S
+  io.out := MuxCase(self, Seq((self > maxsat) -> maxsat, (self < minsat) -> minsat))(w2-1, 0).asSInt()
 }
