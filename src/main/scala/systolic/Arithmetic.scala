@@ -17,7 +17,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def withWidthOf(t: T): T
   def clippedToWidthOf(t: T): T
   def relu: T
-  def relu6: T
+  def relu6: T // TODO this should take in a shift variable
 }
 
 object Arithmetic {
@@ -45,52 +45,52 @@ object Arithmetic {
 
   implicit object SIntArithmetic extends Arithmetic[SInt] {
     implicit def cast(self: SInt) = new ArithmeticOps(self) {
-      // def +(t: SInt) = self + t
-      // def *(t: SInt) = self * t
+      override def +(t: SInt) = self + t
+      override def *(t: SInt) = self * t
 
-      override def +(t: SInt) = {
+      /*override def +(t: SInt) = {
         val adder = Module(new AddWrapper(self.getWidth, t.getWidth))
         adder.io.x := self
         adder.io.y := t
         adder.io.out
-      }
+      }*/
 
-      override def *(t: SInt) = {
+      /*override def *(t: SInt) = {
         val mult = Module(new MultiplyWrapper(self.getWidth, t.getWidth))
         mult.io.x := self
         mult.io.y := t
         mult.io.out
-      }
+      }*/
 
-      /*def >>(u: UInt) = {
+      override def >>(u: UInt) = {
         val pos_offset = (1.U << (u-1.U)).asUInt()
         val neg_offset = ~((-1).S << (u-1.U))
         val pos_sum = self + pos_offset.asSInt()
         val neg_sum = self + neg_offset.asSInt()
         Mux(u === 0.U, self,
             (Mux(self >= 0.S, pos_sum, neg_sum) >> u).asSInt)
-      }*/
+      }
 
-      override def >>(u: UInt) = {
+      /*override def >>(u: UInt) = {
         val shifter = Module(new ShiftWrapper(self.getWidth, u.getWidth))
         shifter.io.x := self
         shifter.io.y := u
         shifter.io.out
-      }
+      }*/
 
       override def withWidthOf(t: SInt) = self(t.getWidth-1, 0).asSInt()
 
-      /*override def clippedToWidthOf(t: SInt): SInt = {
+      override def clippedToWidthOf(t: SInt): SInt = {
         val maxsat = ((1 << (t.getWidth-1))-1).S
         val minsat = (-(1 << (t.getWidth-1))).S
         MuxCase(self, Seq((self > maxsat) -> maxsat, (self < minsat) -> minsat))(t.getWidth-1, 0).asSInt()
-      }*/
+      }
 
-      override def clippedToWidthOf(t: SInt): SInt = {
+      /*override def clippedToWidthOf(t: SInt): SInt = {
         val clipper = Module(new ClippedWrapper(self.getWidth, t.getWidth))
         clipper.io.x := self
         clipper.io.out
-      }
+      }*/
 
       override def relu: SInt = Mux(self >= 0.S, self, 0.S)
       override def relu6: SInt = MuxCase(self, Seq((self < 0.S) -> 0.S, (self > 6.S) -> 6.S))
