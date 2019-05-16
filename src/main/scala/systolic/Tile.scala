@@ -26,8 +26,8 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
     val out_b    = Output(Vec(columns,outputType))
     val out_s    = Output(Vec(columns, UInt(2.W)))
 
-    val in_shift = Input(Vec(columns, UInt(log2Ceil(accType.getWidth - inputType.getWidth + 1).W)))
-    val out_shift = Output(Vec(columns, UInt(log2Ceil(accType.getWidth - inputType.getWidth + 1).W)))
+    val in_shift = Input(Vec(columns, UInt(log2Ceil(accType.getWidth).W)))
+    val out_shift = Output(Vec(columns, UInt(log2Ceil(accType.getWidth).W)))
 
     val in_garbage = Input(Vec(columns, Bool()))
     val out_garbage = Output(Vec(columns, Bool()))

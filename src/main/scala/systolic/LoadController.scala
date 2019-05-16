@@ -32,10 +32,10 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
 
   val stride = RegInit((sp_width / 8).U(xLen.W))
   val block_rows = meshRows * tileRows
-  val sp_row_offset = RegInit(0.U(log2Ceil(block_rows).W))
-  val vaddr_offset = RegInit(0.U(xLen.W))
+  // val sp_row_offset = RegInit(0.U(log2Ceil(block_rows).W))
+  // val vaddr_offset = RegInit(0.U(xLen.W))
 
-  val done_loading = sp_row_offset === 0.U
+  // val done_loading = sp_row_offset === 0.U
 
   val cmd = Queue(io.cmd, ld_str_queue_length)
   val vaddr = cmd.bits.cmd.rs1
@@ -44,10 +44,10 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
   val config_stride = cmd.bits.cmd.rs2
 
   // TODO find more elegant way to load into accumulator
-  val acc_load_beats = accType.getWidth / inputType.getWidth
+  /*val acc_load_beats = accType.getWidth / inputType.getWidth
   val acc_load_beat_stride = sp_width / 8
   val acc_load_cntr = RegInit(0.U((log2Ceil(acc_load_beats) max 1).W))
-  val done_loading_acc = WireInit(false.B)
+  val done_loading_acc = WireInit(false.B)*/
 
   io.busy := cmd.valid
 
@@ -69,11 +69,12 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
     (pushStore && io.pushStore.ready && !pushEx) || (pushEx && pushStore && io.pushEx.ready && io.pushStore.ready)
 
   io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && pull_deps_ready) || control_state === waiting_for_dma_ready
-  io.dma.req.bits.vaddr := vaddr + vaddr_offset
+  io.dma.req.bits.vaddr := vaddr // + vaddr_offset
   io.dma.req.bits.spbank := spaddr.bank
-  io.dma.req.bits.spaddr := spaddr.row + sp_row_offset
-  io.dma.req.bits.accaddr := accaddr.row + sp_row_offset
+  io.dma.req.bits.spaddr := spaddr.row // + sp_row_offset
+  io.dma.req.bits.accaddr := accaddr.row // + sp_row_offset
   io.dma.req.bits.is_acc := accaddr.is_acc_addr
+  io.dma.req.bits.stride := stride
   io.dma.req.bits.write := false.B
   io.dma.resp.ready := true.B
 
@@ -104,13 +105,13 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
           io.pullStore.ready := pullStore
           io.pullEx.ready := pullEx
 
-          when (accaddr.is_acc_addr && (acc_load_beats != 1).B) {
+          /*when (accaddr.is_acc_addr && (acc_load_beats != 1).B) {
             acc_load_cntr := wrappingAdd(acc_load_cntr, 1.U, acc_load_beats)
-            vaddr_offset := vaddr_offset + acc_load_beat_stride.U
+            // vaddr_offset := vaddr_offset + acc_load_beat_stride.U
           }.otherwise {
-            sp_row_offset := wrappingAdd(sp_row_offset, 1.U, block_rows)
-            vaddr_offset := vaddr_offset + stride
-          }
+            // sp_row_offset := wrappingAdd(sp_row_offset, 1.U, block_rows)
+            // vaddr_offset := vaddr_offset + stride
+          }*/
 
           control_state := waiting_for_dma_resp
         }
@@ -119,21 +120,21 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
 
     is (waiting_for_dma_resp) {
       when (io.dma.resp.valid) {
-        when (done_loading && (!accaddr.is_acc_addr || acc_load_cntr === 0.U)) {
+        //when (done_loading && (!accaddr.is_acc_addr || acc_load_cntr === 0.U)) {
           cmd.ready := true.B
 
           io.pushStore.valid := pushStore
           io.pushEx.valid := pushEx
 
-          vaddr_offset := 0.U
-          acc_load_cntr := 0.U
+          // vaddr_offset := 0.U
+          //acc_load_cntr := 0.U
 
           control_state := waiting_for_command
-        }.otherwise {
+        /*}.otherwise {
           io.dma.req.valid := true.B
           wait_for_dma_req := true.B
           control_state := waiting_for_dma_ready
-        }
+        }*/
       }
     }
 
@@ -144,17 +145,17 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
 
   when (wait_for_dma_req) {
     when (io.dma.req.fire()) {
-      when (accaddr.is_acc_addr) {
+      /*when (accaddr.is_acc_addr) {
         acc_load_cntr := wrappingAdd(acc_load_cntr, 1.U, acc_load_beats)
         vaddr_offset := vaddr_offset + acc_load_beat_stride.U
         done_loading_acc := acc_load_cntr === (acc_load_beats-1).U
-      }
+      }*/
 
-      when (!accaddr.is_acc_addr || done_loading_acc) {
+      /*when (!accaddr.is_acc_addr || done_loading_acc) {
         sp_row_offset := wrappingAdd(sp_row_offset, 1.U, block_rows)
         vaddr_offset := Mux(!accaddr.is_acc_addr, vaddr_offset + stride,
           vaddr_offset + (stride - (acc_load_beat_stride * (acc_load_beats-1)).U))
-      }
+      }*/
 
       control_state := waiting_for_dma_resp
     }

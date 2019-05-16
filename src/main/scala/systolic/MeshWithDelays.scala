@@ -34,7 +34,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
 
     val s = Input(UInt(1.W))
     val m = Input(UInt(1.W))
-    val shift = Input(UInt(log2Ceil(accType.getWidth - inputType.getWidth + 1).W))
+    val shift = Input(UInt(log2Ceil(accType.getWidth).W))
 
     val tag_in = Flipped(Decoupled(tagType))
     val tag_out = Output(tagType)

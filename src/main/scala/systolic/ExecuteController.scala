@@ -68,7 +68,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     in_s_flush := 0.U
   }
 
-  val in_shift = Reg(UInt(log2Ceil(accType.getWidth - inputType.getWidth + 1).W))
+  val in_shift = Reg(UInt(log2Ceil(accType.getWidth).W))
   val activation = Reg(UInt(2.W))
 
   // SRAM addresses of matmul operands

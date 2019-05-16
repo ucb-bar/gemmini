@@ -31,10 +31,10 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, a
 
   val stride = RegInit((sp_width / 8).U(xLen.W))
   val block_rows = meshRows * tileRows
-  val sp_row_offset = RegInit(0.U(log2Ceil(block_rows).W)) // Used for anything in the scratchpad, INCLUDING the accumulator
-  val vaddr_offset = RegInit(0.U(xLen.W))
+  // val sp_row_offset = RegInit(0.U(log2Ceil(block_rows).W)) // Used for anything in the scratchpad, INCLUDING the accumulator
+  // val vaddr_offset = RegInit(0.U(xLen.W))
 
-  val done_storing = sp_row_offset === 0.U
+  // val done_storing = sp_row_offset === 0.U
 
   val cmd = Queue(io.cmd, ld_str_queue_length)
   val vaddr = cmd.bits.cmd.rs1
@@ -62,11 +62,12 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, a
     (pushLoad && io.pushLoad.ready && !pushEx) || (pushEx && pushLoad && io.pushEx.ready && io.pushLoad.ready)
 
   io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoStore && pull_deps_ready) || control_state === waiting_for_dma_ready
-  io.dma.req.bits.vaddr := vaddr + vaddr_offset
+  io.dma.req.bits.vaddr := vaddr // + vaddr_offset
   io.dma.req.bits.spbank := spaddr.bank
-  io.dma.req.bits.spaddr := spaddr.row + sp_row_offset
-  io.dma.req.bits.accaddr := accaddr.row + sp_row_offset
+  io.dma.req.bits.spaddr := spaddr.row // + sp_row_offset
+  io.dma.req.bits.accaddr := accaddr.row // + sp_row_offset
   io.dma.req.bits.is_acc := accaddr.is_acc_addr
+  io.dma.req.bits.stride := stride
   io.dma.req.bits.write := true.B
   io.dma.resp.ready := true.B
 
@@ -97,8 +98,10 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, a
           io.pullEx.ready := pullEx
           io.pullLoad.ready := pullLoad
 
-          sp_row_offset := wrappingAdd(sp_row_offset, 1.U, block_rows)
-          vaddr_offset := wrappingAdd(vaddr_offset, stride, stride * block_rows.U)
+          // sp_row_offset := wrappingAdd(sp_row_offset, 1.U, block_rows)
+          // vaddr_offset := wrappingAdd(vaddr_offset, stride, stride * block_rows.U)
+          // sp_row_offset := 0.U
+          // vaddr_offset := 0.U
 
           control_state := waiting_for_dma_resp
         }
@@ -107,7 +110,7 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, a
 
     is (waiting_for_dma_resp) {
       when (io.dma.resp.valid) {
-        when (done_storing) {
+        /*when (done_storing) {
           cmd.ready := true.B
 
           io.pushEx.valid := pushEx
@@ -118,7 +121,13 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, a
           io.dma.req.valid := true.B
           wait_for_dma_req := true.B
           control_state := waiting_for_dma_ready
-        }
+        }*/
+        cmd.ready := true.B
+
+        io.pushEx.valid := pushEx
+        io.pushLoad.valid := pushLoad
+
+        control_state := waiting_for_command
       }
     }
 
@@ -129,8 +138,10 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, a
 
   when (wait_for_dma_req) {
     when (io.dma.req.fire()) {
-      sp_row_offset := wrappingAdd(sp_row_offset, 1.U, block_rows)
-      vaddr_offset := wrappingAdd(vaddr_offset, stride, stride * block_rows.U)
+      // sp_row_offset := wrappingAdd(sp_row_offset, 1.U, block_rows)
+      // vaddr_offset := wrappingAdd(vaddr_offset, stride, stride * block_rows.U)
+      // sp_row_offset := 0.U
+      // vaddr_offset := 0.U
 
       control_state := waiting_for_dma_resp
     }

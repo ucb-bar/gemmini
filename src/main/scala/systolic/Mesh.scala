@@ -28,7 +28,7 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
     val out_c  = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
     val out_s  = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
 
-    val in_shift = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Ceil(accType.getWidth - outputType.getWidth + 1).W))))
+    val in_shift = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Ceil(accType.getWidth).W))))
 
     val in_garbage = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
     val out_garbage = Output(Vec(meshColumns, Vec(tileColumns, Bool())))

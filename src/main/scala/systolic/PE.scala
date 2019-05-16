@@ -23,8 +23,8 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
     val out_c = Output(outputType)
     val out_s = Output(UInt(2.W))
 
-    val in_shift = Input(UInt(log2Ceil(accType.getWidth - inputType.getWidth + 1).W))
-    val out_shift = Output(UInt(log2Ceil(accType.getWidth - inputType.getWidth + 1).W))
+    val in_shift = Input(UInt(log2Ceil(accType.getWidth).W)) // TODO does this have to be able to shift everything?
+    val out_shift = Output(UInt(log2Ceil(accType.getWidth).W))
 
     val in_garbage = Input(Bool())
     val out_garbage = Output(Bool())
