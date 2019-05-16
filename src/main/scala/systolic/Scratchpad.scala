@@ -218,13 +218,18 @@ class Scratchpad[T <: Data: Arithmetic](
     val lastFlit = bytesAvail <= dataBytes.U
     val bytesToSend = Mux(lastFlit, bytesAvail, dataBytes.U)
 
-    val stride = RegEnable(io.dma.req.bits.stride, io.dma.req.fire()) // RegInit((sp_width / 8).U(xLen.W))
+    val stride = req.stride // RegEnable(io.dma.req.bits.stride, io.dma.req.fire()) // RegInit((sp_width / 8).U(xLen.W))
+
+    val acc_beats = accType.getWidth / inputType.getWidth
+    val acc_stride = inputType.getWidth * meshColumns * tileColumns
+    val read_req_acc_beat_cntr = RegInit(0.U((log2Ceil(acc_beats) max 1).W))
+    val acc_beat_cntr = RegInit(0.U((log2Ceil(acc_beats) max 1).W))
 
     val row_counter = RegInit(0.U(log2Ceil(block_rows).W)) // Used to address into scratchpads
     val last_row = row_counter === 0.U // (block_rows-1).U
 
     val reader_req_row_counter = RegInit(0.U(log2Ceil(block_rows).W))
-    val reader_req_last_row = reader_req_row_counter === 0.U
+    val reader_req_last_row = reader_req_row_counter === (block_rows-1).U
 
     val readReq = Wire(new StreamReadRequest)
     readReq.partial := !lastPage
@@ -307,7 +312,7 @@ class Scratchpad[T <: Data: Arithmetic](
       val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
 
       val accumulator = Module(new AccumulatorMem(acc_rows, acc_row_t, spad_row_t))
-      val accbankren = dmaren && io.dma.req.bits.is_acc
+      val accbankren = dmaren && req.is_acc
 
       accumulator.io.read.en := accbankren || io.acc.read.en
       accumulator.io.read.addr := Mux(accbankren, req.accaddr + row_counter, io.acc.read.addr)
@@ -371,23 +376,6 @@ class Scratchpad[T <: Data: Arithmetic](
       // req.vaddr := nextVaddr
       bytesLeft := bytesLeft - bytesAvail
       state := s_readresp
-
-      reader_req_row_counter := reader_req_row_counter + 1.U
-
-      /*val across_pages = bytesLeft =/= bytesAvail
-      when (across_pages) {
-        state := s_readresp
-      }.otherwise {
-        val new_page = next_row_vaddr(coreMaxAddrBits-1, pgIdxBits) =/= req.vaddr(coreMaxAddrBits-1, pgIdxBits)
-        req.vaddr := next_row_vaddr
-        next_row_vaddr := next_row_vaddr + stride
-
-        when (reader_req_last_row) {
-          state := s_readresp
-        }.elsewhen(new_page) {
-          state := s_translate_req
-        }
-      }*/
     }
 
     when (reader.module.io.resp.fire()) {
@@ -398,19 +386,35 @@ class Scratchpad[T <: Data: Arithmetic](
 
       when (across_pages) {
         req.vaddr := nextVaddr
-        reader_req_row_counter := reader_req_row_counter - 1.U // TODO we shouldn't add in the first place, rather than cleaning it up by subtracting later
         state := s_translate_req
       }.otherwise {
-        val new_page = next_row_vaddr(coreMaxAddrBits-1, pgIdxBits) =/= req.vaddr(coreMaxAddrBits-1, pgIdxBits)
-        req.vaddr := next_row_vaddr
-        next_row_vaddr := next_row_vaddr + stride
+        read_req_acc_beat_cntr := wrappingAdd(read_req_acc_beat_cntr, 1.U, acc_beats)
 
-        when (reader_req_last_row) {
+        val acc_beats_done = read_req_acc_beat_cntr === (acc_beats-1).U
+
+        // Pick the next virtual address
+        when (!req.is_acc || acc_beats_done) {
+          req.vaddr := next_row_vaddr
+          next_row_vaddr := next_row_vaddr + stride
+        }.otherwise { // when this is an accumulator load operation
+          req.vaddr := req.vaddr + acc_stride.U
+        }
+
+        // Increment the row_counter
+        when (!req.is_acc || acc_beats_done) {
+          reader_req_row_counter := reader_req_row_counter + 1.U
+        }
+
+        // Choose next state
+        when (reader_req_last_row && (!req.is_acc || acc_beats_done)) {
           state := s_readwait
         }.otherwise {
           // Start reading new row
-          bufAddr := 0.U
+          // bufAddr := 0.U
           bytesLeft := rowBytes.U
+
+          val new_vaddr = Mux(!req.is_acc || acc_beats_done, next_row_vaddr, req.vaddr + acc_stride.U)
+          val new_page = new_vaddr(coreMaxAddrBits-1, pgIdxBits) =/= req.vaddr(coreMaxAddrBits-1, pgIdxBits)
 
           state := Mux(new_page, s_translate_req, s_readreq)
         }
@@ -420,11 +424,7 @@ class Scratchpad[T <: Data: Arithmetic](
     when (reader.module.io.out.fire()) {
       rowBuffer(bufIdx) := reader.module.io.out.bits.data
       bufAddr := bufAddr + dataBytes.U
-      // when (reader.module.io.out.bits.last) { bufDone := true.B }
-
-      when (reader.module.io.out.bits.last) {
-        bufDone := true.B
-      }
+      when (reader.module.io.out.bits.last) { bufDone := true.B }
     }
 
     when (writer.module.io.in.fire()) {
@@ -478,18 +478,26 @@ class Scratchpad[T <: Data: Arithmetic](
     when (state === s_readwait && bufDone) {
       dmawen := true.B
       error := false.B
+      bufAddr := 0.U
+      bufDone := false.B
 
-      row_counter := row_counter + 1.U
-      when (row_counter === (block_rows-1).U) { // TODO unify this condition with last_row
-        state := s_respond
-      }.otherwise {
-        bufDone := false.B
+      acc_beat_cntr := wrappingAdd(acc_beat_cntr, 1.U, acc_beats)
+      val acc_beats_done = acc_beat_cntr === (acc_beats-1).U
+
+      when (!req.is_acc || acc_beats_done) {
+        row_counter := row_counter + 1.U
+
+        when (row_counter === (block_rows-1).U) {
+          state := s_respond
+        }
       }
     }
 
     when (io.dma.resp.fire()) {
       row_counter := 0.U
       reader_req_row_counter := 0.U
+      read_req_acc_beat_cntr := 0.U
+      acc_beat_cntr := 0.U
       state := s_idle
     }
   }
