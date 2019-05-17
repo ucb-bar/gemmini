@@ -282,7 +282,7 @@ class Scratchpad[T <: Data: Arithmetic](
       (data(dataBits-1, 0), bytemask(dataBytes-1, 0))
     }
 
-    reader.module.io.out.ready := !bufDone
+    reader.module.io.out.ready := !bufDone // TODO can we make this always true?
     writer.module.io.in.valid := state === s_writedata
     writer.module.io.in.bits.data := rowData
     writer.module.io.in.bits.keep := rowKeep
@@ -294,7 +294,7 @@ class Scratchpad[T <: Data: Arithmetic](
       val bank = banks(i)
       val read = io.read(i)
       val write = io.write(i)
-      val bankren = dmaren && io.dma.req.bits.spbank === i.U && !io.dma.req.bits.is_acc
+      val bankren = dmaren && req.spbank === i.U && !req.is_acc
       val bankwen = dmawen && req.spbank === i.U && !req.is_acc
 
       bank.io.read.en := bankren || read.en
@@ -322,6 +322,7 @@ class Scratchpad[T <: Data: Arithmetic](
       when(req.is_acc) { dmardata := accumulator.io.read.data.asUInt() }
 
       // TODO find a more elegant way to move data into accumulator
+      // TODO Mvin one accumulator row at a time, instead of sending four separate requests
       val accRowBufferLen = meshColumns * tileColumns * accType.getWidth / w - 1
       val accRowBuffer = Reg(Vec(accRowBufferLen, UInt(w.W)))
       val accRowBufferBeatCntr = RegInit(0.U((log2Ceil(accRowBufferLen+1) max 1).W))
