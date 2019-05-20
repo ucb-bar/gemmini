@@ -64,6 +64,7 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, a
   io.dma.req.bits.accaddr := accaddr.row
   io.dma.req.bits.is_acc := accaddr.is_acc_addr
   io.dma.req.bits.stride := stride
+  io.dma.req.bits.len := 1.U // TODO let stores also give a len parameter
   io.dma.req.bits.write := true.B
   io.dma.resp.ready := true.B
 

@@ -12,7 +12,6 @@ class StreamReadRequest(val nXacts: Int) extends Bundle {
   val address = UInt(48.W)
   val length = UInt(15.W)
   val partial = Bool()
-  val id = UInt((log2Ceil(nXacts) max 1).W)
 }
 
 class StreamChannelWithID(val nXacts: Int, val dataBits: Int) extends Bundle {
@@ -96,8 +95,6 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
     val xactLast = Reg(UInt(nXacts.W))
     val xactLeftKeep = Reg(Vec(nXacts, UInt(beatBytes.W)))
     val xactRightKeep = Reg(Vec(nXacts, UInt(beatBytes.W)))
-
-    // val reqId = RegEnable(io.req.bits.id, io.req.fire())
 
     val reqSize = MuxCase(byteAddrBits.U,
       (log2Ceil(maxBytes) until byteAddrBits by -1).map(lgSize =>

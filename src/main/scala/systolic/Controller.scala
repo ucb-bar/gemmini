@@ -62,10 +62,12 @@ class AccAddr(xLen: Int, acc_rows: Int, tagWidth: Int) extends Bundle {
 class SystolicArray[T <: Data: Arithmetic](inputType: T, outputType: T, accType: T, opcodes: OpcodeSet)
                                           (implicit p: Parameters) extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
-    nPTWPorts = 1) {
+    nPTWPorts = 1) with HasCoreParameters  {
   val config = p(SystolicArrayKey)
   val spad = LazyModule(new Scratchpad(
-    config.sp_banks, config.sp_bank_entries, config.sp_width, inputType, accType, config))
+    config.sp_banks, config.sp_bank_entries, config.sp_width,
+    new SPAddr(xLen, config.sp_banks, config.sp_bank_entries), // TODO unify this with the other sp_addr
+    inputType, accType, config))
   override lazy val module = new SystolicArrayModule(this, inputType, outputType, accType)
   override val tlNode = spad.node
 }

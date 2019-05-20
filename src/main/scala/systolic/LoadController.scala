@@ -37,6 +37,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
   val vaddr = cmd.bits.cmd.rs1
   val accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr)
   val spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr)
+  val len = cmd.bits.cmd.rs2(xLen-1, 32) // TODO magic numbers
   val config_stride = cmd.bits.cmd.rs2
 
   io.busy := cmd.valid
@@ -65,6 +66,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
   io.dma.req.bits.accaddr := accaddr.row
   io.dma.req.bits.is_acc := accaddr.is_acc_addr
   io.dma.req.bits.stride := stride
+  io.dma.req.bits.len := len
   io.dma.req.bits.write := false.B
   io.dma.resp.ready := true.B
 
