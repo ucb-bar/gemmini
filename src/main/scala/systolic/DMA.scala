@@ -8,10 +8,18 @@ import freechips.rocketchip.util.DecoupledHelper
 import icenet.{Aligner, ReservationBuffer, ReservationBufferAlloc, ReservationBufferData}
 import testchipip.{StreamChannel, TLHelper}
 
-class StreamReadRequest extends Bundle {
+class StreamReadRequest(val nXacts: Int) extends Bundle {
   val address = UInt(48.W)
   val length = UInt(15.W)
   val partial = Bool()
+  val id = UInt((log2Ceil(nXacts) max 1).W)
+}
+
+class StreamChannelWithID(val nXacts: Int, val dataBits: Int) extends Bundle {
+  val data = UInt(dataBits.W)
+  val keep = UInt((dataBits/8).W)
+  val last = Bool()
+  val id = UInt((log2Ceil(nXacts) max 1).W)
 }
 
 class StreamReader(nXacts: Int, outFlits: Int, maxBytes: Int)
@@ -24,21 +32,30 @@ class StreamReader(nXacts: Int, outFlits: Int, maxBytes: Int)
     val dataBits = core.module.dataBits
 
     val io = IO(new Bundle {
-      val req = Flipped(Decoupled(new StreamReadRequest))
+      val req = Flipped(Decoupled(new StreamReadRequest(nXacts)))
       val resp = Decoupled(Bool())
-      val out = Decoupled(new StreamChannel(dataBits))
+      val out = Decoupled(new StreamChannelWithID(nXacts, dataBits))
     })
 
     core.module.io.req <> io.req
     io.resp <> core.module.io.resp
 
-    val buffer = Module(new ReservationBuffer(nXacts, outFlits, dataBits))
-    buffer.io.alloc <> core.module.io.alloc
-    buffer.io.in <> core.module.io.out
+    // val buffer = Module(new ReservationBuffer(nXacts, outFlits, dataBits))
+    // buffer.io.alloc <> core.module.io.alloc
+    // buffer.io.in <> core.module.io.out
 
-    val aligner = Module(new Aligner(dataBits))
-    aligner.io.in <> buffer.io.out
-    io.out <> aligner.io.out
+    // val aligner = Module(new Aligner(dataBits))
+    // aligner.io.in <> buffer.io.out
+    // io.out <> aligner.io.out
+
+    core.module.io.alloc.ready := io.out.ready
+
+    io.out.valid := core.module.io.out.valid
+    core.module.io.out.ready := io.out.ready
+    io.out.bits.data := core.module.io.out.bits.data.data
+    io.out.bits.last := core.module.io.out.bits.data.last
+    io.out.bits.keep := core.module.io.out.bits.data.keep
+    io.out.bits.id := core.module.io.out.bits.id
   }
 }
 
@@ -56,7 +73,7 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
     val lenBits = 15
 
     val io = IO(new Bundle {
-      val req = Flipped(Decoupled(new StreamReadRequest))
+      val req = Flipped(Decoupled(new StreamReadRequest(nXacts)))
       val resp = Decoupled(Bool())
       val alloc = Decoupled(new ReservationBufferAlloc(nXacts, outFlits))
       val out = Decoupled(new ReservationBufferData(nXacts, dataBits))
@@ -72,12 +89,15 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
     // 0 if last packet in sequence, 1 otherwise
     val sendpart = Reg(Bool())
 
+    // TODO is xact needed for anything anymore?
     val xactBusy = RegInit(0.U(nXacts.W))
     val xactOnehot = PriorityEncoderOH(~xactBusy).asUInt()
     val xactId = OHToUInt(xactOnehot)
     val xactLast = Reg(UInt(nXacts.W))
     val xactLeftKeep = Reg(Vec(nXacts, UInt(beatBytes.W)))
     val xactRightKeep = Reg(Vec(nXacts, UInt(beatBytes.W)))
+
+    // val reqId = RegEnable(io.req.bits.id, io.req.fire())
 
     val reqSize = MuxCase(byteAddrBits.U,
       (log2Ceil(maxBytes) until byteAddrBits by -1).map(lgSize =>
@@ -95,9 +115,14 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
     val rkeep = fullKeep >> roffset
     val first = Reg(Bool())
 
-    xactBusy := (xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)) &
+    /*xactBusy := (xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)) &
       (~Mux(tl.d.fire() && edge.last(tl.d),
-        UIntToOH(tl.d.bits.source), 0.U)).asUInt()
+        UIntToOH(tl.d.bits.source), 0.U)).asUInt()*/
+
+    xactBusy := xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)
+    when (tl.d.fire() && edge.last(tl.d) && xactBusy.andR()) {
+      xactBusy := 0.U
+    }
 
     val helper = DecoupledHelper(tl.a.ready, io.alloc.ready)
 
