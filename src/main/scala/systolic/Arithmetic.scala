@@ -40,7 +40,9 @@ object Arithmetic {
 
       override def relu: UInt = self
       override def relu6(shift: UInt): UInt = {
-        val max = (6.U << shift).asUInt()
+        val max6 = (6.U << shift).asUInt()
+        val maxwidth = ((1 << (self.getWidth-1))-1).U
+        val max = Mux(max6 > maxwidth, maxwidth, max6)(self.getWidth-1, 0).asUInt()
         Mux(self < max, self, max)
       }
     }
@@ -97,7 +99,9 @@ object Arithmetic {
 
       override def relu: SInt = Mux(self >= 0.S, self, 0.S)
       override def relu6(shift: UInt): SInt = {
-        val max = (6.S << shift).asSInt()
+        val max6 = (6.S << shift).asSInt()
+        val maxwidth = ((1 << (self.getWidth-1))-1).S
+        val max = Mux(max6 > maxwidth, maxwidth, max6)(self.getWidth-1, 0).asSInt()
         MuxCase(self, Seq((self < 0.S) -> 0.S, (self > max) -> max))
       }
     }
