@@ -140,6 +140,7 @@ class ScratchpadBank(n: Int, w: Int) extends Module {
 
 // TODO find a more elegant way to move data into accumulator
 // TODO replace the SRAM types with Vec[Vec[inputType]], rather than just simple UInts
+// TODO support unaligned accesses, for both multiple and single matrix loads
 class Scratchpad[T <: Data: Arithmetic](
     nBanks: Int, nRows: Int, w: Int, sp_addr_t: SPAddr,
     inputType: T, accType: T, config: SystolicArrayConfig,
@@ -194,13 +195,19 @@ class Scratchpad[T <: Data: Arithmetic](
     val rowAddrBits = log2Ceil(rowBytes)
     val byteAddrBits = log2Ceil(dataBytes)
 
+    val acc_w = (accType.getWidth / inputType.getWidth) * w
+    val acc_rowBytes = acc_w / 8
+    val acc_nBeats = (acc_w - 1) / dataBits + 1
+    val acc_rowAddrBits = log2Ceil(acc_rowBytes)
+
     val req = Reg(new ScratchpadMemRequest(nBanks, nRows, acc_rows))
     val reqVpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
     val reqOffset = req.vaddr(pgIdxBits-1, 0)
     val reqPpn = Reg(UInt(ppnBits.W))
     val reqPaddr = Cat(reqPpn, reqOffset)
-    val bytesLeft = Reg(UInt(log2Ceil(rowBytes+1).W))
-    val req_rowBytes = rowBytes.U // * req.len
+    val bytesLeft_len = if (reader.module.io.req.bits.length.getWidth % 2 == 0) reader.module.io.req.bits.length.getWidth+1 else reader.module.io.req.bits.length.getWidth // TODO inelegant
+    val bytesLeft = Reg(UInt(bytesLeft_len.W))
+    val req_rowBytes = Mux(!req.write && req.is_acc, acc_rowBytes.U, rowBytes.U) * req.len
     val next_row_vaddr = Reg(UInt(xLen.W)) // TODO Is the address space actually 64 bits?
 
     io.tlb.req.valid := state === s_translate_req
@@ -226,7 +233,7 @@ class Scratchpad[T <: Data: Arithmetic](
     val row_counter = RegInit(0.U(log2Ceil(block_rows).W)) // Used to address into scratchpads
     val block_counter = RegInit(0.U(log2Ceil(maxBytes / rowBytes).W))
     val last_row = row_counter === 0.U // (block_rows-1).U
-    val last_block = block_counter === req.len
+    val last_block = block_counter === (req.len - 1.U)
 
     val reader_req_row_counter = RegInit(0.U(log2Ceil(block_rows).W)) // TODO unify this with the other row_counter
     val reader_req_last_row = reader_req_row_counter === (block_rows-1).U
@@ -252,11 +259,12 @@ class Scratchpad[T <: Data: Arithmetic](
     writer.module.io.req.bits := writeReq
     writer.module.io.resp.ready := state === s_writeresp
 
-    val rowBuffer = Reg(Vec(nBeats, UInt(dataBits.W)))
-    val bufAddr = Reg(UInt(rowAddrBits.W))
+    val rowBuffer = Reg(Vec(acc_nBeats, UInt(dataBits.W)))
+    val bufAddr = Reg(UInt(acc_rowAddrBits.W))
     val bufIdx = (bufAddr >> byteAddrBits.U).asUInt() //bufAddr(rowAddrBits-1, byteAddrBits)
     val bufDone = Reg(Bool())
-    val rowBuffer_filled = bufIdx === (nBeats-1).U
+    // val rowBuffer_filled = bufIdx === (nBeats-1).U
+    val rowBuffer_filled = bufIdx === Mux(!req.write && req.is_acc, (acc_nBeats-1).U, (nBeats-1).U)
 
     val dmardata = WireInit(0.U(w.W))
     val dmaren = WireInit(false.B)
@@ -298,6 +306,7 @@ class Scratchpad[T <: Data: Arithmetic](
     val dmawen_addr = (req_full_addr + reader_row_id + (block_counter * block_rows.U)).asTypeOf(sp_addr_t)
     val dmawen_spbank = dmawen_addr.bank
     val dmawen_sprow = dmawen_addr.row
+    val dmawen_accrow = req.accaddr + reader_row_id + (block_counter * block_rows.U)
 
     for (i <- 0 until nBanks) {
       val bank = banks(i)
@@ -324,37 +333,19 @@ class Scratchpad[T <: Data: Arithmetic](
 
       val accumulator = Module(new AccumulatorMem(acc_rows, acc_row_t, spad_row_t))
       val accbankren = dmaren && req.is_acc
+      val accbankwen = dmawen && req.is_acc
 
       accumulator.io.read.en := accbankren || io.acc.read.en
       accumulator.io.read.addr := Mux(accbankren, req.accaddr + row_counter, io.acc.read.addr)
       accumulator.io.read.shift := io.acc.read.shift
+      accumulator.io.read.relu6_shift := io.acc.read.relu6_shift
       accumulator.io.read.act := io.acc.read.act
       io.acc.read.data := accumulator.io.read.data
       when(req.is_acc) { dmardata := accumulator.io.read.data.asUInt() }
 
-      // TODO find a more elegant way to move data into accumulator
-      // TODO Mvin one accumulator row at a time, instead of sending four separate requests
-      val accRowBufferLen = meshColumns * tileColumns * accType.getWidth / w - 1
-      val accRowBuffer = Reg(Vec(accRowBufferLen, UInt(w.W)))
-      val accRowBufferBeatCntr = RegInit(0.U((log2Ceil(accRowBufferLen+1) max 1).W))
-
-      val accRowBufferWen = dmawen && req.is_acc && accRowBufferBeatCntr < accRowBufferLen.U
-      val accbankwen = dmawen && req.is_acc && !accRowBufferWen
-
-      // We need a special case here for when accRowBufferLen is 0, since the tools seem to fail with 0 length Vecs
-      val accRowInput = (if (accRowBufferLen > 0) Cat(rowBuffer.asUInt(), accRowBuffer.asUInt()) else rowBuffer.asUInt()).asTypeOf(acc_row_t)
-
-      when (accRowBufferWen) {
-        if (accRowBufferLen > 0)
-          accRowBuffer(accRowBufferBeatCntr) := rowBuffer.asUInt()
-        accRowBufferBeatCntr := accRowBufferBeatCntr + 1.U
-      }.elsewhen(accbankwen) {
-        accRowBufferBeatCntr := 0.U
-      }
-
       accumulator.io.write.en := accbankwen || io.acc.write.en
-      accumulator.io.write.addr := Mux(accbankwen, req.accaddr + row_counter, io.acc.write.addr)
-      accumulator.io.write.data := Mux(accbankwen, accRowInput, io.acc.write.data)
+      accumulator.io.write.addr := Mux(accbankwen, dmawen_accrow, io.acc.write.addr)
+      accumulator.io.write.data := Mux(accbankwen, rowBuffer.asUInt(), io.acc.write.data.asUInt()).asTypeOf(acc_row_t)
       accumulator.io.write.acc := !accbankwen && io.acc.write.acc // TODO add ability to mvin to accumulating memory space from main memory
     }
 
@@ -363,7 +354,7 @@ class Scratchpad[T <: Data: Arithmetic](
       next_row_vaddr := io.dma.req.bits.vaddr + io.dma.req.bits.stride
       bufAddr := 0.U
       bufDone := false.B
-      bytesLeft := req_rowBytes
+      bytesLeft := Mux(!io.dma.req.bits.write && io.dma.req.bits.is_acc, acc_rowBytes.U, rowBytes.U) * io.dma.req.bits.len
       state := s_translate_req
     }
 
@@ -487,8 +478,11 @@ class Scratchpad[T <: Data: Arithmetic](
       bufAddr := 0.U
       bufDone := false.B
 
-      row_counter := row_counter + 1.U
       block_counter := block_counter + 1.U
+
+      when (last_block) {
+        row_counter := row_counter + 1.U
+      }
 
       when (reader_is_last) {
         block_counter := 0.U

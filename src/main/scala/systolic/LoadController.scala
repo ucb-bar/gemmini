@@ -6,7 +6,7 @@ import SystolicISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
-class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, acc_addr: AccAddr,
+class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr,
                                 inputType: T, accType: T)
                                (implicit p: Parameters) extends Module {
   import config._
@@ -32,13 +32,27 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
 
   val stride = RegInit((sp_width / 8).U(xLen.W))
   val block_rows = meshRows * tileRows
+  val sp_row_bytes = meshColumns * tileColumns * (inputType.getWidth / 8)
+  val acc_row_bytes = meshColumns * tileColumns * (accType.getWidth / 8)
+  val row_bytes = Mux(io.dma.req.bits.is_acc, acc_row_bytes.U, sp_row_bytes.U)
 
   val cmd = Queue(io.cmd, ld_str_queue_length)
-  val vaddr = cmd.bits.cmd.rs1
-  val accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr)
-  val spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr)
-  val len = cmd.bits.cmd.rs2(xLen-1, 32) // TODO magic numbers
+
   val config_stride = cmd.bits.cmd.rs2
+
+  val cmd_vaddr = cmd.bits.cmd.rs1
+  val vaddr = Reg(cmd_vaddr.cloneType)
+  val cmd_accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr_t)
+  val accaddr = Reg(cmd_accaddr.cloneType)
+  val cmd_spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr_t)
+  val spaddr = Reg(cmd_spaddr.cloneType)
+
+  val cmd_len = cmd.bits.cmd.rs2(47, 32) // TODO magic numbers
+  val len = Reg(UInt(16.W))
+  val len_done = len === 0.U
+
+  val cmd_closest_aligned = Mux(io.dma.req.bits.is_acc, closestAlignedLowerPowerOf2(cmd_len, cmd_vaddr, acc_row_bytes), closestAlignedLowerPowerOf2(cmd_len, cmd_vaddr, sp_row_bytes))
+  val closest_aligned = Mux(io.dma.req.bits.is_acc, closestAlignedLowerPowerOf2(len, vaddr, acc_row_bytes), closestAlignedLowerPowerOf2(len, vaddr, sp_row_bytes))
 
   io.busy := cmd.valid
 
@@ -60,13 +74,13 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
     (pushStore && io.pushStore.ready && !pushEx) || (pushEx && pushStore && io.pushEx.ready && io.pushStore.ready)
 
   io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && pull_deps_ready) || control_state === waiting_for_dma_ready
-  io.dma.req.bits.vaddr := vaddr
-  io.dma.req.bits.spbank := spaddr.bank
-  io.dma.req.bits.spaddr := spaddr.row
-  io.dma.req.bits.accaddr := accaddr.row
-  io.dma.req.bits.is_acc := accaddr.is_acc_addr
+  io.dma.req.bits.vaddr := Mux(control_state === waiting_for_command, cmd_vaddr, vaddr)
+  io.dma.req.bits.spbank := Mux(control_state === waiting_for_command, cmd_spaddr.bank, spaddr.bank)
+  io.dma.req.bits.spaddr := Mux(control_state === waiting_for_command, cmd_spaddr.row, spaddr.row)
+  io.dma.req.bits.accaddr := Mux(control_state === waiting_for_command, cmd_accaddr.row, accaddr.row)
+  io.dma.req.bits.is_acc := cmd_accaddr.is_acc_addr // TODO what happens if there is overflow in accaddr? Put in an assert for that
   io.dma.req.bits.stride := stride
-  io.dma.req.bits.len := len
+  io.dma.req.bits.len := Mux(control_state === waiting_for_command, cmd_closest_aligned, closest_aligned)
   io.dma.req.bits.write := false.B
   io.dma.resp.ready := true.B
 
@@ -97,6 +111,11 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
           io.pullStore.ready := pullStore
           io.pullEx.ready := pullEx
 
+          len := cmd_len - cmd_closest_aligned
+          spaddr := (cmd_spaddr.asUInt() + io.dma.req.bits.len * block_rows.U).asTypeOf(sp_addr_t)
+          accaddr := (cmd_accaddr.asUInt() + io.dma.req.bits.len * block_rows.U).asTypeOf(acc_addr_t)
+          vaddr := cmd_vaddr + io.dma.req.bits.len * row_bytes
+
           control_state := waiting_for_dma_resp
         }
       }
@@ -104,12 +123,16 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
 
     is (waiting_for_dma_resp) {
       when (io.dma.resp.valid) {
-        cmd.ready := true.B
+        when (len_done) {
+          cmd.ready := true.B
 
-        io.pushStore.valid := pushStore
-        io.pushEx.valid := pushEx
+          io.pushStore.valid := pushStore
+          io.pushEx.valid := pushEx
 
-        control_state := waiting_for_command
+          control_state := waiting_for_command
+        }.otherwise {
+          control_state := waiting_for_dma_ready
+        }
       }
     }
 
@@ -120,6 +143,11 @@ class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr:
 
   when (wait_for_dma_req) {
     when (io.dma.req.fire()) {
+      len := len - closest_aligned
+      spaddr := (spaddr.asUInt() + io.dma.req.bits.len * block_rows.U).asTypeOf(sp_addr_t)
+      accaddr := (accaddr.asUInt() + io.dma.req.bits.len * block_rows.U).asTypeOf(acc_addr_t)
+      vaddr := vaddr + io.dma.req.bits.len * row_bytes
+
       control_state := waiting_for_dma_resp
     }
   }

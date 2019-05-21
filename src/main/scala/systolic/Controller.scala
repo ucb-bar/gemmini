@@ -62,11 +62,11 @@ class AccAddr(xLen: Int, acc_rows: Int, tagWidth: Int) extends Bundle {
 class SystolicArray[T <: Data: Arithmetic](inputType: T, outputType: T, accType: T, opcodes: OpcodeSet)
                                           (implicit p: Parameters) extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
-    nPTWPorts = 1) with HasCoreParameters  {
+    nPTWPorts = 1) {
   val config = p(SystolicArrayKey)
   val spad = LazyModule(new Scratchpad(
     config.sp_banks, config.sp_bank_entries, config.sp_width,
-    new SPAddr(xLen, config.sp_banks, config.sp_bank_entries), // TODO unify this with the other sp_addr
+    new SPAddr(64 /* TODO make this xLen */, config.sp_banks, config.sp_bank_entries), // TODO unify this with the other sp_addr
     inputType, accType, config))
   override lazy val module = new SystolicArrayModule(this, inputType, outputType, accType)
   override val tlNode = spad.node
@@ -81,7 +81,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   import outer.config._
   import outer.spad
 
-  val sp_addr = new SPAddr(xLen, sp_banks, sp_bank_entries)
+  val sp_addr_t = new SPAddr(xLen, sp_banks, sp_bank_entries)
   val funct_t = new Bundle {
     val push1 = UInt(1.W)
     val pop1 = UInt(1.W)
@@ -109,9 +109,9 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val push2 = cmd.bits.inst.funct.asTypeOf(funct_t).push2
   val pop2 = cmd.bits.inst.funct.asTypeOf(funct_t).pop2
 
-  val load_controller = Module(new LoadController(outer.config, xLen, sp_addr, acc_addr, inputType, accType))
-  val store_controller = Module(new StoreController(outer.config, xLen, sp_addr, acc_addr))
-  val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config, sp_addr, acc_addr, inputType, outputType, accType))
+  val load_controller = Module(new LoadController(outer.config, xLen, sp_addr_t, acc_addr, inputType, accType))
+  val store_controller = Module(new StoreController(outer.config, xLen, sp_addr_t, acc_addr))
+  val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config, sp_addr_t, acc_addr, inputType, outputType, accType))
 
   val dma_arbiter = Module(new DMAArbiter(sp_banks, sp_bank_entries, acc_rows))
 

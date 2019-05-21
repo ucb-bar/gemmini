@@ -8,6 +8,7 @@ class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, shift_width: Int, rdataTy
   val addr = Output(UInt(log2Ceil(n).W))
   val data = Input(rdataType)
   val shift = Output(UInt(shift_width.W))
+  val relu6_shift = Output(UInt(shift_width.W))
   val act = Output(UInt(2.W))
 
   override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType).asInstanceOf[this.type]
@@ -56,7 +57,7 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]])(
     val e_clipped = (e >> io.read.shift).clippedToWidthOf(rdataType.head.head)
     val e_act = MuxCase(e_clipped, Seq(
       (io.read.act === Activation.RELU) -> e_clipped.relu,
-      (io.read.act === Activation.RELU6) -> e_clipped.relu6))
+      (io.read.act === Activation.RELU6) -> e_clipped.relu6(io.read.relu6_shift)))
 
     e_act
   })))

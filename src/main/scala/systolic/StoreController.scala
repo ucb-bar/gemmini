@@ -7,7 +7,8 @@ import Util._
 import freechips.rocketchip.config.Parameters
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
-class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, acc_addr: AccAddr)(implicit p: Parameters) extends Module {
+class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr)
+                     (implicit p: Parameters) extends Module {
   import config._
 
   val io = IO(new Bundle {
@@ -34,8 +35,8 @@ class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr: SPAddr, a
 
   val cmd = Queue(io.cmd, ld_str_queue_length)
   val vaddr = cmd.bits.cmd.rs1
-  val accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr)
-  val spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr)
+  val accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr_t)
+  val spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr_t)
   val config_stride = cmd.bits.cmd.rs2
 
   io.busy := cmd.valid

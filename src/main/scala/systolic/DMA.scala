@@ -116,6 +116,7 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
       (~Mux(tl.d.fire() && edge.last(tl.d),
         UIntToOH(tl.d.bits.source), 0.U)).asUInt()*/
 
+    // TODO this doesn't work if we want to support unaligned accesses
     xactBusy := xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)
     when (tl.d.fire() && edge.last(tl.d) && xactBusy.andR()) {
       xactBusy := 0.U
