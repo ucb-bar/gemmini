@@ -10,6 +10,7 @@ class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, shift_width: Int, rdataTy
   val shift = Output(UInt(shift_width.W))
   val relu6_shift = Output(UInt(shift_width.W))
   val act = Output(UInt(2.W))
+  val valid = Input(Bool())
 
   override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType).asInstanceOf[this.type]
 }
@@ -30,7 +31,8 @@ class AccumulatorMemIO [T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]], rdata: Ve
   override def cloneType: this.type = new AccumulatorMemIO(n, t, rdata).asInstanceOf[this.type]
 }
 
-class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]])(implicit ev: Arithmetic[T]) extends Module {
+class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], mem_pipeline: Int)
+                               (implicit ev: Arithmetic[T]) extends Module {
   import ev._
 
   // TODO unify this with TwoPortSyncMemIO
@@ -53,7 +55,10 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]])(
 
   mem.io.raddr := Mux(io.write.en && io.write.acc, io.write.addr, io.read.addr)
   mem.io.ren := io.read.en || (io.write.en && io.write.acc)
-  val activated_rdata = VecInit(mem.io.rdata.map(v => VecInit(v.map { e =>
+
+  val rdata_buf = ShiftRegister(mem.io.rdata, mem_pipeline) // TODO if mem_pipeline > 1, this is inefficient
+
+  val activated_rdata = VecInit(rdata_buf.map(v => VecInit(v.map { e =>
     val e_clipped = (e >> io.read.shift).clippedToWidthOf(rdataType.head.head)
     val e_act = MuxCase(e_clipped, Seq(
       (io.read.act === Activation.RELU) -> e_clipped.relu,
@@ -62,7 +67,9 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]])(
     e_act
   })))
   io.read.data := activated_rdata
+  io.read.valid := ShiftRegister(io.read.en, mem_pipeline+1)
 
+  // require(mem_pipeline >= 1, "accumulator memory needs at least one pipeline cycle") // TODO
   assert(!(io.read.en && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
   assert(!(io.read.en && io.write.en && io.read.addr === io.write.addr), "reading from and writing to same address is not supported") // TODO
   assert(!(io.read.en && w_buf_valid && waddr_buf === io.read.addr), "reading from an address immediately after writing to it is not supported") // TODO

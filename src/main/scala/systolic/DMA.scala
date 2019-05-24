@@ -5,7 +5,7 @@ import chisel3.util._
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
 import freechips.rocketchip.util.DecoupledHelper
-import icenet.{Aligner, ReservationBuffer, ReservationBufferAlloc, ReservationBufferData}
+import icenet.{ReservationBufferAlloc, ReservationBufferData}
 import testchipip.{StreamChannel, TLHelper}
 
 class StreamReadRequest(val nXacts: Int) extends Bundle {

@@ -50,6 +50,11 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   io.busy := false.B // cmd.valid(0)
 
+  // STATE defines
+  val waiting_for_cmd :: compute :: flush :: flushing :: Nil = Enum(4)
+  val control_state = RegInit(waiting_for_cmd)
+
+  // Instruction-related variables
   val current_dataflow = if (dataflow == Dataflow.BOTH) Reg(UInt(1.W)) else dataflow.id.U
 
   val functs = cmd.bits.map(_.cmd.inst.funct)
@@ -121,15 +126,15 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   mesh.io.tag_garbage.pushLoad := false.B
   mesh.io.tag_garbage.pushStore := false.B
   mesh.io.tag_garbage.tag := tag_garbage
-  mesh.io.flush.valid := false.B
+  mesh.io.flush.valid := ShiftRegister(control_state === flush, mem_pipeline) // false.B
 
   mesh.io.a.bits := DontCare
   mesh.io.b.bits := DontCare
   mesh.io.d.bits := DontCare
   mesh.io.tag_in.bits := DontCare
-  mesh.io.s := in_s
-  mesh.io.m := current_dataflow
-  mesh.io.shift := in_shift
+  mesh.io.s := ShiftRegister(Mux(control_state === flush, in_s_flush, in_s), mem_pipeline)
+  mesh.io.m := ShiftRegister(current_dataflow, mem_pipeline)
+  mesh.io.shift := ShiftRegister(in_shift, mem_pipeline)
   mesh.io.flush.bits := 0.U
 
   // Hazards
@@ -150,10 +155,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   }.reduce(_ || _)
 
   val matmul_in_progress = mesh.io.tags_in_progress.map(_.tag =/= tag_garbage).reduce(_ || _)
-
-  // STATE defines
-  val waiting_for_cmd :: compute :: flush :: flushing :: Nil = Enum(4)
-  val control_state = RegInit(waiting_for_cmd)
 
   // SRAM scratchpad
   val dataAbank = a_address_rs1.bank
@@ -257,11 +258,11 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val readData = VecInit(io.read.map(_.data))
   val accReadData = io.acc.read.data.asUInt()
 
-  val dataA = Mux(RegNext(a_read_from_acc), accReadData, readData(RegNext(dataAbank)))
-  val dataB = MuxCase(readData(RegNext(dataBbank)),
-    Seq(RegNext(accumulate_zeros) -> 0.U, RegNext(b_read_from_acc) -> accReadData))
-  val dataD = MuxCase(readData(RegNext(dataDbank)),
-    Seq(RegNext(preload_zeros) -> 0.U, RegNext(d_read_from_acc) -> accReadData))
+  val dataA = Mux(ShiftRegister(RegNext(a_read_from_acc), mem_pipeline), accReadData, readData(ShiftRegister(RegNext(dataAbank), mem_pipeline)))
+  val dataB = MuxCase(readData(ShiftRegister(RegNext(dataBbank), mem_pipeline)),
+    Seq(ShiftRegister(RegNext(accumulate_zeros), mem_pipeline) -> 0.U, ShiftRegister(RegNext(b_read_from_acc), mem_pipeline) -> accReadData))
+  val dataD = MuxCase(readData(ShiftRegister(RegNext(dataDbank), mem_pipeline)),
+    Seq(ShiftRegister(RegNext(preload_zeros), mem_pipeline) -> 0.U, ShiftRegister(RegNext(d_read_from_acc), mem_pipeline) -> accReadData))
 
   // FSM logic
   switch (control_state) {
@@ -377,9 +378,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       }
     }
     is (flush) {
-      when(mesh.io.flush.ready) {
-        mesh.io.flush.valid := true.B
-        mesh.io.s := in_s_flush
+      when(mesh.io.flush.fire()) {
+        // mesh.io.flush.valid := true.B
+        // mesh.io.s := in_s_flush
         control_state := flushing
       }
     }
@@ -392,30 +393,30 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   }
 
   // Computing logic
-  when (perform_mul_pre || perform_single_mul || perform_single_preload) {
+  when (ShiftRegister(perform_mul_pre || perform_single_mul || perform_single_preload, mem_pipeline)) {
     // Default inputs
-    mesh.io.a.valid := RegNext(a_can_fire)
-    mesh.io.b.valid := RegNext(b_can_fire)
-    mesh.io.d.valid := RegNext(d_can_fire)
+    mesh.io.a.valid := ShiftRegister(RegNext(a_can_fire), mem_pipeline)
+    mesh.io.b.valid := ShiftRegister(RegNext(b_can_fire), mem_pipeline)
+    mesh.io.d.valid := ShiftRegister(RegNext(d_can_fire), mem_pipeline)
     mesh.io.tag_in.valid := true.B
 
     mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
-    mesh.io.tag_in.bits.pushLoad := VecInit(pushLoads take 2)(preload_cmd_place)
-    mesh.io.tag_in.bits.pushStore := VecInit(pushStores take 2)(preload_cmd_place)
-    mesh.io.tag_in.bits.tag := c_address_rs2.asUInt()
+    mesh.io.tag_in.bits.pushLoad := ShiftRegister(VecInit(pushLoads take 2)(preload_cmd_place), mem_pipeline)
+    mesh.io.tag_in.bits.pushStore := ShiftRegister(VecInit(pushStores take 2)(preload_cmd_place), mem_pipeline)
+    mesh.io.tag_in.bits.tag := ShiftRegister(c_address_rs2.asUInt(), mem_pipeline)
   }
 
-  when (perform_single_preload) {
-    mesh.io.a.bits := Mux(current_dataflow === Dataflow.WS.id.U, 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+  when (ShiftRegister(perform_single_preload, mem_pipeline)) {
+    mesh.io.a.bits := Mux(ShiftRegister(current_dataflow === Dataflow.WS.id.U, mem_pipeline), 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
-    mesh.io.s := RegNext(in_s_flush) // TODO create a new in_s_preload
+    mesh.io.s := ShiftRegister(RegNext(in_s_flush), mem_pipeline) // TODO create a new in_s_preload
   }
 
-  when (perform_single_mul) {
-    mesh.io.a.bits := Mux(current_dataflow === Dataflow.OS.id.U, 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+  when (ShiftRegister(perform_single_mul, mem_pipeline)) {
+    mesh.io.a.bits := Mux(ShiftRegister(current_dataflow === Dataflow.OS.id.U, mem_pipeline), 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.tag_in.bits.pushLoad := false.B
     mesh.io.tag_in.bits.pushStore := false.B
     mesh.io.tag_in.bits.tag := tag_garbage

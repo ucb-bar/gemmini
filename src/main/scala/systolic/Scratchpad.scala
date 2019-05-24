@@ -12,6 +12,7 @@ import Util._
 
 class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
     extends CoreModule {
+
   val lgMaxSize = log2Ceil(coreDataBytes)
   val io = new Bundle {
     val req = Flipped(Decoupled(new TLBReq(lgMaxSize)))
@@ -125,7 +126,7 @@ class ScratchpadWriteIO(val n: Int, val w: Int) extends Bundle {
   val data = Output(UInt(w.W))
 }
 
-class ScratchpadBank(n: Int, w: Int) extends Module {
+class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int) extends Module {
   val io = IO(new Bundle {
     val read = Flipped(new ScratchpadReadIO(n, w))
     val write = Flipped(new ScratchpadWriteIO(n, w))
@@ -135,7 +136,9 @@ class ScratchpadBank(n: Int, w: Int) extends Module {
 
   when (io.write.en) { mem.write(io.write.addr, io.write.data) }
 
-  io.read.data := mem.read(io.read.addr, io.read.en)
+  val raddr = ShiftRegister(io.read.addr, mem_pipeline)
+  val ren = ShiftRegister(io.read.en, mem_pipeline)
+  io.read.data := mem.read(raddr, ren)
 }
 
 // TODO find a more elegant way to move data into accumulator
@@ -257,51 +260,50 @@ class Scratchpad[T <: Data: Arithmetic](
 
     writer.module.io.req.valid := state === s_writereq
     writer.module.io.req.bits := writeReq
-    writer.module.io.resp.ready := state === s_writeresp
+    writer.module.io.resp.ready := state === s_writeresp && RegNext(state === s_writeresp) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
 
     val rowBuffer = Reg(Vec(acc_nBeats, UInt(dataBits.W)))
     val bufAddr = Reg(UInt(acc_rowAddrBits.W))
-    val bufIdx = (bufAddr >> byteAddrBits.U).asUInt() //bufAddr(rowAddrBits-1, byteAddrBits)
+    val bufIdx = (bufAddr >> byteAddrBits.U).asUInt()
     val bufDone = Reg(Bool())
-    // val rowBuffer_filled = bufIdx === (nBeats-1).U
     val rowBuffer_filled = bufIdx === Mux(!req.write && req.is_acc, (acc_nBeats-1).U, (nBeats-1).U)
 
     val dmardata = WireInit(0.U(w.W))
     val dmaren = WireInit(false.B)
     val dmawen = WireInit(false.B)
 
-    // TODO inelegant
-    val bank_rdata_is_in_rowBuffer = RegInit(true.B)
-    when (bank_rdata_is_in_rowBuffer) {
-      bank_rdata_is_in_rowBuffer := false.B
+    when (req.write && ShiftRegister(dmaren, mem_pipeline+1)) {
+      rowBuffer := dmardata.asTypeOf(rowBuffer)
     }
-    when (!bank_rdata_is_in_rowBuffer && req.write && state =/= s_idle) {
-      rowBuffer := dmardata.asTypeOf(rowBuffer.cloneType)
-    }
-    val bank_rdata = Mux(bank_rdata_is_in_rowBuffer, rowBuffer, dmardata.asTypeOf(rowBuffer.cloneType))
 
     val (rowData, rowKeep) = {
-      val offset = bufAddr(byteAddrBits-1, 0)
+      val bufAddr_delayed = RegNext(bufAddr) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
+      val bytesToSend_delayed = RegNext(bytesToSend) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
+      val bufIdx_delayed = RegNext(bufIdx) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
+
+      val offset = bufAddr_delayed(byteAddrBits-1, 0)
       val rshift = Cat(offset, 0.U(3.W))
       val lshift = Cat(dataBytes.U - offset, 0.U(3.W))
 
-      val first = (bank_rdata(bufIdx) >> rshift).asUInt() //(rowBuffer(bufIdx) >> rshift).asUInt()
-      val second = (bank_rdata(bufIdx + 1.U) << lshift).asUInt() //(rowBuffer(bufIdx + 1.U) << lshift).asUInt()
+      val first = (rowBuffer(bufIdx_delayed) >> rshift).asUInt()
+      val second = (rowBuffer(bufIdx_delayed + 1.U) << lshift).asUInt()
 
       val data = first | second
-      val nbytes = bytesToSend(byteAddrBits, 0)
+      val nbytes = bytesToSend_delayed(byteAddrBits, 0)
       val bytemask = (1.U << nbytes).asUInt() - 1.U
 
       (data(dataBits-1, 0), bytemask(dataBytes-1, 0))
     }
 
     reader.module.io.out.ready := true.B // !bufDone // TODO can we make this always true?
-    writer.module.io.in.valid := state === s_writedata
+
+    // writer.module.io.in.valid := state === s_writedata
+    writer.module.io.in.valid := state =/= s_writedata && RegNext(state === s_writedata) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
     writer.module.io.in.bits.data := rowData
     writer.module.io.in.bits.keep := rowKeep
     writer.module.io.in.bits.last := lastFlit
 
-    val banks = Seq.fill(nBanks) { Module(new ScratchpadBank(nRows, w)) }
+    val banks = Seq.fill(nBanks) { Module(new ScratchpadBank(nRows, w, mem_pipeline)) }
 
     val dmawen_addr = (req_full_addr + reader_row_id + (block_counter * block_rows.U)).asTypeOf(sp_addr_t)
     val dmawen_spbank = dmawen_addr.bank
@@ -313,16 +315,17 @@ class Scratchpad[T <: Data: Arithmetic](
       val read = io.read(i)
       val write = io.write(i)
       val bankren = dmaren && req.spbank === i.U && !req.is_acc
-      //  val bankwen = dmawen && req.spbank === i.U && !req.is_acc
       val bankwen = dmawen && dmawen_spbank === i.U && !req.is_acc
 
       bank.io.read.en := bankren || read.en
       bank.io.read.addr := Mux(bankren, req.spaddr + row_counter, read.addr)
       read.data := bank.io.read.data
-      when (req.spbank === i.U && !req.is_acc) { dmardata := bank.io.read.data }
+      when (req.spbank === i.U && !req.is_acc) {
+        // TODO this may need to change when moving out multiple matrices in one instruction is supported
+        dmardata := bank.io.read.data
+      }
 
       bank.io.write.en := bankwen || write.en
-      // bank.io.write.addr := Mux(bankwen, req.spaddr + reader_row_id, write.addr)
       bank.io.write.addr := Mux(bankwen, dmawen_sprow, write.addr)
       bank.io.write.data := Mux(bankwen, rowBuffer.asUInt(), write.data)
     }
@@ -331,7 +334,7 @@ class Scratchpad[T <: Data: Arithmetic](
       val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
       val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
 
-      val accumulator = Module(new AccumulatorMem(acc_rows, acc_row_t, spad_row_t))
+      val accumulator = Module(new AccumulatorMem(acc_rows, acc_row_t, spad_row_t, mem_pipeline))
       val accbankren = dmaren && req.is_acc
       val accbankwen = dmawen && req.is_acc
 
@@ -341,7 +344,9 @@ class Scratchpad[T <: Data: Arithmetic](
       accumulator.io.read.relu6_shift := io.acc.read.relu6_shift
       accumulator.io.read.act := io.acc.read.act
       io.acc.read.data := accumulator.io.read.data
-      when(req.is_acc) { dmardata := accumulator.io.read.data.asUInt() }
+      when(req.is_acc) {
+        dmardata := accumulator.io.read.data.asUInt()
+      }
 
       accumulator.io.write.en := accbankwen || io.acc.write.en
       accumulator.io.write.addr := Mux(accbankwen, dmawen_accrow, io.acc.write.addr)
@@ -355,13 +360,16 @@ class Scratchpad[T <: Data: Arithmetic](
       bufAddr := 0.U
       bufDone := false.B
       bytesLeft := Mux(!io.dma.req.bits.write && io.dma.req.bits.is_acc, acc_rowBytes.U, rowBytes.U) * io.dma.req.bits.len
+
       state := s_translate_req
     }
 
     when (io.tlb.req.fire()) {
-      when (req.write && !bufDone) {
+      when (req.write) {
+        dmaren := true.B
         bufDone := true.B
       }
+
       state := s_translate_resp
     }
 
@@ -376,14 +384,11 @@ class Scratchpad[T <: Data: Arithmetic](
     }
 
     when (reader.module.io.req.fire()) {
-      // req.vaddr := nextVaddr
       bytesLeft := bytesLeft - bytesAvail
       state := s_readresp
     }
 
     when (reader.module.io.resp.fire()) {
-      // state := Mux(bytesLeft === 0.U, s_readwait, s_translate_req)
-
       // TODO try to do this without taking a detour through the s_readresp state
       val across_pages = bytesLeft =/= 0.U
 
@@ -417,14 +422,20 @@ class Scratchpad[T <: Data: Arithmetic](
     when (reader.module.io.out.fire()) {
       rowBuffer(bufIdx) := reader.module.io.out.bits.data
       bufAddr := bufAddr + dataBytes.U
-      // when (reader.module.io.out.bits.last) {
+
       when (rowBuffer_filled) {
         reader_row_id := reader.module.io.out.bits.id
         bufDone := true.B
       }
     }
 
-    when (writer.module.io.in.fire()) {
+    when (writer.module.io.req.fire()) {
+      row_counter := wrappingAdd(row_counter, 1.U, block_rows)
+      state := s_writedata
+    }
+
+    // when (writer.module.io.in.fire()) {
+    when (state === s_writedata && writer.module.io.in.ready) { // TODO inelegant and inextensible for when mem_pipeline is larger than 1
       bufAddr := bufAddr + bytesToSend
       req.vaddr := req.vaddr + bytesToSend
       bytesLeft := bytesLeft - bytesToSend
@@ -432,7 +443,7 @@ class Scratchpad[T <: Data: Arithmetic](
       val across_pages = bytesLeft =/= bytesToSend // TODO think more deeply about this
 
       // TODO clean this up
-      when (writer.module.io.in.bits.last) {
+      when (lastFlit) {
         val new_page = next_row_vaddr(coreMaxAddrBits-1, pgIdxBits) =/= req.vaddr(coreMaxAddrBits-1, pgIdxBits)
         req.vaddr := next_row_vaddr
         next_row_vaddr := next_row_vaddr + stride
@@ -445,11 +456,10 @@ class Scratchpad[T <: Data: Arithmetic](
           bytesLeft := req_rowBytes
 
           when (!new_page) {
-            writer.module.io.req.valid := true.B // TODO move this condition up to where io.req.valid was originally set
-            writer.module.io.req.bits.length := rowBytes.U // TODO does this require alignment?
-            writer.module.io.req.bits.address := next_row_vaddr
-            state := s_writereq // This can get overridden by the when(writer.module.io.req.fire()) below
+            dmaren := true.B
+            state := s_writereq // TODO do we have to take a detour through s_writereq, or can we fire off a new Writer request here?
           }.otherwise {
+            // Since s_translate_req already sets dmaren to true.B, we don't have to do that here as well
             // TODO can we handle row accesses across page boundaries here?
             state := s_translate_req
           }
@@ -457,22 +467,12 @@ class Scratchpad[T <: Data: Arithmetic](
       }
     }
 
-    when (writer.module.io.req.fire()) {
-      row_counter := wrappingAdd(row_counter, 1.U, block_rows) // row_counter + 1.U
-      when (req.write) {
-        dmaren := true.B
-        bank_rdata_is_in_rowBuffer := false.B
-      }
-
-      state := s_writedata // TODO it might be kind of confusing how this overrides the io.in.fire() above
-    }
-
     when (writer.module.io.resp.fire()) {
       error := false.B
       state := Mux(bytesLeft === 0.U, s_respond, s_translate_req)
     }
 
-    when (/*state === s_readwait &&*/ state =/= s_idle && !req.write && bufDone) {
+    when (state =/= s_idle && !req.write && bufDone) {
       dmawen := true.B
       error := false.B
       bufAddr := 0.U
@@ -494,7 +494,7 @@ class Scratchpad[T <: Data: Arithmetic](
     }
 
     when (io.dma.resp.fire()) {
-      row_counter := 0.U
+      row_counter := 0.U // TODO move these to io.dma.req.fire() instead
       block_counter := 0.U
       reader_req_row_counter := 0.U
       state := s_idle

@@ -21,8 +21,10 @@ case class SystolicArrayConfig(
                                 shifter_banks: Int,
                                 depq_len: Int,
                                 dataflow: Dataflow.Value,
-                                acc_rows: Int = 32,
+                                acc_rows: Int,
+                                mem_pipeline: Int = 1
                               )
+
 case object SystolicArrayKey extends Field[SystolicArrayConfig]
 
 class SystolicDeps extends Bundle {
