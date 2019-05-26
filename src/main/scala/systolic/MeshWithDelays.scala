@@ -146,8 +146,9 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   mesh.io.in_s.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_ := ShiftRegister(Cat(io.m, in_s), i))
   }
+  val result_shift = RegNext(io.shift) // TODO will this arrive at the right time if memory isn't pipelined?
   mesh.io.in_shift.zipWithIndex.foreach { case (shs, i) =>
-    shs.foreach(_ := ShiftRegister(io.shift, i))
+    shs.foreach(_ := ShiftRegister(result_shift, i))
   }
 
   val pause_vec = VecInit(Seq.fill(meshColumns)(VecInit(Seq.fill(tileColumns)(pause))))

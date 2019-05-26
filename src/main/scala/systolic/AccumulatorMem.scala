@@ -10,7 +10,6 @@ class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, shift_width: Int, rdataTy
   val shift = Output(UInt(shift_width.W))
   val relu6_shift = Output(UInt(shift_width.W))
   val act = Output(UInt(2.W))
-  val valid = Input(Bool())
 
   override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType).asInstanceOf[this.type]
 }
@@ -58,16 +57,18 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
 
   val rdata_buf = ShiftRegister(mem.io.rdata, mem_pipeline) // TODO if mem_pipeline > 1, this is inefficient
 
+  val shift = RegNext(io.read.shift) // TODO should this take mem_pipeline into account?
+  val relu6_shift = RegNext(io.read.relu6_shift) // TODO should this take mem_pipeline into account?
+
   val activated_rdata = VecInit(rdata_buf.map(v => VecInit(v.map { e =>
-    val e_clipped = (e >> io.read.shift).clippedToWidthOf(rdataType.head.head)
+    val e_clipped = (e >> shift).clippedToWidthOf(rdataType.head.head)
     val e_act = MuxCase(e_clipped, Seq(
       (io.read.act === Activation.RELU) -> e_clipped.relu,
-      (io.read.act === Activation.RELU6) -> e_clipped.relu6(io.read.relu6_shift)))
+      (io.read.act === Activation.RELU6) -> e_clipped.relu6(relu6_shift)))
 
     e_act
   })))
   io.read.data := activated_rdata
-  io.read.valid := ShiftRegister(io.read.en, mem_pipeline+1)
 
   // require(mem_pipeline >= 1, "accumulator memory needs at least one pipeline cycle") // TODO
   assert(!(io.read.en && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
