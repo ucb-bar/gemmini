@@ -11,6 +11,7 @@ import systolic.Util._
 // TODO Change S to an enum
 // TODO cleanup tags to be like S
 // TODO do we flush for one cycle more than necessary?
+// TODO make all inputs go straight into registers to help with physical design
 
 class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputType: T, accType: T, tagType: U,
                                                        df: Dataflow.Value,

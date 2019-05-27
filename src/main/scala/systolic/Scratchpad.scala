@@ -153,11 +153,13 @@ class Scratchpad[T <: Data: Arithmetic](
   import config._
 
   val block_rows = meshRows * tileRows
+  val acc_w = (accType.getWidth / inputType.getWidth) * w
 
   val dataBytes = dataBits / 8
   val outFlits = block_rows * (w / dataBits)
   // val nXacts = ((w/8) - 1) / maxBytes + 1
   val nXacts = block_rows * (((w/8) - 1) / maxBytes + 1) // TODO is this right?
+  // val nXacts = block_rows * (((acc_w/8) - 1) / maxBytes + 1) // TODO is this right?
 
   require(w % dataBits == 0)
   require(w <= (maxBytes*8)) // TODO get rid of this requirement
@@ -198,7 +200,6 @@ class Scratchpad[T <: Data: Arithmetic](
     val rowAddrBits = log2Ceil(rowBytes)
     val byteAddrBits = log2Ceil(dataBytes)
 
-    val acc_w = (accType.getWidth / inputType.getWidth) * w
     val acc_rowBytes = acc_w / 8
     val acc_nBeats = (acc_w - 1) / dataBits + 1
     val acc_rowAddrBits = log2Ceil(acc_rowBytes)
@@ -260,7 +261,7 @@ class Scratchpad[T <: Data: Arithmetic](
 
     writer.module.io.req.valid := state === s_writereq
     writer.module.io.req.bits := writeReq
-    writer.module.io.resp.ready := state === s_writeresp && RegNext(state === s_writeresp) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
+    writer.module.io.resp.ready := state === s_writeresp
 
     val rowBuffer = Reg(Vec(acc_nBeats, UInt(dataBits.W)))
     val bufAddr = Reg(UInt(acc_rowAddrBits.W))
@@ -277,19 +278,19 @@ class Scratchpad[T <: Data: Arithmetic](
     }
 
     val (rowData, rowKeep) = {
-      val bufAddr_delayed = RegNext(bufAddr) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
-      val bytesToSend_delayed = RegNext(bytesToSend) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
-      val bufIdx_delayed = RegNext(bufIdx) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
+      // val bufAddr_delayed = RegNext(bufAddr) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
+      // val bytesToSend_delayed = RegNext(bytesToSend) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
+      // val bufIdx_delayed = RegNext(bufIdx) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
 
-      val offset = bufAddr_delayed(byteAddrBits-1, 0)
+      val offset = bufAddr(byteAddrBits-1, 0)
       val rshift = Cat(offset, 0.U(3.W))
       val lshift = Cat(dataBytes.U - offset, 0.U(3.W))
 
-      val first = (rowBuffer(bufIdx_delayed) >> rshift).asUInt()
-      val second = (rowBuffer(bufIdx_delayed + 1.U) << lshift).asUInt()
+      val first = (rowBuffer(bufIdx) >> rshift).asUInt()
+      val second = (rowBuffer(bufIdx + 1.U) << lshift).asUInt()
 
       val data = first | second
-      val nbytes = bytesToSend_delayed(byteAddrBits, 0)
+      val nbytes = bytesToSend(byteAddrBits, 0)
       val bytemask = (1.U << nbytes).asUInt() - 1.U
 
       (data(dataBits-1, 0), bytemask(dataBytes-1, 0))
@@ -297,8 +298,8 @@ class Scratchpad[T <: Data: Arithmetic](
 
     reader.module.io.out.ready := true.B // !bufDone // TODO can we make this always true?
 
-    // writer.module.io.in.valid := state === s_writedata
-    writer.module.io.in.valid := state =/= s_writedata && RegNext(state === s_writedata) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
+    writer.module.io.in.valid := (0 to mem_pipeline).map(i => ShiftRegister(state === s_writedata, i)).reduce(_ && _) // TODO inefficient. Reduces throughput when mem_pipeline > 1
+    // writer.module.io.in.valid := state =/= s_writedata && RegNext(state === s_writedata) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
     writer.module.io.in.bits.data := rowData
     writer.module.io.in.bits.keep := rowKeep
     writer.module.io.in.bits.last := lastFlit
@@ -408,7 +409,6 @@ class Scratchpad[T <: Data: Arithmetic](
           state := s_readwait
         }.otherwise {
           // Start reading new row
-          // bufAddr := 0.U
           bytesLeft := req_rowBytes
 
           val new_vaddr = next_row_vaddr
@@ -426,16 +426,12 @@ class Scratchpad[T <: Data: Arithmetic](
       when (rowBuffer_filled) {
         reader_row_id := reader.module.io.out.bits.id
         bufDone := true.B
+        bufAddr := 0.U
       }
     }
 
-    when (writer.module.io.req.fire()) {
-      row_counter := wrappingAdd(row_counter, 1.U, block_rows)
-      state := s_writedata
-    }
-
-    // when (writer.module.io.in.fire()) {
-    when (state === s_writedata && writer.module.io.in.ready) { // TODO inelegant and inextensible for when mem_pipeline is larger than 1
+    // when (state === s_writedata && writer.module.io.in.ready) { // TODO inelegant and inextensible for when mem_pipeline is larger than 1
+    when (writer.module.io.in.fire()) {
       bufAddr := bufAddr + bytesToSend
       req.vaddr := req.vaddr + bytesToSend
       bytesLeft := bytesLeft - bytesToSend
@@ -457,7 +453,7 @@ class Scratchpad[T <: Data: Arithmetic](
 
           when (!new_page) {
             dmaren := true.B
-            state := s_writereq // TODO do we have to take a detour through s_writereq, or can we fire off a new Writer request here?
+            state := s_writereq
           }.otherwise {
             // Since s_translate_req already sets dmaren to true.B, we don't have to do that here as well
             // TODO can we handle row accesses across page boundaries here?
@@ -465,6 +461,11 @@ class Scratchpad[T <: Data: Arithmetic](
           }
         }
       }
+    }
+
+    when (writer.module.io.req.fire()) {
+      row_counter := wrappingAdd(row_counter, 1.U, block_rows)
+      state := s_writedata
     }
 
     when (writer.module.io.resp.fire()) {
@@ -475,7 +476,7 @@ class Scratchpad[T <: Data: Arithmetic](
     when (state =/= s_idle && !req.write && bufDone) {
       dmawen := true.B
       error := false.B
-      bufAddr := 0.U
+      // bufAddr := 0.U
       bufDone := false.B
 
       block_counter := block_counter + 1.U
