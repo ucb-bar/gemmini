@@ -144,6 +144,7 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int) extends Module {
 // TODO find a more elegant way to move data into accumulator
 // TODO replace the SRAM types with Vec[Vec[inputType]], rather than just simple UInts
 // TODO support unaligned accesses, for both multiple and single matrix loads
+// TODO scratchpad is currently broken when one row is larger than dataBits. The requests arrive out-of-order, meaning that half of one row might arrive after the first have of another row. Some kind of re-ordering buffer may be needed
 class Scratchpad[T <: Data: Arithmetic](
     nBanks: Int, nRows: Int, w: Int, sp_addr_t: SPAddr,
     inputType: T, accType: T, config: SystolicArrayConfig,
@@ -159,13 +160,15 @@ class Scratchpad[T <: Data: Arithmetic](
   val outFlits = block_rows * (w / dataBits)
   // val nXacts = ((w/8) - 1) / maxBytes + 1
   val nXacts = block_rows * (((w/8) - 1) / maxBytes + 1) // TODO is this right?
-  // val nXacts = block_rows * (((acc_w/8) - 1) / maxBytes + 1) // TODO is this right?
+  val acc_nXacts = block_rows * (((acc_w/8) - 1) / maxBytes + 1) // TODO is this right?
+  val Xacts_per_row = ((w/8) - 1) / maxBytes + 1
+  val Xacts_per_acc_row = ((acc_w/8) - 1) / maxBytes + 1
 
   require(w % dataBits == 0)
   require(w <= (maxBytes*8)) // TODO get rid of this requirement
 
   val node = TLIdentityNode()
-  val reader = LazyModule(new StreamReader(nXacts, outFlits, maxBytes))
+  val reader = LazyModule(new StreamReader(acc_nXacts, outFlits, maxBytes))
   val writer = LazyModule(new StreamWriter(nXacts, maxBytes))
   node := reader.node
   node := writer.node
@@ -262,6 +265,8 @@ class Scratchpad[T <: Data: Arithmetic](
     writer.module.io.req.valid := state === s_writereq
     writer.module.io.req.bits := writeReq
     writer.module.io.resp.ready := state === s_writeresp
+
+    reader.module.io.reset_Xacts := state === s_idle
 
     val rowBuffer = Reg(Vec(acc_nBeats, UInt(dataBits.W)))
     val bufAddr = Reg(UInt(acc_rowAddrBits.W))
@@ -424,7 +429,7 @@ class Scratchpad[T <: Data: Arithmetic](
       bufAddr := bufAddr + dataBytes.U
 
       when (rowBuffer_filled) {
-        reader_row_id := reader.module.io.out.bits.id
+        reader_row_id := reader.module.io.out.bits.id / Mux(req.is_acc, Xacts_per_acc_row.U, Xacts_per_row.U)
         bufDone := true.B
         bufAddr := 0.U
       }

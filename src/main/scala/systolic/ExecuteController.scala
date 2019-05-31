@@ -84,8 +84,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val d_address_rs1 = WireInit(rs1s(preload_cmd_place).asTypeOf(sp_addr_t))
   val c_address_rs2 = WireInit(rs2s(preload_cmd_place).asTypeOf(sp_addr_t))
 
-  val preload_zeros = WireInit(d_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage)
-  val accumulate_zeros = WireInit(b_address_rs2.asUInt()(tagWidth-1, 0) === tag_garbage)
+  val multiply_garbage = a_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage
+  val accumulate_zeros = b_address_rs2.asUInt()(tagWidth-1, 0) === tag_garbage
+  val preload_zeros = d_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage
 
   // Dependency stuff
   val pushLoads = cmd.bits.map(_.deps.pushLoad)
@@ -229,7 +230,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   // Scratchpad reads
   for (i <- 0 until sp_banks) {
-    val read_a = a_can_fire && !a_read_from_acc && dataAbank === i.U && start_inputting_a
+    val read_a = a_can_fire && !a_read_from_acc && dataAbank === i.U && start_inputting_a && !multiply_garbage
     val read_b = b_can_fire && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros
     val read_d = d_can_fire && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros
 
@@ -241,7 +242,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   // Accumulator read // TODO can only handle one acc read for now
   {
-    val read_a_from_acc = a_can_fire && a_read_from_acc && start_inputting_a
+    val read_a_from_acc = a_can_fire && a_read_from_acc && start_inputting_a && !multiply_garbage
     val read_b_from_acc = b_can_fire && b_read_from_acc && start_inputting_b && !accumulate_zeros
     val read_d_from_acc = d_can_fire && d_read_from_acc && start_inputting_d && !preload_zeros
 

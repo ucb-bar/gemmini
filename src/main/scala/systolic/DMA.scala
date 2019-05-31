@@ -34,6 +34,7 @@ class StreamReader(nXacts: Int, outFlits: Int, maxBytes: Int)
       val req = Flipped(Decoupled(new StreamReadRequest(nXacts)))
       val resp = Decoupled(Bool())
       val out = Decoupled(new StreamChannelWithID(nXacts, dataBits))
+      val reset_Xacts = Input(Bool()) // TODO inelegant
     })
 
     core.module.io.req <> io.req
@@ -55,6 +56,8 @@ class StreamReader(nXacts: Int, outFlits: Int, maxBytes: Int)
     io.out.bits.last := core.module.io.out.bits.data.last
     io.out.bits.keep := core.module.io.out.bits.data.keep
     io.out.bits.id := core.module.io.out.bits.id
+
+    core.module.io.reset_Xacts := io.reset_Xacts
   }
 }
 
@@ -76,6 +79,7 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
       val resp = Decoupled(Bool())
       val alloc = Decoupled(new ReservationBufferAlloc(nXacts, outFlits))
       val out = Decoupled(new ReservationBufferData(nXacts, dataBits))
+      val reset_Xacts = Input(Bool()) // TODO inelegant
     })
 
     val s_idle :: s_read :: s_resp :: Nil = Enum(3)
@@ -118,7 +122,8 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
 
     // TODO this doesn't work if we want to support unaligned accesses
     xactBusy := xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)
-    when (tl.d.fire() && edge.last(tl.d) && xactBusy.andR()) {
+    // when (tl.d.fire() && edge.last(tl.d) && xactBusy.andR()) {
+    when (io.reset_Xacts) {
       xactBusy := 0.U
     }
 
