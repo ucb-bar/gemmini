@@ -98,8 +98,8 @@ class ScratchpadMemRequest(val nBanks: Int, val nRows: Int, val acc_rows: Int)
   val accaddr = UInt(log2Ceil(acc_rows).W)
   val is_acc = Bool()
 
-  val stride = Input(UInt(xLen.W))
-  val len = Input(UInt(16.W)) // TODO don't use a magic number for the width here
+  val stride = UInt(xLen.W)
+  val len = UInt(16.W) // TODO don't use a magic number for the width here
 
   val write = Bool()
 }
