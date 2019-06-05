@@ -39,6 +39,7 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   val meshT = mesh.transpose
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
+  // TODO clock-gate A signals with in_garbage
   for (r <- 0 until meshRows) {
     mesh(r).foldLeft(io.in_a(r)) {
       case (in_a, tile) =>
@@ -48,24 +49,39 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   }
 
   // Chain tile_out_b -> tile_b_in (pipeline b across each column)
-  for (c <- 0 until meshColumns) {
+  /*for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_b(c)) {
       case (in_b, tile) =>
         tile.io.in_b := RegNext(in_b)
         tile.io.out_b
     }
+  }*/
+  for (c <- 0 until meshColumns) {
+    meshT(c).foldLeft((io.in_b(c), io.in_garbage(c))) {
+      case ((in_b, garbage), tile) =>
+        tile.io.in_b := RegEnable(in_b, !garbage.head)
+        (tile.io.out_b, tile.io.out_garbage)
+    }
   }
 
   // Chain tile_out -> tile_propag (pipeline output across each column)
-  for (c <- 0 until meshColumns) {
+  /*for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_d(c)) {
       case (in_propag, tile) =>
         tile.io.in_d := RegNext(in_propag)
         tile.io.out_c
     }
+  }*/
+  for (c <- 0 until meshColumns) {
+    meshT(c).foldLeft((io.in_d(c), io.in_garbage(c))) {
+      case ((in_propag, garbage), tile) =>
+        tile.io.in_d := RegEnable(in_propag, !garbage.head)
+        (tile.io.out_c, tile.io.out_garbage)
+    }
   }
 
   // Chain s (pipeline s across each column)
+  // TODO should S also be clock-gated based on power?
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_s(c)) {
       case (in_s, tile) =>
@@ -75,11 +91,18 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   }
 
   // Chain in_shift (pipeline across each column)
-  for (c <- 0 until meshColumns) {
+  /*for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_shift(c)) {
       case (in_sh, tile) =>
         tile.io.in_shift := RegNext(in_sh)
         tile.io.out_shift
+    }
+  }*/
+  for (c <- 0 until meshColumns) {
+    meshT(c).foldLeft((io.in_shift(c), io.in_garbage(c))) {
+      case ((in_sh, garbage), tile) =>
+        tile.io.in_shift := RegEnable(in_sh, !garbage.head)
+        (tile.io.out_shift, tile.io.out_garbage)
     }
   }
 
@@ -93,7 +116,7 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   }
 
   // Capture out_vec and out_s_vec (connect IO to bottom row of mesh)
-  // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple4)
+  // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple5)
   for (((b, c), (s, g), tile) <- ((io.out_b zip io.out_c), (io.out_s zip io.out_garbage), mesh.last).zipped) {
     b := tile.io.out_b
     c := tile.io.out_c

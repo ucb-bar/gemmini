@@ -132,13 +132,21 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int) extends Module {
     val write = Flipped(new ScratchpadWriteIO(n, w))
   })
 
-  val mem = SyncReadMem(n, UInt(w.W))
+  /*val mem = SyncReadMem(n, UInt(w.W))
 
   when (io.write.en) { mem.write(io.write.addr, io.write.data) }
 
   val raddr = ShiftRegister(io.read.addr, mem_pipeline)
   val ren = ShiftRegister(io.read.en, mem_pipeline)
-  io.read.data := mem.read(raddr, ren)
+  io.read.data := mem.read(raddr, ren)*/
+
+  val mem = SyncReadMem(n, UInt(w.W))
+
+  when (io.write.en) { mem.write(io.write.addr, io.write.data) }
+
+  val raddr = io.read.addr
+  val ren = io.read.en
+  io.read.data := ShiftRegister(mem.read(raddr, ren), mem_pipeline)
 }
 
 // TODO find a more elegant way to move data into accumulator
