@@ -39,12 +39,14 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
 
   val mem = TwoPortSyncMem(n, t)
 
-  val wdata_buf = RegNext(io.write.data)
-  val waddr_buf = RegNext(io.write.addr)
-  val acc_buf = RegNext(io.write.acc)
-  val w_buf_valid = RegNext(io.write.en)
+  // For any write operation, we spend 2 cycles reading the existing address out, buffering it in a register, and then
+  // accumulating on top of it (if necessary)
+  val wdata_buf = ShiftRegister(io.write.data, 2)
+  val waddr_buf = ShiftRegister(io.write.addr, 2)
+  val acc_buf = ShiftRegister(io.write.acc, 2)
+  val w_buf_valid = ShiftRegister(io.write.en, 2)
 
-  val w_sum = VecInit((mem.io.rdata zip wdata_buf).map { case (rv, wv) =>
+  val w_sum = VecInit((RegNext(mem.io.rdata) zip wdata_buf).map { case (rv, wv) =>
     VecInit((rv zip wv).map(t => t._1 + t._2))
   })
 
