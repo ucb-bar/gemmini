@@ -276,7 +276,8 @@ class Scratchpad[T <: Data: Arithmetic](
 
     reader.module.io.reset_Xacts := state === s_idle
 
-    val rowBuffer = Reg(Vec(acc_nBeats, UInt(dataBits.W)))
+    val readRowBuffer = Reg(Vec(acc_nBeats, UInt(dataBits.W)))
+    val writeRowBuffer = Reg(Vec(nBeats, UInt(dataBits.W)))
     val bufAddr = Reg(UInt(acc_rowAddrBits.W))
     val bufIdx = (bufAddr >> byteAddrBits.U).asUInt()
     val bufDone = Reg(Bool())
@@ -287,7 +288,7 @@ class Scratchpad[T <: Data: Arithmetic](
     val dmawen = WireInit(false.B)
 
     when (req.write && ShiftRegister(dmaren, mem_pipeline+1)) {
-      rowBuffer := dmardata.asTypeOf(rowBuffer)
+      writeRowBuffer := dmardata.asTypeOf(writeRowBuffer)
     }
 
     val (rowData, rowKeep) = {
@@ -299,8 +300,8 @@ class Scratchpad[T <: Data: Arithmetic](
       val rshift = Cat(offset, 0.U(3.W))
       val lshift = Cat(dataBytes.U - offset, 0.U(3.W))
 
-      val first = (rowBuffer(bufIdx) >> rshift).asUInt()
-      val second = (rowBuffer(bufIdx + 1.U) << lshift).asUInt()
+      val first = (writeRowBuffer(bufIdx) >> rshift).asUInt()
+      val second = (writeRowBuffer(bufIdx + 1.U) << lshift).asUInt()
 
       val data = first | second
       val nbytes = bytesToSend(byteAddrBits, 0)
@@ -341,7 +342,7 @@ class Scratchpad[T <: Data: Arithmetic](
 
       bank.io.write.en := bankwen || write.en
       bank.io.write.addr := Mux(bankwen, dmawen_sprow, write.addr)
-      bank.io.write.data := Mux(bankwen, rowBuffer.asUInt(), write.data)
+      bank.io.write.data := Mux(bankwen, readRowBuffer.asUInt(), write.data)
     }
 
     {
@@ -364,7 +365,7 @@ class Scratchpad[T <: Data: Arithmetic](
 
       accumulator.io.write.en := accbankwen || io.acc.write.en
       accumulator.io.write.addr := Mux(accbankwen, dmawen_accrow, io.acc.write.addr)
-      accumulator.io.write.data := Mux(accbankwen, rowBuffer.asUInt(), io.acc.write.data.asUInt()).asTypeOf(acc_row_t)
+      accumulator.io.write.data := Mux(accbankwen, readRowBuffer.asUInt(), io.acc.write.data.asUInt()).asTypeOf(acc_row_t)
       accumulator.io.write.acc := !accbankwen && io.acc.write.acc // TODO add ability to mvin to accumulating memory space from main memory
     }
 
@@ -433,7 +434,7 @@ class Scratchpad[T <: Data: Arithmetic](
     }
 
     when (reader.module.io.out.fire()) {
-      rowBuffer(bufIdx) := reader.module.io.out.bits.data
+      readRowBuffer(bufIdx) := reader.module.io.out.bits.data
       bufAddr := bufAddr + dataBytes.U
 
       when (rowBuffer_filled) {
