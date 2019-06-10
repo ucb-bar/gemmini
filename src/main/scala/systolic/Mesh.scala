@@ -118,9 +118,10 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   // Capture out_vec and out_s_vec (connect IO to bottom row of mesh)
   // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple5)
   for (((b, c), (s, g), tile) <- ((io.out_b zip io.out_c), (io.out_s zip io.out_garbage), mesh.last).zipped) {
-    b := tile.io.out_b
-    c := tile.io.out_c
-    s := tile.io.out_s
-    g := tile.io.out_garbage
+    // TODO we pipelined this to make physical design easier. Consider removing these if possible
+    b := RegNext(tile.io.out_b)
+    c := RegNext(tile.io.out_c)
+    s := RegNext(tile.io.out_s)
+    g := RegNext(tile.io.out_garbage)
   }
 }
