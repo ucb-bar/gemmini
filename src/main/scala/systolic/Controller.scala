@@ -71,7 +71,7 @@ class SystolicArray[T <: Data: Arithmetic](inputType: T, outputType: T, accType:
     new SPAddr(64 /* TODO make this xLen */, config.sp_banks, config.sp_bank_entries), // TODO unify this with the other sp_addr
     inputType, accType, config))
   override lazy val module = new SystolicArrayModule(this, inputType, outputType, accType)
-  override val tlNode = spad.node
+  override val tlNode = spad.id_node
 }
 
 // TODO add WS support

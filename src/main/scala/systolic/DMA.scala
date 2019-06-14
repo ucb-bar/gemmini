@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.util._
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
+import freechips.rocketchip.tilelink.TLBundleParameters
 import freechips.rocketchip.util.DecoupledHelper
 import icenet.{ReservationBufferAlloc, ReservationBufferData}
 import testchipip.{StreamChannel, TLHelper}

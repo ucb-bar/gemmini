@@ -59,6 +59,7 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
 
   val rdata_buf = ShiftRegister(mem.io.rdata, mem_pipeline) // TODO if mem_pipeline > 1, this is inefficient
 
+  // TODO put some way here of making sure that shift or relu6_shift does not change before a read is finished
   val shift = RegNext(io.read.shift) // TODO should this take mem_pipeline into account?
   val relu6_shift = RegNext(io.read.relu6_shift) // TODO should this take mem_pipeline into account?
 

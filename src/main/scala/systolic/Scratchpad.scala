@@ -3,12 +3,13 @@ package systolic
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.config.Parameters
-import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
+import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
-import freechips.rocketchip.tilelink.{TLEdgeOut, TLIdentityNode}
+import freechips.rocketchip.tilelink.{TLEdgeOut, TLIdentityNode, TLXbar}
 import freechips.rocketchip.util.InOrderArbiter
 import Util._
+import testchipip.TLHelper
 
 class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
     extends CoreModule {
@@ -175,11 +176,18 @@ class Scratchpad[T <: Data: Arithmetic](
   require(w % dataBits == 0)
   require(w <= (maxBytes*8)) // TODO get rid of this requirement
 
-  val node = TLIdentityNode()
+  val id_node = TLIdentityNode()
+  val xbar_node = TLXbar()
+
   val reader = LazyModule(new StreamReader(acc_nXacts, outFlits, maxBytes))
   val writer = LazyModule(new StreamWriter(nXacts, maxBytes))
-  node := reader.node
-  node := writer.node
+
+  // id_node :=* reader.node
+  // id_node :=* writer.node
+
+  xbar_node := reader.node
+  xbar_node := writer.node
+  id_node := xbar_node
 
   lazy val module = new LazyModuleImp(this) with HasCoreParameters {
     val io = IO(new Bundle {
