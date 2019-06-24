@@ -70,7 +70,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   val in_s = functs(0) === COMPUTE_AND_FLIP_CMD
   val in_s_flush = Reg(Bool())
+  val in_s_preload = Reg(Bool())
   when (current_dataflow === Dataflow.WS.id.U) {
+    in_s_preload := 0.U
     in_s_flush := 0.U
   }
 
@@ -301,6 +303,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
           io.pullStore.ready := cmd.bits(0).deps.pullStore
 
           when (current_dataflow === Dataflow.OS.id.U) {
+            in_s_preload := in_s_flush
             in_s_flush := rs2s(0)(tagWidth-1, 0) =/= tag_garbage
           }
 
@@ -318,6 +321,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
           io.pullStore.ready := cmd.bits(1).deps.pullStore
 
           when (current_dataflow === Dataflow.OS.id.U) {
+            in_s_preload := in_s_flush
             in_s_flush := rs2s(1)(tagWidth - 1, 0) =/= tag_garbage
           }
 
@@ -413,7 +417,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   when (ShiftRegister(perform_single_preload, mem_pipeline)) {
     mesh.io.a.bits := Mux(ShiftRegister(current_dataflow === Dataflow.WS.id.U, mem_pipeline), 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
-    mesh.io.s := ShiftRegister(RegNext(in_s_flush), mem_pipeline) // TODO create a new in_s_preload
+    // mesh.io.s := ShiftRegister(RegNext(in_s_flush), mem_pipeline) // TODO create a new in_s_preload
+    mesh.io.s := ShiftRegister(in_s_preload, mem_pipeline)
   }
 
   when (ShiftRegister(perform_single_mul, mem_pipeline)) {

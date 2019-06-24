@@ -499,7 +499,8 @@ class Scratchpad[T <: Data: Arithmetic](
       dmawen := true.B
       error := false.B
       // bufAddr := 0.U
-      bufDone := false.B
+      // bufDone := false.B
+      bufDone := reader.module.io.out.fire() && rowBuffer_filled
 
       block_counter := block_counter + 1.U
 
