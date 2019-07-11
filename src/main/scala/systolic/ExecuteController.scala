@@ -441,6 +441,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     w_row + block_size.U - 1.U - output_counter.value)
 
   val is_garbage_addr = mesh.io.tag_out.tag === tag_garbage
+  val is_garbage_addr_and_no_deps = is_garbage_addr && !mesh.io.tag_out.pushLoad && !mesh.io.tag_out.pushStore // TODO is this actually necessary?
 
   // Write to normal scratchpad
   for(i <- 0 until sp_banks) {
@@ -466,7 +467,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     io.acc.write.acc := w_address_acc.acc
   }
 
-  when(mesh.io.out.fire() && !is_garbage_addr) {
+  when(mesh.io.out.fire() && !is_garbage_addr_and_no_deps) {
     when(output_counter.inc()) {
       io.pushLoad.valid := mesh.io.tag_out.pushLoad
       io.pushStore.valid := mesh.io.tag_out.pushStore
@@ -474,6 +475,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       assert(!mesh.io.tag_out.pushLoad || io.pushLoad.ready)
       assert(!mesh.io.tag_out.pushStore || io.pushStore.ready)
     }
-    start_array_outputting := true.B
+
+    start_array_outputting :=  !is_garbage_addr
   }
 }

@@ -11,6 +11,7 @@ import freechips.rocketchip.util.InOrderArbiter
 import Util._
 import testchipip.TLHelper
 
+// TODO can we make TLB hits only take one cycle?
 class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
     extends CoreModule {
 
