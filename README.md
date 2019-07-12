@@ -72,6 +72,15 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 
 **Action:** stride <= rs2
 
+### `flush` flushes the TLB
+**Format:** `flush rs1`
+- `rs1` = If `rs1[0]` is 1, then the current TLB request is skipped (if its waiting for an interrupt). Otherwise, the current TLB request is repeated.
+
+**Notes:**
+
+- This instruction executes _as soon as it is received_ without waiting for other instructions which may be queued up. It is the programmer's responsibility to insert fences if necessary.
+- Dependency bits cannot be appended to this instruction.
+
 ## Core Matmul Sequences
 Every single matrix multiply operation is a combination of `matmul.preload` and `matmul.compute` (due to the length of a single instruction it was split into two instructions). `matmul.preload` should precede the `matmul.compute`.
 

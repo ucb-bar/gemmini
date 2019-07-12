@@ -6,6 +6,7 @@ import SystolicISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
+// TODO deal with errors when reading scratchpad responses
 class LoadController[T <: Data](config: SystolicArrayConfig, xLen: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr,
                                 inputType: T, accType: T)
                                (implicit p: Parameters) extends Module {

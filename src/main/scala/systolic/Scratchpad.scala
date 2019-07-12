@@ -11,6 +11,14 @@ import freechips.rocketchip.util.InOrderArbiter
 import Util._
 import testchipip.TLHelper
 
+class TLBExceptionIO extends Bundle {
+  val interrupt = Output(Bool())
+  val flush_retry = Input(Bool())
+  val flush_skip = Input(Bool())
+
+  def flush: Bool = flush_retry || flush_skip
+}
+
 // TODO can we make TLB hits only take one cycle?
 class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
     extends CoreModule {
@@ -20,13 +28,15 @@ class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
     val req = Flipped(Decoupled(new TLBReq(lgMaxSize)))
     val resp = Decoupled(new TLBResp)
     val ptw = new TLBPTWIO
+
+    val exp = new TLBExceptionIO
   }
 
   val req = Reg(new TLBReq(lgMaxSize))
   val resp = Reg(new TLBResp)
   val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(entries)))
 
-  val s_idle :: s_tlb_req :: s_tlb_resp :: s_done :: Nil = Enum(4)
+  val s_idle :: s_tlb_req :: s_tlb_resp :: s_done :: s_interrupt :: Nil = Enum(5)
   val state = RegInit(s_idle)
 
   when (io.req.fire()) {
@@ -39,7 +49,14 @@ class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
   }
 
   when (state === s_tlb_resp) {
-    when (tlb.io.resp.miss) {
+    val exception = tlb.io.resp.pf.ld || tlb.io.resp.pf.st || tlb.io.resp.pf.inst ||
+      tlb.io.resp.ae.ld || tlb.io.resp.ae.st || tlb.io.resp.ae.inst ||
+      tlb.io.resp.ma.ld || tlb.io.resp.ma.st || tlb.io.resp.ma.inst
+
+    when (exception) {
+      resp := tlb.io.resp
+      state := s_interrupt
+    } .elsewhen(tlb.io.resp.miss) {
       state := s_tlb_req
     } .otherwise {
       resp := tlb.io.resp
@@ -47,13 +64,25 @@ class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
     }
   }
 
+  when (state === s_interrupt) {
+    when (tlb.io.sfence.fire()) {
+      state := Mux(io.exp.flush_retry, s_tlb_req, s_done)
+    }
+  }
+
   when (io.resp.fire()) { state := s_idle }
 
   io.req.ready := state === s_idle
 
-  tlb.io.sfence.valid := false.B
-  tlb.io.sfence.bits := DontCare
+  io.exp.interrupt := state === s_interrupt
+  tlb.io.sfence.valid := io.exp.flush
+  tlb.io.sfence.bits.rs1 := false.B
+  tlb.io.sfence.bits.rs2 := false.B
+  tlb.io.sfence.bits.addr := DontCare
+  tlb.io.sfence.bits.asid := DontCare
+
   tlb.io.kill := false.B
+
   tlb.io.req.valid := state === s_tlb_req
   tlb.io.req.bits := req
 
@@ -61,6 +90,8 @@ class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
   io.resp.bits := resp
 
   io.ptw <> tlb.io.ptw
+
+  assert(!io.exp.flush_retry || !io.exp.flush_skip, "TLB: flushing with both retry and skip at same time")
 }
 
 class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
@@ -74,15 +105,16 @@ class FrontendTLB(nClients: Int, entries: Int)
   val io = IO(new Bundle {
     val clients = Flipped(Vec(nClients, new FrontendTLBIO))
     val ptw = new TLBPTWIO
+    val exp = new TLBExceptionIO
   })
 
   val lgMaxSize = log2Ceil(coreDataBytes)
-  val tlbArb = Module(new InOrderArbiter(
-    new TLBReq(lgMaxSize), new TLBResp, nClients))
+  val tlbArb = Module(new InOrderArbiter(new TLBReq(lgMaxSize), new TLBResp, nClients))
   val tlb = Module(new DecoupledTLB(entries))
   tlb.io.req <> tlbArb.io.out_req
   tlbArb.io.out_resp <> tlb.io.resp
   io.ptw <> tlb.io.ptw
+  io.exp <> tlb.io.exp
 
   tlbArb.io.in_req <> io.clients.map(_.req)
   io.clients.zip(tlbArb.io.in_resp).foreach {
@@ -301,10 +333,6 @@ class Scratchpad[T <: Data: Arithmetic](
     }
 
     val (rowData, rowKeep) = {
-      // val bufAddr_delayed = RegNext(bufAddr) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
-      // val bytesToSend_delayed = RegNext(bytesToSend) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
-      // val bufIdx_delayed = RegNext(bufIdx) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
-
       val offset = bufAddr(byteAddrBits-1, 0)
       val rshift = Cat(offset, 0.U(3.W))
       val lshift = Cat(dataBytes.U - offset, 0.U(3.W))
