@@ -49,9 +49,7 @@ class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
   }
 
   when (state === s_tlb_resp) {
-    val exception = tlb.io.resp.pf.ld || tlb.io.resp.pf.st || tlb.io.resp.pf.inst ||
-      tlb.io.resp.ae.ld || tlb.io.resp.ae.st || tlb.io.resp.ae.inst ||
-      tlb.io.resp.ma.ld || tlb.io.resp.ma.st || tlb.io.resp.ma.inst
+    val exception = Mux(req.cmd === M_XRD, tlb.io.resp.pf.ld || tlb.io.resp.ae.ld, tlb.io.resp.pf.st || tlb.io.resp.ae.st)
 
     when (exception) {
       resp := tlb.io.resp
