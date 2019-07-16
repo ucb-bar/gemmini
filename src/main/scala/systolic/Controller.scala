@@ -99,6 +99,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   implicit val edge = outer.tlNode.edges.out.head
   val tlb = Module(new FrontendTLB(1, 4))
   tlb.io.clients(0) <> outer.spad.module.io.tlb
+  tlb.io.exp.flush_skip := false.B
+  tlb.io.exp.flush_retry := false.B
   io.ptw.head <> tlb.io.ptw
 
   // Controllers
@@ -179,17 +181,30 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   ex_controller.io.pullLoad <> load_to_ex_depq
   ex_controller.io.pullStore <> store_to_ex_depq
 
-  // Wire up busy signals
-  io.busy := load_controller.io.busy || store_controller.io.busy || ex_controller.io.busy
+  // Wire up global RoCC signals
+  io.busy := load_controller.io.busy || store_controller.io.busy
+  io.interrupt := tlb.io.exp.interrupt
 
   // Issue commands to controllers
+  // TODO we combinationally couple cmd.ready and cmd.valid signals here
   when (cmd.valid) {
-    val config_cmd_type = cmd.bits.rs1(1,0)
+    val config_cmd_type = cmd.bits.rs1(1,0) // TODO magic numbers
 
+    val is_flush = funct === FLUSH_CMD
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_store = (funct === STORE_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
+    val is_ex = (funct === COMPUTE_AND_FLIP_CMD || funct === COMPUTE_AND_STAY_CMD || funct === PRELOAD_CMD) ||
+      (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
 
-    when (is_load) {
+    when (is_flush) {
+      val skip = cmd.bits.rs1(0)
+      tlb.io.exp.flush_skip := skip
+      tlb.io.exp.flush_retry := !skip
+
+      cmd.ready := true.B // TODO should we wait for an acknowledgement from the TLB?
+    }
+
+    .elsewhen (is_load) {
       load_controller.io.cmd.valid := true.B
 
       when (load_controller.io.cmd.fire()) {
@@ -211,6 +226,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
       when (ex_controller.io.cmd.fire()) {
         cmd.ready := true.B
       }
+
+      assert(is_ex, "unknown systolic command")
     }
   }
 }
