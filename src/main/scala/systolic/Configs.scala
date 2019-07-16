@@ -50,7 +50,7 @@ class DefaultSystolicConfig extends Config((site, here, up) => {
       sp_width = 8 * 16, // has to be meshRows*tileRows*dataWidth // TODO should this be changeable?
       shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
       depq_len = 65536,
-      dataflow = Dataflow.BOTH
+      dataflow = Dataflow.BOTH,
       acc_rows = 64 * 1024 * 8 / (16 * 32),
       mem_pipeline = 1
     )

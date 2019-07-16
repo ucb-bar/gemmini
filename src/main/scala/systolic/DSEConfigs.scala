@@ -31,7 +31,7 @@ class SystolicParamsDSE1 extends Config((site, here, up) => {
       sp_width = 8 * 16, // has to be meshRows*tileRows*dataWidth // TODO should this be changeable?
       shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
       depq_len = 65536,
-      dataflow = Dataflow.OS
+      dataflow = Dataflow.OS,
       acc_rows = 16 * 1024 * 8 / (16 * 32),
       mem_pipeline = 1
     )
