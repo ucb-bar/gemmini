@@ -131,7 +131,7 @@ class SystolicParamsDSE4 extends Config((site, here, up) => {
       (p: Parameters) => {
          implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(SInt(8.W), SInt(16.W), SInt(32.W), OpcodeSet.custom3))
+        LazyModule(new SystolicArray(SInt(32.W), SInt(32.W), SInt(32.W), OpcodeSet.custom3))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -215,7 +215,7 @@ class SystolicParamsDSE7 extends Config((site, here, up) => {
       sp_banks = 4,
       sp_bank_entries = 256 * 1024 * 8 / (4 * 16*8), // has to be a multiply of meshRows*tileRows
       sp_width = 16 * 8, // has to be meshRows*tileRows*dataWidth // TODO should this be changeable?
-      acc_rows = 16 * 1024 * 8 / (16*32),
+      acc_rows = 64 * 1024 * 8 / (16*32),
       shifter_banks = 16,
       depq_len = 65536,
       dataflow = Dataflow.OS
