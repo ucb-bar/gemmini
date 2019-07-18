@@ -6,26 +6,26 @@ import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
 import SystolicISA._
-import Util._
 
-case class SystolicArrayConfig(
-                                tileRows: Int,
-                                tileColumns: Int,
-                                meshRows: Int,
-                                meshColumns: Int,
-                                ld_str_queue_length: Int,
-                                ex_queue_length: Int,
-                                sp_banks: Int,
-                                sp_bank_entries: Int,
-                                sp_width: Int,
-                                shifter_banks: Int,
-                                depq_len: Int,
-                                dataflow: Dataflow.Value,
-                                acc_rows: Int,
-                                mem_pipeline: Int = 1
-                              )
-
-case object SystolicArrayKey extends Field[SystolicArrayConfig]
+case class SystolicArrayConfig[T <: Data : Arithmetic] (
+  tileRows: Int,
+  tileColumns: Int,
+  meshRows: Int,
+  meshColumns: Int,
+  ld_str_queue_length: Int,
+  ex_queue_length: Int,
+  sp_banks: Int,
+  sp_bank_entries: Int,
+  sp_width: Int,
+  shifter_banks: Int,
+  depq_len: Int,
+  dataflow: Dataflow.Value,
+  acc_rows: Int,
+  mem_pipeline: Int = 1,
+  inputType: T,
+  outputType: T,
+  accType: T
+)
 
 class SystolicDeps extends Bundle {
   val pushStore = Bool()
@@ -61,22 +61,23 @@ class AccAddr(xLen: Int, acc_rows: Int, tagWidth: Int) extends Bundle {
   override def cloneType: this.type = new AccAddr(xLen, acc_rows, tagWidth).asInstanceOf[this.type]
 }
 
-class SystolicArray[T <: Data: Arithmetic](inputType: T, outputType: T, accType: T, opcodes: OpcodeSet)
-                                          (implicit p: Parameters) extends LazyRoCC (
+class SystolicArray[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: SystolicArrayConfig[T])
+                                           (implicit p: Parameters)
+  extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
     nPTWPorts = 1) {
-  val config = p(SystolicArrayKey)
+  val xLen = p(XLen)
   val spad = LazyModule(new Scratchpad(
     config.sp_banks, config.sp_bank_entries, config.sp_width,
-    new SPAddr(64 /* TODO make this xLen */, config.sp_banks, config.sp_bank_entries), // TODO unify this with the other sp_addr
-    inputType, accType, config))
-  override lazy val module = new SystolicArrayModule(this, inputType, outputType, accType)
+    new SPAddr(xLen, config.sp_banks, config.sp_bank_entries) // TODO unify this with the other sp_addr
+    , config))
+  override lazy val module = new SystolicArrayModule(this)
   override val tlNode = spad.id_node
 }
 
 // TODO add WS support
 class SystolicArrayModule[T <: Data: Arithmetic]
-    (outer: SystolicArray[T], inputType: T, outputType: T, accType: T)
+    (outer: SystolicArray[T])
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
 
@@ -113,9 +114,9 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val push2 = cmd.bits.inst.funct.asTypeOf(funct_t).push2
   val pop2 = cmd.bits.inst.funct.asTypeOf(funct_t).pop2
 
-  val load_controller = Module(new LoadController(outer.config, xLen, sp_addr_t, acc_addr, inputType, accType))
+  val load_controller = Module(new LoadController(outer.config, xLen, sp_addr_t, acc_addr))
   val store_controller = Module(new StoreController(outer.config, xLen, sp_addr_t, acc_addr))
-  val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config, sp_addr_t, acc_addr, inputType, outputType, accType))
+  val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config, sp_addr_t, acc_addr))
 
   val dma_arbiter = Module(new DMAArbiter(sp_banks, sp_bank_entries, acc_rows))
 

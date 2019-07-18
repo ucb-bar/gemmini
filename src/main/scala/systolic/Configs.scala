@@ -1,13 +1,14 @@
 package systolic
 
 import chisel3._
-import freechips.rocketchip.config.{Field, Config, Parameters}
+import freechips.rocketchip.config.{Config, Field, Parameters}
 import freechips.rocketchip.diplomacy.{LazyModule, ValName}
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet, XLen}
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.system._
+import systolic.Arithmetic.SIntArithmetic
 
 
 // ------------------
@@ -31,34 +32,39 @@ class WithMultiRoCC extends Config((site, here, up) => {
 // Component Mixin Configs
 // -----------------------
 
+object SystolicConfigs {
+  val defaultConfig = SystolicArrayConfig(
+    tileRows = 1,
+    tileColumns = 1,
+    meshRows = 16,
+    meshColumns = 16,
+    ld_str_queue_length = 10,
+    ex_queue_length = 10,
+    sp_banks = 4,
+    sp_bank_entries = 256 * 1024 * 8 / (4 * 16 * 8), // has to be a multiply of meshRows*tileRows
+    sp_width = 8 * 16, // has to be meshRows*tileRows*dataWidth // TODO should this be changeable?
+    shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
+    depq_len = 65536,
+    dataflow = Dataflow.BOTH,
+    acc_rows = 64 * 1024 * 8 / (16 * 32),
+    mem_pipeline = 1,
+    inputType = SInt(8.W),
+    outputType = SInt(16.W),
+    accType = SInt(32.W)
+  )
+}
+
 /**
  * Mixin which sets the default parameters for a systolic array accelerator.
    Also sets the system bus width to 128 bits (instead of the deafult 64 bits) to
    allow for the default 16x16 8-bit systolic array to be attached.
  */
-class DefaultSystolicConfig extends Config((site, here, up) => {
-  case SystolicArrayKey =>
-    SystolicArrayConfig(
-      tileRows = 1,
-      tileColumns = 1,
-      meshRows = 16,
-      meshColumns = 16,
-      ld_str_queue_length = 10,
-      ex_queue_length = 10,
-      sp_banks = 4,
-      sp_bank_entries = 256 * 1024 * 8 / (4 * 16 * 8), // has to be a multiply of meshRows*tileRows
-      sp_width = 8 * 16, // has to be meshRows*tileRows*dataWidth // TODO should this be changeable?
-      shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
-      depq_len = 65536,
-      dataflow = Dataflow.BOTH,
-      acc_rows = 64 * 1024 * 8 / (16 * 32),
-      mem_pipeline = 1
-    )
+class DefaultSystolicConfig[T <: Data : Arithmetic] extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
-         implicit val q = p
+        implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(SInt(8.W), SInt(16.W), SInt(32.W), OpcodeSet.custom3))
+        LazyModule(new SystolicArray(OpcodeSet.custom3, SystolicConfigs.defaultConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -99,7 +105,7 @@ class SystolicHostMiniCore extends Config((site, here, up) => {
       Seq((p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(SInt(8.W), SInt(16.W), SInt(32.W), OpcodeSet.custom3))
+        LazyModule(new SystolicArray(OpcodeSet.custom3, SystolicConfigs.defaultConfig))
       }))
 })
 
@@ -138,7 +144,7 @@ class WithSystolicHostMiniCore extends Config((site, here, up) => {
       Seq((p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(SInt(8.W), SInt(16.W), SInt(32.W), OpcodeSet.custom3))
+        LazyModule(new SystolicArray(OpcodeSet.custom3, SystolicConfigs.defaultConfig))
       }))
 })
 

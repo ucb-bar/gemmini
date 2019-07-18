@@ -8,7 +8,7 @@ import freechips.rocketchip.config.Parameters
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
-class StoreController(config: SystolicArrayConfig, xLen: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr)
+class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xLen: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr)
                      (implicit p: Parameters) extends Module {
   import config._
 
