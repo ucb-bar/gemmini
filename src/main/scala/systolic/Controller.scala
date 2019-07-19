@@ -25,7 +25,58 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
   inputType: T,
   outputType: T,
   accType: T
-)
+) {
+  def generateHeader(guard: String = "SYSTOLIC_PARAMS_H"): String = {
+    // Returns the (min,max) values for a dataType
+    def limitsOfDataType(dataType: Data): (String, String) = {
+      assert(dataType.getWidth < 32) // Above 32 bits, we need to append UL to the number, which isn't done yet
+      if (dataType.isInstanceOf[UInt]) {
+        ("0", BigInt(2).pow(dataType.getWidth).-(1).toString)
+      } else if (dataType.isInstanceOf[SInt]) {
+        ("-" + BigInt(2).pow(dataType.getWidth - 1).toString ,BigInt(2).pow(dataType.getWidth - 1).-(1).toString)
+      } else {
+        throw new IllegalArgumentException(s"Data type $dataType isn't an integer")
+      }
+    }
+
+    assert(tileColumns*meshColumns == tileRows*meshRows)
+    assert(Set(8, 16, 32, 64).contains(inputType.getWidth))
+    assert(Set(8, 16, 32, 64).contains(outputType.getWidth))
+    assert(Set(8, 16, 32, 64).contains(accType.getWidth))
+
+    val header = new StringBuilder()
+    header ++= s"#ifndef $guard\n"
+    header ++= s"#define $guard\n\n"
+
+    header ++= s"#define <stdint.h>\n"
+    header ++= s"#define <limits.h>\n\n"
+
+    header ++= s"#define DIM ${tileColumns*meshColumns}\n"
+    header ++= s"#define ADDR_LEN 32\n"
+    header ++= s"#define BANK_NUM $sp_banks\n"
+    header ++= s"#define BANK_ROWS $sp_bank_entries\n" // TODO: check
+    header ++= s"#define ACC_ROWS $acc_rows\n" // TODO: check
+    header ++= s"#define MAX_BYTES 64\n"
+    header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${inputType.getWidth/8}))\n"
+    header ++= s"#define MAX_BLOCK_LEN_ACC (MAX_BYTES/(DIM*${accType.getWidth/8}))\n\n"
+
+    header ++= s"#define MAX_Q_LEN $depq_len\n\n"
+
+    // Datatype of the systolic array
+    val limits = limitsOfDataType(inputType)
+    header ++= s"typedef int${inputType.getWidth}_t elem_t;\n"
+    header ++= s"elem_t elem_t_max = ${limits._2};\n"
+    header ++= s"elem_t elem_t_min = ${limits._1};\n"
+    header ++= s"typedef int${accType.getWidth}_t acc_t;\n\n"
+
+    header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"
+    header ++= s"#define row_align_acc(blocks) __attribute__((aligned(blocks*DIM*sizeof(acc_t))))\n\n"
+
+
+    header ++= s"#endif // $guard"
+    header.toString()
+  }
+}
 
 class SystolicDeps extends Bundle {
   val pushStore = Bool()
