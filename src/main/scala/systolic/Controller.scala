@@ -1,5 +1,8 @@
 package systolic
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Paths}
+
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.config._
@@ -117,6 +120,9 @@ class SystolicArray[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: Syst
   extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
     nPTWPorts = 1) {
+
+  Files.write(Paths.get("systolic_params.h"), config.generateHeader().getBytes(StandardCharsets.UTF_8))
+
   val xLen = p(XLen)
   val spad = LazyModule(new Scratchpad(
     config.sp_banks, config.sp_bank_entries, config.sp_width,
