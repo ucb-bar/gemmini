@@ -61,7 +61,7 @@ object SystolicConfigs {
    Also sets the system bus width to 128 bits (instead of the deafult 64 bits) to
    allow for the default 16x16 8-bit systolic array to be attached.
  */
-class DefaultSystolicConfig[T <: Data : Arithmetic] extends Config((site, here, up) => {
+class DefaultSystolicConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
