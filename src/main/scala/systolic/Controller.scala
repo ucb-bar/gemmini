@@ -54,8 +54,8 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
     header ++= s"#ifndef $guard\n"
     header ++= s"#define $guard\n\n"
 
-    header ++= s"#define <stdint.h>\n"
-    header ++= s"#define <limits.h>\n\n"
+    header ++= s"#include <stdint.h>\n"
+    header ++= s"#include <limits.h>\n\n"
 
     header ++= s"#define DIM ${tileColumns*meshColumns}\n"
     header ++= s"#define ADDR_LEN 32\n"
