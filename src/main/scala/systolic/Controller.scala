@@ -1,31 +1,86 @@
 package systolic
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Paths}
+
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
 import SystolicISA._
-import Util._
 
-case class SystolicArrayConfig(
-                                tileRows: Int,
-                                tileColumns: Int,
-                                meshRows: Int,
-                                meshColumns: Int,
-                                ld_str_queue_length: Int,
-                                ex_queue_length: Int,
-                                sp_banks: Int,
-                                sp_bank_entries: Int,
-                                sp_width: Int,
-                                shifter_banks: Int,
-                                depq_len: Int,
-                                dataflow: Dataflow.Value,
-                                acc_rows: Int,
-                                mem_pipeline: Int = 1
-                              )
+case class SystolicArrayConfig[T <: Data : Arithmetic] (
+  tileRows: Int,
+  tileColumns: Int,
+  meshRows: Int,
+  meshColumns: Int,
+  ld_str_queue_length: Int,
+  ex_queue_length: Int,
+  sp_banks: Int,
+  sp_bank_entries: Int,
+  sp_width: Int,
+  shifter_banks: Int,
+  depq_len: Int,
+  dataflow: Dataflow.Value,
+  acc_rows: Int,
+  mem_pipeline: Int = 1,
+  inputType: T,
+  outputType: T,
+  accType: T,
+  headerFileName: String = "systolic_params.h"
+) {
+  def generateHeader(guard: String = "SYSTOLIC_PARAMS_H"): String = {
+    // Returns the (min,max) values for a dataType
+    def limitsOfDataType(dataType: Data): (String, String) = {
+      assert(dataType.getWidth < 32) // Above 32 bits, we need to append UL to the number, which isn't done yet
+      if (dataType.isInstanceOf[UInt]) {
+        ("0", BigInt(2).pow(dataType.getWidth).-(1).toString)
+      } else if (dataType.isInstanceOf[SInt]) {
+        ("-" + BigInt(2).pow(dataType.getWidth - 1).toString ,BigInt(2).pow(dataType.getWidth - 1).-(1).toString)
+      } else {
+        throw new IllegalArgumentException(s"Data type $dataType isn't an integer")
+      }
+    }
 
-case object SystolicArrayKey extends Field[SystolicArrayConfig]
+    assert(tileColumns*meshColumns == tileRows*meshRows)
+    assert(Set(8, 16, 32, 64).contains(inputType.getWidth))
+    assert(Set(8, 16, 32, 64).contains(outputType.getWidth))
+    assert(Set(8, 16, 32, 64).contains(accType.getWidth))
+
+    val header = new StringBuilder()
+    header ++= s"#ifndef $guard\n"
+    header ++= s"#define $guard\n\n"
+
+    header ++= s"#define <stdint.h>\n"
+    header ++= s"#define <limits.h>\n\n"
+
+    header ++= s"#define DIM ${tileColumns*meshColumns}\n"
+    header ++= s"#define ADDR_LEN 32\n"
+    header ++= s"#define BANK_NUM $sp_banks\n"
+    header ++= s"#define BANK_ROWS $sp_bank_entries\n" // TODO: check
+    header ++= s"#define ACC_ROWS $acc_rows\n" // TODO: check
+    header ++= s"#define MAX_BYTES 64\n"
+    header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${inputType.getWidth/8}))\n"
+    header ++= s"#define MAX_BLOCK_LEN_ACC (MAX_BYTES/(DIM*${accType.getWidth/8}))\n\n"
+
+    header ++= s"#define MAX_Q_LEN $depq_len\n\n"
+
+    // Datatype of the systolic array
+    val limits = limitsOfDataType(inputType)
+    header ++= s"typedef int${inputType.getWidth}_t elem_t;\n"
+    header ++= s"elem_t elem_t_max = ${limits._2};\n"
+    header ++= s"elem_t elem_t_min = ${limits._1};\n"
+    header ++= s"typedef int${accType.getWidth}_t acc_t;\n\n"
+
+    header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"
+    header ++= s"#define row_align_acc(blocks) __attribute__((aligned(blocks*DIM*sizeof(acc_t))))\n\n"
+
+
+    header ++= s"#endif // $guard"
+    header.toString()
+  }
+}
 
 class SystolicDeps extends Bundle {
   val pushStore = Bool()
@@ -61,22 +116,26 @@ class AccAddr(xLen: Int, acc_rows: Int, tagWidth: Int) extends Bundle {
   override def cloneType: this.type = new AccAddr(xLen, acc_rows, tagWidth).asInstanceOf[this.type]
 }
 
-class SystolicArray[T <: Data: Arithmetic](inputType: T, outputType: T, accType: T, opcodes: OpcodeSet)
-                                          (implicit p: Parameters) extends LazyRoCC (
+class SystolicArray[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: SystolicArrayConfig[T])
+                                           (implicit p: Parameters)
+  extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
     nPTWPorts = 1) {
-  val config = p(SystolicArrayKey)
+
+  Files.write(Paths.get(config.headerFileName), config.generateHeader().getBytes(StandardCharsets.UTF_8))
+
+  val xLen = p(XLen)
   val spad = LazyModule(new Scratchpad(
     config.sp_banks, config.sp_bank_entries, config.sp_width,
-    new SPAddr(64 /* TODO make this xLen */, config.sp_banks, config.sp_bank_entries), // TODO unify this with the other sp_addr
-    inputType, accType, config))
-  override lazy val module = new SystolicArrayModule(this, inputType, outputType, accType)
+    new SPAddr(xLen, config.sp_banks, config.sp_bank_entries) // TODO unify this with the other sp_addr
+    , config))
+  override lazy val module = new SystolicArrayModule(this)
   override val tlNode = spad.id_node
 }
 
 // TODO add WS support
 class SystolicArrayModule[T <: Data: Arithmetic]
-    (outer: SystolicArray[T], inputType: T, outputType: T, accType: T)
+    (outer: SystolicArray[T])
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
 
@@ -113,9 +172,9 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val push2 = cmd.bits.inst.funct.asTypeOf(funct_t).push2
   val pop2 = cmd.bits.inst.funct.asTypeOf(funct_t).pop2
 
-  val load_controller = Module(new LoadController(outer.config, xLen, sp_addr_t, acc_addr, inputType, accType))
+  val load_controller = Module(new LoadController(outer.config, xLen, sp_addr_t, acc_addr))
   val store_controller = Module(new StoreController(outer.config, xLen, sp_addr_t, acc_addr))
-  val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config, sp_addr_t, acc_addr, inputType, outputType, accType))
+  val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config, sp_addr_t, acc_addr))
 
   val dma_arbiter = Module(new DMAArbiter(sp_banks, sp_bank_entries, acc_rows))
 

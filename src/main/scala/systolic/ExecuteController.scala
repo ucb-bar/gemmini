@@ -8,10 +8,9 @@ import freechips.rocketchip.config.Parameters
 
 // TODO handle reads from the same bank
 // TODO don't flush all 4 time steps when shorter flushes will work
-class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArrayConfig,
-                                   sp_addr_t: SPAddr, acc_addr_t: AccAddr,
-                                   inputType: T, outputType: T, accType: T)
-                                              (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
+class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArrayConfig[T],
+                                   sp_addr_t: SPAddr, acc_addr_t: AccAddr)
+                                  (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
   import config._
   import ev._
 
