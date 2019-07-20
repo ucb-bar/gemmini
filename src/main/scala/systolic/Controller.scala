@@ -27,7 +27,8 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
   mem_pipeline: Int = 1,
   inputType: T,
   outputType: T,
-  accType: T
+  accType: T,
+  headerFileName: String = "systolic_params.h"
 ) {
   def generateHeader(guard: String = "SYSTOLIC_PARAMS_H"): String = {
     // Returns the (min,max) values for a dataType
@@ -121,7 +122,7 @@ class SystolicArray[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: Syst
     opcodes = OpcodeSet.custom3,
     nPTWPorts = 1) {
 
-  Files.write(Paths.get("systolic_params.h"), config.generateHeader().getBytes(StandardCharsets.UTF_8))
+  Files.write(Paths.get(config.headerFileName), config.generateHeader().getBytes(StandardCharsets.UTF_8))
 
   val xLen = p(XLen)
   val spad = LazyModule(new Scratchpad(
