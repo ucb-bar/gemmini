@@ -187,10 +187,12 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int) extends Module {
 // TODO scratchpad is currently broken when one row is larger than dataBits. The requests arrive out-of-order, meaning that half of one row might arrive after the first have of another row. Some kind of re-ordering buffer may be needed
 class Scratchpad[T <: Data: Arithmetic](
     nBanks: Int, nRows: Int, w: Int, sp_addr_t: SPAddr, config: SystolicArrayConfig[T],
-    val maxBytes: Int = 128, val dataBits: Int = 128)
     (implicit p: Parameters) extends LazyModule {
 
   import config._
+
+  val maxBytes = dma_maxbytes
+  val dataBits = dma_buswidth
 
   val block_rows = meshRows * tileRows
   val acc_w = (accType.getWidth / inputType.getWidth) * w

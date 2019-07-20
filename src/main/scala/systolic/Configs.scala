@@ -48,8 +48,10 @@ object SystolicConfigs {
     dataflow = Dataflow.BOTH,
     acc_rows = 64 * 1024 * 8 / (16 * 32),
     mem_pipeline = 1,
+    dma_maxbytes = 128, // TODO get this from cacheblockbytes
+    dma_buswidth = 128, // TODO get this from SystemBusKey
     inputType = SInt(8.W),
-    outputType = SInt(16.W),
+    outputType = SInt(19.W),
     accType = SInt(32.W)
   )
 }
