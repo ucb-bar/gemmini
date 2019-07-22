@@ -50,7 +50,8 @@ Generator for configurable systolic arrays. Supports configurable dimensions, pr
 ### `config_ex` configures the Execute pipeline
 **Format:** `config_ex rs1 rs2`
 - `rs1` = `rs1[0:1]` must be `00`. `rs1[2]` will determine if output (0) or weight (1) stationary. `rs1[4:3]` will determine the activation function: either relu (1), relu6 (2), or no activation function (0).
-- `rs2[31:0]` = the number of bits by which the accumulated result of a matmul is right-shifted
+- `rs[63:32]` is the number of bits by which the accumulated result of a matmul is right-shifted when leaving the accumulator
+- `rs2[31:0]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the systolic array
 - `rs2[63:32]` = the number of bits by which 6 should be left-shifted before applying relu6
 - `funct` = 0
 

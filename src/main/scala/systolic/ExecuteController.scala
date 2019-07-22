@@ -76,6 +76,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   }
 
   val in_shift = Reg(UInt(log2Ceil(accType.getWidth).W))
+  val acc_shift = Reg(UInt(log2Ceil(accType.getWidth).W))
   val relu6_shift = Reg(UInt(log2Ceil(accType.getWidth).W))
   val activation = Reg(UInt(2.W))
 
@@ -248,7 +249,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     val read_d_from_acc = d_can_fire && d_read_from_acc && start_inputting_d && !preload_zeros
 
     io.acc.read.en := read_a_from_acc || read_b_from_acc || read_d_from_acc
-    io.acc.read.shift := in_shift
+    io.acc.read.shift := acc_shift
     io.acc.read.relu6_shift := relu6_shift
     io.acc.read.act := activation
 
@@ -267,6 +268,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     Seq(ShiftRegister(RegNext(preload_zeros), mem_pipeline) -> 0.U, ShiftRegister(RegNext(d_read_from_acc), mem_pipeline) -> accReadData))
 
   // FSM logic
+  // TODO ready and pop wires are combinationally joined here
   switch (control_state) {
     is (waiting_for_cmd) {
       // Default state
@@ -279,6 +281,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         when(DoConfig && !matmul_in_progress) {
           activation := rs1s(0)(4, 3)
           in_shift := rs2s(0)(31, 0) // TODO magic number
+          acc_shift := cmd.bits(0).cmd.rs1(xLen-1, 32) // TODO magic number
           relu6_shift := cmd.bits(0).cmd.rs2(xLen-1, 32) // TODO magic number
 
           if (dataflow == Dataflow.BOTH)
