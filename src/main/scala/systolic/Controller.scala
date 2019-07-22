@@ -35,7 +35,7 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
   def generateHeader(guard: String = "SYSTOLIC_PARAMS_H"): String = {
     // Returns the (min,max) values for a dataType
     def limitsOfDataType(dataType: Data): (String, String) = {
-      assert(dataType.getWidth < 32) // Above 32 bits, we need to append UL to the number, which isn't done yet
+      assert(dataType.getWidth <= 32) // Above 32 bits, we need to append UL to the number, which isn't done yet
       if (dataType.isInstanceOf[UInt]) {
         ("0", BigInt(2).pow(dataType.getWidth).-(1).toString)
       } else if (dataType.isInstanceOf[SInt]) {
