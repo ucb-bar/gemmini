@@ -166,17 +166,18 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   // io.ptw.head <> tlb.io.ptw
   val capturePTWIO = WireInit(false.B)
-  val ptwio_ptbr = RegEnable(io.ptw.head.ptbr, capturePTWIO)
-  val ptwio_status = RegEnable(io.ptw.head.status, capturePTWIO)
-  val ptwio_pmp = RegEnable(io.ptw.head.pmp, capturePTWIO)
-  val ptwio_customCSRs = RegEnable(io.ptw.head.customCSRs, capturePTWIO)
+  // val ptwio_ptbr = RegEnable(io.ptw.head.ptbr, capturePTWIO)
+  // val ptwio_status = RegEnable(io.ptw.head.status, capturePTWIO)
+  // val ptwio_pmp = RegEnable(io.ptw.head.pmp, capturePTWIO)
+  // val ptwio_customCSRs = RegEnable(io.ptw.head.customCSRs, capturePTWIO)
+  val ptwio_status = RegEnable(cmd.bits.status, capturePTWIO)
 
   io.ptw.head.req <> tlb.io.ptw.req
   tlb.io.ptw.resp <> io.ptw.head.resp
-  tlb.io.ptw.ptbr := ptwio_ptbr
+  tlb.io.ptw.ptbr := io.ptw.head.ptbr 
   tlb.io.ptw.status := ptwio_status
-  tlb.io.ptw.pmp := ptwio_pmp
-  tlb.io.ptw.customCSRs := ptwio_customCSRs
+  tlb.io.ptw.pmp := io.ptw.head.pmp 
+  tlb.io.ptw.customCSRs := io.ptw.head.customCSRs 
 
   // Controllers
   val cmd = io.cmd
