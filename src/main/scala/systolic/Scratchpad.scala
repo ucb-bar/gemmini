@@ -140,6 +140,8 @@ class ScratchpadMemRequest(val nBanks: Int, val nRows: Int, val acc_rows: Int)
   val stride = UInt(xLen.W)
   val len = UInt(16.W) // TODO don't use a magic number for the width here
 
+  val status = new MStatus
+
   val write = Bool()
 }
 
@@ -234,6 +236,7 @@ class Scratchpad[T <: Data: Arithmetic](
       val read  = Flipped(Vec(nBanks, new ScratchpadReadIO(nRows, w)))
       val write = Flipped(Vec(nBanks, new ScratchpadWriteIO(nRows, w)))
       val tlb = new FrontendTLBIO
+      val mstatus = Output(new MStatus)
 
       // Accumulator ports
       val acc = new AccumulatorMemIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType)))
@@ -290,6 +293,8 @@ class Scratchpad[T <: Data: Arithmetic](
     val tlberr = Mux(req.write,
       io.tlb.resp.bits.pf.st || io.tlb.resp.bits.ae.st,
       io.tlb.resp.bits.pf.ld || io.tlb.resp.bits.ae.ld)
+
+    io.mstatus := req.status
 
     val nextVaddr = Cat(reqVpn + 1.U, 0.U(pgIdxBits.W))
     val pageBytes = nextVaddr - req.vaddr

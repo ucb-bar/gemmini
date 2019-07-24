@@ -165,19 +165,12 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   tlb.io.exp.flush_retry := false.B
 
   // io.ptw.head <> tlb.io.ptw
-  val capturePTWIO = WireInit(false.B)
-  // val ptwio_ptbr = RegEnable(io.ptw.head.ptbr, capturePTWIO)
-  // val ptwio_status = RegEnable(io.ptw.head.status, capturePTWIO)
-  // val ptwio_pmp = RegEnable(io.ptw.head.pmp, capturePTWIO)
-  // val ptwio_customCSRs = RegEnable(io.ptw.head.customCSRs, capturePTWIO)
-  val ptwio_status = RegEnable(cmd.bits.status, capturePTWIO)
-
   io.ptw.head.req <> tlb.io.ptw.req
   tlb.io.ptw.resp <> io.ptw.head.resp
-  tlb.io.ptw.ptbr := io.ptw.head.ptbr 
-  tlb.io.ptw.status := ptwio_status
-  tlb.io.ptw.pmp := io.ptw.head.pmp 
-  tlb.io.ptw.customCSRs := io.ptw.head.customCSRs 
+  tlb.io.ptw.ptbr := io.ptw.head.ptbr
+  tlb.io.ptw.status := outer.spad.module.io.mstatus
+  tlb.io.ptw.pmp := io.ptw.head.pmp
+  tlb.io.ptw.customCSRs := io.ptw.head.customCSRs
 
   // Controllers
   val cmd = io.cmd
@@ -286,10 +279,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
       val skip = cmd.bits.rs1(0)
       tlb.io.exp.flush_skip := skip
       tlb.io.exp.flush_retry := !skip
-
-      capturePTWIO := true.B
-
-      assert(io.cmd.bits.status.asUInt === io.ptw.head.status.asUInt, "ptw io is incorrect")
 
       cmd.ready := true.B // TODO should we wait for an acknowledgement from the TLB?
     }

@@ -39,6 +39,7 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xL
   val accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr_t)
   val spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr_t)
   val config_stride = cmd.bits.cmd.rs2
+  val mstatus = cmd.bits.cmd.status
 
   io.busy := cmd.valid
 
@@ -68,6 +69,7 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xL
   io.dma.req.bits.stride := stride
   io.dma.req.bits.len := 1.U // TODO let stores also give a len parameter
   io.dma.req.bits.write := true.B
+  io.dma.req.bits.status := mstatus
   io.dma.resp.ready := true.B
 
   io.pushLoad.valid := false.B

@@ -39,6 +39,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
   val cmd = Queue(io.cmd, ld_str_queue_length)
 
   val config_stride = cmd.bits.cmd.rs2
+  val mstatus = cmd.bits.cmd.status
 
   val cmd_vaddr = cmd.bits.cmd.rs1
   val vaddr = Reg(cmd_vaddr.cloneType)
@@ -82,6 +83,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
   io.dma.req.bits.stride := stride
   io.dma.req.bits.len := Mux(control_state === waiting_for_command, cmd_closest_aligned, closest_aligned)
   io.dma.req.bits.write := false.B
+  io.dma.req.bits.status := mstatus
   io.dma.resp.ready := true.B
 
   io.pushStore.valid := false.B
