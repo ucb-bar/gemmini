@@ -288,7 +288,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
       capturePTWIO := true.B
 
-      assert(cmd.status === io.ptw.head.status, "ptw io is incorrect")
+      assert(io.cmd.bits.status.asUInt === io.ptw.head.status.asUInt, "ptw io is incorrect")
 
       cmd.ready := true.B // TODO should we wait for an acknowledgement from the TLB?
     }
