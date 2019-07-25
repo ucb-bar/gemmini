@@ -18,7 +18,7 @@ object DSEBaseConfig {
     meshColumns = 16,
     ld_str_queue_length = 10,
     ex_queue_length = 10,
-    sp_banks = 4,
+    sp_banks = 4, // TODO support one-bank designs
     sp_bank_entries = 64 * 1024 * 8 / (4 * 16 * 8), // has to be a multiply of meshRows*tileRows
     sp_width = 8 * 16, // has to be meshRows*tileRows*dataWidth // TODO should this be changeable?
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
@@ -44,7 +44,7 @@ object DSEConfigs{
   val fullyCombinationalConfig = baseConfig.copy(tileRows = 16, tileColumns = 16, meshRows = 1, meshColumns = 1, headerFileName = "systolic_params_dse6.h")
   val moreMemoryConfig = baseConfig.copy(sp_bank_entries = 256*1024*8 / (4*16*8),
     acc_rows = 64*1024*8/(16*32), headerFileName = "systolic_params_dse7.h") // 256kB
-  val lessBanksConfig = baseConfig.copy(sp_banks = 1, sp_bank_entries = 64*1024*8/(1*16*8), headerFileName = "systolic_params_dse8.h")
+  val moreBanksConfig = baseConfig.copy(sp_banks = 32, sp_bank_entries = 64*1024*8/(32*16*8), headerFileName = "systolic_params_dse8.h")
   val narrowerBusConfig = baseConfig.copy(dma_maxbytes = 64, dma_buswidth = 64, headerFileName = "systolic_params_dse10.h")
 }
 
@@ -132,13 +132,13 @@ class SystolicParamsDSE7 extends Config((site, here, up) => {
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
-//===========MEMORY BANKS CHANGE: 2 Banks=========
+//===========MEMORY BANKS CHANGE: 33 Banks=========
 class SystolicParamsDSE8 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.lessBanksConfig))
+        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.moreBanksConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
