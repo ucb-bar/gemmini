@@ -9,7 +9,6 @@ import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
 import SystolicISA._
-import midas.targetutils.FpgaDebug
 
 case class SystolicArrayConfig[T <: Data : Arithmetic] (
   tileRows: Int,
@@ -195,15 +194,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val (ex_to_load_depq, ex_to_load_depq_len) = MultiHeadedQueue(ex_controller.io.pushLoad, depq_len, 1)
   val (ex_to_store_depq, ex_to_store_depq_len) = MultiHeadedQueue(ex_controller.io.pushStore, depq_len, 1)
 
-  FpgaDebug(load_controller.io.pushStore.ready)
-  FpgaDebug(load_controller.io.pushEx.ready)
-  FpgaDebug(store_controller.io.pushLoad.ready)
-  FpgaDebug(store_controller.io.pushEx.ready)
-  FpgaDebug(ex_controller.io.pushLoad.ready)
-  FpgaDebug(ex_controller.io.pushStore.ready)
-  FpgaDebug(ex_to_load_depq_len)
-  FpgaDebug(ex_to_store_depq_len)
-  
   // Wire up commands to controllers
   load_controller.io.cmd.valid := false.B
   load_controller.io.cmd.bits.cmd := cmd.bits
@@ -262,7 +252,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   // Wire up global RoCC signals
   io.busy := load_controller.io.busy || store_controller.io.busy
   io.interrupt := tlb.io.exp.interrupt
-  FpgaDebug(io.interrupt)
 
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here

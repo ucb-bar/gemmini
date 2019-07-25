@@ -10,7 +10,6 @@ import freechips.rocketchip.tilelink.{TLEdgeOut, TLIdentityNode, TLXbar}
 import freechips.rocketchip.util.InOrderArbiter
 import Util._
 import testchipip.TLHelper
-import midas.targetutils.FpgaDebug
 
 class TLBExceptionIO extends Bundle {
   val interrupt = Output(Bool())
@@ -40,11 +39,6 @@ class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
 
   val s_idle :: s_tlb_req :: s_tlb_resp :: s_done :: s_interrupt :: Nil = Enum(5)
   val state = RegInit(s_idle)
-  FpgaDebug(state)
-  FpgaDebug(tlb.io.resp)
-  FpgaDebug(req)
-  FpgaDebug(io.req.valid)
-  FpgaDebug(io.req.ready)
 
   when (io.req.fire()) {
     req := io.req.bits
@@ -94,7 +88,6 @@ class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
   io.resp.bits := resp
 
   io.ptw <> tlb.io.ptw
-  FpgaDebug(tlb.io.ptw)
 
   assert(!io.exp.flush_retry || !io.exp.flush_skip, "TLB: flushing with both retry and skip at same time")
 }
@@ -242,11 +235,6 @@ class Scratchpad[T <: Data: Arithmetic](
       val acc = new AccumulatorMemIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType)))
     })
 
-    FpgaDebug(io.dma.req.fire())
-    FpgaDebug(io.dma.req.ready)
-    FpgaDebug(io.dma.req.valid)
-    FpgaDebug(io.dma.req.bits.write)
-
     require(reader.module.dataBits == dataBits)
     require(writer.module.dataBits == dataBits)
 
@@ -256,9 +244,6 @@ class Scratchpad[T <: Data: Arithmetic](
          s_respond :: Nil) = Enum(10)
     val state = RegInit(s_idle)
     val error = Reg(Bool())
-
-    FpgaDebug(state)
-    FpgaDebug(error)
 
     io.dma.req.ready := state === s_idle
     io.dma.resp.valid := state === s_respond
