@@ -20,11 +20,11 @@ class TLBExceptionIO extends Bundle {
 }
 
 // TODO can we make TLB hits only take one cycle?
-class DecoupledTLB(entries: Int)(implicit edge: TLEdgeOut, p: Parameters)
+class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Parameters)
     extends CoreModule {
 
   // val lgMaxSize = log2Ceil(coreDataBytes)
-  val lgMaxSize = log2Ceil(128)
+  val lgMaxSize = log2Ceil(maxSize)
   val io = new Bundle {
     val req = Flipped(Decoupled(new TLBReq(lgMaxSize)))
     val resp = Decoupled(new TLBResp)
@@ -98,7 +98,7 @@ class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
   val resp = Flipped(Decoupled(new TLBResp))
 }
 
-class FrontendTLB(nClients: Int, entries: Int)
+class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
                  (implicit edge: TLEdgeOut, p: Parameters) extends CoreModule {
   val io = IO(new Bundle {
     val clients = Flipped(Vec(nClients, new FrontendTLBIO))
@@ -108,7 +108,7 @@ class FrontendTLB(nClients: Int, entries: Int)
 
   val lgMaxSize = log2Ceil(coreDataBytes)
   val tlbArb = Module(new InOrderArbiter(new TLBReq(lgMaxSize), new TLBResp, nClients))
-  val tlb = Module(new DecoupledTLB(entries))
+  val tlb = Module(new DecoupledTLB(entries, maxSize))
   tlb.io.req <> tlbArb.io.out_req
   tlbArb.io.out_resp <> tlb.io.resp
   io.ptw <> tlb.io.ptw
