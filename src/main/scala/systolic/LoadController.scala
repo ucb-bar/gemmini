@@ -52,8 +52,8 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
   val len = Reg(UInt(16.W))
   val len_done = len === 0.U
 
-  val cmd_closest_aligned = Mux(io.dma.req.bits.is_acc, closestAlignedLowerPowerOf2(cmd_len, cmd_vaddr, acc_row_bytes), closestAlignedLowerPowerOf2(cmd_len, cmd_vaddr, sp_row_bytes))
-  val closest_aligned = Mux(io.dma.req.bits.is_acc, closestAlignedLowerPowerOf2(len, vaddr, acc_row_bytes), closestAlignedLowerPowerOf2(len, vaddr, sp_row_bytes))
+  val cmd_closest_aligned = Mux(io.dma.req.bits.is_acc, closestAlignedLowerPowerOf2(cmd_len, cmd_vaddr, stride, acc_row_bytes), closestAlignedLowerPowerOf2(cmd_len, cmd_vaddr, stride, sp_row_bytes))
+  val closest_aligned = Mux(io.dma.req.bits.is_acc, closestAlignedLowerPowerOf2(len, vaddr, stride, acc_row_bytes), closestAlignedLowerPowerOf2(len, vaddr, stride, sp_row_bytes))
 
   io.busy := cmd.valid
 

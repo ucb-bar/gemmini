@@ -35,12 +35,12 @@ object Util {
     (1.U << exp).asUInt()
   }
 
-  def closestAlignedLowerPowerOf2(u: UInt, addr: UInt, rowBytes: Int): UInt = {
+  def closestAlignedLowerPowerOf2(u: UInt, addr: UInt, stride: UInt, rowBytes: Int): UInt = {
     val lgRowBytes = log2Ceil(rowBytes)
 
     // TODO figure out a more efficient way of doing this. Is this many muxes really necessary?
     val exp = u.toBools().zipWithIndex.map { case (b, i) =>
-      Mux(b && addr(i + lgRowBytes - 1, 0) === 0.U, i.U, 0.U)
+      Mux(b && addr(i + lgRowBytes - 1, 0) === 0.U && stride(i + lgRowBytes - 1, 0) === 0.U, i.U, 0.U)
     }.reduce((acc, u) => Mux(acc > u, acc, u))
 
     (1.U << exp).asUInt()
