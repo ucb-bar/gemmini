@@ -33,13 +33,14 @@ object DSEBaseConfig {
     accType = SInt(32.W)
   )
 }
+
 object DSEConfigs{
   import DSEBaseConfig.{baseConfig => base}
   val baseConfig = base.copy(headerFileName = "systolic_params_dse1.h")
   val wsOnlyConfig = baseConfig.copy(dataflow = Dataflow.WS, headerFileName = "systolic_params_dse2.h")
   val bothDataflowsConfig = baseConfig.copy(dataflow = Dataflow.BOTH, headerFileName = "systolic_params_dse3.h")
   val highBitwidthConfig = baseConfig.copy(inputType = SInt(32.W), outputType = SInt(32.W), sp_width = 32*16,
-    sp_bank_entries = 64 * 1024 * 8 / (4 * 16 * 8), headerFileName = "systolic_params_dse4.h")
+    sp_bank_entries = 64 * 1024 * 8 / (4 * 16 * 32), headerFileName = "systolic_params_dse4.h")
   val largerDimConfig = baseConfig.copy(meshRows = 32, meshColumns = 32, sp_bank_entries = 64*1024*8/(4*32*8),
     sp_width = 8*32, acc_rows = 16*1024*8 / (32*32), outputType = SInt(20.W), headerFileName = "systolic_params_dse5.h")
   val fullyCombinationalConfig = baseConfig.copy(tileRows = 16, tileColumns = 16, meshRows = 1, meshColumns = 1, headerFileName = "systolic_params_dse6.h")
