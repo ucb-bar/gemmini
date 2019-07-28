@@ -48,6 +48,11 @@ object DSEConfigs{
     acc_rows = 64*1024*8/(16*32), headerFileName = "systolic_params_dse7.h") // 256kB
   val moreBanksConfig = baseConfig.copy(sp_banks = 32, sp_bank_entries = 64*1024*8/(32*16*8), headerFileName = "systolic_params_dse8.h")
   val narrowerBusConfig = baseConfig.copy(dma_maxbytes = 64, dma_buswidth = 64, headerFileName = "systolic_params_dse10.h")
+  val pnr16Config = baseConfig.copy(sp_bank_entries = 256*1024*8 / (4*16*8), acc_rows = 64*1024*8/(16*32),
+    dataflow = Dataflow.BOTH, headerFileName = "systolic_params_pnr16.h")
+  val pnr32Config = baseConfig.copy(sp_width = 8*32, sp_bank_entries = 512*1024*8 / (4*32*8), acc_rows = 128*1024*8/(32*32),
+    meshRows = 32, meshColumns = 32, outputType = SInt(20.W), dataflow = Dataflow.BOTH,
+    headerFileName = "systolic_params_pnr32.h")
 }
 
 //===========BASELINE=========
@@ -158,6 +163,29 @@ class SystolicParamsDSE10 extends Config((site, here, up) => {
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 8)
 })
 
+//===========PnR 16-by-16=========
+class SystolicParamsPnR16 extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      implicit val v = implicitly[ValName]
+      LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.pnr16Config))
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
+
+//===========PnR 32-by-32=========
+class SystolicParamsPnR32 extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      implicit val v = implicitly[ValName]
+      LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.pnr32Config))
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
 
 // -----------------------------
 // Design Space Exploration Top Level Configs
@@ -188,4 +216,10 @@ class SystolicDSE8Config extends Config(new SystolicParamsDSE8 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
 class SystolicDSE10Config extends Config(new SystolicParamsDSE10 ++
+                                    new freechips.rocketchip.system.DefaultConfig)
+
+class SystolicPnr16Config extends Config(new SystolicParamsPnR16 ++
+                                    new freechips.rocketchip.system.DefaultConfig)
+
+class SystolicPnr32Config extends Config(new SystolicParamsPnR32 ++
                                     new freechips.rocketchip.system.DefaultConfig)
