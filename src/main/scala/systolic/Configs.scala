@@ -41,12 +41,11 @@ object SystolicConfigs {
     ld_str_queue_length = 10,
     ex_queue_length = 10,
     sp_banks = 4,
-    sp_bank_entries = 256 * 1024 * 8 / (4 * 16 * 8), // has to be a multiply of meshRows*tileRows
-    sp_width = 8 * 16, // has to be meshRows*tileRows*dataWidth // TODO should this be changeable?
+    sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     depq_len = 65536,
     dataflow = Dataflow.BOTH,
-    acc_rows = 64 * 1024 * 8 / (16 * 32),
+    acc_capacity = CapacityInKilobytes(64),
     mem_pipeline = 1,
     dma_maxbytes = 128, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey

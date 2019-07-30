@@ -19,12 +19,11 @@ object DSEBaseConfig {
     ld_str_queue_length = 10,
     ex_queue_length = 10,
     sp_banks = 4, // TODO support one-bank designs
-    sp_bank_entries = 64 * 1024 * 8 / (4 * 16 * 8), // has to be a multiply of meshRows*tileRows
-    sp_width = 8 * 16, // has to be meshRows*tileRows*dataWidth // TODO should this be changeable?
+    sp_capacity = CapacityInKilobytes(64),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     depq_len = 65536,
     dataflow = Dataflow.OS,
-    acc_rows = 16 * 1024 * 8 / (16 * 32),
+    acc_capacity = CapacityInKilobytes(16),
     mem_pipeline = 1,
     dma_maxbytes = 128, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
@@ -39,18 +38,19 @@ object DSEConfigs{
   val baseConfig = base.copy(headerFileName = "systolic_params_dse1.h")
   val wsOnlyConfig = baseConfig.copy(dataflow = Dataflow.WS, headerFileName = "systolic_params_dse2.h")
   val bothDataflowsConfig = baseConfig.copy(dataflow = Dataflow.BOTH, headerFileName = "systolic_params_dse3.h")
-  val highBitwidthConfig = baseConfig.copy(inputType = SInt(32.W), outputType = SInt(32.W), sp_width = 32*16,
-    sp_bank_entries = 64 * 1024 * 8 / (4 * 16 * 32), headerFileName = "systolic_params_dse4.h")
-  val largerDimConfig = baseConfig.copy(meshRows = 32, meshColumns = 32, sp_bank_entries = 64*1024*8/(4*32*8),
-    sp_width = 8*32, acc_rows = 16*1024*8 / (32*32), outputType = SInt(20.W), headerFileName = "systolic_params_dse5.h")
-  val fullyCombinationalConfig = baseConfig.copy(tileRows = 16, tileColumns = 16, meshRows = 1, meshColumns = 1, headerFileName = "systolic_params_dse6.h")
-  val moreMemoryConfig = baseConfig.copy(sp_bank_entries = 256*1024*8 / (4*16*8),
-    acc_rows = 64*1024*8/(16*32), headerFileName = "systolic_params_dse7.h") // 256kB
-  val moreBanksConfig = baseConfig.copy(sp_banks = 32, sp_bank_entries = 64*1024*8/(32*16*8), headerFileName = "systolic_params_dse8.h")
+  val highBitwidthConfig = baseConfig.copy(inputType = SInt(32.W), outputType = SInt(32.W),
+    headerFileName = "systolic_params_dse4.h")
+  val largerDimConfig = baseConfig.copy(meshRows = 32, meshColumns = 32, outputType = SInt(20.W),
+    headerFileName = "systolic_params_dse5.h")
+  val fullyCombinationalConfig = baseConfig.copy(tileRows = 16, tileColumns = 16, meshRows = 1, meshColumns = 1,
+    headerFileName = "systolic_params_dse6.h")
+  val moreMemoryConfig = baseConfig.copy(sp_capacity = CapacityInKilobytes(256), acc_capacity = CapacityInKilobytes(64),
+    headerFileName = "systolic_params_dse7.h") // 256kB
+  val moreBanksConfig = baseConfig.copy(sp_banks = 32, headerFileName = "systolic_params_dse8.h")
   val narrowerBusConfig = baseConfig.copy(dma_maxbytes = 64, dma_buswidth = 64, headerFileName = "systolic_params_dse10.h")
-  val pnr16Config = baseConfig.copy(sp_bank_entries = 256*1024*8 / (4*16*8), acc_rows = 64*1024*8/(16*32),
+  val pnr16Config = baseConfig.copy(sp_capacity = CapacityInKilobytes(256), acc_capacity = CapacityInKilobytes(64),
     dataflow = Dataflow.BOTH, headerFileName = "systolic_params_pnr16.h")
-  val pnr32Config = baseConfig.copy(sp_width = 8*32, sp_bank_entries = 512*1024*8 / (4*32*8), acc_rows = 128*1024*8/(32*32),
+  val pnr32Config = baseConfig.copy(sp_capacity = CapacityInKilobytes(512), acc_capacity = CapacityInKilobytes(128),
     meshRows = 32, meshColumns = 32, outputType = SInt(20.W), dataflow = Dataflow.BOTH,
     headerFileName = "systolic_params_pnr32.h")
 }
