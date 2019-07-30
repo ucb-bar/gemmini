@@ -187,6 +187,17 @@ class SystolicParamsPnR32 extends Config((site, here, up) => {
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
+//===========Scalar Processor Change=========
+class SystolicParamsDSE11 extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.baseConfig))
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
 // -----------------------------
 // Design Space Exploration Top Level Configs
 // -----------------------------
@@ -223,3 +234,6 @@ class SystolicPnr16Config extends Config(new SystolicParamsPnR16 ++
 
 class SystolicPnr32Config extends Config(new SystolicParamsPnR32 ++
                                     new freechips.rocketchip.system.DefaultConfig)
+
+class SystolicDSE11Config extends Config(new SystolicParamsDSE11 ++
+                                    new boom.system.SmallBoomConfig)
