@@ -149,9 +149,13 @@ class ScratchpadMemIO(val nBanks: Int, val nRows: Int, val acc_rows: Int)
 }
 
 class ScratchpadReadIO(val n: Int, val w: Int) extends Bundle {
-  val en = Output(Bool())
-  val addr = Output(UInt(log2Ceil(n).W))
-  val data = Input(UInt(w.W))
+  val req = Decoupled(new Bundle {
+    val addr = UInt(log2Ceil(n).W)
+  })
+
+  val resp = Flipped(Decoupled(new Bundle {
+    val data = UInt(w.W)
+  }))
 }
 
 class ScratchpadWriteIO(val n: Int, val w: Int) extends Bundle {
@@ -161,26 +165,31 @@ class ScratchpadWriteIO(val n: Int, val w: Int) extends Bundle {
 }
 
 class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int) extends Module {
+  // This is essentially a pipelined SRAM with the ability to stall pipeline stages
+
   val io = IO(new Bundle {
     val read = Flipped(new ScratchpadReadIO(n, w))
     val write = Flipped(new ScratchpadWriteIO(n, w))
   })
 
-  /*val mem = SyncReadMem(n, UInt(w.W))
-
-  when (io.write.en) { mem.write(io.write.addr, io.write.data) }
-
-  val raddr = ShiftRegister(io.read.addr, mem_pipeline)
-  val ren = ShiftRegister(io.read.en, mem_pipeline)
-  io.read.data := mem.read(raddr, ren)*/
-
   val mem = SyncReadMem(n, UInt(w.W))
 
   when (io.write.en) { mem.write(io.write.addr, io.write.data) }
 
-  val raddr = io.read.addr
-  val ren = io.read.en
-  io.read.data := ShiftRegister(mem.read(raddr, ren), mem_pipeline)
+  val raddr = io.read.req.bits.addr
+  val ren = io.read.req.fire()
+  val rdata = mem.read(raddr, ren)
+
+  val q = Module(new Queue(UInt(w.W), 1, true, true))
+  q.io.enq.valid := RegNext(io.read.req.fire())
+  q.io.enq.bits := rdata
+
+  io.read.req.ready := q.io.enq.ready
+
+  val p = Pipeline(q.io.deq, mem_pipeline)
+  p.ready := io.read.resp.ready
+  io.read.resp.valid := p.valid
+  io.read.resp.bits.data := p.bits
 }
 
 // TODO find a more elegant way to move data into accumulator
@@ -354,7 +363,6 @@ class Scratchpad[T <: Data: Arithmetic](
     reader.module.io.out.ready := true.B // !bufDone // TODO can we make this always true?
 
     writer.module.io.in.valid := (0 to mem_pipeline).map(i => ShiftRegister(state === s_writedata, i)).reduce(_ && _) // TODO inefficient. Reduces throughput when mem_pipeline > 1
-    // writer.module.io.in.valid := state =/= s_writedata && RegNext(state === s_writedata) // TODO inelegant and inextensible for when mem_pipeline is larger than 1
     writer.module.io.in.bits.data := rowData
     writer.module.io.in.bits.keep := rowKeep
     writer.module.io.in.bits.last := lastFlit
@@ -373,12 +381,14 @@ class Scratchpad[T <: Data: Arithmetic](
       val bankren = dmaren && req.spbank === i.U && !req.is_acc
       val bankwen = dmawen && dmawen_spbank === i.U && !req.is_acc
 
-      bank.io.read.en := bankren || read.en
-      bank.io.read.addr := Mux(bankren, req.spaddr + row_counter, read.addr)
-      read.data := bank.io.read.data
+      bank.io.read.req.valid := bankren || read.req.valid
+      bank.io.read.req.bits.addr := Mux(bankren, req.spaddr + row_counter, read.req.bits.addr)
+      read.resp.bits.data := bank.io.read.resp.bits.data
+      read.resp.valid := bank.io.read.resp.valid
+      bank.io.read.resp.ready := read.resp.ready
       when (req.spbank === i.U && !req.is_acc) {
         // TODO this may need to change when moving out multiple matrices in one instruction is supported
-        dmardata := bank.io.read.data
+        dmardata := bank.io.read.resp.bits.data
       }
 
       bank.io.write.en := bankwen || write.en
@@ -394,14 +404,16 @@ class Scratchpad[T <: Data: Arithmetic](
       val accbankren = dmaren && req.is_acc
       val accbankwen = dmawen && req.is_acc
 
-      accumulator.io.read.en := accbankren || io.acc.read.en
-      accumulator.io.read.addr := Mux(accbankren, req.accaddr + row_counter, io.acc.read.addr)
-      accumulator.io.read.shift := io.acc.read.shift
-      accumulator.io.read.relu6_shift := io.acc.read.relu6_shift
-      accumulator.io.read.act := io.acc.read.act
-      io.acc.read.data := accumulator.io.read.data
+      accumulator.io.read.req.valid := accbankren || io.acc.read.req.valid
+      accumulator.io.read.req.bits.addr := Mux(accbankren, req.accaddr + row_counter, io.acc.read.req.bits.addr)
+      accumulator.io.read.req.bits.shift := io.acc.read.req.bits.shift
+      accumulator.io.read.req.bits.relu6_shift := io.acc.read.req.bits.relu6_shift
+      accumulator.io.read.req.bits.act := io.acc.read.req.bits.act
+      io.acc.read.resp.bits.data := accumulator.io.read.resp.bits.data
+      io.acc.read.resp.valid := accumulator.io.read.resp.valid
+      accumulator.io.read.resp.ready := io.acc.read.resp.ready
       when(req.is_acc) {
-        dmardata := accumulator.io.read.data.asUInt()
+        dmardata := accumulator.io.read.resp.bits.data.asUInt()
       }
 
       accumulator.io.write.en := accbankwen || io.acc.write.en
@@ -485,7 +497,6 @@ class Scratchpad[T <: Data: Arithmetic](
       }
     }
 
-    // when (state === s_writedata && writer.module.io.in.ready) { // TODO inelegant and inextensible for when mem_pipeline is larger than 1
     when (writer.module.io.in.fire()) {
       bufAddr := bufAddr + bytesToSend
       req.vaddr := req.vaddr + bytesToSend

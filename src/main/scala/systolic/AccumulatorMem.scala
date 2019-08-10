@@ -4,12 +4,16 @@ import chisel3._
 import chisel3.util._
 
 class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, shift_width: Int, rdataType: Vec[Vec[T]]) extends Bundle {
-  val en = Output(Bool())
-  val addr = Output(UInt(log2Ceil(n).W))
-  val data = Input(rdataType)
-  val shift = Output(UInt(shift_width.W))
-  val relu6_shift = Output(UInt(shift_width.W))
-  val act = Output(UInt(2.W))
+  val req = Decoupled(new Bundle {
+    val addr = UInt(log2Ceil(n).W)
+    val shift = UInt(shift_width.W)
+    val relu6_shift = UInt(shift_width.W)
+    val act = UInt(2.W)
+  })
+
+  val resp = Flipped(Decoupled(new Bundle {
+    val data = rdataType
+  }))
 
   override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType).asInstanceOf[this.type]
 }
@@ -32,6 +36,10 @@ class AccumulatorMemIO [T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]], rdata: Ve
 
 class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], mem_pipeline: Int)
                                (implicit ev: Arithmetic[T]) extends Module {
+  // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
+  // to it, then we might not get the written data. We might need some kind of cooldown counter after addresses in the
+  // accumulator have been written to for configurations with such small matrices
+
   import ev._
 
   // TODO unify this with TwoPortSyncMemIO
@@ -46,6 +54,7 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   val acc_buf = ShiftRegister(io.write.acc, 2)
   val w_buf_valid = ShiftRegister(io.write.en, 2)
 
+  // TODO can the "RegNext(mem.io.rdata)" here be merged with the pipelined output of the read requests?
   val w_sum = VecInit((RegNext(mem.io.rdata) zip wdata_buf).map { case (rv, wv) =>
     VecInit((rv zip wv).map(t => t._1 + t._2))
   })
@@ -54,27 +63,46 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   mem.io.wen := w_buf_valid
   mem.io.wdata := Mux(acc_buf, w_sum, wdata_buf)
 
-  mem.io.raddr := Mux(io.write.en && io.write.acc, io.write.addr, io.read.addr)
-  mem.io.ren := io.read.en || (io.write.en && io.write.acc)
+  mem.io.raddr := Mux(io.write.en && io.write.acc, io.write.addr, io.read.req.bits.addr)
+  mem.io.ren := io.read.req.valid || (io.write.en && io.write.acc)
+  
+  class PipelinedRdataAndActT extends Bundle {
+    val data = mem.io.rdata.cloneType
+    val shift = io.read.req.bits.shift.cloneType
+    val relu6_shift = io.read.req.bits.relu6_shift.cloneType
+    val act = io.read.req.bits.act.cloneType
+  }
+  
+  val q = Module(new Queue(new PipelinedRdataAndActT, 1, true, true))
+  q.io.enq.bits.data := mem.io.rdata
+  q.io.enq.bits.shift := RegNext(io.read.req.bits.shift)
+  q.io.enq.bits.relu6_shift := RegNext(io.read.req.bits.relu6_shift)
+  q.io.enq.bits.act := RegNext(io.read.req.bits.act)
+  q.io.enq.valid := RegNext(io.read.req.fire())
+  
+  val p = Pipeline(q.io.deq, mem_pipeline, Seq.fill(mem_pipeline)((x: PipelinedRdataAndActT) => x) :+ {
+    x: PipelinedRdataAndActT =>
+      val activated_rdata = VecInit(x.data.map(v => VecInit(v.map { e =>
+        val e_clipped = (e >> x.shift).clippedToWidthOf(rdataType.head.head)
+        val e_act = MuxCase(e_clipped, Seq(
+          (x.act === Activation.RELU) -> e_clipped.relu,
+          (x.act === Activation.RELU6) -> e_clipped.relu6(x.relu6_shift)))
 
-  val rdata_buf = ShiftRegister(mem.io.rdata, mem_pipeline) // TODO if mem_pipeline > 1, this is inefficient
+        e_act
+      })))
 
-  // TODO put some way here of making sure that shift or relu6_shift does not change before a read is finished
-  val shift = RegNext(io.read.shift) // TODO should this take mem_pipeline into account?
-  val relu6_shift = RegNext(io.read.relu6_shift) // TODO should this take mem_pipeline into account?
+      val result = WireInit(x)
+      result.data := activated_rdata
 
-  val activated_rdata = VecInit(rdata_buf.map(v => VecInit(v.map { e =>
-    val e_clipped = (e >> shift).clippedToWidthOf(rdataType.head.head)
-    val e_act = MuxCase(e_clipped, Seq(
-      (io.read.act === Activation.RELU) -> e_clipped.relu,
-      (io.read.act === Activation.RELU6) -> e_clipped.relu6(relu6_shift)))
+      result
+  })
 
-    e_act
-  })))
-  io.read.data := activated_rdata
+  io.read.req.ready := q.io.enq.ready
+  io.read.resp.bits.data := p.bits.data
+  io.read.resp.valid := p.valid
+  p.ready := io.read.resp.ready
 
-  // require(mem_pipeline >= 1, "accumulator memory needs at least one pipeline cycle") // TODO
-  assert(!(io.read.en && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
-  assert(!(io.read.en && io.write.en && io.read.addr === io.write.addr), "reading from and writing to same address is not supported") // TODO
-  assert(!(io.read.en && w_buf_valid && waddr_buf === io.read.addr), "reading from an address immediately after writing to it is not supported") // TODO
+  assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
+  assert(!(io.read.req.valid && io.write.en && io.read.req.bits.addr === io.write.addr), "reading from and writing to same address is not supported") // TODO
+  assert(!(io.read.req.valid && w_buf_valid && waddr_buf === io.read.req.bits.addr), "reading from an address immediately after writing to it is not supported") // TODO
 }

@@ -236,10 +236,14 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     val read_b = b_can_fire && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros
     val read_d = d_can_fire && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros
 
-    io.read(i).en := read_a || read_b || read_d
-    io.read(i).addr := MuxCase(a_address_rs1.row + a_fire_counter,
+    // io.read(i).en := read_a || read_b || read_d
+    io.read(i).req.valid := read_a || read_b || read_d
+    // io.read(i).addr := MuxCase(a_address_rs1.row + a_fire_counter,
+    io.read(i).req.bits.addr := MuxCase(a_address_rs1.row + a_fire_counter,
       Seq(read_b -> (b_address_rs2.row + b_fire_counter),
         read_d -> (d_address_rs1.row + block_size.U - 1.U - d_fire_counter)))
+
+    io.read(i).resp.ready := true.B
   }
 
   // Accumulator read // TODO can only handle one acc read for now
@@ -248,18 +252,21 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     val read_b_from_acc = b_can_fire && b_read_from_acc && start_inputting_b && !accumulate_zeros
     val read_d_from_acc = d_can_fire && d_read_from_acc && start_inputting_d && !preload_zeros
 
-    io.acc.read.en := read_a_from_acc || read_b_from_acc || read_d_from_acc
-    io.acc.read.shift := acc_shift
-    io.acc.read.relu6_shift := relu6_shift
-    io.acc.read.act := activation
+    io.acc.read.req.valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
+    io.acc.read.req.bits.shift := acc_shift
+    io.acc.read.req.bits.relu6_shift := relu6_shift
+    io.acc.read.req.bits.act := activation
 
-    io.acc.read.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr_t).row + a_fire_counter,
+    io.acc.read.req.bits.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr_t).row + a_fire_counter,
       Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr_t).row + b_fire_counter),
         read_d_from_acc -> (d_address_rs1.asTypeOf(acc_addr_t).row + block_size.U - 1.U - d_fire_counter)))
+
+    io.acc.read.resp.ready := true.B
   }
 
-  val readData = VecInit(io.read.map(_.data))
-  val accReadData = io.acc.read.data.asUInt()
+  // val readData = VecInit(io.read.map(_.data))
+  val readData = VecInit(io.read.map(_.resp.bits.data))
+  val accReadData = io.acc.read.resp.bits.data.asUInt()
 
   val dataA = Mux(ShiftRegister(RegNext(a_read_from_acc), mem_pipeline), accReadData, readData(ShiftRegister(RegNext(dataAbank), mem_pipeline)))
   val dataB = MuxCase(readData(ShiftRegister(RegNext(dataBbank), mem_pipeline)),
@@ -419,7 +426,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   when (ShiftRegister(perform_single_preload, mem_pipeline)) {
     mesh.io.a.bits := Mux(ShiftRegister(current_dataflow === Dataflow.WS.id.U, mem_pipeline), 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
-    // mesh.io.s := ShiftRegister(RegNext(in_s_flush), mem_pipeline) // TODO create a new in_s_preload
     mesh.io.s := ShiftRegister(in_s_preload, mem_pipeline)
   }
 
