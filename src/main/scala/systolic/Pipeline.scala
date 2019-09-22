@@ -62,13 +62,13 @@ class Pipeline[T <: Data] (gen: T, latency: Int)(comb: Seq[T => T] = Seq.fill(la
 }
 
 object Pipeline {
-  def apply[T <: Data](in: DecoupledIO[T], latency: Int, comb: Seq[T => T]): DecoupledIO[T] = {
+  def apply[T <: Data](in: ReadyValidIO[T], latency: Int, comb: Seq[T => T]): DecoupledIO[T] = {
     val p = Module(new Pipeline(in.bits.cloneType, latency)(comb))
     p.io.in <> in
     p.io.out
   }
 
-  def apply[T <: Data](in: DecoupledIO[T], latency: Int): DecoupledIO[T] = {
+  def apply[T <: Data](in: ReadyValidIO[T], latency: Int): DecoupledIO[T] = {
     val p = Module(new Pipeline(in.bits.cloneType, latency)())
     p.io.in <> in
     p.io.out

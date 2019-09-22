@@ -14,7 +14,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
 
-    val dma = new ScratchpadMemIO(sp_banks, sp_bank_entries, acc_rows)
+    val dma = new ScratchpadReadMemIO(sp_banks, sp_bank_entries, acc_rows)
 
     // TODO what's a better way to express no bits?
     val pushStore = Decoupled(UInt(1.W))
@@ -25,35 +25,22 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
     val busy = Output(Bool())
   })
 
-  val waiting_for_command :: waiting_for_dma_resp :: waiting_for_dma_ready :: Nil = Enum(3)
+  val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
   val control_state = RegInit(waiting_for_command)
-
-  val wait_for_dma_req = WireInit(false.B) // Not really a state on its own, just a trigger for behavior that is shared across states
 
   val stride = RegInit((sp_width / 8).U(xLen.W))
   val block_rows = meshRows * tileRows
-  val sp_row_bytes = meshColumns * tileColumns * (inputType.getWidth / 8)
-  val acc_row_bytes = meshColumns * tileColumns * (accType.getWidth / 8)
-  val row_bytes = Mux(io.dma.req.bits.is_acc, acc_row_bytes.U, sp_row_bytes.U)
+  val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
 
   val cmd = Queue(io.cmd, ld_str_queue_length)
-
+  val vaddr = cmd.bits.cmd.rs1
+  val accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr_t)
+  val spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr_t)
   val config_stride = cmd.bits.cmd.rs2
   val mstatus = cmd.bits.cmd.status
 
-  val cmd_vaddr = cmd.bits.cmd.rs1
-  val vaddr = Reg(cmd_vaddr.cloneType)
-  val cmd_accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr_t)
-  val accaddr = Reg(cmd_accaddr.cloneType)
-  val cmd_spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr_t)
-  val spaddr = Reg(cmd_spaddr.cloneType)
-
-  val cmd_len = cmd.bits.cmd.rs2(47, 32) // TODO magic numbers
-  val len = Reg(UInt(16.W))
-  val len_done = len === 0.U
-
-  val cmd_closest_aligned = Mux(io.dma.req.bits.is_acc, closestAlignedLowerPowerOf2(cmd_len, cmd_vaddr, stride, acc_row_bytes), closestAlignedLowerPowerOf2(cmd_len, cmd_vaddr, stride, sp_row_bytes))
-  val closest_aligned = Mux(io.dma.req.bits.is_acc, closestAlignedLowerPowerOf2(len, vaddr, stride, acc_row_bytes), closestAlignedLowerPowerOf2(len, vaddr, stride, sp_row_bytes))
+  val spaddr_plus_row_counter = (Cat(spaddr.bank, spaddr.row) + row_counter).asTypeOf(sp_addr_t)
+  val accaddr_plus_row_counter = (accaddr.row + row_counter).asTypeOf(acc_addr_t)
 
   io.busy := cmd.valid
 
@@ -74,31 +61,65 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
   val push_deps_ready = !pushDep || (pushEx && io.pushEx.ready && !pushStore) ||
     (pushStore && io.pushStore.ready && !pushEx) || (pushEx && pushStore && io.pushEx.ready && io.pushStore.ready)
 
-  io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && pull_deps_ready) || control_state === waiting_for_dma_ready
-  io.dma.req.bits.vaddr := Mux(control_state === waiting_for_command, cmd_vaddr, vaddr)
-  io.dma.req.bits.spbank := Mux(control_state === waiting_for_command, cmd_spaddr.bank, spaddr.bank)
-  io.dma.req.bits.spaddr := Mux(control_state === waiting_for_command, cmd_spaddr.row, spaddr.row)
-  io.dma.req.bits.accaddr := Mux(control_state === waiting_for_command, cmd_accaddr.row, accaddr.row)
-  io.dma.req.bits.is_acc := cmd_accaddr.is_acc_addr // TODO what happens if there is overflow in accaddr? Put in an assert for that
-  io.dma.req.bits.stride := stride
-  io.dma.req.bits.len := Mux(control_state === waiting_for_command, cmd_closest_aligned, closest_aligned)
-  io.dma.req.bits.write := false.B
+  io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && pull_deps_ready) ||
+    control_state === waiting_for_dma_req_ready ||
+    (control_state === sending_rows && row_counter =/= 0.U)
+  io.dma.req.bits.vaddr := vaddr + row_counter * stride
+  io.dma.req.bits.spbank := spaddr_plus_row_counter.bank
+  io.dma.req.bits.spaddr := spaddr_plus_row_counter.row
+  io.dma.req.bits.accaddr := accaddr_plus_row_counter.row
+  io.dma.req.bits.is_acc := accaddr.is_acc_addr
+  io.dma.req.bits.len := 1.U // TODO
   io.dma.req.bits.status := mstatus
-  io.dma.resp.ready := true.B
 
-  io.pushStore.valid := false.B
-  io.pullStore.ready := false.B
+  io.dma.resp.ready := true.B // We ignore all responses for now, because we assume that all memory accesses were valid
+
+  io.pushStore.valid :=  false.B
   io.pushEx.valid := false.B
+  io.pullStore.ready := false.B
   io.pullEx.ready := false.B
 
   // TODO are these really needed?
   io.pushStore.bits := DontCare
   io.pushEx.bits := DontCare
 
+  // Command tracker
+  val deps_t = new Bundle {
+    val pushStore = Bool()
+    val pushEx = Bool()
+  }
+
+  val nCmds = 2 // TODO make this a config parameter
+
+  val cmd_tracker = Module(new DMACommandTracker(nCmds, block_rows, deps_t))
+  cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad && pull_deps_ready
+  cmd_tracker.io.alloc.bits.tag.pushStore := pushStore
+  cmd_tracker.io.alloc.bits.tag.pushEx := pushEx
+  cmd_tracker.io.request_returned.valid := io.dma.resp.valid // TODO use a bundle connect
+  cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
+  cmd_tracker.io.cmd_completed.ready :=
+    !(cmd_tracker.io.cmd_completed.bits.tag.pushStore && !io.pushStore.ready) &&
+      !(cmd_tracker.io.cmd_completed.bits.tag.pushEx && !io.pushEx.ready)
+
+  val cmd_id = RegEnableThru(cmd_tracker.io.alloc.bits.cmd_id, cmd_tracker.io.alloc.fire()) // TODO is this really better than a simple RegEnable?
+  io.dma.req.bits.cmd_id := cmd_id
+
+  when (cmd_tracker.io.cmd_completed.fire()) {
+    val tag = cmd_tracker.io.cmd_completed.bits.tag
+    io.pushStore.valid := tag.pushStore
+    io.pushEx.valid := tag.pushEx
+  }
+
+  // Row counter
+  when (io.dma.req.fire()) {
+    row_counter := wrappingAdd(row_counter, 1.U, block_rows)
+  }
+
+  // Control logic
   switch (control_state) {
     is (waiting_for_command) {
-      when (cmd.valid && pull_deps_ready && push_deps_ready) {
-        when(DoConfig) {
+      when (cmd.valid && pull_deps_ready) {
+        when(DoConfig && push_deps_ready) {
           stride := config_stride
 
           io.pushStore.valid := pushStore
@@ -109,48 +130,27 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
           cmd.ready := true.B
         }
 
-        .elsewhen(io.dma.req.fire()) {
-          io.pullStore.ready := pullStore
+        .elsewhen(DoLoad && cmd_tracker.io.alloc.fire()) {
           io.pullEx.ready := pullEx
-
-          len := cmd_len - cmd_closest_aligned
-          spaddr := (cmd_spaddr.asUInt() + io.dma.req.bits.len * block_rows.U).asTypeOf(sp_addr_t)
-          accaddr := (cmd_accaddr.asUInt() + io.dma.req.bits.len * block_rows.U).asTypeOf(acc_addr_t)
-          vaddr := cmd_vaddr + io.dma.req.bits.len * row_bytes
-
-          control_state := waiting_for_dma_resp
+          io.pullStore.ready := pullStore
+          control_state := Mux(io.dma.req.fire(), sending_rows, waiting_for_dma_req_ready)
         }
       }
     }
 
-    is (waiting_for_dma_resp) {
-      when (io.dma.resp.valid) {
-        when (len_done) {
-          cmd.ready := true.B
-
-          io.pushStore.valid := pushStore
-          io.pushEx.valid := pushEx
-
-          control_state := waiting_for_command
-        }.otherwise {
-          control_state := waiting_for_dma_ready
-        }
+    is (waiting_for_dma_req_ready) {
+      when (io.dma.req.fire()) {
+        control_state := sending_rows
       }
     }
 
-    is (waiting_for_dma_ready) {
-      wait_for_dma_req := true.B
-    }
-  }
+    is (sending_rows) {
+      val last_row = row_counter === 0.U || (row_counter === (block_rows-1).U && io.dma.req.fire())
 
-  when (wait_for_dma_req) {
-    when (io.dma.req.fire()) {
-      len := len - closest_aligned
-      spaddr := (spaddr.asUInt() + io.dma.req.bits.len * block_rows.U).asTypeOf(sp_addr_t)
-      accaddr := (accaddr.asUInt() + io.dma.req.bits.len * block_rows.U).asTypeOf(acc_addr_t)
-      vaddr := vaddr + io.dma.req.bits.len * row_bytes
-
-      control_state := waiting_for_dma_resp
+      when (last_row) {
+        control_state := waiting_for_command
+        cmd.ready := true.B
+      }
     }
   }
 }

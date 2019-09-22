@@ -46,8 +46,6 @@ class PipelineTester(c: Pipeline[SInt]) extends PeekPokeTester(c) {
   }
 
   assert(max_cycles > 0, "ran out of max_cycles")
-  // if (max_cycles <= 0)
-    // println("Fuck\n")
 }
 
 class PipelineUnitTest extends ChiselFlatSpec {

@@ -205,6 +205,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   val firing = start_inputting_a || start_inputting_b || start_inputting_d
 
+  // TODO rather than just assuming that we fire off an SRAM request when we want one, we should check whether or not the SRAM is actually ready
   when (!firing) {
     a_fire_counter := 0.U
   }.elsewhen (a_can_fire && firing) {
@@ -236,14 +237,13 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     val read_b = b_can_fire && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros
     val read_d = d_can_fire && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros
 
-    // io.read(i).en := read_a || read_b || read_d
     io.read(i).req.valid := read_a || read_b || read_d
-    // io.read(i).addr := MuxCase(a_address_rs1.row + a_fire_counter,
+    io.read(i).req.bits.fromDMA := false.B
     io.read(i).req.bits.addr := MuxCase(a_address_rs1.row + a_fire_counter,
       Seq(read_b -> (b_address_rs2.row + b_fire_counter),
         read_d -> (d_address_rs1.row + block_size.U - 1.U - d_fire_counter)))
 
-    io.read(i).resp.ready := true.B
+    io.read(i).resp.ready := DontCare // TODO Execute controller shouldn't really see this
   }
 
   // Accumulator read // TODO can only handle one acc read for now
@@ -256,12 +256,13 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     io.acc.read.req.bits.shift := acc_shift
     io.acc.read.req.bits.relu6_shift := relu6_shift
     io.acc.read.req.bits.act := activation
+    io.acc.read.req.bits.fromDMA := false.B
 
     io.acc.read.req.bits.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr_t).row + a_fire_counter,
       Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr_t).row + b_fire_counter),
         read_d_from_acc -> (d_address_rs1.asTypeOf(acc_addr_t).row + block_size.U - 1.U - d_fire_counter)))
 
-    io.acc.read.resp.ready := true.B
+    io.acc.read.resp.ready := DontCare // TODO Execute controller shouldn't really see this
   }
 
   // val readData = VecInit(io.read.map(_.data))
@@ -393,8 +394,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     }
     is (flush) {
       when(mesh.io.flush.fire()) {
-        // mesh.io.flush.valid := true.B
-        // mesh.io.s := in_s_flush
         control_state := flushing
       }
     }
@@ -409,6 +408,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   // Computing logic
   when (ShiftRegister(perform_mul_pre || perform_single_mul || perform_single_preload, mem_pipeline)) {
     // Default inputs
+    /* TODO we should probably check the SRAM read resp's source here, rather than just counting since the time the
+      request fired (technically, we don't even check that it fired here, only that the request was valid on the
+      execute controller's side)
+     */
     mesh.io.a.valid := ShiftRegister(RegNext(a_can_fire), mem_pipeline)
     mesh.io.b.valid := ShiftRegister(RegNext(b_can_fire), mem_pipeline)
     mesh.io.d.valid := ShiftRegister(RegNext(d_can_fire), mem_pipeline)
@@ -425,7 +428,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   when (ShiftRegister(perform_single_preload, mem_pipeline)) {
     mesh.io.a.bits := Mux(ShiftRegister(current_dataflow === Dataflow.WS.id.U, mem_pipeline), 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
+    mesh.io.b.bits := 0.U.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.s := ShiftRegister(in_s_preload, mem_pipeline)
   }
 

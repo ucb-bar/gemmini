@@ -4,10 +4,13 @@ import chisel3._
 import chisel3.util._
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
+import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters}
 import freechips.rocketchip.tilelink.TLBundleParameters
 import freechips.rocketchip.util.DecoupledHelper
-import icenet.{ReservationBufferAlloc, ReservationBufferData}
+// import icenet.{ReservationBufferAlloc, ReservationBufferData}
 import testchipip.{StreamChannel, TLHelper}
+import freechips.rocketchip.rocket.constants.MemoryOpConstants
+import Util._
 
 class StreamReadRequest(val nXacts: Int) extends Bundle {
   val address = UInt(48.W)
@@ -22,7 +25,7 @@ class StreamChannelWithID(val nXacts: Int, val dataBits: Int) extends Bundle {
   val id = UInt((log2Ceil(nXacts) max 1).W)
 }
 
-class StreamReader(nXacts: Int, outFlits: Int, maxBytes: Int)
+/*class StreamReader(nXacts: Int, outFlits: Int, maxBytes: Int)
                   (implicit p: Parameters) extends LazyModule {
 
   val core = LazyModule(new StreamReaderCore(nXacts, outFlits, maxBytes))
@@ -40,14 +43,6 @@ class StreamReader(nXacts: Int, outFlits: Int, maxBytes: Int)
 
     core.module.io.req <> io.req
     io.resp <> core.module.io.resp
-
-    // val buffer = Module(new ReservationBuffer(nXacts, outFlits, dataBits))
-    // buffer.io.alloc <> core.module.io.alloc
-    // buffer.io.in <> core.module.io.out
-
-    // val aligner = Module(new Aligner(dataBits))
-    // aligner.io.in <> buffer.io.out
-    // io.out <> aligner.io.out
 
     core.module.io.alloc.ready := io.out.ready
 
@@ -198,127 +193,157 @@ class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
       state := s_idle
     }
   }
+}*/
+
+// w is the maximum width of the data that it can be requested to send at once
+class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends CoreBundle {
+  val vaddr = UInt(xLen.W)
+  val data = UInt(dataWidth.W)
 }
 
-class StreamWriteRequest extends Bundle {
-  val address = UInt(48.W)
-  val length = UInt(16.W)
-}
-
-class StreamWriter(nXacts: Int, maxBytes: Int)
-                  (implicit p: Parameters) extends LazyModule {
+class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int)
+                  (implicit p: Parameters) extends LazyModule with MemoryOpConstants {
   val node = TLHelper.makeClientNode(
     name = "stream-writer", sourceId = IdRange(0, nXacts))
 
-  lazy val module = new LazyModuleImp(this) {
+  require(isPow2(aligned_to))
+
+  lazy val module = new LazyModuleImp(this) with HasCoreParameters {
     val (tl, edge) = node.out(0)
-    val dataBits = tl.params.dataBits
-    val beatBytes = dataBits / 8
-    val byteAddrBits = log2Ceil(beatBytes)
-    val addrBits = tl.params.addressBits
-    val lenBits = 16
+    val dataBytes = dataWidth / 8
+    val beatBytes = beatBits / 8
 
     val io = IO(new Bundle {
-      val req = Flipped(Decoupled(new StreamWriteRequest))
-      val resp = Decoupled(UInt(lenBits.W))
-      val in = Flipped(Decoupled(new StreamChannel(dataBits)))
+      val req = Flipped(Decoupled(new StreamWriteRequest(dataWidth)))
+      val tlb = new FrontendTLBIO
+      val busy = Output(Bool())
     })
 
-    val s_idle :: s_data :: s_resp :: Nil = Enum(3)
+    val (s_idle :: s_translate_req :: s_translate_resp ::
+      s_writing_new_block :: s_writing_beats :: Nil) = Enum(5)
     val state = RegInit(s_idle)
 
-    val length = Reg(UInt(lenBits.W))
-    val baseAddr = Reg(UInt(addrBits.W))
-    val offset = Reg(UInt(addrBits.W))
-    val addrMerged = baseAddr + offset
-    val bytesToSend = length - offset
-    val baseByteOff = baseAddr(byteAddrBits-1, 0)
-    val byteOff = addrMerged(byteAddrBits-1, 0)
-    val extraBytes = Mux(baseByteOff === 0.U, 0.U, beatBytes.U - baseByteOff)
+    val req = Reg(new StreamWriteRequest(dataWidth))
+
+    val vpn = req.vaddr(xLen-1, pgIdxBits)
+
+    val bytesSent = RegInit(0.U(log2Ceil(dataBytes).W))
+    val bytesLeft = (dataBytes/aligned_to).U - bytesSent
+
+    val beatsLeft = Reg(UInt(log2Ceil(maxBytes/aligned_to).W))
 
     val xactBusy = RegInit(0.U(nXacts.W))
     val xactOnehot = PriorityEncoderOH(~xactBusy)
     val xactId = OHToUInt(xactOnehot)
 
-    val maxBeats = maxBytes / beatBytes
-    val beatIdBits = log2Ceil(maxBeats)
+    val xactBusy_add = Mux(tl.a.fire(), (1.U << xactId).asUInt(), 0.U)
+    val xactBusy_remove = ~Mux(tl.d.fire(), (1.U << tl.d.bits.source).asUInt(), 0.U)
+    xactBusy := (xactBusy | xactBusy_add) & xactBusy_remove.asUInt()
 
-    val beatsLeft = Reg(UInt(beatIdBits.W))
-    val headAddr = Reg(UInt(addrBits.W))
-    val headXact = Reg(UInt(log2Ceil(nXacts).W))
-    val headSize = Reg(UInt(log2Ceil(maxBytes + 1).W))
+    val state_machine_ready_for_req = WireInit(state === s_idle)
+    io.req.ready := !xactBusy.andR() && state_machine_ready_for_req
+    io.busy := xactBusy.orR
 
-    val newBlock = beatsLeft === 0.U
-    val canSend = !xactBusy.andR || !newBlock
+    val send_sizes = (aligned_to to (dataBytes max maxBytes) by aligned_to).
+      filter(s => s < beatBytes || s % beatBytes == 0)
+      .reverse // The possible sizes of requests we can send over TileLink
+    val send_sizes_lg = send_sizes.map(s => log2Ceil(s).U)
+    val send_sizes_valid = send_sizes.map { s =>
+      val lgsz = log2Ceil(s)
+      val is_aligned = req.vaddr(lgsz - 1, 0) === 0.U
 
-    val reqSize = MuxCase(0.U,
-      (log2Ceil(maxBytes) until 0 by -1).map(lgSize =>
-        (addrMerged(lgSize-1,0) === 0.U &&
-          (bytesToSend >> lgSize.U).asUInt =/= 0.U) -> lgSize.U))
+      val across_page_boundary = (req.vaddr + s.U)(xLen - 1, pgIdxBits) =/= vpn
 
-    xactBusy := (xactBusy | Mux(tl.a.fire() && newBlock, xactOnehot, 0.U)) &
-      (~Mux(tl.d.fire(), UIntToOH(tl.d.bits.source), 0.U)).asUInt
+      val is_too_large = s.U > bytesLeft
 
-    val overhang = RegInit(0.U(dataBits.W))
-    val sendTrail = bytesToSend <= extraBytes
-    val fulldata = overhang | (io.in.bits.data << Cat(baseByteOff, 0.U(3.W))).asUInt
+      is_aligned && !across_page_boundary && !is_too_large
+    }
+    val send_size = MuxCase(send_sizes.last.U, (send_sizes_valid zip send_sizes).map { case (v, sz) => v -> sz.U })
+    val lg_send_size = MuxCase(send_sizes_lg.last, (send_sizes_valid zip send_sizes_lg).map { case (v, lgsz) => v -> lgsz })
 
-    val fromSource = Mux(newBlock, xactId, headXact)
-    val toAddress = Mux(newBlock, addrMerged, headAddr)
-    val lgSize = Mux(newBlock, reqSize, headSize)
-    val wdata = fulldata(dataBits-1, 0)
-    val wmask = Cat((0 until beatBytes).map(
-      i => (i.U >= byteOff) && (i.U < bytesToSend)).reverse)
-    val wpartial = !wmask.andR
+    // Address translation
+    io.tlb.req.valid := state === s_translate_req
+    io.tlb.req.bits.vaddr := Cat(vpn, 0.U(pgIdxBits.W))
+    io.tlb.req.bits.passthrough := false.B
+    io.tlb.req.bits.size := send_size
+    io.tlb.req.bits.cmd := M_XWR
 
-    val putPartial = edge.Put(
-      fromSource = xactId,
-      toAddress = addrMerged & (~(beatBytes-1).U(addrBits.W)).asUInt,
-      lgSize = log2Ceil(beatBytes).U,
-      data = Mux(sendTrail, overhang, wdata),
-      mask = wmask)._2
+    val ppn = RegEnable(io.tlb.resp.bits.paddr(paddrBits-1, pgIdxBits),
+      io.tlb.resp.fire())
+    val paddr = Cat(ppn, req.vaddr(pgIdxBits-1, 0))
 
+    val last_vpn_translated = RegEnable(vpn, io.tlb.resp.fire())
+    val last_vpn_translated_valid = RegInit(false.B) // TODO check for flush
+
+    when (io.tlb.resp.fire()) {
+      last_vpn_translated_valid := true.B
+      state := s_writing_new_block
+    }.elsewhen (io.tlb.req.fire()) {
+      state := s_translate_resp
+    }
+
+    // Firing off TileLink write requests
     val putFull = edge.Put(
-      fromSource = fromSource,
-      toAddress = toAddress,
-      lgSize = lgSize,
-      data = wdata)._2
+      fromSource = RegEnableThru(xactId, state === s_writing_new_block),
+      toAddress = RegEnableThru(paddr, state === s_writing_new_block),
+      lgSize = RegEnableThru(lg_send_size, state === s_writing_new_block),
+      data = (req.data >> bytesSent).asUInt())._2
 
-    io.req.ready := !xactBusy.andR() // && (state === s_idle || state === s_resp) // TODO this needs to be more sophisticated for general usage
-    tl.a.valid := (state === s_data) && (io.in.valid || sendTrail) && canSend
-    tl.a.bits := Mux(wpartial, putPartial, putFull)
+    tl.a.valid := state === s_writing_new_block || state === s_writing_beats
+    tl.a.bits := putFull
     tl.d.ready := xactBusy.orR
-    io.in.ready := state === s_data && canSend && !sendTrail && tl.a.ready
-    io.resp.valid := state === s_resp && !xactBusy.orR
-    io.resp.bits := length
 
-    // TODO allow in and req to fire at the same time
     when (tl.a.fire()) {
-      when (!newBlock) {
+      when (state === s_writing_new_block) {
+        val totalBeats = (send_size / beatBytes.U) + (send_size % beatBytes.U)
+        beatsLeft := totalBeats - 1.U
+
+        val next_vaddr = req.vaddr + send_size
+        val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
+        req.vaddr := next_vaddr
+
+        when (totalBeats === 1.U) {
+          bytesSent := bytesSent + send_size
+
+          when (send_size >= bytesLeft) {
+            // We're done with this request at this point
+            state_machine_ready_for_req := true.B
+            state := s_idle
+          }.elsewhen (new_page) {
+            state := s_translate_req
+          }
+        }.otherwise {
+          bytesSent := bytesSent + beatBytes.U
+          state := s_writing_beats
+        }
+      }.elsewhen(state === s_writing_beats) {
         beatsLeft := beatsLeft - 1.U
-      } .elsewhen (reqSize > byteAddrBits.U) {
-        val nBeats = (1.U << (reqSize - byteAddrBits.U)).asUInt()
-        beatsLeft := nBeats - 1.U
-        headAddr := addrMerged
-        headXact := xactId
-        headSize := reqSize
+        bytesSent := bytesSent + beatBytes.U
+
+        when (beatsLeft === 0.U) {
+          val new_page = req.vaddr(pgIdxBits-1, 0) === 0.U
+
+          when (beatBytes.U >= bytesLeft) {
+            // We're done with this request at this point
+            state_machine_ready_for_req := true.B
+            state := s_idle
+          }.elsewhen(new_page) {
+            state := s_translate_req
+          }.otherwise {
+            state := s_writing_new_block
+          }
+        }
       }
-
-      val bytesSent = PopCount(wmask)
-      offset := offset + bytesSent
-      overhang := fulldata >> dataBits.U
-
-      when (bytesSent === bytesToSend && io.in.bits.last) { state := s_resp }
     }
 
+    // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
-      offset := 0.U
-      baseAddr := io.req.bits.address
-      length := io.req.bits.length
-      beatsLeft := 0.U
-      state := s_data
-    }
+      req := io.req.bits
+      bytesSent := 0.U
 
-    when (io.resp.fire()) { state := s_idle }
+      val vpn_already_translated = last_vpn_translated_valid &&
+        last_vpn_translated === io.req.bits.vaddr(xLen-1, pgIdxBits)
+      state := Mux(vpn_already_translated, s_writing_new_block, s_translate_req)
+    }
   }
 }

@@ -9,10 +9,13 @@ class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, shift_width: Int, rdataTy
     val shift = UInt(shift_width.W)
     val relu6_shift = UInt(shift_width.W)
     val act = UInt(2.W)
+
+    val fromDMA = Bool()
   })
 
   val resp = Flipped(Decoupled(new Bundle {
     val data = rdataType
+    val fromDMA = Bool()
   }))
 
   override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType).asInstanceOf[this.type]
@@ -65,12 +68,13 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
 
   mem.io.raddr := Mux(io.write.en && io.write.acc, io.write.addr, io.read.req.bits.addr)
   mem.io.ren := io.read.req.valid || (io.write.en && io.write.acc)
-  
+
   class PipelinedRdataAndActT extends Bundle {
     val data = mem.io.rdata.cloneType
     val shift = io.read.req.bits.shift.cloneType
     val relu6_shift = io.read.req.bits.relu6_shift.cloneType
     val act = io.read.req.bits.act.cloneType
+    val fromDMA = io.read.req.bits.fromDMA.cloneType
   }
   
   val q = Module(new Queue(new PipelinedRdataAndActT, 1, true, true))
@@ -78,8 +82,9 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   q.io.enq.bits.shift := RegNext(io.read.req.bits.shift)
   q.io.enq.bits.relu6_shift := RegNext(io.read.req.bits.relu6_shift)
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
+  q.io.enq.bits.fromDMA := RegNext(io.read.req.bits.fromDMA)
   q.io.enq.valid := RegNext(io.read.req.fire())
-  
+
   val p = Pipeline(q.io.deq, mem_pipeline, Seq.fill(mem_pipeline)((x: PipelinedRdataAndActT) => x) :+ {
     x: PipelinedRdataAndActT =>
       val activated_rdata = VecInit(x.data.map(v => VecInit(v.map { e =>
@@ -99,6 +104,7 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
 
   io.read.req.ready := q.io.enq.ready
   io.read.resp.bits.data := p.bits.data
+  io.read.resp.bits.fromDMA := p.bits.fromDMA
   io.read.resp.valid := p.valid
   p.ready := io.read.resp.ready
 

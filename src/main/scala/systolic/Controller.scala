@@ -54,14 +54,14 @@ class SystolicArray[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: Syst
 
   val xLen = p(XLen)
   val spad = LazyModule(new Scratchpad(
-    config.sp_banks, config.sp_bank_entries, config.sp_width,
-    new SPAddr(xLen, config.sp_banks, config.sp_bank_entries) // TODO unify this with the other sp_addr
-    , config))
+    config.sp_banks, config.sp_bank_entries,
+    new SPAddr(xLen, config.sp_banks, config.sp_bank_entries), // TODO unify this with the other sp_addr
+    config))
+
   override lazy val module = new SystolicArrayModule(this)
   override val tlNode = spad.id_node
 }
 
-// TODO add WS support
 class SystolicArrayModule[T <: Data: Arithmetic]
     (outer: SystolicArray[T])
     extends LazyRoCCModuleImp(outer)
@@ -89,16 +89,16 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   tlb.io.exp.flush_skip := false.B
   tlb.io.exp.flush_retry := false.B
 
-  // io.ptw.head <> tlb.io.ptw
-  io.ptw.head.req <> tlb.io.ptw.req
+  io.ptw.head <> tlb.io.ptw // TODO
+  /*io.ptw.head.req <> tlb.io.ptw.req
   tlb.io.ptw.resp <> io.ptw.head.resp
   tlb.io.ptw.ptbr := io.ptw.head.ptbr
   tlb.io.ptw.status := outer.spad.module.io.mstatus
   tlb.io.ptw.pmp := io.ptw.head.pmp
-  tlb.io.ptw.customCSRs := io.ptw.head.customCSRs
+  tlb.io.ptw.customCSRs := io.ptw.head.customCSRs*/
 
   // Controllers
-  val cmd = io.cmd
+  val cmd = Queue(io.cmd)
   cmd.ready := false.B
 
   val funct = cmd.bits.inst.funct.asTypeOf(funct_t).funct
@@ -111,7 +111,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val store_controller = Module(new StoreController(outer.config, xLen, sp_addr_t, acc_addr))
   val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config, sp_addr_t, acc_addr))
 
-  val dma_arbiter = Module(new DMAArbiter(sp_banks, sp_bank_entries, acc_rows))
+  // val dma_arbiter = Module(new DMAArbiter(sp_banks, sp_bank_entries, acc_rows))
 
   val load_to_store_depq = Queue(load_controller.io.pushStore, depq_len)
   val load_to_ex_depq = Queue(load_controller.io.pushEx, depq_len)
@@ -154,9 +154,11 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   ex_controller.io.pushStoreLeft := depq_len.U - ex_to_store_depq_len
 
   // Wire up scratchpad to controllers
-  spad.module.io.dma <> dma_arbiter.io.dma
-  dma_arbiter.io.load <> load_controller.io.dma
-  dma_arbiter.io.store <> store_controller.io.dma
+  // spad.module.io.dma_read <> dma_arbiter.io.dma
+  // dma_arbiter.io.load <> load_controller.io.dma
+  // dma_arbiter.io.store <> store_controller.io.dma
+  spad.module.io.dma.read <> load_controller.io.dma
+  spad.module.io.dma.write <> store_controller.io.dma
   ex_controller.io.read <> spad.module.io.read
   ex_controller.io.write <> spad.module.io.write
   ex_controller.io.acc <> spad.module.io.acc
@@ -176,7 +178,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   ex_controller.io.pullStore <> store_to_ex_depq
 
   // Wire up global RoCC signals
-  io.busy := load_controller.io.busy || store_controller.io.busy
+  io.busy := cmd.valid || load_controller.io.busy || store_controller.io.busy || spad.module.io.busy
   io.interrupt := tlb.io.exp.interrupt
 
   // Issue commands to controllers

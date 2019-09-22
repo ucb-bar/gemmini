@@ -15,7 +15,7 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xL
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
 
-    val dma = new ScratchpadMemIO(sp_banks, sp_bank_entries, acc_rows)
+    val dma = new ScratchpadWriteMemIO(sp_banks, sp_bank_entries, acc_rows)
 
     // TODO what's a better way to express no bits?
     val pushLoad = Decoupled(UInt(1.W))
@@ -26,13 +26,12 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xL
     val busy = Output(Bool())
   })
 
-  val waiting_for_command :: waiting_for_dma_resp :: waiting_for_dma_ready :: Nil = Enum(3)
+  val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
   val control_state = RegInit(waiting_for_command)
-
-  val wait_for_dma_req = WireInit(false.B) // Not really a state on its own, just a trigger for behavior that is shared across states
 
   val stride = RegInit((sp_width / 8).U(xLen.W))
   val block_rows = meshRows * tileRows
+  val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
 
   val cmd = Queue(io.cmd, ld_str_queue_length)
   val vaddr = cmd.bits.cmd.rs1
@@ -40,6 +39,9 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xL
   val spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr_t)
   val config_stride = cmd.bits.cmd.rs2
   val mstatus = cmd.bits.cmd.status
+
+  val spaddr_plus_row_counter = (Cat(spaddr.bank, spaddr.row) + row_counter).asTypeOf(sp_addr_t)
+  val accaddr_plus_row_counter = (accaddr.row + row_counter).asTypeOf(acc_addr_t)
 
   io.busy := cmd.valid
 
@@ -60,17 +62,17 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xL
   val push_deps_ready = !pushDep || (pushEx && io.pushEx.ready && !pushLoad) ||
     (pushLoad && io.pushLoad.ready && !pushEx) || (pushEx && pushLoad && io.pushEx.ready && io.pushLoad.ready)
 
-  io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoStore && pull_deps_ready) || control_state === waiting_for_dma_ready
-  io.dma.req.bits.vaddr := vaddr
-  io.dma.req.bits.spbank := spaddr.bank
-  io.dma.req.bits.spaddr := spaddr.row
-  io.dma.req.bits.accaddr := accaddr.row
+  io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoStore && pull_deps_ready) ||
+    control_state === waiting_for_dma_req_ready ||
+    (control_state === sending_rows && row_counter =/= 0.U)
+  io.dma.req.bits.vaddr := vaddr + row_counter * stride
+  io.dma.req.bits.spbank := spaddr_plus_row_counter.bank
+  io.dma.req.bits.spaddr := spaddr_plus_row_counter.row
+  io.dma.req.bits.accaddr := accaddr_plus_row_counter.row
   io.dma.req.bits.is_acc := accaddr.is_acc_addr
-  io.dma.req.bits.stride := stride
-  io.dma.req.bits.len := 1.U // TODO let stores also give a len parameter
-  io.dma.req.bits.write := true.B
   io.dma.req.bits.status := mstatus
-  io.dma.resp.ready := true.B
+
+  io.dma.resp.ready := true.B // We ignore all responses for now, because we assume that all memory accesses were valid
 
   io.pushLoad.valid := false.B
   io.pullLoad.ready := false.B
@@ -81,10 +83,16 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xL
   io.pushLoad.bits := DontCare
   io.pushEx.bits := DontCare
 
+  // Row counter
+  when (io.dma.req.fire()) {
+    row_counter := wrappingAdd(row_counter, 1.U, block_rows)
+  }
+
+  // Control logic
   switch (control_state) {
     is (waiting_for_command) {
-      when (cmd.valid && pull_deps_ready && push_deps_ready) {
-        when(DoConfig) {
+      when (cmd.valid && pull_deps_ready) {
+        when(DoConfig && push_deps_ready) {
           stride := config_stride
 
           io.pushLoad.valid := pushLoad
@@ -95,34 +103,31 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xL
           cmd.ready := true.B
         }
 
-        .elsewhen(io.dma.req.fire()) {
+        .elsewhen(DoStore) {
           io.pullEx.ready := pullEx
           io.pullLoad.ready := pullLoad
-
-          control_state := waiting_for_dma_resp
+          control_state := Mux(io.dma.req.fire(), sending_rows, waiting_for_dma_req_ready)
         }
       }
     }
 
-    is (waiting_for_dma_resp) {
-      when (io.dma.resp.valid) {
-        cmd.ready := true.B
-
-        io.pushEx.valid := pushEx
-        io.pushLoad.valid := pushLoad
-
-        control_state := waiting_for_command
+    is (waiting_for_dma_req_ready) {
+      when (io.dma.req.fire()) {
+        control_state := sending_rows
       }
     }
 
-    is (waiting_for_dma_ready) {
-      wait_for_dma_req := true.B
-    }
-  }
+    is (sending_rows) {
+      val last_row = row_counter === 0.U || (row_counter === (block_rows-1).U && io.dma.req.fire())
 
-  when (wait_for_dma_req) {
-    when (io.dma.req.fire()) {
-      control_state := waiting_for_dma_resp
+      when (last_row && push_deps_ready) {
+        control_state := waiting_for_command
+
+        io.pushLoad.valid := pushLoad
+        io.pushEx.valid := pushEx
+
+        cmd.ready := true.B
+      }
     }
   }
 }

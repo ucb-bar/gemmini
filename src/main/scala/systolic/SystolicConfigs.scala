@@ -15,10 +15,10 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
                                                          ex_queue_length: Int,
                                                          sp_banks: Int, // TODO support one-bank designs
                                                          sp_capacity: SystolicMemCapacity,
+                                                         acc_capacity: SystolicMemCapacity,
                                                          shifter_banks: Int,
                                                          depq_len: Int,
                                                          dataflow: Dataflow.Value,
-                                                         acc_capacity: SystolicMemCapacity,
                                                          mem_pipeline: Int,
                                                          dma_maxbytes: Int,
                                                          dma_buswidth: Int,
@@ -38,6 +38,7 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
   }
 
   assert(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
+  assert(acc_rows % (meshRows * tileRows) == 0, "the number of rows in the accumulator must be a multiple of the dimensions of the systolic array")
 
   def generateHeader(guard: String = "SYSTOLIC_PARAMS_H"): String = {
     // Returns the (min,max) values for a dataType

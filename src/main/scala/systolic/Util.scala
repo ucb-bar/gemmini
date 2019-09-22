@@ -26,6 +26,11 @@ object Util {
     Mux(u < n, max.U - (n-u) + 1.U, u - n)
   }
 
+  def ceilingDivide(numer: Int, denom: Int): Int = {
+    if (numer % denom == 0) { numer / denom }
+    else { numer / denom + 1}
+  }
+
   def closestLowerPowerOf2(u: UInt): UInt = {
     // TODO figure out a more efficient way of doing this. Is this many muxes really necessary?
     val exp = u.toBools().zipWithIndex.map { case (b, i) =>
@@ -44,5 +49,12 @@ object Util {
     }.reduce((acc, u) => Mux(acc > u, acc, u))
 
     (1.U << exp).asUInt()
+  }
+
+  // This function will return "next" with a 0-cycle delay when the "enable" signal is high. It's like a queue with
+  // the "pipe" and "flow" parameters set to "true"
+  def RegEnableThru[T <: Data](next: T, enable: Bool): T = {
+    val buf = RegEnable(next, enable)
+    Mux(enable, next, buf)
   }
 }
