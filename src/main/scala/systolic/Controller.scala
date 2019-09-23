@@ -84,8 +84,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
 
   // TLB
   implicit val edge = outer.tlNode.edges.out.head
-  val tlb = Module(new FrontendTLB(1, 4, dma_maxbytes))
-  tlb.io.clients(0) <> outer.spad.module.io.tlb
+  val tlb = Module(new FrontendTLB(2, 4, dma_maxbytes))
+  (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
   tlb.io.exp.flush_skip := false.B
   tlb.io.exp.flush_retry := false.B
 

@@ -7,208 +7,237 @@ import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
 import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters}
 import freechips.rocketchip.tilelink.TLBundleParameters
 import freechips.rocketchip.util.DecoupledHelper
-// import icenet.{ReservationBufferAlloc, ReservationBufferData}
 import testchipip.{StreamChannel, TLHelper}
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
 import Util._
 
-class StreamReadRequest(val nXacts: Int) extends Bundle {
-  val address = UInt(48.W)
-  val length = UInt(15.W)
-  val partial = Bool()
+class StreamReadRequest(val spad_rows: Int)(implicit p: Parameters) extends CoreBundle {
+  val vaddr = UInt(xLen.W)
+  val spaddr = UInt(log2Up(spad_rows).W)
+  val cmd_id = UInt(8.W) // TODO magic number
 }
 
-class StreamChannelWithID(val nXacts: Int, val dataBits: Int) extends Bundle {
-  val data = UInt(dataBits.W)
-  val keep = UInt((dataBits/8).W)
+class StreamReadResponse(val dataWidth: Int, val spad_rows: Int)(implicit p: Parameters) extends CoreBundle {
+  val data = UInt(dataWidth.W)
+  val spaddr = UInt(log2Up(spad_rows).W)
   val last = Bool()
-  val id = UInt((log2Ceil(nXacts) max 1).W)
+  val cmd_id = UInt(8.W) // TODO magic number
 }
 
-/*class StreamReader(nXacts: Int, outFlits: Int, maxBytes: Int)
+class ReservationBufferTag(val spad_rows: Int, val maxLen: Int, val nCmds: Int = 2) extends Bundle {
+  // TODO get nCmds from config
+  val spaddr = UInt(log2Up(spad_rows).W)
+  val lgLen = UInt(log2Up(log2Ceil(maxLen+1)).W)
+  val cmd_id = UInt(log2Up(nCmds).W)
+}
+
+class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int, spad_rows: Int, meshRows: Int)
                   (implicit p: Parameters) extends LazyModule {
 
-  val core = LazyModule(new StreamReaderCore(nXacts, outFlits, maxBytes))
+  val core = LazyModule(new StreamReaderCore(nXacts, beatBits, maxBytes, dataWidth, aligned_to, spad_rows))
   val node = core.node
 
   lazy val module = new LazyModuleImp(this) {
-    val dataBits = core.module.dataBits
+    val beatsInSpadRow = dataWidth / beatBits
+    val beatsInMaxReq = (maxBytes * 8) / beatBits
+    val reserveBufferRowLen = beatsInSpadRow max beatsInMaxReq
+
+    val matsInMaxReq = (maxBytes * 8) / dataWidth // How many matrices' rows can be requested in one request?
 
     val io = IO(new Bundle {
-      val req = Flipped(Decoupled(new StreamReadRequest(nXacts)))
-      val resp = Decoupled(Bool())
-      val out = Decoupled(new StreamChannelWithID(nXacts, dataBits))
-      val reset_Xacts = Input(Bool()) // TODO inelegant
+      val req = Flipped(Decoupled(new StreamReadRequest(spad_rows)))
+      val resp = Decoupled(new StreamReadResponse(dataWidth, spad_rows))
+      val tlb = new FrontendTLBIO
+      val busy = Output(Bool())
     })
 
+    val resBuffer = Module(new ReservationBuffer(UInt(beatBits.W), new ReservationBufferTag(spad_rows, matsInMaxReq),
+      nXacts, reserveBufferRowLen))
+
+    val lineBreaker = Module(new LineBreaker(dataWidth, spad_rows, maxBytes*8, meshRows))
+
     core.module.io.req <> io.req
-    io.resp <> core.module.io.resp
+    io.tlb <> core.module.io.tlb
+    io.busy := core.module.io.busy
 
-    core.module.io.alloc.ready := io.out.ready
+    resBuffer.io.alloc <> core.module.io.reserve.alloc
+    resBuffer.io.alloc_stream <> core.module.io.reserve.alloc_stream
+    resBuffer.io.in <> core.module.io.reserve.in
 
-    io.out.valid := core.module.io.out.valid
-    core.module.io.out.ready := io.out.ready
-    io.out.bits.data := core.module.io.out.bits.data.data
-    io.out.bits.last := core.module.io.out.bits.data.last
-    io.out.bits.keep := core.module.io.out.bits.data.keep
-    io.out.bits.id := core.module.io.out.bits.id
+    lineBreaker.io.in.valid := resBuffer.io.out.valid
+    lineBreaker.io.in.bits.data := resBuffer.io.out.bits.data.asUInt()
+    lineBreaker.io.in.bits.spaddr := resBuffer.io.out.bits.tag.spaddr
+    lineBreaker.io.in.bits.lgLen := resBuffer.io.out.bits.tag.lgLen
+    lineBreaker.io.in.bits.cmd_id := resBuffer.io.out.bits.tag.cmd_id
+    resBuffer.io.out.ready := lineBreaker.io.in.ready
 
-    core.module.io.reset_Xacts := io.reset_Xacts
+    io.resp.valid := lineBreaker.io.out.valid
+    io.resp.bits.data := lineBreaker.io.out.bits.data
+    io.resp.bits.spaddr := lineBreaker.io.out.bits.spaddr
+    io.resp.bits.cmd_id := lineBreaker.io.out.bits.cmd_id
+    io.resp.bits.last := lineBreaker.io.out.bits.last
+    lineBreaker.io.out.ready := io.resp.ready
   }
 }
 
-class StreamReaderCore(nXacts: Int, outFlits: Int, maxBytes: Int)
+// TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
+class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int, spad_rows: Int)
                       (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-reader", sourceId = IdRange(0, nXacts))
 
-  lazy val module = new LazyModuleImp(this) {
+  require(isPow2(aligned_to))
+
+  lazy val module = new LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
     val (tl, edge) = node.out(0)
-    val dataBits = tl.params.dataBits
-    val beatBytes = dataBits / 8
-    val byteAddrBits = log2Ceil(beatBytes)
-    val addrBits = tl.params.addressBits
-    val lenBits = 15
+
+    val dataBytes = dataWidth / 8
+    val beatBytes = beatBits / 8
+
+    val beatsInSpadRow = dataWidth / beatBits
+    val beatsInMaxReq = (maxBytes * 8) / beatBits
+    val reserveBufferRowLen = beatsInSpadRow max beatsInMaxReq
+
+    val matsInMaxReq = (maxBytes * 8) / dataWidth // How many matrices' rows can be requested in one request?
 
     val io = IO(new Bundle {
-      val req = Flipped(Decoupled(new StreamReadRequest(nXacts)))
-      val resp = Decoupled(Bool())
-      val alloc = Decoupled(new ReservationBufferAlloc(nXacts, outFlits))
-      val out = Decoupled(new ReservationBufferData(nXacts, dataBits))
-      val reset_Xacts = Input(Bool()) // TODO inelegant
+      val req = Flipped(Decoupled(new StreamReadRequest(spad_rows)))
+      val reserve = new ReservationBufferAllocatorIO(UInt(beatBits.W), new ReservationBufferTag(spad_rows, matsInMaxReq),
+        nXacts, reserveBufferRowLen)
+      val tlb = new FrontendTLBIO
+      val busy = Output(Bool())
     })
 
-    val s_idle :: s_read :: s_resp :: Nil = Enum(3)
-    val state = RegInit(s_idle)
+    val (s_idle :: s_translate_req :: s_translate_resp :: s_req_new_block ::
+      s_req_blocks :: Nil) = Enum(5)
+    val  state = RegInit(s_idle)
 
-    // Physical (word) address in memory
-    val sendaddr = Reg(UInt(addrBits.W))
-    // Number of words to send
-    val sendlen  = Reg(UInt(lenBits.W))
-    // 0 if last packet in sequence, 1 otherwise
-    val sendpart = Reg(Bool())
+    val req = Reg(new StreamReadRequest(spad_rows))
 
-    // TODO is xact needed for anything anymore?
+    val vpn = req.vaddr(xLen-1, pgIdxBits)
+
+    val bytesRequested = Reg(UInt(log2Ceil(dataBytes).W)) // TODO this only needs to count up to (dataBytes/aligned_to), right?
+    val bytesLeft = dataBytes.U - bytesRequested // TODO This needs to take the request length into account
+
     val xactBusy = RegInit(0.U(nXacts.W))
-    val xactOnehot = PriorityEncoderOH(~xactBusy).asUInt()
+    val xactOnehot = PriorityEncoderOH(~xactBusy)
     val xactId = OHToUInt(xactOnehot)
-    val xactLast = Reg(UInt(nXacts.W))
-    val xactLeftKeep = Reg(Vec(nXacts, UInt(beatBytes.W)))
-    val xactRightKeep = Reg(Vec(nXacts, UInt(beatBytes.W)))
 
-    val reqSize = MuxCase(byteAddrBits.U,
-      (log2Ceil(maxBytes) until byteAddrBits by -1).map(lgSize =>
-        // Use the largest size (beatBytes <= size <= maxBytes)
-        // s.t. sendaddr % size == 0 and sendlen > size
-        (sendaddr(lgSize-1,0) === 0.U &&
-          (sendlen >> lgSize.U).asUInt =/= 0.U) -> lgSize.U))
-    val isLast = (xactLast >> tl.d.bits.source)(0) && edge.last(tl.d)
-    val canSend = state === s_read && !xactBusy.andR
+    val xactBusy_add = Mux(tl.a.fire(), (1.U << xactId).asUInt(), 0.U)
+    val xactBusy_remove = ~Mux(tl.d.fire(), (1.U << tl.d.bits.source).asUInt(), 0.U)
+    xactBusy := (xactBusy | xactBusy_add) & xactBusy_remove.asUInt()
 
-    val fullKeep = ~0.U(beatBytes.W)
-    val loffset = Reg(UInt(byteAddrBits.W))
-    val roffset = Reg(UInt(byteAddrBits.W))
-    val lkeep = fullKeep << loffset
-    val rkeep = fullKeep >> roffset
-    val first = Reg(Bool())
+    val state_machine_ready_for_req = WireInit(state === s_idle)
+    io.req.ready := !xactBusy.andR() && state_machine_ready_for_req
+    io.busy := xactBusy.orR
 
-    /*xactBusy := (xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)) &
-      (~Mux(tl.d.fire() && edge.last(tl.d),
-        UIntToOH(tl.d.bits.source), 0.U)).asUInt()*/
+    val send_sizes = (aligned_to to (dataBytes max maxBytes) by aligned_to)
+      .reverse // The possible sizes of requests we can send over TileLink
+    val send_sizes_lg = send_sizes.map(s => log2Ceil(s).U)
+    val send_sizes_valid = send_sizes.map { s =>
+      val lgsz = log2Ceil(s)
+      val is_aligned = req.vaddr(lgsz - 1, 0) === 0.U
 
-    // TODO this doesn't work if we want to support unaligned accesses
-    xactBusy := xactBusy | Mux(tl.a.fire(), xactOnehot, 0.U)
-    // when (tl.d.fire() && edge.last(tl.d) && xactBusy.andR()) {
-    when (io.reset_Xacts) {
-      xactBusy := 0.U
+      val across_page_boundary = (req.vaddr + s.U)(xLen - 1, pgIdxBits) =/= vpn
+
+      val is_too_large = s.U > bytesLeft
+
+      is_aligned && !across_page_boundary && !is_too_large
+    }
+    val send_size = MuxCase(send_sizes.last.U, (send_sizes_valid zip send_sizes).map { case (v, sz) => v -> sz.U })
+    val lg_send_size = MuxCase(send_sizes_lg.last, (send_sizes_valid zip send_sizes_lg).map { case (v, lgsz) => v -> lgsz })
+
+    // Address translation
+    io.tlb.req.valid := state === s_translate_req
+    io.tlb.req.bits.vaddr := Cat(vpn, 0.U(pgIdxBits.W))
+    io.tlb.req.bits.passthrough := false.B
+    io.tlb.req.bits.size := send_size
+    io.tlb.req.bits.cmd := M_XRD
+
+    val ppn = RegEnable(io.tlb.resp.bits.paddr(paddrBits-1, pgIdxBits),
+      io.tlb.resp.fire())
+    val paddr = Cat(ppn, req.vaddr(pgIdxBits-1, 0))
+
+    val last_vpn_translated = RegEnable(vpn, io.tlb.resp.fire())
+    val last_vpn_translated_valid = RegInit(false.B) // TODO check for flush
+
+    when (io.tlb.resp.fire()) {
+      last_vpn_translated_valid := true.B
+      state := s_req_new_block
+    }.elsewhen (io.tlb.req.fire()) {
+      state := s_translate_resp
     }
 
-    val helper = DecoupledHelper(tl.a.ready, io.alloc.ready)
-
-    io.req.ready := !xactBusy.andR() // && (state === s_idle || state === s_resp) // state === s_idle // TODO this needs to be more sophisticated for general usage
-    io.alloc.valid := helper.fire(io.alloc.ready, canSend)
-    io.alloc.bits.id := xactId
-    io.alloc.bits.count := (1.U << (reqSize - byteAddrBits.U))
-    tl.a.valid := helper.fire(tl.a.ready, canSend)
-    tl.a.bits := edge.Get(
+    // Firing off TileLink read requests and allocating space inside the reservation buffer for them
+    val get = edge.Get(
       fromSource = xactId,
-      toAddress = sendaddr,
-      lgSize = reqSize)._2
+      toAddress = paddr,
+      lgSize = lg_send_size
+    )._2
 
-    val outLeftKeep = xactLeftKeep(tl.d.bits.source)
-    val outRightKeep = xactRightKeep(tl.d.bits.source)
+    tl.a.valid := (state === s_req_new_block && io.reserve.alloc.ready) || (state === s_req_blocks)
+    tl.a.bits := get
 
-    io.out.valid := tl.d.valid
-    io.out.bits.id := tl.d.bits.source
-    io.out.bits.data.data := tl.d.bits.data
-    io.out.bits.data.keep := MuxCase(fullKeep, Seq(
-      (edge.first(tl.d) && edge.last(tl.d)) -> (outLeftKeep & outRightKeep),
-      edge.first(tl.d) -> outLeftKeep,
-      edge.last(tl.d)  -> outRightKeep))
-    io.out.bits.data.last := isLast
-    tl.d.ready := io.out.ready
-    io.resp.valid := state === s_resp
-    io.resp.bits := true.B
+    io.reserve.alloc.valid := state === s_req_new_block && tl.a.ready
+    io.reserve.alloc.bits.tag.spaddr := req.spaddr
+    io.reserve.alloc.bits.tag.lgLen := 0.U // TODO
+    io.reserve.alloc.bits.tag.cmd_id := req.cmd_id
 
-    when (io.req.fire()) {
-      val req = io.req.bits
-      val lastaddr = req.address + req.length
-      val startword = req.address(addrBits-1, byteAddrBits)
-      val endword = lastaddr(addrBits-1, byteAddrBits) +
-        Mux(lastaddr(byteAddrBits-1, 0) === 0.U, 0.U, 1.U)
-
-      loffset := req.address(byteAddrBits-1, 0)
-      roffset := Cat(endword, 0.U(byteAddrBits.W)) - lastaddr
-      first := true.B
-
-      sendaddr := Cat(startword, 0.U(byteAddrBits.W))
-      sendlen  := Cat(endword - startword, 0.U(byteAddrBits.W))
-      sendpart := req.partial
-      state := s_read
-
-      assert(req.length > 0.U, s"request length must be >0")
-    }
+    io.reserve.alloc_stream.valid := (state === s_req_new_block || state === s_req_blocks) && tl.a.ready
+    io.reserve.alloc_stream.bits.xact_id := xactId
+    io.reserve.alloc_stream.bits.len := send_size / beatBytes.U
+    io.reserve.alloc_stream.bits.last := false.B
 
     when (tl.a.fire()) {
-      val reqBytes = (1.U << reqSize).asUInt()
-      sendaddr := sendaddr + reqBytes
-      sendlen  := sendlen - reqBytes
-      when (sendlen === reqBytes) {
-        xactLast := (xactLast & (~xactOnehot).asUInt) | Mux(sendpart, 0.U, xactOnehot)
-        xactRightKeep(xactId) := rkeep
-        state := s_resp
-      } .otherwise {
-        xactLast := xactLast & (~xactOnehot).asUInt
-        xactRightKeep(xactId) := fullKeep
-      }
-      when (first) {
-        first := false.B
-        xactLeftKeep(xactId) := lkeep
-      } .otherwise {
-        xactLeftKeep(xactId) := fullKeep
+      val next_vaddr = req.vaddr + send_size
+      val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
+      req.vaddr := next_vaddr
+
+      bytesRequested := bytesRequested + send_size
+
+      when (send_size >= bytesLeft) {
+        // We're done with this request at this point
+        state_machine_ready_for_req := true.B
+        io.reserve.alloc_stream.bits.last := true.B
+        state := s_idle
+      }.elsewhen (new_page) {
+        state := s_translate_req
+      }.otherwise {
+        state := s_req_blocks
       }
     }
 
-    when (io.resp.fire()) {
-      state := s_idle
+    // Forward TileLink read responses to the reservation buffer
+    tl.d.ready := xactBusy.orR
+    io.reserve.in.valid := tl.d.fire()
+    io.reserve.in.bits.xact_id := tl.d.bits.source
+    io.reserve.in.bits.data := tl.d.bits.data
+
+    // Accepting requests to kick-start the state machine
+    when (io.req.fire()) {
+      req := io.req.bits
+      bytesRequested := 0.U
+
+      val vpn_already_translated = last_vpn_translated_valid &&
+        last_vpn_translated === io.req.bits.vaddr(xLen-1, pgIdxBits)
+      state := Mux(vpn_already_translated, s_req_new_block, s_translate_req)
     }
   }
-}*/
+}
 
-// w is the maximum width of the data that it can be requested to send at once
 class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(xLen.W)
   val data = UInt(dataWidth.W)
 }
 
 class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int)
-                  (implicit p: Parameters) extends LazyModule with MemoryOpConstants {
+                  (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-writer", sourceId = IdRange(0, nXacts))
 
   require(isPow2(aligned_to))
 
-  lazy val module = new LazyModuleImp(this) with HasCoreParameters {
+  lazy val module = new LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
     val (tl, edge) = node.out(0)
     val dataBytes = dataWidth / 8
     val beatBytes = beatBits / 8
@@ -227,8 +256,8 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
 
     val vpn = req.vaddr(xLen-1, pgIdxBits)
 
-    val bytesSent = RegInit(0.U(log2Ceil(dataBytes).W))
-    val bytesLeft = (dataBytes/aligned_to).U - bytesSent
+    val bytesSent = Reg(UInt(log2Ceil(dataBytes).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
+    val bytesLeft = dataBytes.U - bytesSent
 
     val beatsLeft = Reg(UInt(log2Ceil(maxBytes/aligned_to).W))
 

@@ -57,4 +57,20 @@ object Util {
     val buf = RegEnable(next, enable)
     Mux(enable, next, buf)
   }
+
+  def ctz(u: UInt): UInt = {
+    MuxCase(u.getWidth.U, u.toBools().zipWithIndex.map { case (b, i) => b -> i.U })
+  }
+
+  // An undirectioned Valid bundle
+  class UDValid[T <: Data](t: T) extends Bundle {
+    val valid = Bool()
+    val bits = t.cloneType
+
+    override def cloneType: this.type = new UDValid(t.cloneType).asInstanceOf[this.type]
+  }
+
+  object UDValid {
+    def apply[T <: Data](t: T): UDValid[T] = new UDValid(t)
+  }
 }

@@ -72,8 +72,6 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xL
   io.dma.req.bits.is_acc := accaddr.is_acc_addr
   io.dma.req.bits.status := mstatus
 
-  io.dma.resp.ready := true.B // We ignore all responses for now, because we assume that all memory accesses were valid
-
   io.pushLoad.valid := false.B
   io.pullLoad.ready := false.B
   io.pushEx.valid := false.B

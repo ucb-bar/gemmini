@@ -35,7 +35,7 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val nRequests: Int, tag_t: =>
   class Entry extends Bundle {
     val valid = Bool()
     val tag = tag_t.cloneType
-    val requests_returned = UInt((log2Ceil(nRequests+1) max 1).W)
+    val requests_returned = UInt(log2Up(nRequests+1).W)
   }
 
   val entry_init = Wire(new Entry)

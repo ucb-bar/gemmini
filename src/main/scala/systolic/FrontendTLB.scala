@@ -55,12 +55,16 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   io.ptw <> tlb.io.ptw
 
   when (io.req.fire() || state === s_waiting_for_resp) {
+    // We could actually check the response from the TLB instantaneously to get a response in the same cycle. However,
+    // our current arbiters don't play well with that scenario. To get the instantaneous response, simple erase the
+    // "state === s_idle" condition from the "elsewhen" below
+
     val miss = tlb.io.resp.miss
     val exception = Mux(req.cmd === M_XRD, tlb.io.resp.pf.ld || tlb.io.resp.ae.ld, tlb.io.resp.pf.st || tlb.io.resp.ae.st)
 
     when (exception) {
       state := s_interrupt
-    }.elsewhen (miss) {
+    }.elsewhen (miss || state === s_idle) {
       state := s_waiting_for_resp
     }.otherwise {
       io.resp.valid := true.B
@@ -113,3 +117,14 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
       arb_resp.ready := true.B
   }
 }
+
+/*class TLBArb (nClients: Int, lgMaxSize: Int)(implicit p: Parameters) extends CoreModule {
+  val io = IO(new Bundle {
+    val in_req = Vec(nClients, Flipped(Decoupled(new TLBReq(lgMaxSize))))
+    val in_resp = Vec(nClients, Flipped(Valid(new TLBResp)))
+    val out_req = Decoupled(new TLBReq(lgMaxSize))
+    val out_resp = Valid(new TLBResp)
+  })
+
+  val priority = Reg(UInt(log2Up(nClients).W))
+}*/

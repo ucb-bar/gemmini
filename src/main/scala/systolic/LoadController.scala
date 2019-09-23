@@ -72,8 +72,6 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
   io.dma.req.bits.len := 1.U // TODO
   io.dma.req.bits.status := mstatus
 
-  io.dma.resp.ready := true.B // We ignore all responses for now, because we assume that all memory accesses were valid
-
   io.pushStore.valid :=  false.B
   io.pushEx.valid := false.B
   io.pullStore.ready := false.B
@@ -95,7 +93,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad && pull_deps_ready
   cmd_tracker.io.alloc.bits.tag.pushStore := pushStore
   cmd_tracker.io.alloc.bits.tag.pushEx := pushEx
-  cmd_tracker.io.request_returned.valid := io.dma.resp.valid // TODO use a bundle connect
+  cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
   cmd_tracker.io.cmd_completed.ready :=
     !(cmd_tracker.io.cmd_completed.bits.tag.pushStore && !io.pushStore.ready) &&

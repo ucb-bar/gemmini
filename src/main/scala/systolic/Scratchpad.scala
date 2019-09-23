@@ -41,23 +41,17 @@ class ScratchpadMemWriteRequest(val nBanks: Int, val nRows: Int, val acc_rows: I
 
 class ScratchpadMemReadResponse extends Bundle {
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
-  val error = Bool()
-}
-
-class ScratchpadMemWriteResponse extends Bundle {
-  val error = Bool()
 }
 
 class ScratchpadReadMemIO(val nBanks: Int, val nRows: Int, val acc_rows: Int)
                          (implicit p: Parameters) extends CoreBundle {
   val req = Decoupled(new ScratchpadMemReadRequest(nBanks, nRows, acc_rows))
-  val resp = Flipped(Decoupled(new ScratchpadMemReadResponse))
+  val resp = Flipped(Valid(new ScratchpadMemReadResponse))
 }
 
 class ScratchpadWriteMemIO(val nBanks: Int, val nRows: Int, val acc_rows: Int)
                          (implicit p: Parameters) extends CoreBundle {
   val req = Decoupled(new ScratchpadMemWriteRequest(nBanks, nRows, acc_rows))
-  val resp = Flipped(Decoupled(new ScratchpadMemWriteResponse))
 }
 
 class ScratchpadReadReq(val n: Int) extends Bundle {
@@ -102,7 +96,7 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int) extends Module {
   // val q = Module(new Queue(UInt(w.W), 1, true, true))
   val q = Module(new Queue(new ScratchpadReadResp(w), 1, true, true))
   q.io.enq.valid := RegNext(ren)
-  q.io.enq.bits.data := 1.U // rdata // TODO
+  q.io.enq.bits.data := rdata
   q.io.enq.bits.fromDMA := RegNext(fromDMA)
 
   io.read.req.ready := q.io.enq.ready
@@ -133,21 +127,21 @@ class Scratchpad[T <: Data: Arithmetic](
   val inflight_writer_matrices = 2
   val inflight_reader_matrices = 2
 
-  val outFlits = block_rows * (w / dataBits) // TODO get rid of this
-  val nXacts_writer = inflight_writer_matrices * block_rows * ceilingDivide(w, maxBytes)
-  val nXacts_reader = inflight_reader_matrices * block_rows * ceilingDivide(acc_w, maxBytes)
+  val nXacts_writer = inflight_writer_matrices * block_rows * ceilingDivide(w, maxBytes) // TODO just make this 4
+  val nXacts_reader = inflight_reader_matrices * block_rows * ceilingDivide(acc_w, maxBytes) // TODO just make this 4
 
   val id_node = TLIdentityNode()
   val xbar_node = TLXbar()
 
-  // val reader = LazyModule(new StreamReader(nXacts_reader, outFlits, maxBytes)) // TODO
+  val reader = LazyModule(new StreamReader(nXacts_reader, dataBits, maxBytes, w, w/8,
+    sp_banks * sp_bank_entries, block_rows))
   val writer = LazyModule(new StreamWriter(nXacts_writer, dataBits, maxBytes, w, w/8))
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node
   // id_node :=* writer.node
 
-  // xbar_node := reader.node // TODO
+  xbar_node := reader.node // TODO
   xbar_node := writer.node
   id_node := xbar_node
 
@@ -167,7 +161,7 @@ class Scratchpad[T <: Data: Arithmetic](
       val acc = new AccumulatorMemIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType)))
 
       // TLB ports
-      val tlb = new FrontendTLBIO
+      val tlb = Vec(2, new FrontendTLBIO)
       val mstatus = Output(new MStatus)
 
       // Misc. ports
@@ -175,12 +169,12 @@ class Scratchpad[T <: Data: Arithmetic](
     })
 
     val write_dispatch_q = Queue(io.dma.write.req)
-    // val read_dispatch_q = Queue(io.dma.read.req)
+    // val read_dispatch_q = Queue(io.dma.read.req, 0)
 
     write_dispatch_q.ready := false.B
 
     val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(sp_banks, sp_bank_entries, acc_rows), mem_pipeline+1, pipe=true))
-    // val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(sp_banks, sp_bank_entries, acc_rows), mem_pipeline+1, pipe=true))
+    val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(sp_banks, sp_bank_entries, acc_rows), mem_pipeline+1, pipe=true))
 
     write_issue_q.io.enq.valid := false.B
     write_issue_q.io.enq.bits := write_dispatch_q.bits
@@ -191,9 +185,23 @@ class Scratchpad[T <: Data: Arithmetic](
     write_issue_q.io.deq.ready := writer.module.io.req.ready && writeData.valid
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
     writer.module.io.req.bits.data := writeData.bits
-    io.tlb <> writer.module.io.tlb
 
-    io.busy := writer.module.io.busy
+    read_issue_q.io.enq <> io.dma.read.req
+
+    reader.module.io.req.valid := read_issue_q.io.deq.valid
+    read_issue_q.io.deq.ready := reader.module.io.req.ready
+    reader.module.io.req.bits.vaddr := read_issue_q.io.deq.bits.vaddr
+    reader.module.io.req.bits.spaddr := read_issue_q.io.deq.bits.spbank * sp_bank_entries.U + read_issue_q.io.deq.bits.spaddr
+    reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
+
+    reader.module.io.resp.ready := false.B
+    io.dma.read.resp.valid := reader.module.io.resp.fire() && reader.module.io.resp.bits.last
+    io.dma.read.resp.bits.cmd_id := reader.module.io.resp.bits.cmd_id
+
+    io.tlb(0) <> writer.module.io.tlb
+    io.tlb(1) <> reader.module.io.tlb
+
+    io.busy := writer.module.io.busy || reader.module.io.busy
 
     {
       val banks = Seq.fill(nBanks) { Module(new ScratchpadBank(nRows, w, mem_pipeline)) }
@@ -236,9 +244,23 @@ class Scratchpad[T <: Data: Arithmetic](
 
       // TODO Writing to the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
-        bio.write.en := false.B
-        bio.write.data := DontCare
-        bio.write.addr := DontCare
+        val exwrite = io.write(i).en
+        val dmaread = reader.module.io.resp.valid && reader.module.io.resp.bits.spaddr.asTypeOf(sp_addr_t).bank === i.U
+
+        bio.write.en := exwrite || dmaread
+
+        when (exwrite) {
+          bio.write.addr := io.write(i).addr
+          bio.write.data := io.write(i).data
+        }.elsewhen (dmaread) {
+          bio.write.addr := reader.module.io.resp.bits.spaddr
+          bio.write.data := reader.module.io.resp.bits.data
+
+          reader.module.io.resp.ready := true.B
+        }.otherwise {
+          bio.write.addr := DontCare
+          bio.write.data := DontCare
+        }
       }
     }
 
