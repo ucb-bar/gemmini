@@ -40,6 +40,7 @@ class ScratchpadMemWriteRequest(val nBanks: Int, val nRows: Int, val acc_rows: I
 }
 
 class ScratchpadMemReadResponse extends Bundle {
+  val lgBytesRead = UInt(16.W) // TODO magic number here
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
 }
 
@@ -124,18 +125,19 @@ class Scratchpad[T <: Data: Arithmetic](
   val w = inputType.getWidth *  block_cols
   val acc_w = accType.getWidth * block_cols
 
-  val inflight_writer_matrices = 2
-  val inflight_reader_matrices = 2
+  // val inflight_writer_matrices = 2
+  // val inflight_reader_matrices = 2
 
-  val nXacts_writer = inflight_writer_matrices * block_rows * ceilingDivide(w, maxBytes) // TODO just make this 4
-  val nXacts_reader = inflight_reader_matrices * block_rows * ceilingDivide(acc_w, maxBytes) // TODO just make this 4
+  // val nXacts_writer = inflight_writer_matrices * block_rows * ceilingDivide(w, maxBytes) // TODO just make this 4
+  // val nXacts_reader = inflight_reader_matrices * block_rows * ceilingDivide(acc_w, maxBytes) // TODO just make this 4
+  val max_in_flight = 4
 
   val id_node = TLIdentityNode()
   val xbar_node = TLXbar()
 
-  val reader = LazyModule(new StreamReader(nXacts_reader, dataBits, maxBytes, w, w/8,
+  val reader = LazyModule(new StreamReader(max_in_flight, dataBits, maxBytes, w, w/8,
     sp_banks * sp_bank_entries, block_rows))
-  val writer = LazyModule(new StreamWriter(nXacts_writer, dataBits, maxBytes, w, w/8))
+  val writer = LazyModule(new StreamWriter(max_in_flight, dataBits, maxBytes, w, w/8))
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node
@@ -174,7 +176,7 @@ class Scratchpad[T <: Data: Arithmetic](
     write_dispatch_q.ready := false.B
 
     val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(sp_banks, sp_bank_entries, acc_rows), mem_pipeline+1, pipe=true))
-    val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(sp_banks, sp_bank_entries, acc_rows), mem_pipeline+1, pipe=true))
+    val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(sp_banks, sp_bank_entries, acc_rows), mem_pipeline+1, pipe=true)) // TODO can't this just be a normal queue?
 
     write_issue_q.io.enq.valid := false.B
     write_issue_q.io.enq.bits := write_dispatch_q.bits
@@ -192,11 +194,13 @@ class Scratchpad[T <: Data: Arithmetic](
     read_issue_q.io.deq.ready := reader.module.io.req.ready
     reader.module.io.req.bits.vaddr := read_issue_q.io.deq.bits.vaddr
     reader.module.io.req.bits.spaddr := read_issue_q.io.deq.bits.spbank * sp_bank_entries.U + read_issue_q.io.deq.bits.spaddr
+    reader.module.io.req.bits.len := read_issue_q.io.deq.bits.len
     reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
 
     reader.module.io.resp.ready := false.B
     io.dma.read.resp.valid := reader.module.io.resp.fire() && reader.module.io.resp.bits.last
     io.dma.read.resp.bits.cmd_id := reader.module.io.resp.bits.cmd_id
+    io.dma.read.resp.bits.lgBytesRead := reader.module.io.resp.bits.lgLen
 
     io.tlb(0) <> writer.module.io.tlb
     io.tlb(1) <> reader.module.io.tlb

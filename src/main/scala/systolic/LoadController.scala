@@ -30,12 +30,14 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
 
   val stride = RegInit((sp_width / 8).U(xLen.W))
   val block_rows = meshRows * tileRows
+  val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
 
   val cmd = Queue(io.cmd, ld_str_queue_length)
   val vaddr = cmd.bits.cmd.rs1
   val accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr_t)
   val spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr_t)
+  val len = cmd.bits.cmd.rs2(xLen-1, 32) // TODO we don't really need to read all the bits here
   val config_stride = cmd.bits.cmd.rs2
   val mstatus = cmd.bits.cmd.status
 
@@ -69,7 +71,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
   io.dma.req.bits.spaddr := spaddr_plus_row_counter.row
   io.dma.req.bits.accaddr := accaddr_plus_row_counter.row
   io.dma.req.bits.is_acc := accaddr.is_acc_addr
-  io.dma.req.bits.len := 1.U // TODO
+  io.dma.req.bits.len := len
   io.dma.req.bits.status := mstatus
 
   io.pushStore.valid :=  false.B
@@ -89,12 +91,19 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
 
   val nCmds = 2 // TODO make this a config parameter
 
-  val cmd_tracker = Module(new DMACommandTracker(nCmds, block_rows, deps_t))
+  val maxBytesInRowRequest = config.dma_maxbytes max (block_cols * config.inputType.getWidth / 8) max
+    (block_cols * config.accType.getWidth / 8)
+  val maxBytesInMatRequest = block_rows * maxBytesInRowRequest
+
+  val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, maxBytesInMatRequest, deps_t))
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad && pull_deps_ready
+  cmd_tracker.io.alloc.bits.bytes_to_read := len * block_rows.U * // TODO change len to lgLen so that the multiplier here can be removed
+    block_cols.U * (Mux(accaddr.is_acc_addr, config.accType.getWidth.U, config.inputType.getWidth.U) / 8.U)
   cmd_tracker.io.alloc.bits.tag.pushStore := pushStore
   cmd_tracker.io.alloc.bits.tag.pushEx := pushEx
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
+  cmd_tracker.io.request_returned.bits.lg_bytes_read := io.dma.resp.bits.lgBytesRead
   cmd_tracker.io.cmd_completed.ready :=
     !(cmd_tracker.io.cmd_completed.bits.tag.pushStore && !io.pushStore.ready) &&
       !(cmd_tracker.io.cmd_completed.bits.tag.pushEx && !io.pushEx.ready)

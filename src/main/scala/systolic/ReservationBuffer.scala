@@ -67,7 +67,7 @@ class ReservationBufferAllocatorIO[T <: Data, Tag <: Data](gen: T, tag_t: Tag, n
 // rowLen: What is the maximum length of a row? Each row is made up of some number of entries of type "gen"
 class ReservationBuffer[T <: Data, Tag <: Data](gen: T, tag_t: Tag, nXacts: Int, rowLen: Int) extends Module {
   val io = IO(new ReservationBufferIO(gen.cloneType, tag_t.cloneType, nXacts, rowLen))
-
+  
   val nEntries = nXacts
 
   class Entry extends Bundle {

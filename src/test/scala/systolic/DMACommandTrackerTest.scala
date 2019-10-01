@@ -5,7 +5,7 @@ import scala.collection.mutable.ArrayBuffer
 import chisel3._
 import chisel3.iotesters.{ChiselFlatSpec, PeekPokeTester}
 
-class DMACommandTrackerTester(c: DMACommandTracker[UInt]) extends PeekPokeTester(c) {
+class DMACommandTrackerTester(c: DMAReadCommandTracker[UInt]) extends PeekPokeTester(c) {
   case class AllocatedCmd(id: Int, tag: Int, requestsSent: Int)
   
   var max_cycles = 100000000
@@ -80,7 +80,7 @@ class DMACommandTrackerUnitTest extends ChiselFlatSpec {
 
   behavior of "DMACommandTracker"
   it should "work" in {
-    chisel3.iotesters.Driver.execute(testerArgs, () => new DMACommandTracker(2, 16, UInt(29.W))) {
+    chisel3.iotesters.Driver.execute(testerArgs, () => new DMAReadCommandTracker(2, 16, UInt(29.W))) {
       c => new DMACommandTrackerTester(c)
     } should be (true)
   }
