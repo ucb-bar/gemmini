@@ -37,6 +37,7 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
     case CapacityInMatrices(ms) => ms * meshRows * tileRows
   }
 
+  assert(sp_bank_entries % 2 == 0, "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement
   assert(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
   assert(acc_rows % (meshRows * tileRows) == 0, "the number of rows in the accumulator must be a multiple of the dimensions of the systolic array")
 

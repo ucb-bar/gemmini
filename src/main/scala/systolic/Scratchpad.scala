@@ -122,22 +122,17 @@ class Scratchpad[T <: Data: Arithmetic](
 
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
-  val w = inputType.getWidth *  block_cols
+  val spad_w = inputType.getWidth *  block_cols
   val acc_w = accType.getWidth * block_cols
 
-  // val inflight_writer_matrices = 2
-  // val inflight_reader_matrices = 2
-
-  // val nXacts_writer = inflight_writer_matrices * block_rows * ceilingDivide(w, maxBytes) // TODO just make this 4
-  // val nXacts_reader = inflight_reader_matrices * block_rows * ceilingDivide(acc_w, maxBytes) // TODO just make this 4
   val max_in_flight = 4
 
   val id_node = TLIdentityNode()
   val xbar_node = TLXbar()
 
-  val reader = LazyModule(new StreamReader(max_in_flight, dataBits, maxBytes, w, w/8,
-    sp_banks * sp_bank_entries, block_rows))
-  val writer = LazyModule(new StreamWriter(max_in_flight, dataBits, maxBytes, w, w/8))
+  val reader = LazyModule(new StreamReader(max_in_flight, dataBits, maxBytes, spad_w, acc_w, spad_w/8,
+    sp_banks * sp_bank_entries, acc_rows, block_rows))
+  val writer = LazyModule(new StreamWriter(max_in_flight, dataBits, maxBytes, spad_w, spad_w/8))
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node
@@ -156,8 +151,8 @@ class Scratchpad[T <: Data: Arithmetic](
       }
 
       // SRAM ports
-      val read  = Flipped(Vec(nBanks, new ScratchpadReadIO(nRows, w)))
-      val write = Flipped(Vec(nBanks, new ScratchpadWriteIO(nRows, w)))
+      val read  = Flipped(Vec(nBanks, new ScratchpadReadIO(nRows, spad_w)))
+      val write = Flipped(Vec(nBanks, new ScratchpadWriteIO(nRows, spad_w)))
 
       // Accumulator ports
       val acc = new AccumulatorMemIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType)))
@@ -181,7 +176,9 @@ class Scratchpad[T <: Data: Arithmetic](
     write_issue_q.io.enq.valid := false.B
     write_issue_q.io.enq.bits := write_dispatch_q.bits
 
-    val writeData = Wire(Valid(UInt(w.W)))
+    val writeData = Wire(Valid(UInt((spad_w max acc_w).W)))
+    writeData.valid := false.B
+    writeData.bits := DontCare
 
     writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid
     write_issue_q.io.deq.ready := writer.module.io.req.ready && writeData.valid
@@ -195,6 +192,7 @@ class Scratchpad[T <: Data: Arithmetic](
     reader.module.io.req.bits.vaddr := read_issue_q.io.deq.bits.vaddr
     reader.module.io.req.bits.spaddr := read_issue_q.io.deq.bits.spbank * sp_bank_entries.U + read_issue_q.io.deq.bits.spaddr
     reader.module.io.req.bits.len := read_issue_q.io.deq.bits.len
+    reader.module.io.req.bits.is_acc := read_issue_q.io.deq.bits.is_acc
     reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
 
     reader.module.io.resp.ready := false.B
@@ -208,13 +206,16 @@ class Scratchpad[T <: Data: Arithmetic](
     io.busy := writer.module.io.busy || reader.module.io.busy
 
     {
-      val banks = Seq.fill(nBanks) { Module(new ScratchpadBank(nRows, w, mem_pipeline)) }
+      val banks = Seq.fill(nBanks) { Module(new ScratchpadBank(nRows, spad_w, mem_pipeline)) }
       val bank_ios = VecInit(banks.map(_.io))
 
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.spbank)
-      writeData.valid := bank_issued_io.read.resp.valid && bank_issued_io.read.resp.bits.fromDMA
-      writeData.bits := bank_issued_io.read.resp.bits.data
+
+      when (!write_issue_q.io.deq.bits.is_acc) {
+        writeData.valid := bank_issued_io.read.resp.valid && bank_issued_io.read.resp.bits.fromDMA
+        writeData.bits := bank_issued_io.read.resp.bits.data
+      }
 
       // Reading from the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
@@ -226,6 +227,7 @@ class Scratchpad[T <: Data: Arithmetic](
           !write_dispatch_q.bits.is_acc && write_dispatch_q.bits.spbank === i.U
 
         bio.read.req.valid := exread || dmawrite
+        ex_read_req.ready := bio.read.req.ready
 
         // The ExecuteController gets priority when reading from SRAMs
         when (exread) {
@@ -242,14 +244,16 @@ class Scratchpad[T <: Data: Arithmetic](
         }
 
         val ex_read_resp = io.read(i).resp
-        val dma_resp_ready = writer.module.io.req.ready
+        val dma_resp_ready = writer.module.io.req.ready &&
+          !write_issue_q.io.deq.bits.is_acc && write_issue_q.io.deq.bits.spbank === i.U // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_resp_ready, ex_read_resp.ready)
       }
 
-      // TODO Writing to the SRAM banks
+      // Writing to the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
         val exwrite = io.write(i).en
-        val dmaread = reader.module.io.resp.valid && reader.module.io.resp.bits.spaddr.asTypeOf(sp_addr_t).bank === i.U
+        val dmaread = reader.module.io.resp.valid &&
+          !reader.module.io.resp.bits.is_acc && reader.module.io.resp.bits.addr.asTypeOf(sp_addr_t).bank === i.U
 
         bio.write.en := exwrite || dmaread
 
@@ -257,10 +261,10 @@ class Scratchpad[T <: Data: Arithmetic](
           bio.write.addr := io.write(i).addr
           bio.write.data := io.write(i).data
         }.elsewhen (dmaread) {
-          bio.write.addr := reader.module.io.resp.bits.spaddr
+          bio.write.addr := reader.module.io.resp.bits.addr
           bio.write.data := reader.module.io.resp.bits.data
 
-          reader.module.io.resp.ready := true.B
+          reader.module.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
         }.otherwise {
           bio.write.addr := DontCare
           bio.write.data := DontCare
@@ -268,11 +272,73 @@ class Scratchpad[T <: Data: Arithmetic](
       }
     }
 
-    /*{
+    {
       val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
       val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
 
       val accumulator = Module(new AccumulatorMem(acc_rows, acc_row_t, spad_row_t, mem_pipeline))
-    }*/
+
+      when (write_issue_q.io.deq.bits.is_acc) {
+        writeData.valid := accumulator.io.read.resp.valid && accumulator.io.read.resp.bits.fromDMA
+        writeData.bits := accumulator.io.read.resp.bits.data.asUInt()
+      }
+
+      // Accumulator reads
+      {
+        val exread = io.acc.read.req.valid
+
+        // TODO we tie the write dispatch queue's, and write issue queue's, ready and valid signals together here
+        val dmawrite = write_dispatch_q.valid && write_issue_q.io.enq.ready && write_dispatch_q.bits.is_acc
+
+        accumulator.io.read.req.valid := exread || dmawrite
+        accumulator.io.read.req.bits.shift := io.acc.read.req.bits.shift
+        accumulator.io.read.req.bits.relu6_shift := io.acc.read.req.bits.relu6_shift
+        accumulator.io.read.req.bits.act := io.acc.read.req.bits.act
+        io.acc.read.req.ready := accumulator.io.read.req.ready
+
+        // The ExecuteController gets priority when reading from the accumulator
+        when (exread) {
+          accumulator.io.read.req.bits.addr := io.acc.read.req.bits.addr
+          accumulator.io.read.req.bits.fromDMA := false.B
+        }.elsewhen(dmawrite) {
+          accumulator.io.read.req.bits.addr := write_dispatch_q.bits.accaddr
+          accumulator.io.read.req.bits.fromDMA := true.B
+
+          write_dispatch_q.ready := true.B
+          write_issue_q.io.enq.valid := true.B
+        }.otherwise {
+          accumulator.io.read.req.bits.addr := DontCare
+          accumulator.io.read.req.bits.fromDMA := DontCare
+        }
+
+        val ex_resp_ready = io.acc.read.resp.ready
+        val dma_resp_ready = writer.module.io.req.ready && write_issue_q.io.deq.bits.is_acc  // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
+        accumulator.io.read.resp.ready := Mux(accumulator.io.read.resp.bits.fromDMA, dma_resp_ready, ex_resp_ready)
+      }
+
+      // Accumulator writes
+      {
+        val exwrite = io.acc.write.en
+        val dmaread = reader.module.io.resp.valid && reader.module.io.resp.bits.is_acc
+
+        accumulator.io.write.en := exwrite || dmaread
+
+        when (exwrite) {
+          accumulator.io.write.addr := io.acc.write.addr
+          accumulator.io.write.data := io.acc.write.data
+          accumulator.io.write.acc := io.acc.write.acc
+        }.elsewhen (dmaread) {
+          accumulator.io.write.addr := reader.module.io.resp.bits.addr
+          accumulator.io.write.data := reader.module.io.resp.bits.data.asTypeOf(acc_row_t)
+          accumulator.io.write.acc := false.B
+
+          reader.module.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
+        }.otherwise {
+          accumulator.io.write.addr := DontCare
+          accumulator.io.write.data := DontCare
+          accumulator.io.write.acc := DontCare
+        }
+      }
+    }
   }
 }

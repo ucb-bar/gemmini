@@ -43,6 +43,8 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   // to it, then we might not get the written data. We might need some kind of cooldown counter after addresses in the
   // accumulator have been written to for configurations with such small matrices
 
+  // TODO Refuse a read from an address which has only just been written to
+
   import ev._
 
   // TODO unify this with TwoPortSyncMemIO
@@ -57,7 +59,6 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   val acc_buf = ShiftRegister(io.write.acc, 2)
   val w_buf_valid = ShiftRegister(io.write.en, 2)
 
-  // TODO can the "RegNext(mem.io.rdata)" here be merged with the pipelined output of the read requests?
   val w_sum = VecInit((RegNext(mem.io.rdata) zip wdata_buf).map { case (rv, wv) =>
     VecInit((rv zip wv).map(t => t._1 + t._2))
   })

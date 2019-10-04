@@ -9,45 +9,42 @@ import testchipip.TLHelper
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
 import Util._
 
-class StreamReadRequest(val spad_rows: Int)(implicit p: Parameters) extends CoreBundle {
+class StreamReadRequest(val spad_rows: Int, val acc_rows: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(xLen.W)
-  val spaddr = UInt(log2Up(spad_rows).W)
+  val spaddr = UInt(log2Up(spad_rows max acc_rows).W)
+  val is_acc = Bool()
   val len = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 }
 
-class StreamReadResponse(val dataWidth: Int, val spad_rows: Int)(implicit p: Parameters) extends CoreBundle {
-  val data = UInt(dataWidth.W)
-  val spaddr = UInt(log2Up(spad_rows).W)
+class StreamReadResponse(val spadWidth: Int, val accWidth: Int, val spad_rows: Int, val acc_rows: Int)(implicit p: Parameters) extends CoreBundle {
+  val data = UInt((spadWidth max accWidth).W)
+  val addr = UInt(log2Up(spad_rows max acc_rows).W)
+  val is_acc = Bool()
   val last = Bool()
   val lgLen = UInt(8.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 }
 
-class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int, spad_rows: Int, meshRows: Int)
+class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
+                   spad_rows: Int, acc_rows: Int, meshRows: Int)
                   (implicit p: Parameters) extends LazyModule {
   // TODO the mask isn't returned in the response, which means that this can't work when "dataWidth" is larger than "maxBytes"
 
-  val core = LazyModule(new StreamReaderCore(nXacts, beatBits, maxBytes, dataWidth, aligned_to, spad_rows, meshRows))
+  val core = LazyModule(new StreamReaderCore(nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows))
   val node = core.node
 
   lazy val module = new LazyModuleImp(this) {
-    val beatsInSpadRow = dataWidth / beatBits
-    val beatsInMaxReq = (maxBytes * 8) / beatBits
-    val reserveBufferRowLen = beatsInSpadRow max beatsInMaxReq
-
-    val matsInMaxReq = (maxBytes * 8) / dataWidth // How many matrices' rows can be requested in one request?
-
     val io = IO(new Bundle {
-      val req = Flipped(Decoupled(new StreamReadRequest(spad_rows)))
-      val resp = Decoupled(new StreamReadResponse(dataWidth, spad_rows))
+      val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows)))
+      val resp = Decoupled(new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows))
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
     })
 
-    val xactTracker = Module(new XactTracker(nXacts, maxBytes, dataWidth, spad_rows, maxBytes))
+    val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes))
 
-    val beatPacker = Module(new BeatPacker(beatBits, maxBytes, dataWidth, spad_rows, maxBytes, aligned_to, meshRows))
+    val beatPacker = Module(new BeatPacker(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows))
 
     core.module.io.req <> io.req
     io.tlb <> core.module.io.tlb
@@ -66,7 +63,8 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
     beatPacker.io.out.ready := io.resp.ready
     io.resp.valid := beatPacker.io.out.valid
     io.resp.bits.data := beatPacker.io.out.bits.data
-    io.resp.bits.spaddr := beatPacker.io.out.bits.addr
+    io.resp.bits.addr := beatPacker.io.out.bits.addr
+    io.resp.bits.is_acc := beatPacker.io.out.bits.is_acc
     io.resp.bits.cmd_id := xactTracker.io.peek.entry.cmd_id
     io.resp.bits.lgLen := xactTracker.io.peek.entry.lgLen
     io.resp.bits.last := beatPacker.io.out.bits.last
@@ -81,7 +79,8 @@ class StreamReadBeat (val nXacts: Int, val beatBits: Int) extends Bundle {
 }
 
 // TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
-class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int, spad_rows: Int, meshRows: Int)
+class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int,
+                       aligned_to: Int, spad_rows: Int, acc_rows: Int, meshRows: Int)
                       (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-reader", sourceId = IdRange(0, nXacts))
@@ -91,18 +90,13 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int
   lazy val module = new LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
     val (tl, edge) = node.out(0)
 
-    val dataBytes = dataWidth / 8
+    val spadWidthBytes = spadWidth / 8
+    val accWidthBytes = accWidth / 8
     val beatBytes = beatBits / 8
 
-    val beatsInSpadRow = dataWidth / beatBits
-    val beatsInMaxReq = (maxBytes * 8) / beatBits
-    val reserveBufferRowLen = beatsInSpadRow max beatsInMaxReq
-
-    val matsInMaxReq = (maxBytes * 8) / dataWidth // How many matrices' rows can be requested in one request?
-
     val io = IO(new Bundle {
-      val req = Flipped(Decoupled(new StreamReadRequest(spad_rows)))
-      val reserve = new XactTrackerAllocIO(nXacts, maxBytes, dataWidth, spad_rows, maxBytes)
+      val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows)))
+      val reserve = new XactTrackerAllocIO(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes)
       val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits))
       val tlb = new FrontendTLBIO
     })
@@ -111,17 +105,17 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int
       /*s_req_blocks ::*/ Nil) = Enum(4)
     val  state = RegInit(s_idle)
 
-    val req = Reg(new StreamReadRequest(spad_rows))
+    val req = Reg(new StreamReadRequest(spad_rows, acc_rows))
 
     val vpn = req.vaddr(xLen-1, pgIdxBits)
 
-    val bytesRequested = Reg(UInt(log2Ceil(dataBytes max maxBytes).W)) // TODO this only needs to count up to (dataBytes/aligned_to), right?
-    val bytesLeft = (req.len * dataBytes.U) - bytesRequested // TODO make "len" "lgLen" to get rid of the multiplier
+    val bytesRequested = Reg(UInt(log2Ceil(spadWidthBytes max accWidthBytes max maxBytes).W)) // TODO this only needs to count up to (dataBytes/aligned_to), right?
+    val bytesLeft = Mux(req.is_acc, req.len * accWidthBytes.U, req.len * spadWidthBytes.U) - bytesRequested // TODO make "len" "lgLen" to get rid of the multiplier
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
     io.req.ready := state_machine_ready_for_req
 
-    val send_sizes = (aligned_to to (dataBytes max maxBytes) by aligned_to)
+    val send_sizes = (aligned_to to (spadWidthBytes max accWidthBytes max maxBytes) by aligned_to)
       .filter(s => isPow2(s))
       .reverse // The possible sizes of requests we can send over TileLink
     val send_sizes_lg = send_sizes.map(s => log2Ceil(s).U)
@@ -129,7 +123,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int
       val lgsz = log2Ceil(s)
       val is_aligned = req.vaddr(lgsz - 1, 0) === 0.U
 
-      val across_page_boundary = (req.vaddr + s.U)(xLen - 1, pgIdxBits) =/= vpn
+      val across_page_boundary = (req.vaddr + s.U - 1.U)(xLen - 1, pgIdxBits) =/= vpn
 
       val is_too_large = s.U > bytesLeft
 
@@ -171,7 +165,9 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int
 
     io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := 0.U // TODO
-    io.reserve.entry.addr := req.spaddr + (bytesRequested * meshRows.U / dataBytes.U) // TODO change this for accumulator
+    io.reserve.entry.addr := req.spaddr + meshRows.U *
+      Mux(req.is_acc, bytesRequested / accWidthBytes.U, bytesRequested / spadWidthBytes.U)
+    io.reserve.entry.is_acc := req.is_acc
     io.reserve.entry.spad_row_offset := 0.U // TODO
     io.reserve.entry.lgLen := lg_send_size
     io.reserve.entry.cmd_id := req.cmd_id
@@ -271,7 +267,7 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
       val lgsz = log2Ceil(s)
       val is_aligned = req.vaddr(lgsz - 1, 0) === 0.U
 
-      val across_page_boundary = (req.vaddr + s.U)(xLen - 1, pgIdxBits) =/= vpn
+      val across_page_boundary = (req.vaddr + s.U - 1.U)(xLen - 1, pgIdxBits) =/= vpn
 
       val is_too_large = s.U > bytesLeft
 
