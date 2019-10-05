@@ -10,7 +10,7 @@ class BeatPackerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, va
   val data = UInt((spadWidth max accWidth).W)
   val addr = UInt(log2Up(spadRows max accRows).W)
   val is_acc = Bool()
-  val mask = Vec((spadWidth max accWidth)/(alignedTo*8), Bool())
+  val mask = Vec((spadWidth max accWidth)/(alignedTo*8) max 1, Bool())
   val last = Bool()
 }
 
@@ -28,7 +28,6 @@ class BeatPacker(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, sp
   extends Module {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes)))
-    // val in = Flipped(Decoupled(new BeatPackerInStream(beatBits)))
     val in = Flipped(Decoupled(UInt(beatBits.W)))
     val out = Decoupled(new BeatPackerOut(spadWidth, accWidth, spadRows, accRows, alignedTo))
   })

@@ -70,27 +70,33 @@ class ScratchpadReadIO(val n: Int, val w: Int) extends Bundle {
   val resp = Flipped(Decoupled(new ScratchpadReadResp(w)))
 }
 
-class ScratchpadWriteIO(val n: Int, val w: Int) extends Bundle {
+class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundle {
   val en = Output(Bool())
   val addr = Output(UInt(log2Ceil(n).W))
+  val mask = Output(Vec(mask_len, Bool()))
   val data = Output(UInt(w.W))
 }
 
-class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int) extends Module {
+class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int) extends Module {
   // This is essentially a pipelined SRAM with the ability to stall pipeline stages
+
+  require(w % aligned_to == 0 || w < aligned_to)
+  val mask_len = (w / (aligned_to * 8)) max 1 // How many mask bits are there?
+  val mask_elem = UInt((w min (aligned_to * 8)).W) // What datatype does each mask bit correspond to?
 
   val io = IO(new Bundle {
     val read = Flipped(new ScratchpadReadIO(n, w))
-    val write = Flipped(new ScratchpadWriteIO(n, w))
+    val write = Flipped(new ScratchpadWriteIO(n, w, mask_len))
   })
 
-  val mem = SyncReadMem(n, UInt(w.W))
+  // val mem = SyncReadMem(n, UInt(w.W))
+  val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
 
-  when (io.write.en) { mem.write(io.write.addr, io.write.data) }
+  when (io.write.en) { mem.write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), io.write.mask) }
 
   val raddr = io.read.req.bits.addr
   val ren = io.read.req.fire()
-  val rdata = mem.read(raddr, ren)
+  val rdata = mem.read(raddr, ren).asUInt()
   val fromDMA = io.read.req.bits.fromDMA
 
   // Make a queue which buffers the result of an SRAM read if it can't immediately be consumed
@@ -125,14 +131,12 @@ class Scratchpad[T <: Data: Arithmetic](
   val spad_w = inputType.getWidth *  block_cols
   val acc_w = accType.getWidth * block_cols
 
-  val max_in_flight = 4
-
   val id_node = TLIdentityNode()
   val xbar_node = TLXbar()
 
-  val reader = LazyModule(new StreamReader(max_in_flight, dataBits, maxBytes, spad_w, acc_w, spad_w/8,
+  val reader = LazyModule(new StreamReader(max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
     sp_banks * sp_bank_entries, acc_rows, block_rows))
-  val writer = LazyModule(new StreamWriter(max_in_flight, dataBits, maxBytes, spad_w, spad_w/8))
+  val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes, spad_w, aligned_to))
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node
@@ -152,7 +156,7 @@ class Scratchpad[T <: Data: Arithmetic](
 
       // SRAM ports
       val read  = Flipped(Vec(nBanks, new ScratchpadReadIO(nRows, spad_w)))
-      val write = Flipped(Vec(nBanks, new ScratchpadWriteIO(nRows, spad_w)))
+      val write = Flipped(Vec(nBanks, new ScratchpadWriteIO(nRows, spad_w, (spad_w / (aligned_to * 8)) max 1)))
 
       // Accumulator ports
       val acc = new AccumulatorMemIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType)))
@@ -206,7 +210,7 @@ class Scratchpad[T <: Data: Arithmetic](
     io.busy := writer.module.io.busy || reader.module.io.busy
 
     {
-      val banks = Seq.fill(nBanks) { Module(new ScratchpadBank(nRows, spad_w, mem_pipeline)) }
+      val banks = Seq.fill(nBanks) { Module(new ScratchpadBank(nRows, spad_w, mem_pipeline, aligned_to)) }
       val bank_ios = VecInit(banks.map(_.io))
 
       // Getting the output of the bank that's about to be issued to the writer
@@ -246,7 +250,10 @@ class Scratchpad[T <: Data: Arithmetic](
         val ex_read_resp = io.read(i).resp
         val dma_resp_ready = writer.module.io.req.ready &&
           !write_issue_q.io.deq.bits.is_acc && write_issue_q.io.deq.bits.spbank === i.U // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
+
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_resp_ready, ex_read_resp.ready)
+        ex_read_resp.valid := bio.read.resp.valid // TODO should we AND this with fromDMA?
+        ex_read_resp.bits := bio.read.resp.bits
       }
 
       // Writing to the SRAM banks
@@ -260,14 +267,17 @@ class Scratchpad[T <: Data: Arithmetic](
         when (exwrite) {
           bio.write.addr := io.write(i).addr
           bio.write.data := io.write(i).data
+          bio.write.mask := io.write(i).mask
         }.elsewhen (dmaread) {
           bio.write.addr := reader.module.io.resp.bits.addr
           bio.write.data := reader.module.io.resp.bits.data
+          bio.write.mask := reader.module.io.resp.bits.mask take ((spad_w / (aligned_to * 8)) max 1)
 
           reader.module.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
         }.otherwise {
           bio.write.addr := DontCare
           bio.write.data := DontCare
+          bio.write.mask := DontCare
         }
       }
     }
@@ -313,7 +323,10 @@ class Scratchpad[T <: Data: Arithmetic](
 
         val ex_resp_ready = io.acc.read.resp.ready
         val dma_resp_ready = writer.module.io.req.ready && write_issue_q.io.deq.bits.is_acc  // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
+
         accumulator.io.read.resp.ready := Mux(accumulator.io.read.resp.bits.fromDMA, dma_resp_ready, ex_resp_ready)
+        io.acc.read.resp.valid := accumulator.io.read.resp.valid // TODO should we AND this with fromDMA?
+        io.acc.read.resp.bits := accumulator.io.read.resp.bits
       }
 
       // Accumulator writes

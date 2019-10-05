@@ -32,6 +32,8 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
       val cmd_id = cmd_id_t
       val tag = tag_t
     })
+
+    val busy = Output(Bool())
   })
 
   class Entry extends Bundle {
@@ -59,6 +61,8 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
 
   io.alloc.ready := !cmd_valids.reduce(_ && _)
   io.alloc.bits.cmd_id := next_empty_alloc
+
+  io.busy := cmd_valids.reduce(_ || _)
 
   val cmd_completed_id = MuxCase(0.U, cmds.zipWithIndex.map { case (cmd, i) =>
     // (cmd.valid && cmd.bytes_left === nRequests.U) -> i.U

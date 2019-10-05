@@ -95,6 +95,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
     (block_cols * config.accType.getWidth / 8)
   val maxBytesInMatRequest = block_rows * maxBytesInRowRequest
 
+  // TODO we don't actually check that the instructions in the cmd_tracker push dependencies in order
   val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, maxBytesInMatRequest, deps_t))
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad && pull_deps_ready
   cmd_tracker.io.alloc.bits.bytes_to_read := len * block_rows.U * // TODO change len to lgLen so that the multiplier here can be removed
@@ -126,7 +127,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
   switch (control_state) {
     is (waiting_for_command) {
       when (cmd.valid && pull_deps_ready) {
-        when(DoConfig && push_deps_ready) {
+        when(DoConfig && push_deps_ready && !cmd_tracker.io.busy) {
           stride := config_stride
 
           io.pushStore.valid := pushStore

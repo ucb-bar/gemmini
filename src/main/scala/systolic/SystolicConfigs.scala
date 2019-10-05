@@ -1,6 +1,7 @@
 package systolic
 
 import chisel3._
+import chisel3.util._
 
 sealed abstract trait SystolicMemCapacity
 case class CapacityInKilobytes(kilobytes: Int) extends SystolicMemCapacity
@@ -22,6 +23,7 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
                                                          mem_pipeline: Int,
                                                          dma_maxbytes: Int,
                                                          dma_buswidth: Int,
+                                                         aligned_to: Int,
                                                          inputType: T,
                                                          outputType: T,
                                                          accType: T,
@@ -37,9 +39,11 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
     case CapacityInMatrices(ms) => ms * meshRows * tileRows
   }
 
-  assert(sp_bank_entries % 2 == 0, "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement
-  assert(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
-  assert(acc_rows % (meshRows * tileRows) == 0, "the number of rows in the accumulator must be a multiple of the dimensions of the systolic array")
+  val max_in_flight_reqs = 4 // TODO calculate this somehow
+
+  require(isPow2(sp_bank_entries), "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement
+  require(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
+  require(acc_rows % (meshRows * tileRows) == 0, "the number of rows in the accumulator must be a multiple of the dimensions of the systolic array")
 
   def generateHeader(guard: String = "SYSTOLIC_PARAMS_H"): String = {
     // Returns the (min,max) values for a dataType

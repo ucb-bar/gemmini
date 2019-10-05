@@ -18,7 +18,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
 
     val read  = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
-    val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width))
+    val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1))
     val acc = Flipped(new AccumulatorMemIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType))))
 
     // TODO what's a better way to express no bits?
@@ -243,7 +243,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       Seq(read_b -> (b_address_rs2.row + b_fire_counter),
         read_d -> (d_address_rs1.row + block_size.U - 1.U - d_fire_counter)))
 
-    io.read(i).resp.ready := DontCare // TODO Execute controller shouldn't really see this
+    io.read(i).resp.ready := true.B
   }
 
   // Accumulator read // TODO can only handle one acc read for now
@@ -262,7 +262,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr_t).row + b_fire_counter),
         read_d_from_acc -> (d_address_rs1.asTypeOf(acc_addr_t).row + block_size.U - 1.U - d_fire_counter)))
 
-    io.acc.read.resp.ready := DontCare // TODO Execute controller shouldn't really see this
+    io.acc.read.resp.ready := true.B
   }
 
   // val readData = VecInit(io.read.map(_.data))
@@ -468,6 +468,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     io.write(i).en := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr
     io.write(i).addr := current_w_bank_address
     io.write(i).data := activated_wdata.asUInt()
+    io.write(i).mask := VecInit(Seq.fill(io.write(0).mask.length)(true.B))
   }
 
   // Write to accumulator

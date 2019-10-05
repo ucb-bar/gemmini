@@ -81,6 +81,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
   val flushing_or_about_to = flushing || io.flush.fire()
 
   val fire_counter = RegInit(0.U((log2Ceil(block_size) max 1).W))
+  val fire_started = RegInit(false.B)
 
   val a_buf = RegEnable(io.a.bits, io.a.fire())
   val b_buf = RegEnable(io.b.bits, io.b.fire())
@@ -95,7 +96,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
 
   val tag_written = RegInit(false.B)
 
-  val buffering_done = fire_counter === 0.U && tag_written
+  val buffering_done = fire_counter === 0.U && fire_started && tag_written
   val waiting_on_non_matrix_inputs = fire_counter === 0.U && !(tag_written || io.tag_in.fire()) // TODO change when more non-matrix inputs are buffered
 
   when (io.a.fire()) {
@@ -118,6 +119,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
     d_written := false.B
 
     fire_counter := wrappingAdd(fire_counter, 1.U, block_size)
+    fire_started := true.B // We only need to write to this here, rather than in a "when (buffering_done)" statement
   }
 
   io.a.ready := !a_written
@@ -192,8 +194,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
     io.tag_in.ready := true.B
     tag_written := io.tag_in.fire()
 
-     tag_id := ~tag_id_reg
-     tag_id_reg := tag_id
+    tag_id := ~tag_id_reg
+    tag_id_reg := tag_id
 
     when (!flushing) {
       in_s := io.s ^ in_s_reg

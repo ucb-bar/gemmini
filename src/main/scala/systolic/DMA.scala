@@ -17,9 +17,11 @@ class StreamReadRequest(val spad_rows: Int, val acc_rows: Int)(implicit p: Param
   val cmd_id = UInt(8.W) // TODO magic number
 }
 
-class StreamReadResponse(val spadWidth: Int, val accWidth: Int, val spad_rows: Int, val acc_rows: Int)(implicit p: Parameters) extends CoreBundle {
+class StreamReadResponse(val spadWidth: Int, val accWidth: Int, val spad_rows: Int, val acc_rows: Int,
+                         val aligned_to: Int) (implicit p: Parameters) extends CoreBundle {
   val data = UInt((spadWidth max accWidth).W)
   val addr = UInt(log2Up(spad_rows max acc_rows).W)
+  val mask = Vec((spadWidth max accWidth) / (aligned_to * 8) max 1, Bool())
   val is_acc = Bool()
   val last = Bool()
   val lgLen = UInt(8.W) // TODO magic number
@@ -29,15 +31,13 @@ class StreamReadResponse(val spadWidth: Int, val accWidth: Int, val spad_rows: I
 class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
                    spad_rows: Int, acc_rows: Int, meshRows: Int)
                   (implicit p: Parameters) extends LazyModule {
-  // TODO the mask isn't returned in the response, which means that this can't work when "dataWidth" is larger than "maxBytes"
-
   val core = LazyModule(new StreamReaderCore(nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows))
   val node = core.node
 
   lazy val module = new LazyModuleImp(this) {
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows)))
-      val resp = Decoupled(new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows))
+      val resp = Decoupled(new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to))
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
     })
@@ -55,7 +55,7 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     xactTracker.io.peek.pop := beatPacker.io.in.fire() && core.module.io.beatData.bits.last
 
     core.module.io.beatData.ready := beatPacker.io.in.ready
-    beatPacker.io.req.valid := core.module.io.beatData.valid // && core.module.io.beatData.bits.first
+    beatPacker.io.req.valid := core.module.io.beatData.valid
     beatPacker.io.req.bits := xactTracker.io.peek.entry
     beatPacker.io.in.valid := core.module.io.beatData.valid
     beatPacker.io.in.bits := core.module.io.beatData.bits.data
@@ -64,6 +64,7 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     io.resp.valid := beatPacker.io.out.valid
     io.resp.bits.data := beatPacker.io.out.bits.data
     io.resp.bits.addr := beatPacker.io.out.bits.addr
+    io.resp.bits.mask := beatPacker.io.out.bits.mask
     io.resp.bits.is_acc := beatPacker.io.out.bits.is_acc
     io.resp.bits.cmd_id := xactTracker.io.peek.entry.cmd_id
     io.resp.bits.lgLen := xactTracker.io.peek.entry.lgLen
@@ -74,7 +75,7 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
 class StreamReadBeat (val nXacts: Int, val beatBits: Int) extends Bundle {
   val xactid = UInt(log2Up(nXacts).W)
   val data = UInt(beatBits.W)
-  val first = Bool()
+  // val first = Bool()
   val last = Bool()
 }
 
@@ -121,7 +122,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     val send_sizes_lg = send_sizes.map(s => log2Ceil(s).U)
     val send_sizes_valid = send_sizes.map { s =>
       val lgsz = log2Ceil(s)
-      val is_aligned = req.vaddr(lgsz - 1, 0) === 0.U
+      val is_aligned = if (s == 1) { true.B } else { req.vaddr(lgsz - 1, 0) === 0.U }
 
       val across_page_boundary = (req.vaddr + s.U - 1.U)(xLen - 1, pgIdxBits) =/= vpn
 
@@ -165,12 +166,13 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
 
     io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := 0.U // TODO
-    io.reserve.entry.addr := req.spaddr + meshRows.U *
-      Mux(req.is_acc, bytesRequested / accWidthBytes.U, bytesRequested / spadWidthBytes.U)
     io.reserve.entry.is_acc := req.is_acc
-    io.reserve.entry.spad_row_offset := 0.U // TODO
     io.reserve.entry.lgLen := lg_send_size
     io.reserve.entry.cmd_id := req.cmd_id
+
+    io.reserve.entry.addr := req.spaddr + meshRows.U *
+      Mux(req.is_acc, bytesRequested / accWidthBytes.U, bytesRequested / spadWidthBytes.U)
+    io.reserve.entry.spad_row_offset := Mux(req.is_acc, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
 
     when (tl.a.fire()) {
       val next_vaddr = req.vaddr + send_size
@@ -195,8 +197,9 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     io.beatData.valid := tl.d.valid
     io.beatData.bits.xactid := tl.d.bits.source
     io.beatData.bits.data := tl.d.bits.data
-    io.beatData.bits.last := edge.first(tl.d)
+    // io.beatData.bits.last := edge.first(tl.d)
     io.beatData.bits.last := edge.last(tl.d)
+    // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
@@ -226,6 +229,7 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
     val (tl, edge) = node.out(0)
     val dataBytes = dataWidth / 8
     val beatBytes = beatBits / 8
+    val lgBeatBytes = log2Ceil(beatBytes)
 
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamWriteRequest(dataWidth)))
@@ -265,7 +269,7 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
     val send_sizes_lg = send_sizes.map(s => log2Ceil(s).U)
     val send_sizes_valid = send_sizes.map { s =>
       val lgsz = log2Ceil(s)
-      val is_aligned = req.vaddr(lgsz - 1, 0) === 0.U
+      val is_aligned = if (s == 1) { true.B } else { req.vaddr(lgsz - 1, 0) === 0.U }
 
       val across_page_boundary = (req.vaddr + s.U - 1.U)(xLen - 1, pgIdxBits) =/= vpn
 
@@ -286,6 +290,8 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
     val ppn = RegEnable(io.tlb.resp.bits.paddr(paddrBits-1, pgIdxBits),
       io.tlb.resp.fire())
     val paddr = Cat(ppn, req.vaddr(pgIdxBits-1, 0))
+    val paddr_aligned = Cat(paddr(paddrBits-1, lgBeatBytes), 0.U(lgBeatBytes.W)) // Aligned to beatBytes
+    val paddr_offset = paddr(lgBeatBytes-1, 0)
 
     val last_vpn_translated = RegEnable(vpn, io.tlb.resp.fire())
     val last_vpn_translated_valid = RegInit(false.B) // TODO check for flush
@@ -297,20 +303,36 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
       state := s_translate_resp
     }
 
+    /*val first_fire = RegInit(false.B)
+    when (tl.a.fire()) {
+      first_fire := true.B
+    }*/
+
     // Firing off TileLink write requests
     val putFull = edge.Put(
       fromSource = RegEnableThru(xactId, state === s_writing_new_block),
-      toAddress = RegEnableThru(paddr, state === s_writing_new_block),
+      toAddress = RegEnableThru(paddr_aligned, state === s_writing_new_block),
       lgSize = RegEnableThru(lg_send_size, state === s_writing_new_block),
-      data = (req.data >> bytesSent).asUInt())._2
+      // data = Mux(!first_fire, (req.data >> (bytesSent * 8.U)).asUInt(), 0.U))._2
+      data = (req.data >> (bytesSent * 8.U)).asUInt())._2
+
+    val mask = Cat((0 until beatBytes).map(i => i.U >= paddr_offset && i.U < paddr_offset + send_size).reverse)
+
+    val putPartial = edge.Put(
+      fromSource = xactId,
+      toAddress = paddr_aligned,
+      lgSize = lgBeatBytes.U, // lg_send_size,
+      // data = Mux(!first_fire, ((req.data >> (bytesSent * 8.U)) << (paddr_offset * 8.U)).asUInt(), 0.U),
+      data = ((req.data >> (bytesSent * 8.U)) << (paddr_offset * 8.U)).asUInt(),
+      mask =  mask)._2
 
     tl.a.valid := (state === s_writing_new_block || state === s_writing_beats) && !xactBusy.andR()
-    tl.a.bits := putFull
+    tl.a.bits := Mux(RegEnableThru(send_size < beatBytes.U, state === s_writing_new_block), putPartial, putFull)
     tl.d.ready := xactBusy.orR
 
     when (tl.a.fire()) {
       when (state === s_writing_new_block) {
-        val totalBeats = (send_size / beatBytes.U) + (send_size % beatBytes.U)
+        val totalBeats = (send_size / beatBytes.U) + Mux(send_size % beatBytes.U =/= 0.U, 1.U, 0.U)
         beatsLeft := totalBeats - 1.U
 
         val next_vaddr = req.vaddr + send_size

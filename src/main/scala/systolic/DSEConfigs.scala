@@ -27,6 +27,7 @@ object DSEBaseConfig {
     mem_pipeline = 1,
     dma_maxbytes = 128, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
+    aligned_to = 16,
     inputType = SInt(8.W),
     outputType = SInt(19.W),
     accType = SInt(32.W)
