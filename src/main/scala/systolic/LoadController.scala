@@ -7,7 +7,7 @@ import Util._
 import freechips.rocketchip.config.Parameters
 
 // TODO deal with errors when reading scratchpad responses
-class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr)
+class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr)
                                (implicit p: Parameters) extends Module {
   import config._
 
@@ -28,7 +28,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
   val control_state = RegInit(waiting_for_command)
 
-  val stride = RegInit((sp_width / 8).U(xLen.W))
+  val stride = RegInit((sp_width / 8).U(coreMaxAddrBits.W))
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
@@ -37,7 +37,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], xLen: Int, sp_ad
   val vaddr = cmd.bits.cmd.rs1
   val accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr_t)
   val spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr_t)
-  val len = cmd.bits.cmd.rs2(xLen-1, 32) // TODO we don't really need to read all the bits here
+  val len = cmd.bits.cmd.rs2(coreMaxAddrBits-1, 32) // TODO we don't really need to read all the bits here
   val config_stride = cmd.bits.cmd.rs2
   val mstatus = cmd.bits.cmd.status
 

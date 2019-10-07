@@ -8,7 +8,7 @@ import freechips.rocketchip.config.Parameters
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
-class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xLen: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr)
+class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], coreMaxAddrBits: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr)
                      (implicit p: Parameters) extends Module {
   import config._
 
@@ -29,7 +29,7 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], xL
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
   val control_state = RegInit(waiting_for_command)
 
-  val stride = RegInit((sp_width / 8).U(xLen.W))
+  val stride = RegInit((sp_width / 8).U(coreMaxAddrBits.W))
   val block_rows = meshRows * tileRows
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
 
