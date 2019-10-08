@@ -40,7 +40,7 @@ class ScratchpadMemWriteRequest(val nBanks: Int, val nRows: Int, val acc_rows: I
 }
 
 class ScratchpadMemReadResponse extends Bundle {
-  val lgBytesRead = UInt(16.W) // TODO magic number here
+  val bytesRead = UInt(16.W) // TODO magic number here
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
 }
 
@@ -202,7 +202,7 @@ class Scratchpad[T <: Data: Arithmetic](
     reader.module.io.resp.ready := false.B
     io.dma.read.resp.valid := reader.module.io.resp.fire() && reader.module.io.resp.bits.last
     io.dma.read.resp.bits.cmd_id := reader.module.io.resp.bits.cmd_id
-    io.dma.read.resp.bits.lgBytesRead := reader.module.io.resp.bits.lgLen
+    io.dma.read.resp.bits.bytesRead := reader.module.io.resp.bits.bytes_read
 
     io.tlb(0) <> writer.module.io.tlb
     io.tlb(1) <> reader.module.io.tlb

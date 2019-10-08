@@ -14,6 +14,11 @@ class BeatPackerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, va
   val last = Bool()
 }
 
+/*class BeatPackerIn(val beatBits: Int) extends Bundle {
+  val data = UInt(beatBits.W)
+  val last = Bool()
+}*/
+
 /*
   beatBits: in bits
   maxShift: in bytes
@@ -29,9 +34,11 @@ class BeatPacker(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, sp
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes)))
     val in = Flipped(Decoupled(UInt(beatBits.W)))
+    // val in = Flipped(Decoupled(new BeatPackerIn(beatBits)))
     val out = Decoupled(new BeatPackerOut(spadWidth, accWidth, spadRows, accRows, alignedTo))
   })
 
+  val beatBytes = beatBits/8
   val spadWidthBytes = spadWidth/8
   val accWidthBytes = accWidth/8
 
@@ -40,34 +47,41 @@ class BeatPacker(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, sp
   val buflen = maxReqBytes max spadWidthBytes max accWidthBytes // in bytes
   val buffer = Reg(UInt((buflen*8).W))
 
-  val bytesSent = Reg(UInt(log2Up(buflen).W))
-  val bytesRead = Reg(UInt(log2Up(buflen+1).W))
-
   val rowBytes = Mux(req.bits.is_acc, accWidthBytes.U, spadWidthBytes.U)
 
-  val len = (1.U << Mux(io.req.fire(), io.req.bits.lgLen, req.bits.lgLen)).asUInt()
+  val bytesSent = Reg(UInt(log2Up(buflen+1).W))
+  val bytesRead = Reg(UInt(log2Up(buflen+1).W))
+  val bytesReadAfterShift = Mux(bytesRead > req.bits.shift, bytesRead - req.bits.shift, 0.U)
+  val bytesDiscarded = bytesRead - bytesReadAfterShift
+  val usefulBytesRead = minOf(bytesReadAfterShift, req.bits.bytes_to_read)
+
+  val last_sending = rowBytes >= req.bits.bytes_to_read - bytesSent
+  val last_reading = beatBytes.U >= (1.U << req.bits.lg_len_req).asUInt() - bytesRead
 
   io.req.ready := !req.valid
 
-  io.in.ready := io.req.fire() || (req.valid && bytesRead =/= len)
+  io.in.ready := io.req.fire() || (req.valid && bytesRead =/= (1.U << req.bits.lg_len_req).asUInt())
 
-  io.out.valid := req.valid && bytesRead > bytesSent && (bytesRead - bytesSent >= rowBytes ||
-    bytesRead === (1.U << req.bits.lgLen).asUInt())
-  io.out.bits.data := (buffer >> (bytesSent * 8.U)) << (req.bits.spad_row_offset * 8.U)
-  io.out.bits.mask := VecInit((0 until (spadWidthBytes max accWidthBytes) by alignedTo).map(i =>
-    i.U >= req.bits.spad_row_offset &&
-      i.U < req.bits.spad_row_offset +& (1.U << req.bits.lgLen).asUInt()))
-  io.out.bits.addr := req.bits.addr + meshRows.U *
-    Mux(req.bits.is_acc, bytesSent / accWidthBytes.U, bytesSent / spadWidthBytes.U)
+  io.out.valid := req.valid && usefulBytesRead > bytesSent && (usefulBytesRead - bytesSent >= rowBytes ||
+    usefulBytesRead === req.bits.bytes_to_read)
+  io.out.bits.data := (buffer >> (bytesSent * 8.U)) << Mux(bytesSent === 0.U, req.bits.spad_row_offset * 8.U, 0.U)
+  io.out.bits.mask := VecInit((0 until (spadWidthBytes max accWidthBytes) by alignedTo).map { i =>
+    val spad_row_offset = Mux(bytesSent === 0.U, req.bits.spad_row_offset, 0.U)
+    i.U >= spad_row_offset &&
+      i.U < spad_row_offset +& (req.bits.bytes_to_read - bytesSent)
+  })
+  io.out.bits.addr := req.bits.addr + meshRows.U * {
+    val total_bytes_sent = req.bits.spad_row_offset + bytesSent
+    Mux(req.bits.is_acc, total_bytes_sent / accWidthBytes.U, total_bytes_sent / spadWidthBytes.U)
+  }
   io.out.bits.is_acc := req.bits.is_acc
-
-  val last = rowBytes >= (1.U << req.bits.lgLen).asUInt() - bytesSent
-  io.out.bits.last := last
+  io.out.bits.last := last_sending
 
   when (io.out.fire()) {
-    bytesSent := bytesSent + rowBytes
+    val spad_row_offset = Mux(bytesSent === 0.U, req.bits.spad_row_offset, 0.U)
+    bytesSent := satAdd(bytesSent, rowBytes - spad_row_offset, req.bits.bytes_to_read)
 
-    when (last) {
+    when (last_sending && bytesRead === (1.U << req.bits.lg_len_req).asUInt()) {
       req.valid := false.B
       io.req.ready := true.B
     }
@@ -82,13 +96,28 @@ class BeatPacker(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, sp
 
   when (io.in.fire()) {
     val current_bytesRead = Mux(io.req.fire(), 0.U, bytesRead)
+    val current_bytesDiscarded = Mux(io.req.fire(), 0.U, bytesDiscarded)
+    val current_usefulBytesRead = Mux(io.req.fire(), 0.U, usefulBytesRead)
+    val current_shift = Mux(io.req.fire(), io.req.bits.shift, req.bits.shift)
+    val current_lg_len_req = Mux(io.req.fire(), io.req.bits.lg_len_req, req.bits.lg_len_req)
+    val current_len_req = (1.U << current_lg_len_req).asUInt()
 
-    val rshift = Mux(current_bytesRead =/= 0.U, 0.U, Mux(io.req.fire(), io.req.bits.shift, req.bits.shift)) * 8.U // in bits
-    val lshift = current_bytesRead * 8.U // bits
-    val mask = (~(((~0.U(beatBits.W)) >> rshift) << lshift)).asUInt()
-    buffer := (buffer & mask) | ((io.in.bits >> rshift) << lshift).asUInt()
+    when (current_shift - current_bytesDiscarded <= beatBytes.U /* &&
+      current_bytesRead < current_len_req */
+    ) {
+      val rshift = (current_shift - current_bytesDiscarded) * 8.U // in bits
+      // val lshift = current_bytesRead * 8.U // in bits
+      val lshift = current_usefulBytesRead * 8.U // in bits
+      val mask = (~(((~0.U(beatBits.W)) >> rshift) << lshift)).asUInt()
 
-    bytesRead := satAdd(current_bytesRead, (beatBits.U - rshift) / 8.U, len)
+      buffer := (buffer & mask) | ((io.in.bits >> rshift) << lshift).asUInt()
+    }
+
+    bytesRead := satAdd(current_bytesRead, beatBytes.U, current_len_req)
+
+    when (!io.req.fire() && bytesSent === req.bits.bytes_to_read && last_reading) {
+      req.valid := false.B
+    }
   }
 
   when (reset.toBool()) {

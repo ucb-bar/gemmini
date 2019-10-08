@@ -91,7 +91,6 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
     header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"
     header ++= s"#define row_align_acc(blocks) __attribute__((aligned(blocks*DIM*sizeof(acc_t))))\n\n"
 
-
     header ++= s"#endif // $guard"
     header.toString()
   }

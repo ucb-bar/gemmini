@@ -104,7 +104,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
   cmd_tracker.io.alloc.bits.tag.pushEx := pushEx
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
-  cmd_tracker.io.request_returned.bits.lg_bytes_read := io.dma.resp.bits.lgBytesRead
+  cmd_tracker.io.request_returned.bits.bytes_read := io.dma.resp.bits.bytesRead
   cmd_tracker.io.cmd_completed.ready :=
     !(cmd_tracker.io.cmd_completed.bits.tag.pushStore && !io.pushStore.ready) &&
       !(cmd_tracker.io.cmd_completed.bits.tag.pushEx && !io.pushEx.ready)

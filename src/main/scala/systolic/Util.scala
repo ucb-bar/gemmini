@@ -62,8 +62,12 @@ object Util {
     Mux(enable, next, buf)
   }
 
-  def ctz(u: UInt): UInt = {
-    MuxCase(u.getWidth.U, u.toBools().zipWithIndex.map { case (b, i) => b -> i.U })
+  def maxOf(u1: UInt, u2: UInt): UInt = {
+    Mux(u1 > u2, u1, u2)
+  }
+
+  def minOf(u1: UInt, u2: UInt): UInt = {
+    Mux(u1 < u2, u1, u2)
   }
 
   // An undirectioned Valid bundle

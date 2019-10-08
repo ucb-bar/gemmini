@@ -24,7 +24,7 @@ class StreamReadResponse(val spadWidth: Int, val accWidth: Int, val spad_rows: I
   val mask = Vec((spadWidth max accWidth) / (aligned_to * 8) max 1, Bool())
   val is_acc = Bool()
   val last = Bool()
-  val lgLen = UInt(8.W) // TODO magic number
+  val bytes_read = UInt(8.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 }
 
@@ -67,7 +67,7 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     io.resp.bits.mask := beatPacker.io.out.bits.mask
     io.resp.bits.is_acc := beatPacker.io.out.bits.is_acc
     io.resp.bits.cmd_id := xactTracker.io.peek.entry.cmd_id
-    io.resp.bits.lgLen := xactTracker.io.peek.entry.lgLen
+    io.resp.bits.bytes_read := xactTracker.io.peek.entry.bytes_to_read // 1.U << xactTracker.io.peek.entry.lg_len_req
     io.resp.bits.last := beatPacker.io.out.bits.last
   }
 }
@@ -75,7 +75,6 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
 class StreamReadBeat (val nXacts: Int, val beatBits: Int) extends Bundle {
   val xactid = UInt(log2Up(nXacts).W)
   val data = UInt(beatBits.W)
-  // val first = Bool()
   val last = Bool()
 }
 
@@ -87,6 +86,8 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     name = "stream-reader", sourceId = IdRange(0, nXacts))
 
   require(isPow2(aligned_to))
+
+  // TODO when we request data from multiple rows which are actually contiguous in main memory, we should merge them into fewer requests
 
   lazy val module = new LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
     val (tl, edge) = node.out(0)
@@ -102,8 +103,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
       val tlb = new FrontendTLBIO
     })
 
-    val (s_idle :: s_translate_req :: s_translate_resp :: s_req_new_block ::
-      /*s_req_blocks ::*/ Nil) = Enum(4)
+    val s_idle :: s_translate_req :: s_translate_resp :: s_req_new_block :: Nil = Enum(4)
     val  state = RegInit(s_idle)
 
     val req = Reg(new StreamReadRequest(spad_rows, acc_rows))
@@ -111,11 +111,12 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     val vpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
 
     val bytesRequested = Reg(UInt(log2Ceil(spadWidthBytes max accWidthBytes max maxBytes).W)) // TODO this only needs to count up to (dataBytes/aligned_to), right?
-    val bytesLeft = Mux(req.is_acc, req.len * accWidthBytes.U, req.len * spadWidthBytes.U) - bytesRequested // TODO make "len" "lgLen" to get rid of the multiplier
+    val bytesLeft = Mux(req.is_acc, req.len * accWidthBytes.U, req.len * spadWidthBytes.U) - bytesRequested
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
     io.req.ready := state_machine_ready_for_req
 
+    /*
     val send_sizes = (aligned_to to (spadWidthBytes max accWidthBytes max maxBytes) by aligned_to)
       .filter(s => isPow2(s))
       .reverse // The possible sizes of requests we can send over TileLink
@@ -132,12 +133,13 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     }
     val send_size = MuxCase(send_sizes.last.U, (send_sizes_valid zip send_sizes).map { case (v, sz) => v -> sz.U })
     val lg_send_size = MuxCase(send_sizes_lg.last, (send_sizes_valid zip send_sizes_lg).map { case (v, lgsz) => v -> lgsz })
+     */
 
     // Address translation
     io.tlb.req.valid := state === s_translate_req
     io.tlb.req.bits.vaddr := Cat(vpn, 0.U(pgIdxBits.W))
     io.tlb.req.bits.passthrough := false.B
-    io.tlb.req.bits.size := send_size
+    io.tlb.req.bits.size := 0.U
     io.tlb.req.bits.cmd := M_XRD
 
     val ppn = RegEnable(io.tlb.resp.bits.paddr(paddrBits-1, pgIdxBits),
@@ -154,20 +156,72 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
       state := s_translate_resp
     }
 
+    // Select the size and mask of the TileLink request
+    class Packet extends Bundle {
+      val size = UInt(log2Up(maxBytes+1).W)
+      val lg_size = UInt(log2Ceil(log2Ceil(maxBytes+1)).W)
+      val bytes_read = UInt(log2Up(maxBytes+1).W)
+      val shift = UInt(log2Up(maxBytes).W)
+      val paddr = UInt(paddrBits.W)
+    }
+
+    val read_sizes = ((aligned_to max beatBytes) to maxBytes by aligned_to).
+      filter(s => isPow2(s)).
+      filter(s => s % beatBytes == 0)
+    val read_packets = read_sizes.map { s =>
+      val lg_s = log2Ceil(s)
+      val paddr_aligned_to_size = if (s == 1) paddr else Cat(paddr(paddrBits-1, lg_s), 0.U(lg_s.W))
+      val paddr_offset = if (s > 1) paddr(lg_s-1, 0) else 0.U
+
+      val packet = Wire(new Packet())
+      packet.size := s.U
+      packet.lg_size := lg_s.U
+      packet.bytes_read := minOf(s.U - paddr_offset, bytesLeft)
+      packet.shift := paddr_offset
+      packet.paddr := paddr_aligned_to_size
+
+      packet
+    }
+    val read_packet = read_packets.reduce { (acc, p) =>
+      Mux(p.bytes_read > acc.bytes_read, p, acc)
+    }
+    val read_paddr = read_packet.paddr
+    val read_lg_size = read_packet.lg_size
+    val read_bytes_read = read_packet.bytes_read
+    val read_shift = read_packet.shift
+
     // Firing off TileLink read requests and allocating space inside the reservation buffer for them
+    /*
     val get = edge.Get(
       fromSource = io.reserve.xactid,
       toAddress = paddr,
       lgSize = lg_send_size
     )._2
+    */
+
+    val get = edge.Get(
+      fromSource = io.reserve.xactid,
+      toAddress = read_paddr,
+      lgSize = read_lg_size
+    )._2
 
     tl.a.valid := state === s_req_new_block && io.reserve.ready
     tl.a.bits := get
 
+    /*
     io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := 0.U // TODO
     io.reserve.entry.is_acc := req.is_acc
-    io.reserve.entry.lgLen := lg_send_size
+    io.reserve.entry.lg_len_req := lg_send_size
+    io.reserve.entry.bytes_to_read := send_size
+    io.reserve.entry.cmd_id := req.cmd_id
+    */
+
+    io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
+    io.reserve.entry.shift := read_shift
+    io.reserve.entry.is_acc := req.is_acc
+    io.reserve.entry.lg_len_req := read_lg_size
+    io.reserve.entry.bytes_to_read := read_bytes_read
     io.reserve.entry.cmd_id := req.cmd_id
 
     io.reserve.entry.addr := req.spaddr + meshRows.U *
@@ -175,21 +229,20 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     io.reserve.entry.spad_row_offset := Mux(req.is_acc, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
 
     when (tl.a.fire()) {
-      val next_vaddr = req.vaddr + send_size
+      val next_vaddr = req.vaddr + read_bytes_read // send_size
       val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
       req.vaddr := next_vaddr
 
-      bytesRequested := bytesRequested + send_size
+      bytesRequested := bytesRequested + read_bytes_read // send_size
 
-      when (send_size >= bytesLeft) {
+      // when (send_size >= bytesLeft) {
+      when (read_bytes_read >= bytesLeft) {
         // We're done with this request at this point
         state_machine_ready_for_req := true.B
         state := s_idle
       }.elsewhen (new_page) {
         state := s_translate_req
-      }/*.otherwise {
-        state := s_req_blocks
-      }*/
+      }
     }
 
     // Forward TileLink read responses to the reservation buffer
@@ -284,7 +337,7 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
       state := s_translate_resp
     }
 
-    // Describes the size and mask of the TileLink request
+    // Select the size and mask of the TileLink request
     class Packet extends Bundle {
       val size = UInt(log2Ceil(maxBytes).W)
       val lg_size = UInt(log2Ceil(log2Ceil(maxBytes)).W)
@@ -298,7 +351,8 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
 
     val write_sizes = ((aligned_to max beatBytes) to maxBytes by aligned_to).
       filter(s => isPow2(s)).
-      filter(s => s % beatBytes == 0)
+      filter(s => s % beatBytes == 0).
+      filter(s => s <= dataBytes*2)
     val write_packets = write_sizes.map { s =>
       val lg_s = log2Ceil(s)
       val paddr_aligned_to_size = if (s == 1) paddr else Cat(paddr(paddrBits-1, lg_s), 0.U(lg_s.W))

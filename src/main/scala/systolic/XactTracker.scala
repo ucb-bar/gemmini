@@ -11,7 +11,8 @@ class XactTrackerEntry(val maxShift: Int, val spadWidth: Int, val accWidth :Int,
   val addr = UInt(log2Up(spadRows max accRows).W)
   val is_acc = Bool()
   val spad_row_offset = UInt(log2Up(spadWidth max accWidth).W)
-  val lgLen = UInt(log2Up(log2Up(maxReqBytes)).W)
+  val lg_len_req = UInt(log2Up(log2Up(maxReqBytes+1)+1).W)
+  val bytes_to_read = UInt(log2Up(maxReqBytes+1).W)
   val cmd_id = UInt(log2Up(nCmds).W)
 }
 

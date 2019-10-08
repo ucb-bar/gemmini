@@ -24,7 +24,7 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
     }
 
     val request_returned = Flipped(Valid(new Bundle {
-      val lg_bytes_read = UInt(log2Up(maxBytes+1).W)
+      val bytes_read = UInt(log2Up(maxBytes+1).W)
       val cmd_id = cmd_id_t
     }))
 
@@ -46,13 +46,6 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
     }
   }
 
-  /*
-  val entry_init = Wire(new Entry)
-  entry_init.valid := false.B
-  entry_init.tag := DontCare
-  entry_init.bytes_left := DontCare
-  */
-
   // val cmds = RegInit(VecInit(Seq.fill(nCmds)(entry_init)))
   val cmds = Reg(Vec(nCmds, new Entry))
   val cmd_valids = cmds.map(_.valid)
@@ -65,10 +58,8 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
   io.busy := cmd_valids.reduce(_ || _)
 
   val cmd_completed_id = MuxCase(0.U, cmds.zipWithIndex.map { case (cmd, i) =>
-    // (cmd.valid && cmd.bytes_left === nRequests.U) -> i.U
     (cmd.valid && cmd.bytes_left === 0.U) -> i.U
   })
-  // io.cmd_completed.valid := cmds.map(cmd => cmd.valid && cmd.bytes_left === nRequests.U).reduce(_ || _)
   io.cmd_completed.valid := cmds.map(cmd => cmd.valid && cmd.bytes_left === 0.U).reduce(_ || _)
   io.cmd_completed.bits.cmd_id := cmd_completed_id
   io.cmd_completed.bits.tag := cmds(cmd_completed_id).tag
@@ -81,10 +72,10 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
 
   when (io.request_returned.fire()) {
     val cmd_id = io.request_returned.bits.cmd_id
-    cmds(cmd_id).bytes_left := cmds(cmd_id).bytes_left - (1.U << io.request_returned.bits.lg_bytes_read)
+    cmds(cmd_id).bytes_left := cmds(cmd_id).bytes_left - io.request_returned.bits.bytes_read
 
     assert(cmds(cmd_id).valid)
-    assert(cmds(cmd_id).bytes_left >= (1.U << io.request_returned.bits.lg_bytes_read))
+    assert(cmds(cmd_id).bytes_left >= io.request_returned.bits.bytes_read)
   }
 
   when (io.cmd_completed.fire()) {
