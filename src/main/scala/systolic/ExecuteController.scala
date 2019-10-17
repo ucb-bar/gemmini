@@ -69,15 +69,15 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   val in_s = functs(0) === COMPUTE_AND_FLIP_CMD
   val in_s_flush = Reg(Bool())
-  val in_s_preload = Reg(Bool())
+  // val in_s_preload = Reg(Bool())
   when (current_dataflow === Dataflow.WS.id.U) {
-    in_s_preload := 0.U
+    // in_s_preload := 0.U
     in_s_flush := 0.U
   }
 
-  val in_shift = Reg(UInt(log2Ceil(accType.getWidth).W))
-  val acc_shift = Reg(UInt(log2Ceil(accType.getWidth).W))
-  val relu6_shift = Reg(UInt(log2Ceil(accType.getWidth).W))
+  val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
+  val acc_shift = Reg(UInt(log2Up(accType.getWidth).W))
+  val relu6_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val activation = Reg(UInt(2.W))
 
   // SRAM addresses of matmul operands
@@ -118,6 +118,14 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   io.pullLoad.ready := false.B
   io.pullStore.ready := false.B
 
+  // Instantiate a queue which queues up signals which must be fed into the mesh
+  val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, mem_pipeline+1,
+    pipe=true))
+
+  val cntl_ready = mesh_cntl_signals_q.io.enq.ready
+  val cntl_valid = mesh_cntl_signals_q.io.deq.valid
+  val cntl = mesh_cntl_signals_q.io.deq.bits
+
   // Instantiate the actual mesh
   val mesh = Module(new MeshWithDelays(inputType, outputType, accType, tag_with_deps, dataflow, tileRows,
     tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
@@ -129,15 +137,15 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   mesh.io.tag_garbage.pushLoad := false.B
   mesh.io.tag_garbage.pushStore := false.B
   mesh.io.tag_garbage.tag := tag_garbage
-  mesh.io.flush.valid := ShiftRegister(control_state === flush, mem_pipeline) // false.B
+  mesh.io.flush.valid := control_state === flush && !cntl_valid // We want to make sure that the mesh has absorbed all inputs before flushing
 
   mesh.io.a.bits := DontCare
   mesh.io.b.bits := DontCare
   mesh.io.d.bits := DontCare
   mesh.io.tag_in.bits := DontCare
-  mesh.io.s := ShiftRegister(Mux(control_state === flush, in_s_flush, in_s), mem_pipeline)
-  mesh.io.m := ShiftRegister(current_dataflow, mem_pipeline)
-  mesh.io.shift := ShiftRegister(in_shift, mem_pipeline)
+  mesh.io.s := Mux(control_state === flush, in_s_flush, cntl.s)
+  mesh.io.m := cntl.dataflow
+  mesh.io.shift := cntl.shift
   mesh.io.flush.bits := 0.U
 
   // Hazards
@@ -173,11 +181,14 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val start_inputting_d = WireInit(false.B)
   val start_array_outputting = WireInit(false.B)
 
+  // TODO merge these into one enum
   val perform_single_preload = RegInit(false.B)
   val perform_single_mul = RegInit(false.B)
   val perform_mul_pre = RegInit(false.B)
 
-  val output_counter = new Counter(block_size)
+  val performing_single_preload = WireInit(perform_single_preload && control_state === compute)
+  val performing_single_mul = WireInit(perform_single_mul && control_state === compute)
+  val performing_mul_pre = WireInit(perform_mul_pre && control_state === compute)
 
   // Fire counters which resolve same-bank accesses
   val a_fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
@@ -203,24 +214,27 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       ((!same_bank(a_address_rs1, d_address_rs1, start_inputting_a, start_inputting_d) && same_bank(b_address_rs2, d_address_rs1, start_inputting_b, start_inputting_d)) && b_fire_counter =/= d_fire_counter) ||
       ((same_bank(a_address_rs1, d_address_rs1, start_inputting_a, start_inputting_d) && same_bank(b_address_rs2, d_address_rs1, start_inputting_b, start_inputting_d)) && b_fire_counter =/= d_fire_counter)
 
+  val a_ready = WireInit(true.B)
+  val b_ready = WireInit(true.B)
+  val d_ready = WireInit(true.B)
+
   val firing = start_inputting_a || start_inputting_b || start_inputting_d
 
-  // TODO rather than just assuming that we fire off an SRAM request when we want one, we should check whether or not the SRAM is actually ready
   when (!firing) {
     a_fire_counter := 0.U
-  }.elsewhen (a_can_fire && firing) {
+  }.elsewhen (a_can_fire && firing && a_ready && cntl_ready) {
     a_fire_counter := wrappingAdd(a_fire_counter, 1.U, block_size)
   }
 
   when (!firing) {
     b_fire_counter := 0.U
-  }.elsewhen (b_can_fire && firing) {
+  }.elsewhen (b_can_fire && firing && b_ready && cntl_ready) {
     b_fire_counter := wrappingAdd(b_fire_counter, 1.U, block_size)
   }
 
   when (!firing) {
     d_fire_counter := 0.U
-  }.elsewhen (d_can_fire && firing) {
+  }.elsewhen (d_can_fire && firing && d_ready && cntl_ready) {
     d_fire_counter := wrappingAdd(d_fire_counter, 1.U, block_size)
   }
 
@@ -236,6 +250,12 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     val read_a = a_can_fire && !a_read_from_acc && dataAbank === i.U && start_inputting_a && !multiply_garbage
     val read_b = b_can_fire && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros
     val read_d = d_can_fire && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros
+
+    Seq((read_a, a_ready), (read_b, b_ready), (read_d, d_ready)).foreach { case (rd, r) =>
+      when (rd && !io.read(i).req.ready) {
+        r := false.B
+      }
+    }
 
     io.read(i).req.valid := read_a || read_b || read_d
     io.read(i).req.bits.fromDMA := false.B
@@ -265,18 +285,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     io.acc.read.resp.ready := true.B
   }
 
-  // val readData = VecInit(io.read.map(_.data))
-  val readData = VecInit(io.read.map(_.resp.bits.data))
-  val accReadData = io.acc.read.resp.bits.data.asUInt()
-
-  val dataA = Mux(ShiftRegister(RegNext(a_read_from_acc), mem_pipeline), accReadData, readData(ShiftRegister(RegNext(dataAbank), mem_pipeline)))
-  val dataB = MuxCase(readData(ShiftRegister(RegNext(dataBbank), mem_pipeline)),
-    Seq(ShiftRegister(RegNext(accumulate_zeros), mem_pipeline) -> 0.U, ShiftRegister(RegNext(b_read_from_acc), mem_pipeline) -> accReadData))
-  val dataD = MuxCase(readData(ShiftRegister(RegNext(dataDbank), mem_pipeline)),
-    Seq(ShiftRegister(RegNext(preload_zeros), mem_pipeline) -> 0.U, ShiftRegister(RegNext(d_read_from_acc), mem_pipeline) -> accReadData))
-
   // FSM logic
-  // TODO ready and pop wires are combinationally joined here
   switch (control_state) {
     is (waiting_for_cmd) {
       // Default state
@@ -306,16 +315,13 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         // Preload
         .elsewhen(DoPreloads(0) && cmd.valid(1) && !raw_hazard_pre) {
           perform_single_preload := true.B
+          performing_single_preload := true.B
+
           start_inputting_a := current_dataflow === Dataflow.OS.id.U
           start_inputting_d := true.B
 
           io.pullLoad.ready := cmd.bits(0).deps.pullLoad
           io.pullStore.ready := cmd.bits(0).deps.pullStore
-
-          when (current_dataflow === Dataflow.OS.id.U) {
-            in_s_preload := in_s_flush
-            in_s_flush := rs2s(0)(tagWidth-1, 0) =/= tag_garbage
-          }
 
           control_state := compute
         }
@@ -323,6 +329,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         // Overlap compute and preload
         .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && pull_deps_ready(1) && push_deps_ready(1) && cmd.valid(2) && !raw_hazard_mulpre) {
           perform_mul_pre := true.B
+          performing_mul_pre := true.B
+
           start_inputting_a := true.B
           start_inputting_b := true.B
           start_inputting_d := true.B
@@ -330,17 +338,14 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
           io.pullLoad.ready := cmd.bits(1).deps.pullLoad
           io.pullStore.ready := cmd.bits(1).deps.pullStore
 
-          when (current_dataflow === Dataflow.OS.id.U) {
-            in_s_preload := in_s_flush
-            in_s_flush := rs2s(1)(tagWidth - 1, 0) =/= tag_garbage
-          }
-
           control_state := compute
         }
 
         // Single mul
         .elsewhen(DoComputes(0)) {
           perform_single_mul := true.B
+          performing_single_mul := true.B
+
           start_inputting_a := current_dataflow === Dataflow.WS.id.U
           start_inputting_b := true.B
 
@@ -365,6 +370,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         when (about_to_fire_all_rows) {
           cmd.pop := 1.U
           control_state := waiting_for_cmd
+
+          when (current_dataflow === Dataflow.OS.id.U) {
+            in_s_flush := rs2s(0)(tagWidth - 1, 0) =/= tag_garbage
+          }
         }
       }
 
@@ -378,6 +387,11 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
         when (about_to_fire_all_rows) {
           cmd.pop := 2.U
           control_state := waiting_for_cmd
+
+          when (current_dataflow === Dataflow.OS.id.U) {
+            // in_s_preload := in_s_flush
+            in_s_flush := rs2s(1)(tagWidth - 1, 0) =/= tag_garbage
+          }
         }
       }
 
@@ -406,15 +420,101 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   }
 
   // Computing logic
-  when (ShiftRegister(perform_mul_pre || perform_single_mul || perform_single_preload, mem_pipeline)) {
+  val computing = performing_mul_pre || performing_single_mul || performing_single_preload
+
+  class ComputeCntlSignals extends Bundle {
+    val perform_mul_pre = Bool()
+    val perform_single_mul = Bool()
+    val perform_single_preload = Bool()
+
+    val a_bank = UInt(log2Up(sp_banks).W)
+    val b_bank = UInt(log2Up(sp_banks).W)
+    val d_bank = UInt(log2Up(sp_banks).W)
+
+    val a_read_from_acc = Bool()
+    val b_read_from_acc = Bool()
+    val d_read_from_acc = Bool()
+
+    val a_garbage = Bool()
+    val b_garbage = Bool()
+    val d_garbage = Bool()
+
+    val accumulate_zeros = Bool()
+    val preload_zeros = Bool()
+
+    val a_fire = Bool()
+    val b_fire = Bool()
+    val d_fire = Bool()
+
+    val c_addr = sp_addr_t.cloneType
+
+    val dataflow = UInt(1.W)
+
+    val s = UInt(1.W)
+
+    val shift = UInt(log2Up(accType.getWidth).W)
+  }
+
+  mesh_cntl_signals_q.io.enq.valid := computing
+
+  mesh_cntl_signals_q.io.enq.bits.perform_mul_pre := performing_mul_pre
+  mesh_cntl_signals_q.io.enq.bits.perform_single_mul := performing_single_mul
+  mesh_cntl_signals_q.io.enq.bits.perform_single_preload := performing_single_preload
+
+  mesh_cntl_signals_q.io.enq.bits.a_bank := dataAbank
+  mesh_cntl_signals_q.io.enq.bits.b_bank := dataBbank
+  mesh_cntl_signals_q.io.enq.bits.d_bank := dataDbank
+
+  mesh_cntl_signals_q.io.enq.bits.a_garbage := a_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage || !start_inputting_a
+  mesh_cntl_signals_q.io.enq.bits.b_garbage := b_address_rs2.asUInt()(tagWidth-1, 0) === tag_garbage || !start_inputting_b
+  mesh_cntl_signals_q.io.enq.bits.d_garbage := d_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage || !start_inputting_d
+
+  mesh_cntl_signals_q.io.enq.bits.a_read_from_acc := a_read_from_acc
+  mesh_cntl_signals_q.io.enq.bits.b_read_from_acc := b_read_from_acc
+  mesh_cntl_signals_q.io.enq.bits.d_read_from_acc := d_read_from_acc
+
+  mesh_cntl_signals_q.io.enq.bits.accumulate_zeros := accumulate_zeros
+  mesh_cntl_signals_q.io.enq.bits.preload_zeros := preload_zeros
+
+  mesh_cntl_signals_q.io.enq.bits.a_fire := a_can_fire && a_ready
+  mesh_cntl_signals_q.io.enq.bits.b_fire := b_can_fire && b_ready
+  mesh_cntl_signals_q.io.enq.bits.d_fire := d_can_fire && d_ready
+
+  mesh_cntl_signals_q.io.enq.bits.c_addr := c_address_rs2
+
+  mesh_cntl_signals_q.io.enq.bits.dataflow := current_dataflow
+  mesh_cntl_signals_q.io.enq.bits.s := Mux(performing_single_preload, in_s_flush, in_s)
+  mesh_cntl_signals_q.io.enq.bits.shift := in_shift
+
+  val readData = VecInit(io.read.map(_.resp.bits.data))
+  val accReadData = io.acc.read.resp.bits.data.asUInt()
+
+  val readValid = VecInit(io.read.map(bank => bank.resp.valid && !bank.resp.bits.fromDMA))
+  val accReadValid = io.acc.read.resp.valid && !io.acc.read.resp.bits.fromDMA
+
+  mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) &&
+    (!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) &&
+    (!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready)
+
+  val dataA_valid = cntl.a_garbage || Mux(cntl.a_read_from_acc, accReadValid, readValid(cntl.a_bank))
+  val dataB_valid = cntl.b_garbage || MuxCase(readValid(cntl.b_bank), Seq(
+    cntl.accumulate_zeros -> false.B,
+    cntl.b_read_from_acc -> accReadValid
+  ))
+  val dataD_valid = cntl.d_garbage || MuxCase(readValid(cntl.d_bank), Seq(
+    cntl.preload_zeros -> false.B,
+    cntl.d_read_from_acc -> accReadValid
+  ))
+
+  val dataA = Mux(cntl.a_read_from_acc, accReadData, readData(cntl.a_bank))
+  val dataB = MuxCase(readData(cntl.b_bank), Seq(cntl.accumulate_zeros -> 0.U, cntl.b_read_from_acc -> accReadData))
+  val dataD = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData))
+
+  when (cntl_valid) {
     // Default inputs
-    /* TODO we should probably check the SRAM read resp's source here, rather than just counting since the time the
-      request fired (technically, we don't even check that it fired here, only that the request was valid on the
-      execute controller's side)
-     */
-    mesh.io.a.valid := ShiftRegister(RegNext(a_can_fire), mem_pipeline)
-    mesh.io.b.valid := ShiftRegister(RegNext(b_can_fire), mem_pipeline)
-    mesh.io.d.valid := ShiftRegister(RegNext(d_can_fire), mem_pipeline)
+    mesh.io.a.valid := cntl.a_fire && dataA_valid
+    mesh.io.b.valid := cntl.b_fire && dataB_valid
+    mesh.io.d.valid := cntl.d_fire && dataD_valid
     mesh.io.tag_in.valid := true.B
 
     mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
@@ -423,17 +523,16 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
     mesh.io.tag_in.bits.pushLoad := ShiftRegister(VecInit(pushLoads take 2)(preload_cmd_place), mem_pipeline)
     mesh.io.tag_in.bits.pushStore := ShiftRegister(VecInit(pushStores take 2)(preload_cmd_place), mem_pipeline)
-    mesh.io.tag_in.bits.tag := ShiftRegister(c_address_rs2.asUInt(), mem_pipeline)
+    mesh.io.tag_in.bits.tag := cntl.c_addr.asUInt()
   }
 
-  when (ShiftRegister(perform_single_preload, mem_pipeline)) {
-    mesh.io.a.bits := Mux(ShiftRegister(current_dataflow === Dataflow.WS.id.U, mem_pipeline), 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+  when (cntl_valid && cntl.perform_single_preload) {
+    mesh.io.a.bits := Mux(cntl.dataflow === Dataflow.WS.id.U, 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := 0.U.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
-    mesh.io.s := ShiftRegister(in_s_preload, mem_pipeline)
   }
 
-  when (ShiftRegister(perform_single_mul, mem_pipeline)) {
-    mesh.io.a.bits := Mux(ShiftRegister(current_dataflow === Dataflow.OS.id.U, mem_pipeline), 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+  when (cntl_valid && cntl.perform_single_mul) {
+    mesh.io.a.bits := Mux(cntl.dataflow === Dataflow.OS.id.U, 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.tag_in.bits.pushLoad := false.B
     mesh.io.tag_in.bits.pushStore := false.B
     mesh.io.tag_in.bits.tag := tag_garbage
@@ -447,6 +546,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   val w_bank = w_address.bank
   val w_row = Mux(write_to_acc, w_address_acc.row, w_address.row)
+
+  val output_counter = new Counter(block_size)
 
   val current_w_bank_address = Mux(current_dataflow === Dataflow.WS.id.U, w_row + output_counter.value,
     w_row + block_size.U - 1.U - output_counter.value)
