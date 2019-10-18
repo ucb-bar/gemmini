@@ -4,7 +4,11 @@ import chisel3._
 import chisel3.util._
 import Util._
 
-class TagQueue[T <: Data](entries: Int, t: T) extends Module {
+trait TagQueueTag {
+  def make_this_garbage(dummy: Int = 0): Unit
+}
+
+class TagQueue[T <: TagQueueTag with Data](entries: Int, t: T) extends Module {
   val io = IO(new Bundle {
     val in = new Bundle {
       val valid = Input(Bool())
@@ -18,10 +22,11 @@ class TagQueue[T <: Data](entries: Int, t: T) extends Module {
     }
 
     // This should really be a constructor parameter, but Chisel errors out when it is
-    val garbage = Input(t)
+    // val garbage = Input(t)
   })
 
-  val regs = RegInit(VecInit(Seq.fill(entries)(io.garbage)))
+  // val regs = RegInit(VecInit(Seq.fill(entries)(io.garbage)))
+  val regs = Reg(Vec(entries, t.cloneType))
   val raddr = RegInit(0.U((log2Ceil(entries) max 1).W))
   val waddr = RegInit(3.U((log2Ceil(entries) max 1).W))
 
@@ -39,5 +44,9 @@ class TagQueue[T <: Data](entries: Int, t: T) extends Module {
 
   when (io.out.next) {
     raddr := raddr_inc
+  }
+
+  when (reset.toBool()) {
+    regs.foreach(_.make_this_garbage())
   }
 }

@@ -106,7 +106,6 @@ class BeatPacker(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, sp
       current_bytesRead < current_len_req */
     ) {
       val rshift = (current_shift - current_bytesDiscarded) * 8.U // in bits
-      // val lshift = current_bytesRead * 8.U // in bits
       val lshift = current_usefulBytesRead * 8.U // in bits
       val mask = (~(((~0.U(beatBits.W)) >> rshift) << lshift)).asUInt()
 

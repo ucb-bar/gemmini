@@ -8,8 +8,7 @@ import freechips.rocketchip.config.Parameters
 
 // TODO handle reads from the same bank
 // TODO don't flush all 4 time steps when shorter flushes will work
-class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArrayConfig[T],
-                                   sp_addr_t: SPAddr, acc_addr_t: AccAddr)
+class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArrayConfig[T])
                                   (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
   import config._
   import ev._
@@ -35,11 +34,16 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   val block_size = meshRows*tileRows
 
-  val tag_garbage = Cat(Seq.fill(tagWidth)(1.U(1.W)))
-  val tag_with_deps = new Bundle {
+  val tag_with_deps = new Bundle with TagQueueTag {
     val pushLoad = Bool()
     val pushStore = Bool()
-    val tag = UInt(tagWidth.W)
+    val tag = local_addr_t.cloneType
+
+    override def make_this_garbage(dummy: Int = 0): Unit = {
+      pushLoad := false.B
+      pushStore := false.B
+      tag.make_this_garbage()
+    }
   }
 
   val cmd_q_heads = 3
@@ -69,9 +73,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   val in_s = functs(0) === COMPUTE_AND_FLIP_CMD
   val in_s_flush = Reg(Bool())
-  // val in_s_preload = Reg(Bool())
   when (current_dataflow === Dataflow.WS.id.U) {
-    // in_s_preload := 0.U
     in_s_flush := 0.U
   }
 
@@ -81,14 +83,14 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val activation = Reg(UInt(2.W))
 
   // SRAM addresses of matmul operands
-  val a_address_rs1 = WireInit(rs1s(a_address_place).asTypeOf(sp_addr_t))
-  val b_address_rs2 = WireInit(rs2s(0).asTypeOf(sp_addr_t))
-  val d_address_rs1 = WireInit(rs1s(preload_cmd_place).asTypeOf(sp_addr_t))
-  val c_address_rs2 = WireInit(rs2s(preload_cmd_place).asTypeOf(sp_addr_t))
+  val a_address_rs1 = WireInit(rs1s(a_address_place).asTypeOf(local_addr_t))
+  val b_address_rs2 = WireInit(rs2s(0).asTypeOf(local_addr_t))
+  val d_address_rs1 = WireInit(rs1s(preload_cmd_place).asTypeOf(local_addr_t))
+  val c_address_rs2 = WireInit(rs2s(preload_cmd_place).asTypeOf(local_addr_t))
 
-  val multiply_garbage = a_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage
-  val accumulate_zeros = b_address_rs2.asUInt()(tagWidth-1, 0) === tag_garbage
-  val preload_zeros = d_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage
+  val multiply_garbage = a_address_rs1.is_garbage()
+  val accumulate_zeros = b_address_rs2.is_garbage()
+  val preload_zeros = d_address_rs1.is_garbage()
 
   // Dependency stuff
   val pushLoads = cmd.bits.map(_.deps.pushLoad)
@@ -134,9 +136,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   mesh.io.b.valid := false.B
   mesh.io.d.valid := false.B
   mesh.io.tag_in.valid := false.B
-  mesh.io.tag_garbage.pushLoad := false.B
-  mesh.io.tag_garbage.pushStore := false.B
-  mesh.io.tag_garbage.tag := tag_garbage
   mesh.io.flush.valid := control_state === flush && !cntl_valid // We want to make sure that the mesh has absorbed all inputs before flushing
 
   mesh.io.a.bits := DontCare
@@ -150,31 +149,31 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   // Hazards
   val raw_hazard_pre = mesh.io.tags_in_progress.map { t =>
-    val is_garbage = t.tag === tag_garbage
-    val pre_raw_haz = t.tag === rs1s(0)(tagWidth-1, 0)
-    val mul_raw_haz = t.tag === rs1s(1)(tagWidth-1, 0) || t.tag === rs2s(1)(tagWidth-1, 0)
+    val is_garbage = t.tag.is_garbage()
+    val pre_raw_haz = t.tag.is_same_address(rs1s(0))
+    val mul_raw_haz = t.tag.is_same_address(rs1s(1)) || t.tag.is_same_address(rs2s(1))
 
     !is_garbage && (pre_raw_haz || mul_raw_haz)
   }.reduce(_ || _)
 
   val raw_hazard_mulpre = mesh.io.tags_in_progress.map { t =>
-    val is_garbage = t.tag === tag_garbage
-    val pre_raw_haz = t.tag === rs1s(1)(tagWidth-1, 0)
-    val mul_raw_haz = t.tag === rs1s(2)(tagWidth-1, 0) || t.tag === rs2s(2)(tagWidth-1, 0)
+    val is_garbage = t.tag.is_garbage()
+    val pre_raw_haz = t.tag.is_same_address(rs1s(1))
+    val mul_raw_haz = t.tag.is_same_address(rs1s(2)) || t.tag.is_same_address(rs2s(2))
 
     !is_garbage && (mul_raw_haz || pre_raw_haz)
   }.reduce(_ || _)
 
-  val matmul_in_progress = mesh.io.tags_in_progress.map(_.tag =/= tag_garbage).reduce(_ || _)
+  val matmul_in_progress = mesh.io.tags_in_progress.map(!_.tag.is_garbage()).reduce(_ || _)
 
   // SRAM scratchpad
-  val dataAbank = a_address_rs1.bank
-  val dataBbank = b_address_rs2.bank
-  val dataDbank = d_address_rs1.bank
+  val dataAbank = a_address_rs1.sp_bank()
+  val dataBbank = b_address_rs2.sp_bank()
+  val dataDbank = d_address_rs1.sp_bank()
 
-  val a_read_from_acc = a_address_rs1.asTypeOf(acc_addr_t).is_acc_addr
-  val b_read_from_acc = b_address_rs2.asTypeOf(acc_addr_t).is_acc_addr
-  val d_read_from_acc = d_address_rs1.asTypeOf(acc_addr_t).is_acc_addr
+  val a_read_from_acc = a_address_rs1.is_acc_addr
+  val b_read_from_acc = b_address_rs2.is_acc_addr
+  val d_read_from_acc = d_address_rs1.is_acc_addr
 
   val start_inputting_a = WireInit(false.B)
   val start_inputting_b = WireInit(false.B)
@@ -195,14 +194,15 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val b_fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
   val d_fire_counter = Reg(UInt((log2Ceil(block_size) max 1).W))
 
-  def same_bank(addr1: SPAddr, addr2: SPAddr, start_inputting1: Bool, start_inputting2: Bool): Bool = {
-    val addr1_read_from_acc = addr1.asTypeOf(acc_addr_t).is_acc_addr
-    val addr2_read_from_acc = addr2.asTypeOf(acc_addr_t).is_acc_addr
+  def same_bank(addr1: LocalAddr, addr2: LocalAddr, start_inputting1: Bool, start_inputting2: Bool): Bool = {
+    val addr1_read_from_acc = addr1.is_acc_addr
+    val addr2_read_from_acc = addr2.is_acc_addr
 
-    val is_garbage = addr1.asUInt()(tagWidth-1, 0) === tag_garbage || addr2.asUInt()(tagWidth-1, 0) === tag_garbage ||
+    val is_garbage = addr1.is_garbage() || addr2.is_garbage() ||
       !start_inputting1 || !start_inputting2
 
-    !is_garbage && ((addr1_read_from_acc && addr2_read_from_acc) || (!addr1_read_from_acc && !addr2_read_from_acc && addr1.bank === addr2.bank))
+    !is_garbage && ((addr1_read_from_acc && addr2_read_from_acc) ||
+      (!addr1_read_from_acc && !addr2_read_from_acc && addr1.sp_bank() === addr2.sp_bank()))
   }
 
   // The priority scheme we follow is that A fires first, then B, then D
@@ -259,9 +259,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
     io.read(i).req.valid := read_a || read_b || read_d
     io.read(i).req.bits.fromDMA := false.B
-    io.read(i).req.bits.addr := MuxCase(a_address_rs1.row + a_fire_counter,
-      Seq(read_b -> (b_address_rs2.row + b_fire_counter),
-        read_d -> (d_address_rs1.row + block_size.U - 1.U - d_fire_counter)))
+    io.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
+      Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
+        read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter)))
 
     io.read(i).resp.ready := true.B
   }
@@ -278,9 +278,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     io.acc.read.req.bits.act := activation
     io.acc.read.req.bits.fromDMA := false.B
 
-    io.acc.read.req.bits.addr := MuxCase(a_address_rs1.asTypeOf(acc_addr_t).row + a_fire_counter,
-      Seq(read_b_from_acc -> (b_address_rs2.asTypeOf(acc_addr_t).row + b_fire_counter),
-        read_d_from_acc -> (d_address_rs1.asTypeOf(acc_addr_t).row + block_size.U - 1.U - d_fire_counter)))
+    io.acc.read.req.bits.addr := MuxCase(a_address_rs1.acc_row() + a_fire_counter,
+      Seq(read_b_from_acc -> (b_address_rs2.acc_row() + b_fire_counter),
+        read_d_from_acc -> (d_address_rs1.acc_row() + block_size.U - 1.U - d_fire_counter)))
 
     io.acc.read.resp.ready := true.B
   }
@@ -372,7 +372,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
           control_state := waiting_for_cmd
 
           when (current_dataflow === Dataflow.OS.id.U) {
-            in_s_flush := rs2s(0)(tagWidth - 1, 0) =/= tag_garbage
+            in_s_flush := !rs2s(0).asTypeOf(local_addr_t).is_garbage()
           }
         }
       }
@@ -389,8 +389,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
           control_state := waiting_for_cmd
 
           when (current_dataflow === Dataflow.OS.id.U) {
-            // in_s_preload := in_s_flush
-            in_s_flush := rs2s(1)(tagWidth - 1, 0) =/= tag_garbage
+            in_s_flush := !rs2s(1).asTypeOf(local_addr_t).is_garbage()
           }
         }
       }
@@ -446,7 +445,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     val b_fire = Bool()
     val d_fire = Bool()
 
-    val c_addr = sp_addr_t.cloneType
+    val c_addr = local_addr_t.cloneType
 
     val dataflow = UInt(1.W)
 
@@ -465,9 +464,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   mesh_cntl_signals_q.io.enq.bits.b_bank := dataBbank
   mesh_cntl_signals_q.io.enq.bits.d_bank := dataDbank
 
-  mesh_cntl_signals_q.io.enq.bits.a_garbage := a_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage || !start_inputting_a
-  mesh_cntl_signals_q.io.enq.bits.b_garbage := b_address_rs2.asUInt()(tagWidth-1, 0) === tag_garbage || !start_inputting_b
-  mesh_cntl_signals_q.io.enq.bits.d_garbage := d_address_rs1.asUInt()(tagWidth-1, 0) === tag_garbage || !start_inputting_d
+  mesh_cntl_signals_q.io.enq.bits.a_garbage := a_address_rs1.is_garbage() || !start_inputting_a
+  mesh_cntl_signals_q.io.enq.bits.b_garbage := b_address_rs2.is_garbage() || !start_inputting_b
+  mesh_cntl_signals_q.io.enq.bits.d_garbage := d_address_rs1.is_garbage() || !start_inputting_d
 
   mesh_cntl_signals_q.io.enq.bits.a_read_from_acc := a_read_from_acc
   mesh_cntl_signals_q.io.enq.bits.b_read_from_acc := b_read_from_acc
@@ -523,7 +522,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
     mesh.io.tag_in.bits.pushLoad := ShiftRegister(VecInit(pushLoads take 2)(preload_cmd_place), mem_pipeline)
     mesh.io.tag_in.bits.pushStore := ShiftRegister(VecInit(pushStores take 2)(preload_cmd_place), mem_pipeline)
-    mesh.io.tag_in.bits.tag := cntl.c_addr.asUInt()
+    mesh.io.tag_in.bits.tag := cntl.c_addr
   }
 
   when (cntl_valid && cntl.perform_single_preload) {
@@ -535,24 +534,22 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     mesh.io.a.bits := Mux(cntl.dataflow === Dataflow.OS.id.U, 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.tag_in.bits.pushLoad := false.B
     mesh.io.tag_in.bits.pushStore := false.B
-    mesh.io.tag_in.bits.tag := tag_garbage
+    mesh.io.tag_in.bits.tag.make_this_garbage()
   }
 
   // Scratchpad writes
-  val w_address = mesh.io.tag_out.tag.asTypeOf(sp_addr_t)
-  val w_address_acc = mesh.io.tag_out.tag.asTypeOf(acc_addr_t)
+  val w_address = mesh.io.tag_out.tag
+  val write_to_acc = w_address.is_acc_addr
 
-  val write_to_acc = w_address_acc.is_acc_addr
-
-  val w_bank = w_address.bank
-  val w_row = Mux(write_to_acc, w_address_acc.row, w_address.row)
+  val w_bank = w_address.sp_bank()
+  val w_row = Mux(write_to_acc, w_address.acc_row(), w_address.sp_row())
 
   val output_counter = new Counter(block_size)
 
   val current_w_bank_address = Mux(current_dataflow === Dataflow.WS.id.U, w_row + output_counter.value,
     w_row + block_size.U - 1.U - output_counter.value)
 
-  val is_garbage_addr = mesh.io.tag_out.tag === tag_garbage
+  val is_garbage_addr = mesh.io.tag_out.tag.is_garbage()
   val is_garbage_addr_and_no_deps = is_garbage_addr && !mesh.io.tag_out.pushLoad && !mesh.io.tag_out.pushStore // TODO is this actually necessary?
 
   // Write to normal scratchpad
@@ -577,7 +574,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     io.acc.write.en := start_array_outputting && write_to_acc && !is_garbage_addr
     io.acc.write.addr := current_w_bank_address
     io.acc.write.data := mesh.io.out.bits
-    io.acc.write.acc := w_address_acc.acc
+    io.acc.write.acc := w_address.accumulate
   }
 
   when(mesh.io.out.fire() && !is_garbage_addr_and_no_deps) {

@@ -7,14 +7,16 @@ import Util._
 import freechips.rocketchip.config.Parameters
 
 // TODO deal with errors when reading scratchpad responses
-class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr)
+// class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr)
+class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
                                (implicit p: Parameters) extends Module {
   import config._
 
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
 
-    val dma = new ScratchpadReadMemIO(sp_banks, sp_bank_entries, acc_rows)
+    // val dma = new ScratchpadReadMemIO(sp_banks, sp_bank_entries, acc_rows)
+    val dma = new ScratchpadReadMemIO(local_addr_t)
 
     // TODO what's a better way to express no bits?
     val pushStore = Decoupled(UInt(1.W))
@@ -35,14 +37,12 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
 
   val cmd = Queue(io.cmd, ld_str_queue_length)
   val vaddr = cmd.bits.cmd.rs1
-  val accaddr = cmd.bits.cmd.rs2.asTypeOf(acc_addr_t)
-  val spaddr = cmd.bits.cmd.rs2.asTypeOf(sp_addr_t)
+  val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
   val len = cmd.bits.cmd.rs2(coreMaxAddrBits-1, 32) // TODO we don't really need to read all the bits here
   val config_stride = cmd.bits.cmd.rs2
   val mstatus = cmd.bits.cmd.status
 
-  val spaddr_plus_row_counter = (Cat(spaddr.bank, spaddr.row) + row_counter).asTypeOf(sp_addr_t)
-  val accaddr_plus_row_counter = (accaddr.row + row_counter).asTypeOf(acc_addr_t)
+  val localaddr_plus_row_counter = localaddr + row_counter
 
   io.busy := cmd.valid
 
@@ -67,10 +67,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
     control_state === waiting_for_dma_req_ready ||
     (control_state === sending_rows && row_counter =/= 0.U)
   io.dma.req.bits.vaddr := vaddr + row_counter * stride
-  io.dma.req.bits.spbank := spaddr_plus_row_counter.bank
-  io.dma.req.bits.spaddr := spaddr_plus_row_counter.row
-  io.dma.req.bits.accaddr := accaddr_plus_row_counter.row
-  io.dma.req.bits.is_acc := accaddr.is_acc_addr
+  io.dma.req.bits.laddr := localaddr_plus_row_counter
   io.dma.req.bits.len := len
   io.dma.req.bits.status := mstatus
 
@@ -99,7 +96,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
   val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, maxBytesInMatRequest, deps_t))
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad && pull_deps_ready
   cmd_tracker.io.alloc.bits.bytes_to_read := len * block_rows.U * // TODO change len to lgLen so that the multiplier here can be removed
-    block_cols.U * (Mux(accaddr.is_acc_addr, config.accType.getWidth.U, config.inputType.getWidth.U) / 8.U)
+    block_cols.U * (Mux(localaddr.is_acc_addr, config.accType.getWidth.U, config.inputType.getWidth.U) / 8.U)
   cmd_tracker.io.alloc.bits.tag.pushStore := pushStore
   cmd_tracker.io.alloc.bits.tag.pushEx := pushEx
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect

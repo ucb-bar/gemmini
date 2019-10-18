@@ -39,6 +39,8 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
     case CapacityInMatrices(ms) => ms * meshRows * tileRows
   }
 
+  val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_rows)
+
   val max_in_flight_reqs = 4 // TODO calculate this somehow
 
   require(isPow2(sp_bank_entries), "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement

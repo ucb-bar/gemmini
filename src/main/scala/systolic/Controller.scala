@@ -22,8 +22,56 @@ class SystolicDeps extends Bundle {
 class SystolicCmdWithDeps(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val deps = new SystolicDeps
+  // val rob_id = UInt(8.W) // TODO magic number
 
   override def cloneType: this.type = (new SystolicCmdWithDeps).asInstanceOf[this.type]
+}
+
+class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_rows: Int) extends Bundle {
+  private val localAddrBits = 32 // TODO magic number
+
+  private val spAddrBits = log2Ceil(sp_banks * sp_bank_entries)
+  private val accAddrBits = log2Ceil(acc_rows)
+  private val maxAddrBits = spAddrBits max accAddrBits
+
+  private val spBankBits = log2Up(sp_banks)
+  private val spBankRowBits = log2Up(sp_bank_entries)
+
+  val is_acc_addr = Bool()
+  val accumulate = Bool()
+  val garbage = UInt((localAddrBits - maxAddrBits - 2).W)
+  val data = UInt(maxAddrBits.W)
+
+  def sp_bank(dummy: Int = 0) = data(spBankBits + spBankRowBits - 1, spBankRowBits)
+  def sp_row(dummy: Int = 0) = data(spBankRowBits - 1, 0)
+  def acc_row(dummy: Int = 0) = data(accAddrBits-1, 0)
+
+  def is_same_address(other: LocalAddr): Bool = is_acc_addr === other.is_acc_addr && data === other.data
+  def is_same_address(other: UInt): Bool = is_same_address(other.asTypeOf(this))
+  def is_garbage(dummy: Int = 0) = is_acc_addr && accumulate && data.andR() /* &&
+    { if (garbage.getWidth > 0) garbage(0) else true.B } */
+
+  def +(other: UInt) = {
+    require(isPow2(sp_bank_entries)) // TODO remove this requirement
+
+    val result = WireInit(this)
+    result.data := data + other
+    result
+  }
+
+  def make_this_garbage(dummy: Int = 0): Unit = {
+    is_acc_addr := true.B
+    accumulate := true.B
+    data := ~(0.U(maxAddrBits.W))
+
+    /*
+    if (garbage.getWidth > 0) {
+      garbage(0) := 1.U
+    }
+    */
+  }
+
+  override def cloneType: LocalAddr.this.type = new LocalAddr(sp_banks, sp_bank_entries, acc_rows).asInstanceOf[this.type]
 }
 
 class SPAddr(xLen: Int, sp_banks: Int, sp_bank_entries: Int) extends Bundle {
@@ -53,10 +101,7 @@ class SystolicArray[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: Syst
   Files.write(Paths.get(config.headerFileName), config.generateHeader().getBytes(StandardCharsets.UTF_8))
 
   val xLen = p(XLen)
-  val spad = LazyModule(new Scratchpad(
-    config.sp_banks, config.sp_bank_entries,
-    new SPAddr(xLen, config.sp_banks, config.sp_bank_entries), // TODO unify this with the other sp_addr
-    config))
+  val spad = LazyModule(new Scratchpad(config))
 
   override lazy val module = new SystolicArrayModule(this)
   override val tlNode = spad.id_node
@@ -70,7 +115,8 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   import outer.config._
   import outer.spad
 
-  val sp_addr_t = new SPAddr(xLen, sp_banks, sp_bank_entries)
+  // val sp_addr_t = new SPAddr(xLen, sp_banks, sp_bank_entries)
+
   val funct_t = new Bundle {
     val push1 = UInt(1.W)
     val pop1 = UInt(1.W)
@@ -80,7 +126,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   }
 
   val tagWidth = 32
-  val acc_addr = new AccAddr(xLen, acc_rows, tagWidth)
+  // val acc_addr = new AccAddr(xLen, acc_rows, tagWidth)
 
   // TLB
   implicit val edge = outer.tlNode.edges.out.head
@@ -97,7 +143,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   tlb.io.ptw.pmp := io.ptw.head.pmp
   tlb.io.ptw.customCSRs := io.ptw.head.customCSRs*/
 
-  // Controllers
+  // Incoming commands and ROB
   val cmd = Queue(io.cmd)
   cmd.ready := false.B
 
@@ -107,11 +153,16 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   val push2 = cmd.bits.inst.funct.asTypeOf(funct_t).push2
   val pop2 = cmd.bits.inst.funct.asTypeOf(funct_t).pop2
 
-  val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, sp_addr_t, acc_addr))
-  val store_controller = Module(new StoreController(outer.config, coreMaxAddrBits, sp_addr_t, acc_addr))
-  val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config, sp_addr_t, acc_addr))
+  // val rob_entries = 4
+  // val rob = Module(new ROB(cmd.bits.cloneType, rob_entries, sp_bank_entries, meshRows*tileRows))
 
-  // val dma_arbiter = Module(new DMAArbiter(sp_banks, sp_bank_entries, acc_rows))
+  // Controllers
+  // val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, sp_addr_t, acc_addr))
+  // val store_controller = Module(new StoreController(outer.config, coreMaxAddrBits, sp_addr_t, acc_addr))
+  val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
+  val store_controller = Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t))
+  // val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config, sp_addr_t, acc_addr))
+  val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config))
 
   val load_to_store_depq = Queue(load_controller.io.pushStore, depq_len)
   val load_to_ex_depq = Queue(load_controller.io.pushEx, depq_len)
@@ -130,6 +181,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   load_controller.io.cmd.bits.deps.pullStore := pop1
   load_controller.io.cmd.bits.deps.pushEx := push2
   load_controller.io.cmd.bits.deps.pullEx := pop2
+  // load_controller.io.cmd.bits.rob_id := rob.io.issue.ld.cmd_id
 
   store_controller.io.cmd.valid := false.B
   store_controller.io.cmd.bits.cmd := cmd.bits
@@ -154,9 +206,6 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   ex_controller.io.pushStoreLeft := depq_len.U - ex_to_store_depq_len
 
   // Wire up scratchpad to controllers
-  // spad.module.io.dma_read <> dma_arbiter.io.dma
-  // dma_arbiter.io.load <> load_controller.io.dma
-  // dma_arbiter.io.store <> store_controller.io.dma
   spad.module.io.dma.read <> load_controller.io.dma
   spad.module.io.dma.write <> store_controller.io.dma
   ex_controller.io.read <> spad.module.io.read
@@ -226,4 +275,14 @@ class SystolicArrayModule[T <: Data: Arithmetic]
       assert(is_ex, "unknown systolic command")
     }
   }
+
+  /*
+  rob.io.alloc.valid := false.B
+  rob.io.alloc.bits := cmd.bits
+
+  val rob_completed_arb = Module(new Arbiter(UInt(log2Up(rob_entries).W), 3))
+  rob_completed_arb.io.in(0) :=
+
+  rob.io.completed :=
+  */
 }

@@ -13,11 +13,12 @@ import systolic.Util._
 // TODO do we flush for one cycle more than necessary?
 // TODO make all inputs go straight into registers to help with physical design
 
-class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputType: T, accType: T, tagType: U,
-                                                       df: Dataflow.Value,
-                                                       val tileRows: Int, val tileColumns: Int,
-                                                       val meshRows: Int, val meshColumns: Int,
-                                                       val leftBanks: Int, val upBanks: Int, val outBanks: Int = 1)
+class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
+  (inputType: T, val outputType: T, accType: T,
+   tagType: U, df: Dataflow.Value,
+   val tileRows: Int, val tileColumns: Int,
+   val meshRows: Int, val meshColumns: Int,
+   val leftBanks: Int, val upBanks: Int, val outBanks: Int = 1)
   extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
@@ -33,6 +34,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
     val b = Flipped(Decoupled(B_TYPE))
     val d = Flipped(Decoupled(D_TYPE))
 
+    // TODO make s, m, and shift ready-valid interfaces as well
     val s = Input(UInt(1.W))
     val m = Input(UInt(1.W))
     val shift = Input(UInt(log2Ceil(accType.getWidth).W))
@@ -40,7 +42,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
     val tag_in = Flipped(Decoupled(tagType))
     val tag_out = Output(tagType)
     val tags_in_progress = Output(Vec(tagqlen, tagType))
-    val tag_garbage = Input(tagType) // TODO make this a constructor parameter instead
+    // val tag_garbage = Input(tagType) // TODO make this a constructor parameter instead
 
     val out = Valid(C_TYPE) // TODO make this ready-valid
     val out_s = Output(S_TYPE)
@@ -167,8 +169,14 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: Data](inputType: T, val outputT
 
   // Tags
   val tag_queue = Module(new TagQueue(tagqlen, tagType)) // TODO understand the actual required size better
-  tag_queue.io.in.bits := Mux(flushing, io.tag_garbage, io.tag_in.bits)
-  tag_queue.io.garbage := io.tag_garbage
+
+  val tag_garbage = Wire(tagType.cloneType)
+  tag_garbage := DontCare
+  tag_garbage.make_this_garbage()
+
+  // tag_queue.io.in.bits := Mux(flushing, io.tag_garbage, io.tag_in.bits)
+  // tag_queue.io.garbage := io.tag_garbage
+  tag_queue.io.in.bits := Mux(flushing, tag_garbage, io.tag_in.bits)
 
   val tag_id_reg = RegInit(0.U(1.W)) // Used to keep track of when we should increment // TODO inelegant
   val tag_id = WireInit(tag_id_reg)
