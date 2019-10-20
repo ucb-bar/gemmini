@@ -18,6 +18,7 @@ object DSEBaseConfig {
     meshColumns = 16,
     ld_str_queue_length = 10,
     ex_queue_length = 10,
+    rob_entries = 4,
     sp_banks = 4, // TODO support one-bank designs
     sp_capacity = CapacityInKilobytes(64),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks

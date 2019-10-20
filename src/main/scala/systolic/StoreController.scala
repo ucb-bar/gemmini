@@ -14,7 +14,7 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
+    val cmd = Flipped(Decoupled(new SystolicCmdWithDeps(rob_entries)))
 
     // val dma = new ScratchpadWriteMemIO(sp_banks, sp_bank_entries, acc_rows)
     val dma = new ScratchpadWriteMemIO(local_addr_t)
@@ -24,6 +24,8 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
     val pullLoad = Flipped(Decoupled(UInt(1.W)))
     val pushEx = Decoupled(UInt(1.W))
     val pullEx = Flipped(Decoupled(UInt(1.W)))
+
+    val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
     val busy = Output(Bool())
   })
@@ -50,6 +52,7 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
 
   cmd.ready := false.B
 
+  /*
   val pullEx = cmd.bits.deps.pullEx
   val pushEx = cmd.bits.deps.pushEx
   val pullLoad = cmd.bits.deps.pullLoad
@@ -61,6 +64,10 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
     (pullLoad && io.pullLoad.valid && !pullEx) || (pullEx && pullLoad && io.pullEx.valid && io.pullLoad.valid)
   val push_deps_ready = !pushDep || (pushEx && io.pushEx.ready && !pushLoad) ||
     (pushLoad && io.pushLoad.ready && !pushEx) || (pushEx && pushLoad && io.pushEx.ready && io.pushLoad.ready)
+  */
+
+  val pull_deps_ready = true.B
+  val push_deps_ready = true.B
 
   io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoStore && pull_deps_ready) ||
     control_state === waiting_for_dma_req_ready ||
@@ -78,6 +85,9 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
   io.pushLoad.bits := DontCare
   io.pushEx.bits := DontCare
 
+  io.completed.valid := false.B
+  io.completed.bits := cmd.bits.rob_id
+
   // Row counter
   when (io.dma.req.fire()) {
     row_counter := wrappingAdd(row_counter, 1.U, block_rows)
@@ -90,17 +100,21 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
         when(DoConfig && push_deps_ready) {
           stride := config_stride
 
+          /*
           io.pushLoad.valid := pushLoad
           io.pullLoad.ready := pullLoad
           io.pullEx.ready := pullEx
           io.pushEx.valid := pushEx
+          */
+
+          io.completed.valid := true.B
 
           cmd.ready := true.B
         }
 
         .elsewhen(DoStore) {
-          io.pullEx.ready := pullEx
-          io.pullLoad.ready := pullLoad
+          // io.pullEx.ready := pullEx
+          // io.pullLoad.ready := pullLoad
           control_state := Mux(io.dma.req.fire(), sending_rows, waiting_for_dma_req_ready)
         }
       }
@@ -115,11 +129,14 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
     is (sending_rows) {
       val last_row = row_counter === 0.U || (row_counter === (block_rows-1).U && io.dma.req.fire())
 
-      when (last_row && push_deps_ready) {
+      io.completed.valid := last_row
+
+      // when (last_row && push_deps_ready) {
+      when (io.completed.fire()) {
         control_state := waiting_for_command
 
-        io.pushLoad.valid := pushLoad
-        io.pushEx.valid := pushEx
+        // io.pushLoad.valid := pushLoad
+        // io.pushEx.valid := pushEx
 
         cmd.ready := true.B
       }

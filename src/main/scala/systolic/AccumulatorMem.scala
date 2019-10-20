@@ -103,13 +103,20 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
       result
   })
 
-  io.read.req.ready := q.io.enq.ready
+  val q_will_be_empty = (q.io.count +& q.io.enq.fire()) - q.io.deq.fire() === 0.U
+  io.read.req.ready := q_will_be_empty && (
+      // Make sure we aren't accumulating, which would take over both ports
+      !(io.write.en && io.write.acc) &&
+      // Make sure we aren't reading something that is still being written
+      !(RegNext(io.write.en) && RegNext(io.write.addr) === io.read.req.bits.addr) &&
+      !(w_buf_valid && waddr_buf === io.read.req.bits.addr)
+    )
   io.read.resp.bits.data := p.bits.data
   io.read.resp.bits.fromDMA := p.bits.fromDMA
   io.read.resp.valid := p.valid
   p.ready := io.read.resp.ready
 
-  assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
-  assert(!(io.read.req.valid && io.write.en && io.read.req.bits.addr === io.write.addr), "reading from and writing to same address is not supported") // TODO
-  assert(!(io.read.req.valid && w_buf_valid && waddr_buf === io.read.req.bits.addr), "reading from an address immediately after writing to it is not supported") // TODO
+  // assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
+  assert(!(io.read.req.fire() && io.write.en && io.read.req.bits.addr === io.write.addr), "reading from and writing to same address is not supported") // TODO
+  assert(!(io.read.req.fire() && w_buf_valid && waddr_buf === io.read.req.bits.addr), "reading from an address immediately after writing to it is not supported") // TODO
 }

@@ -40,6 +40,7 @@ object SystolicConfigs {
     meshColumns = 16,
     ld_str_queue_length = 10,
     ex_queue_length = 10,
+    rob_entries = 4,
     sp_banks = 4,
     sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks

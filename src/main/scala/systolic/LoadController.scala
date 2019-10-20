@@ -13,7 +13,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new SystolicCmdWithDeps))
+    val cmd = Flipped(Decoupled(new SystolicCmdWithDeps(rob_entries)))
 
     // val dma = new ScratchpadReadMemIO(sp_banks, sp_bank_entries, acc_rows)
     val dma = new ScratchpadReadMemIO(local_addr_t)
@@ -23,6 +23,8 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
     val pullStore = Flipped(Decoupled(UInt(1.W)))
     val pushEx = Decoupled(UInt(1.W))
     val pullEx = Flipped(Decoupled(UInt(1.W)))
+
+    val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
     val busy = Output(Bool())
   })
@@ -51,6 +53,7 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
 
   cmd.ready := false.B
 
+  /*
   val pullEx = cmd.bits.deps.pullEx
   val pushEx = cmd.bits.deps.pushEx
   val pullStore = cmd.bits.deps.pullStore
@@ -62,6 +65,10 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
     (pullStore && io.pullStore.valid && !pullEx) || (pullEx && pullStore && io.pullEx.valid && io.pullStore.valid)
   val push_deps_ready = !pushDep || (pushEx && io.pushEx.ready && !pushStore) ||
     (pushStore && io.pushStore.ready && !pushEx) || (pushEx && pushStore && io.pushEx.ready && io.pushStore.ready)
+  */
+
+  val pull_deps_ready = true.B
+  val push_deps_ready = io.completed.ready
 
   io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && pull_deps_ready) ||
     control_state === waiting_for_dma_req_ready ||
@@ -80,10 +87,15 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
   io.pushStore.bits := DontCare
   io.pushEx.bits := DontCare
 
+  io.completed.valid := false.B
+  io.completed.bits := DontCare
+
   // Command tracker
   val deps_t = new Bundle {
     val pushStore = Bool()
     val pushEx = Bool()
+
+    val rob_id = UInt(log2Up(rob_entries).W)
   }
 
   val nCmds = 2 // TODO make this a config parameter
@@ -97,14 +109,17 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad && pull_deps_ready
   cmd_tracker.io.alloc.bits.bytes_to_read := len * block_rows.U * // TODO change len to lgLen so that the multiplier here can be removed
     block_cols.U * (Mux(localaddr.is_acc_addr, config.accType.getWidth.U, config.inputType.getWidth.U) / 8.U)
-  cmd_tracker.io.alloc.bits.tag.pushStore := pushStore
-  cmd_tracker.io.alloc.bits.tag.pushEx := pushEx
+  // cmd_tracker.io.alloc.bits.tag.pushStore := pushStore
+  // cmd_tracker.io.alloc.bits.tag.pushEx := pushEx
+  cmd_tracker.io.alloc.bits.tag.pushStore := false.B
+  cmd_tracker.io.alloc.bits.tag.pushEx := false.B
+  cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.bytes_read := io.dma.resp.bits.bytesRead
-  cmd_tracker.io.cmd_completed.ready :=
-    !(cmd_tracker.io.cmd_completed.bits.tag.pushStore && !io.pushStore.ready) &&
-      !(cmd_tracker.io.cmd_completed.bits.tag.pushEx && !io.pushEx.ready)
+  cmd_tracker.io.cmd_completed.ready := io.completed.ready
+    /*!(cmd_tracker.io.cmd_completed.bits.tag.pushStore && !io.pushStore.ready) &&
+      !(cmd_tracker.io.cmd_completed.bits.tag.pushEx && !io.pushEx.ready)*/
 
   val cmd_id = RegEnableThru(cmd_tracker.io.alloc.bits.cmd_id, cmd_tracker.io.alloc.fire()) // TODO is this really better than a simple RegEnable?
   io.dma.req.bits.cmd_id := cmd_id
@@ -113,6 +128,9 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
     val tag = cmd_tracker.io.cmd_completed.bits.tag
     io.pushStore.valid := tag.pushStore
     io.pushEx.valid := tag.pushEx
+
+    io.completed.valid := true.B
+    io.completed.bits := tag.rob_id
   }
 
   // Row counter
@@ -127,17 +145,24 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
         when(DoConfig && push_deps_ready && !cmd_tracker.io.busy) {
           stride := config_stride
 
+          /*
           io.pushStore.valid := pushStore
           io.pullStore.ready := pullStore
           io.pullEx.ready := pullEx
           io.pushEx.valid := pushEx
+          */
+
+          io.completed.valid := true.B
+          io.completed.bits := cmd.bits.rob_id
 
           cmd.ready := true.B
         }
 
         .elsewhen(DoLoad && cmd_tracker.io.alloc.fire()) {
+          /*
           io.pullEx.ready := pullEx
           io.pullStore.ready := pullStore
+          */
           control_state := Mux(io.dma.req.fire(), sending_rows, waiting_for_dma_req_ready)
         }
       }

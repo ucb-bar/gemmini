@@ -30,11 +30,15 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
     val out_garbage = Output(Bool())
   })
 
+  val cType = if (df == Dataflow.WS) inputType else accType
+
   val a  = io.in_a
   val b  = io.in_b
   val d  = io.in_d
-  val c1 = Reg(accType)
-  val c2 = Reg(accType)
+  // val c1 = Reg(accType)
+  // val c2 = Reg(accType)
+  val c1 = Reg(cType)
+  val c2 = Reg(cType)
   val s  = io.in_s
 
   val last_s = RegEnable(s, !io.in_garbage)

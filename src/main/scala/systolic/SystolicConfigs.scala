@@ -14,6 +14,7 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
                                                          meshColumns: Int,
                                                          ld_str_queue_length: Int,
                                                          ex_queue_length: Int,
+                                                         rob_entries: Int,
                                                          sp_banks: Int, // TODO support one-bank designs
                                                          sp_capacity: SystolicMemCapacity,
                                                          acc_capacity: SystolicMemCapacity,
