@@ -247,8 +247,10 @@ class Scratchpad[T <: Data: Arithmetic](
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.sp_row()
           bio.read.req.bits.fromDMA := true.B
 
-          write_dispatch_q.ready := true.B
-          write_issue_q.io.enq.valid := true.B
+          when (bio.read.req.fire()) {
+            write_dispatch_q.ready := true.B
+            write_issue_q.io.enq.valid := true.B
+          }
         }.otherwise {
           bio.read.req.bits := DontCare
         }
@@ -320,8 +322,10 @@ class Scratchpad[T <: Data: Arithmetic](
           accumulator.io.read.req.bits.addr := write_dispatch_q.bits.laddr.acc_row()
           accumulator.io.read.req.bits.fromDMA := true.B
 
-          write_dispatch_q.ready := true.B
-          write_issue_q.io.enq.valid := true.B
+          when (accumulator.io.read.req.fire()) {
+            write_dispatch_q.ready := true.B
+            write_issue_q.io.enq.valid := true.B
+          }
         }.otherwise {
           accumulator.io.read.req.bits.addr := DontCare
           accumulator.io.read.req.bits.fromDMA := DontCare

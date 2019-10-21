@@ -20,15 +20,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1))
     val acc = Flipped(new AccumulatorMemIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType))))
 
-    // TODO what's a better way to express no bits?
-    val pushLoad = Decoupled(UInt(1.W))
-    val pullLoad = Flipped(Decoupled(UInt(1.W)))
-    val pushStore = Decoupled(UInt(1.W))
-    val pullStore = Flipped(Decoupled(UInt(1.W)))
-
-    val pushLoadLeft = Input(UInt(log2Ceil(depq_len+1).W))
-    val pushStoreLeft = Input(UInt(log2Ceil(depq_len+1).W))
-
     val completed = Valid(UInt(log2Up(rob_entries).W))
 
     val busy = Output(Bool())
@@ -37,14 +28,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val block_size = meshRows*tileRows
 
   val tag_with_deps = new Bundle with TagQueueTag {
-    val pushLoad = Bool()
-    val pushStore = Bool()
     val rob_ids = Vec(2, UDValid(UInt(log2Up(rob_entries).W)))
     val addr = local_addr_t.cloneType
 
     override def make_this_garbage(dummy: Int = 0): Unit = {
-      pushLoad := false.B
-      pushStore := false.B
       rob_ids.foreach(_.valid := false.B)
       addr.make_this_garbage()
     }
@@ -97,38 +84,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   val preload_zeros = d_address_rs1.is_garbage()
 
   // Dependency stuff
-  /*
-  val pushLoads = cmd.bits.map(_.deps.pushLoad)
-  val pullLoads = cmd.bits.map(_.deps.pullLoad)
-  val pushStores = cmd.bits.map(_.deps.pushStore)
-  val pullStores = cmd.bits.map(_.deps.pullStore)
-  val pushDeps = (pushLoads zip pushStores).map { case (pl, ps) => pl || ps }
-  val pullDeps = (pullLoads zip pullStores).map { case (pl, ps) => pl || ps }
-
-  val pull_deps_ready = (pullDeps, pullLoads, pullStores).zipped.map { case (pullDep, pullLoad, pullStore) =>
-    !pullDep || (pullLoad && !pullStore && io.pullLoad.valid) ||
-      (pullStore && !pullLoad && io.pullStore.valid) ||
-      (pullLoad && pullStore && io.pullLoad.valid && io.pullStore.valid)
-  }
-
-  val push_deps_ready = (pushDeps, pushLoads, pushStores).zipped.map { case (pushDep, pushLoad, pushStore) =>
-    !pushDep || (pushLoad && !pushStore && io.pushLoadLeft >= 3.U) ||
-      (pushStore && !pushLoad && io.pushStoreLeft >= 3.U) ||
-      (pushStore && pushLoad && io.pushLoadLeft >= 3.U && io.pushStoreLeft >= 3.U)
-  }
-  */
-
-  val pull_deps_ready = cmd.bits.map(x => true.B)
-  val push_deps_ready = cmd.bits.map(x => true.B)
-
-  io.pushLoad.valid := false.B
-  io.pushLoad.bits := DontCare
-  io.pushStore.valid := false.B
-  io.pushStore.bits := DontCare
-
-  io.pullLoad.ready := false.B
-  io.pullStore.ready := false.B
-
   io.completed.valid := false.B
   io.completed.bits := DontCare
 
@@ -176,7 +131,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     !is_garbage && (mul_raw_haz || pre_raw_haz)
   }.reduce(_ || _)
 
-  // val matmul_in_progress = mesh.io.tags_in_progress.map(!_.addr.is_garbage()).reduce(_ || _)
   val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_ids(0).valid).reduce(_ || _)
 
   // SRAM scratchpad
@@ -217,17 +171,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     !is_garbage && ((addr1_read_from_acc && addr2_read_from_acc) ||
       (!addr1_read_from_acc && !addr2_read_from_acc && addr1.sp_bank() === addr2.sp_bank()))
   }
-
-  // The priority scheme we follow is that A fires first, then B, then D
-  /*
-  val a_valid = (!same_bank(a_address_rs1, b_address_rs2, start_inputting_a, start_inputting_b) || a_fire_counter === b_fire_counter) && a_fire_counter === d_fire_counter
-  val b_valid = (!same_bank(a_address_rs1, b_address_rs2, start_inputting_a, start_inputting_b) || a_fire_counter =/= b_fire_counter) && b_fire_counter === d_fire_counter
-  val d_valid =
-    ((!same_bank(a_address_rs1, d_address_rs1, start_inputting_a, start_inputting_d) && !same_bank(b_address_rs2, d_address_rs1, start_inputting_b, start_inputting_d)) && (b_valid || b_fire_counter =/= d_fire_counter)) ||
-      ((same_bank(a_address_rs1, d_address_rs1, start_inputting_a, start_inputting_d) && !same_bank(b_address_rs2, d_address_rs1, start_inputting_b, start_inputting_d)) && (a_fire_counter =/= d_fire_counter && (b_valid || b_fire_counter =/= d_fire_counter))) ||
-      ((!same_bank(a_address_rs1, d_address_rs1, start_inputting_a, start_inputting_d) && same_bank(b_address_rs2, d_address_rs1, start_inputting_b, start_inputting_d)) && b_fire_counter =/= d_fire_counter) ||
-      ((same_bank(a_address_rs1, d_address_rs1, start_inputting_a, start_inputting_d) && same_bank(b_address_rs2, d_address_rs1, start_inputting_b, start_inputting_d)) && b_fire_counter =/= d_fire_counter)
-  */
 
   val a_ready = WireInit(true.B)
   val b_ready = WireInit(true.B)
@@ -336,7 +279,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
       perform_mul_pre := false.B
       perform_single_mul := false.B
 
-      when(cmd.valid(0) && pull_deps_ready(0) && push_deps_ready(0))
+      when(cmd.valid(0))
       {
         when(DoConfig && !matmul_in_progress) {
           activation := rs1s(0)(4, 3)
@@ -368,23 +311,17 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
           start_inputting_a := current_dataflow === Dataflow.OS.id.U
           start_inputting_d := true.B
 
-          io.pullLoad.ready := cmd.bits(0).deps.pullLoad
-          io.pullStore.ready := cmd.bits(0).deps.pullStore
-
           control_state := compute
         }
 
         // Overlap compute and preload
-        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && pull_deps_ready(1) && push_deps_ready(1) && cmd.valid(2) && !raw_hazard_mulpre) {
+        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && cmd.valid(2) && !raw_hazard_mulpre) {
           perform_mul_pre := true.B
           performing_mul_pre := true.B
 
           start_inputting_a := true.B
           start_inputting_b := true.B
           start_inputting_d := true.B
-
-          io.pullLoad.ready := cmd.bits(1).deps.pullLoad
-          io.pullStore.ready := cmd.bits(1).deps.pullStore
 
           control_state := compute
         }
@@ -573,8 +510,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
-    // mesh.io.tag_in.bits.pushLoad := ShiftRegister(VecInit(pushLoads take 2)(preload_cmd_place), mem_pipeline)
-    // mesh.io.tag_in.bits.pushStore := ShiftRegister(VecInit(pushStores take 2)(preload_cmd_place), mem_pipeline)
     mesh.io.tag_in.bits.rob_ids(0).valid := true.B
     mesh.io.tag_in.bits.rob_ids(0).bits := cntl.rob_id_1
     mesh.io.tag_in.bits.rob_ids(1) := cntl.rob_id_2
@@ -588,8 +523,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
 
   when (cntl_valid && cntl.perform_single_mul) {
     mesh.io.a.bits := Mux(cntl.dataflow === Dataflow.OS.id.U, 0.U, dataA).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.tag_in.bits.pushLoad := false.B
-    mesh.io.tag_in.bits.pushStore := false.B
     mesh.io.tag_in.bits.addr.make_this_garbage()
   }
 
@@ -640,13 +573,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
   // when(mesh.io.out.fire() && !is_garbage_addr_and_no_deps) {
   when(mesh.io.out.fire()) {
     when(output_counter.inc()) {
-      // io.pushLoad.valid := mesh.io.tag_out.pushLoad
-      // io.pushStore.valid := mesh.io.tag_out.pushStore
-
       rob_ids := mesh.io.tag_out.rob_ids
-
-      // assert(!mesh.io.tag_out.pushLoad || io.pushLoad.ready)
-      // assert(!mesh.io.tag_out.pushStore || io.pushStore.ready)
     }
 
     start_array_outputting :=  !is_garbage_addr

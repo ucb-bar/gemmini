@@ -49,6 +49,8 @@ class ROB[T <: RoCCCommand](cmd_t: T, nEntries: Int, local_addr_t: LocalAddr, bl
   class Entry extends Bundle {
     val q = q_t.cloneType
 
+    val is_config = Bool()
+
     val op1 = UDValid(local_addr_t.cloneType)
     val op2 = UDValid(local_addr_t.cloneType)
 
@@ -98,7 +100,26 @@ class ROB[T <: RoCCCommand](cmd_t: T, nEntries: Int, local_addr_t: LocalAddr, bl
     val war = (wars, precedes, different_q).zipped.map { case (wr, p, dq) => wr && p && dq }.reduce(_ || _)
     val waw = (waws, precedes, different_q).zipped.map { case (ww, p, dq) => ww && p && dq }.reduce(_ || _)
 
-    val dep = raw || war || waw
+    // Commands within the same pipeline are issued in order, for now
+    // TODO allowed out-of-order issue if necessary for perf. reasons
+    val not_oldest = (entries, precedes).zipped.map { case (e, p) =>
+        p && e.valid && !e.bits.issued && e.bits.q === entry.bits.q
+    }.reduce(_ || _)
+
+    val is_st_and_must_wait_for_prior_ex_config = entry.bits.q === stq && !entry.bits.is_config &&
+      (entries, precedes).zipped.map { case (e, p) =>
+        p && e.valid && !e.bits.completed && e.bits.is_config && e.bits.q === exq
+      }.reduce(_ || _)
+
+    val is_ex_config_and_must_wait_for_prior_st = entry.bits.is_config && entry.bits.q === exq &&
+      (entries, precedes).zipped.map { case (e, p) =>
+        p && e.valid && !e.bits.completed && e.bits.q === stq && !e.bits.is_config
+      }.reduce(_ || _)
+
+    val dep = raw || war || waw || // Data dependencies between queues
+      not_oldest || // In order issue within queue
+      is_st_and_must_wait_for_prior_ex_config || is_ex_config_and_must_wait_for_prior_st // Misc. dependencies
+
     when (!dep) {
       entry.bits.ready := true.B
     }
@@ -143,7 +164,7 @@ class ROB[T <: RoCCCommand](cmd_t: T, nEntries: Int, local_addr_t: LocalAddr, bl
   when (io.alloc.fire()) {
     val spAddrBits = 32
     val cmd = io.alloc.bits
-    val funct = cmd.inst.funct(2,0)
+    val funct = cmd.inst.funct
     val config_cmd_type = cmd.rs1(1,0) // TODO magic numbers
 
     empty := false.B
@@ -154,6 +175,8 @@ class ROB[T <: RoCCCommand](cmd_t: T, nEntries: Int, local_addr_t: LocalAddr, bl
     entries(waddr).bits.issued := false.B
     entries(waddr).bits.completed := false.B
     entries(waddr).bits.cmd := cmd
+
+    entries(waddr).bits.is_config := funct === CONFIG_CMD
 
     entries(waddr).bits.op1.valid := funct === PRELOAD_CMD || funct === COMPUTE_AND_STAY_CMD ||
       funct === COMPUTE_AND_FLIP_CMD

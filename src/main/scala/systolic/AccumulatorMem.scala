@@ -68,7 +68,7 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   mem.io.wdata := Mux(acc_buf, w_sum, wdata_buf)
 
   mem.io.raddr := Mux(io.write.en && io.write.acc, io.write.addr, io.read.req.bits.addr)
-  mem.io.ren := io.read.req.valid || (io.write.en && io.write.acc)
+  mem.io.ren := io.read.req.fire() || (io.write.en && io.write.acc)
 
   class PipelinedRdataAndActT extends Bundle {
     val data = mem.io.rdata.cloneType
@@ -117,6 +117,6 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   p.ready := io.read.resp.ready
 
   // assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
-  assert(!(io.read.req.fire() && io.write.en && io.read.req.bits.addr === io.write.addr), "reading from and writing to same address is not supported") // TODO
-  assert(!(io.read.req.fire() && w_buf_valid && waddr_buf === io.read.req.bits.addr), "reading from an address immediately after writing to it is not supported") // TODO
+  assert(!(io.read.req.fire() && io.write.en && io.read.req.bits.addr === io.write.addr), "reading from and writing to same address is not supported")
+  assert(!(io.read.req.fire() && w_buf_valid && waddr_buf === io.read.req.bits.addr), "reading from an address immediately after writing to it is not supported")
 }

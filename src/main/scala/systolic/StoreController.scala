@@ -8,7 +8,6 @@ import freechips.rocketchip.config.Parameters
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
-// class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], coreMaxAddrBits: Int, sp_addr_t: SPAddr, acc_addr_t: AccAddr)
 class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
                      (implicit p: Parameters) extends Module {
   import config._
@@ -18,12 +17,6 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
 
     // val dma = new ScratchpadWriteMemIO(sp_banks, sp_bank_entries, acc_rows)
     val dma = new ScratchpadWriteMemIO(local_addr_t)
-
-    // TODO what's a better way to express no bits?
-    val pushLoad = Decoupled(UInt(1.W))
-    val pullLoad = Flipped(Decoupled(UInt(1.W)))
-    val pushEx = Decoupled(UInt(1.W))
-    val pullEx = Flipped(Decoupled(UInt(1.W)))
 
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
@@ -52,38 +45,12 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
 
   cmd.ready := false.B
 
-  /*
-  val pullEx = cmd.bits.deps.pullEx
-  val pushEx = cmd.bits.deps.pushEx
-  val pullLoad = cmd.bits.deps.pullLoad
-  val pushLoad = cmd.bits.deps.pushLoad
-  val pullDep = pullEx || pullLoad
-  val pushDep = pushEx || pushLoad
-
-  val pull_deps_ready = !pullDep || (pullEx && io.pullEx.valid && !pullLoad) ||
-    (pullLoad && io.pullLoad.valid && !pullEx) || (pullEx && pullLoad && io.pullEx.valid && io.pullLoad.valid)
-  val push_deps_ready = !pushDep || (pushEx && io.pushEx.ready && !pushLoad) ||
-    (pushLoad && io.pushLoad.ready && !pushEx) || (pushEx && pushLoad && io.pushEx.ready && io.pushLoad.ready)
-  */
-
-  val pull_deps_ready = true.B
-  val push_deps_ready = true.B
-
-  io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoStore && pull_deps_ready) ||
+  io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoStore) ||
     control_state === waiting_for_dma_req_ready ||
     (control_state === sending_rows && row_counter =/= 0.U)
   io.dma.req.bits.vaddr := vaddr + row_counter * stride
   io.dma.req.bits.laddr := localaddr_plus_row_counter
   io.dma.req.bits.status := mstatus
-
-  io.pushLoad.valid := false.B
-  io.pullLoad.ready := false.B
-  io.pushEx.valid := false.B
-  io.pullEx.ready := false.B
-
-  // TODO are these really needed?
-  io.pushLoad.bits := DontCare
-  io.pushEx.bits := DontCare
 
   io.completed.valid := false.B
   io.completed.bits := cmd.bits.rob_id
@@ -96,25 +63,14 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
   // Control logic
   switch (control_state) {
     is (waiting_for_command) {
-      when (cmd.valid && pull_deps_ready) {
-        when(DoConfig && push_deps_ready) {
+      when (cmd.valid) {
+        when(DoConfig) {
           stride := config_stride
-
-          /*
-          io.pushLoad.valid := pushLoad
-          io.pullLoad.ready := pullLoad
-          io.pullEx.ready := pullEx
-          io.pushEx.valid := pushEx
-          */
-
           io.completed.valid := true.B
-
           cmd.ready := true.B
         }
 
         .elsewhen(DoStore) {
-          // io.pullEx.ready := pullEx
-          // io.pullLoad.ready := pullLoad
           control_state := Mux(io.dma.req.fire(), sending_rows, waiting_for_dma_req_ready)
         }
       }
@@ -131,13 +87,8 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
 
       io.completed.valid := last_row
 
-      // when (last_row && push_deps_ready) {
       when (io.completed.fire()) {
         control_state := waiting_for_command
-
-        // io.pushLoad.valid := pushLoad
-        // io.pushEx.valid := pushEx
-
         cmd.ready := true.B
       }
     }
