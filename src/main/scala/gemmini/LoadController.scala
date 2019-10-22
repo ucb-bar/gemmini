@@ -12,7 +12,7 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new SystolicCmdWithDeps(rob_entries)))
+    val cmd = Flipped(Decoupled(new GemminiCmdWithDeps(rob_entries)))
 
     val dma = new ScratchpadReadMemIO(local_addr_t)
 

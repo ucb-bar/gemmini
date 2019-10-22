@@ -10,11 +10,11 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
 import GemminiISA._
 
-class SystolicCmdWithDeps(rob_entries: Int)(implicit p: Parameters) extends Bundle {
+class GemminiCmdWithDeps(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val rob_id = UInt(log2Up(rob_entries).W)
 
-  override def cloneType: this.type = (new SystolicCmdWithDeps(rob_entries)).asInstanceOf[this.type]
+  override def cloneType: this.type = (new GemminiCmdWithDeps(rob_entries)).asInstanceOf[this.type]
 }
 
 class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_rows: Int) extends Bundle {
@@ -74,8 +74,8 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_rows: Int) extends Bund
   override def cloneType: LocalAddr.this.type = new LocalAddr(sp_banks, sp_bank_entries, acc_rows).asInstanceOf[this.type]
 }
 
-class SystolicArray[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: GemminiArrayConfig[T])
-                                           (implicit p: Parameters)
+class Gemmini[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: GemminiArrayConfig[T])
+                                     (implicit p: Parameters)
   extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
     nPTWPorts = 1) {
@@ -85,12 +85,12 @@ class SystolicArray[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: Gemm
   val xLen = p(XLen)
   val spad = LazyModule(new Scratchpad(config))
 
-  override lazy val module = new SystolicArrayModule(this)
+  override lazy val module = new GemminiModule(this)
   override val tlNode = spad.id_node
 }
 
-class SystolicArrayModule[T <: Data: Arithmetic]
-    (outer: SystolicArray[T])
+class GemminiModule[T <: Data: Arithmetic]
+    (outer: Gemmini[T])
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
 

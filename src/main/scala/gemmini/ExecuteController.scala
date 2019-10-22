@@ -14,7 +14,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   import ev._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new SystolicCmdWithDeps(rob_entries)))
+    val cmd = Flipped(Decoupled(new GemminiCmdWithDeps(rob_entries)))
 
     val read  = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
     val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1))

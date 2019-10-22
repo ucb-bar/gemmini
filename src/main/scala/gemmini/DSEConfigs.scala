@@ -62,7 +62,7 @@ class SystolicParamsDSE1 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.baseConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.baseConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -74,7 +74,7 @@ class SystolicParamsDSE2 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.wsOnlyConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.wsOnlyConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -86,7 +86,7 @@ class SystolicParamsDSE3 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.bothDataflowsConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.bothDataflowsConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -98,7 +98,7 @@ class SystolicParamsDSE4 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.highBitwidthConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.highBitwidthConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -110,7 +110,7 @@ class SystolicParamsDSE5 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.largerDimConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.largerDimConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -122,7 +122,7 @@ class SystolicParamsDSE6 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.fullyCombinationalConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.fullyCombinationalConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -134,7 +134,7 @@ class SystolicParamsDSE7 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.moreMemoryConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.moreMemoryConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -146,7 +146,7 @@ class SystolicParamsDSE8 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.moreBanksConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.moreBanksConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -158,7 +158,7 @@ class SystolicParamsDSE10 extends Config((site, here, up) => {
       (p: Parameters) => {
          implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.narrowerBusConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.narrowerBusConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 8)
@@ -170,7 +170,7 @@ class SystolicParamsPnR16 extends Config((site, here, up) => {
     (p: Parameters) => {
       implicit val q = p
       implicit val v = implicitly[ValName]
-      LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.pnr16Config))
+      LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.pnr16Config))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -182,7 +182,7 @@ class SystolicParamsPnR32 extends Config((site, here, up) => {
     (p: Parameters) => {
       implicit val q = p
       implicit val v = implicitly[ValName]
-      LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.pnr32Config))
+      LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.pnr32Config))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -194,7 +194,7 @@ class SystolicParamsDSE11 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, DSEConfigs.baseConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.baseConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)

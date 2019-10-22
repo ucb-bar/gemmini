@@ -32,7 +32,7 @@ class WithMultiRoCC extends Config((site, here, up) => {
 // Component Mixin Configs
 // -----------------------
 
-object SystolicConfigs {
+object GemminiConfigs {
   val defaultConfig = GemminiArrayConfig(
     tileRows = 1,
     tileColumns = 1,
@@ -61,12 +61,12 @@ object SystolicConfigs {
    Also sets the system bus width to 128 bits (instead of the deafult 64 bits) to
    allow for the default 16x16 8-bit systolic array to be attached.
  */
-class DefaultSystolicConfig extends Config((site, here, up) => {
+class DefaultGemminiConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, SystolicConfigs.defaultConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -78,7 +78,7 @@ class DefaultSystolicConfig extends Config((site, here, up) => {
    This mixin **replaces** the default host rocket (assuming a single core config).
    This is useful for hierarcical physical design purposes.
  */
-class SystolicHostMiniCore extends Config((site, here, up) => {
+class GemminiHostMiniCore extends Config((site, here, up) => {
   case RocketTilesKey => Seq(
     RocketTileParams(
       core = RocketCoreParams(
@@ -107,7 +107,7 @@ class SystolicHostMiniCore extends Config((site, here, up) => {
       Seq((p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, SystolicConfigs.defaultConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
       }))
 })
 
@@ -119,7 +119,7 @@ class SystolicHostMiniCore extends Config((site, here, up) => {
    This is useful for software development purposes for the systolic accelerator
    as a device with a control processor (rather than a rocc-attached accelerator)
  */
-class WithSystolicHostMiniCore extends Config((site, here, up) => {
+class WithGemminiHostMiniCore extends Config((site, here, up) => {
   case RocketTilesKey => up(RocketTilesKey, site) :+
     RocketTileParams(
       core = RocketCoreParams(
@@ -146,7 +146,7 @@ class WithSystolicHostMiniCore extends Config((site, here, up) => {
       Seq((p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new SystolicArray(OpcodeSet.custom3, SystolicConfigs.defaultConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
       }))
 })
 
@@ -161,7 +161,7 @@ class WithSystolicHostMiniCore extends Config((site, here, up) => {
  * Top level config with a default single core rocket and systolic rocc accelerator.
    Useful for systolic performance evaluation and debugging.
  */
-class SystolicConfig extends Config(new DefaultSystolicConfig ++
+class GemminiConfig extends Config(new DefaultGemminiConfig ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
 
@@ -169,24 +169,24 @@ class SystolicConfig extends Config(new DefaultSystolicConfig ++
  * Top level config with a small host rocket and systolic rocc accelerator.
    Useful for physical design.
  */
-class SystolicAcceleratorConfig extends Config(
-  new SystolicHostMiniCore ++
+class GemminiAcceleratorConfig extends Config(
+  new GemminiHostMiniCore ++
   new WithMultiRoCC ++
-  new DefaultSystolicConfig ++
+  new DefaultGemminiConfig ++
   new WithoutTLMonitors ++
   new freechips.rocketchip.system.DefaultConfig
 )
 
 
 /**
- * Top level config with a default single core rocket, 
+ * Top level config with a default single core rocket,
    and a small mini-core rocket attached to a systolic rocc accelerator.
    Useful for device driver development
  */
-class SystolicAcceleratorDeviceConfig extends Config(
-  new WithSystolicHostMiniCore ++
+class GemminiAcceleratorDeviceConfig extends Config(
+  new WithGemminiHostMiniCore ++
   new WithMultiRoCC ++
-  new DefaultSystolicConfig ++
+  new DefaultGemminiConfig ++
   new WithMultiRoCC ++
   new WithoutTLMonitors ++
   new freechips.rocketchip.system.DefaultConfig

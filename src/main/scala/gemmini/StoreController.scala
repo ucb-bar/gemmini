@@ -13,7 +13,7 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new SystolicCmdWithDeps(rob_entries)))
+    val cmd = Flipped(Decoupled(new GemminiCmdWithDeps(rob_entries)))
 
     // val dma = new ScratchpadWriteMemIO(sp_banks, sp_bank_entries, acc_rows)
     val dma = new ScratchpadWriteMemIO(local_addr_t)
