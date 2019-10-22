@@ -194,15 +194,19 @@ class Scratchpad[T <: Data: Arithmetic](
     write_issue_q.io.deq.ready := writer.module.io.req.ready && writeData.valid
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
     writer.module.io.req.bits.data := writeData.bits
+    writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
 
     read_issue_q.io.enq <> io.dma.read.req
 
     reader.module.io.req.valid := read_issue_q.io.deq.valid
     read_issue_q.io.deq.ready := reader.module.io.req.ready
     reader.module.io.req.bits.vaddr := read_issue_q.io.deq.bits.vaddr
-    reader.module.io.req.bits.spaddr := read_issue_q.io.deq.bits.laddr.sp_bank() * sp_bank_entries.U + read_issue_q.io.deq.bits.laddr.sp_row()
+    // reader.module.io.req.bits.spaddr := read_issue_q.io.deq.bits.laddr.sp_bank() * sp_bank_entries.U + read_issue_q.io.deq.bits.laddr.sp_row()
+    reader.module.io.req.bits.spaddr := Mux(read_issue_q.io.deq.bits.laddr.is_acc_addr,
+      read_issue_q.io.deq.bits.laddr.acc_row(), read_issue_q.io.deq.bits.laddr.full_sp_addr())
     reader.module.io.req.bits.len := read_issue_q.io.deq.bits.len
     reader.module.io.req.bits.is_acc := read_issue_q.io.deq.bits.laddr.is_acc_addr
+    reader.module.io.req.bits.status := read_issue_q.io.deq.bits.status
     reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
 
     reader.module.io.resp.ready := false.B

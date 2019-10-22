@@ -53,14 +53,8 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
   io.dma.req.bits.len := len
   io.dma.req.bits.status := mstatus
 
-  io.completed.valid := false.B
-  io.completed.bits := DontCare
-
   // Command tracker
   val deps_t = new Bundle {
-    val pushStore = Bool()
-    val pushEx = Bool()
-
     val rob_id = UInt(log2Up(rob_entries).W)
   }
 
@@ -75,8 +69,6 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
   cmd_tracker.io.alloc.bits.bytes_to_read := len * block_rows.U * // TODO change len to lgLen so that the multiplier here can be removed
     block_cols.U * (Mux(localaddr.is_acc_addr, config.accType.getWidth.U, config.inputType.getWidth.U) / 8.U)
-  cmd_tracker.io.alloc.bits.tag.pushStore := false.B
-  cmd_tracker.io.alloc.bits.tag.pushEx := false.B
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
@@ -86,12 +78,8 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
   val cmd_id = RegEnableThru(cmd_tracker.io.alloc.bits.cmd_id, cmd_tracker.io.alloc.fire()) // TODO is this really better than a simple RegEnable?
   io.dma.req.bits.cmd_id := cmd_id
 
-  when (cmd_tracker.io.cmd_completed.fire()) {
-    val tag = cmd_tracker.io.cmd_completed.bits.tag
-
-    io.completed.valid := true.B
-    io.completed.bits := tag.rob_id
-  }
+  io.completed.valid := cmd_tracker.io.cmd_completed.valid
+  io.completed.bits := cmd_tracker.io.cmd_completed.bits.tag.rob_id
 
   // Row counter
   when (io.dma.req.fire()) {
@@ -102,13 +90,14 @@ class LoadController[T <: Data](config: SystolicArrayConfig[T], coreMaxAddrBits:
   switch (control_state) {
     is (waiting_for_command) {
       when (cmd.valid) {
-        when(DoConfig) {
-          stride := config_stride
-
+        when(DoConfig && !cmd_tracker.io.cmd_completed.valid) {
           io.completed.valid := true.B
           io.completed.bits := cmd.bits.rob_id
 
-          cmd.ready := true.B
+          when (io.completed.fire()) {
+            stride := config_stride
+            cmd.ready := true.B
+          }
         }
 
         .elsewhen(DoLoad && cmd_tracker.io.alloc.fire()) {

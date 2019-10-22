@@ -16,13 +16,12 @@ object DSEBaseConfig {
     tileColumns = 1,
     meshRows = 16,
     meshColumns = 16,
-    ld_str_queue_length = 10,
-    ex_queue_length = 10,
-    rob_entries = 4,
+    ld_str_queue_length = 2,
+    ex_queue_length = 4,
+    rob_entries = 8,
     sp_banks = 4, // TODO support one-bank designs
     sp_capacity = CapacityInKilobytes(64),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
-    depq_len = 65536,
     dataflow = Dataflow.OS,
     acc_capacity = CapacityInKilobytes(16),
     mem_pipeline = 1,

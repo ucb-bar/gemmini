@@ -290,13 +290,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
           if (dataflow == Dataflow.BOTH)
             current_dataflow := rs1s(0)(2)
 
-          /*
-          io.pullLoad.ready := cmd.bits(0).deps.pullLoad
-          io.pullStore.ready := cmd.bits(0).deps.pullStore
-          io.pushLoad.valid := cmd.bits(0).deps.pushLoad
-          io.pushStore.valid := cmd.bits(0).deps.pushStore
-          */
-
           io.completed.valid := true.B
           io.completed.bits := cmd.bits(0).rob_id
 
@@ -539,7 +532,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArr
     w_row + block_size.U - 1.U - output_counter.value)
 
   val is_garbage_addr = w_address.is_garbage()
-  // val is_garbage_addr_and_no_deps = is_garbage_addr && !mesh.io.tag_out.pushLoad && !mesh.io.tag_out.pushStore // TODO is this actually necessary?
   val is_garbage_addr_and_no_deps = is_garbage_addr && !mesh.io.tag_out.rob_ids(0).valid // TODO is this actually necessary?
 
   // Write to normal scratchpad

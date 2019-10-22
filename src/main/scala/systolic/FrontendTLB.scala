@@ -9,6 +9,11 @@ import freechips.rocketchip.tilelink.TLEdgeOut
 import freechips.rocketchip.util.InOrderArbiter
 import Util._
 
+class DecoupledTLBReq(val lgMaxSize: Int)(implicit p: Parameters) extends CoreBundle {
+  val tlb_req = new TLBReq(lgMaxSize)
+  val status = new MStatus
+}
+
 class TLBExceptionIO extends Bundle {
   val interrupt = Output(Bool())
   val flush_retry = Input(Bool())
@@ -23,7 +28,8 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 
   val lgMaxSize = log2Ceil(maxSize)
   val io = new Bundle {
-    val req = Flipped(Decoupled(new TLBReq(lgMaxSize)))
+    // val req = Flipped(Decoupled(new TLBReq(lgMaxSize)))
+    val req = Flipped(Decoupled(new DecoupledTLBReq(lgMaxSize)))
     val resp = Valid(new TLBResp)
     val ptw = new TLBPTWIO
 
@@ -38,7 +44,7 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 
   io.req.ready := state === s_idle
   tlb.io.req.valid := io.req.fire() || state === s_waiting_for_resp
-  tlb.io.req.bits := req
+  tlb.io.req.bits := req.tlb_req
 
   io.resp.valid := false.B
   io.resp.bits := tlb.io.resp
@@ -53,6 +59,7 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   tlb.io.sfence.bits.asid := DontCare
 
   io.ptw <> tlb.io.ptw
+  tlb.io.ptw.status := req.status
 
   when (io.req.fire() || state === s_waiting_for_resp) {
     // We could actually check the response from the TLB instantaneously to get a response in the same cycle. However,
@@ -60,7 +67,7 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
     // "state === s_idle" condition from the "elsewhen" below
 
     val miss = tlb.io.resp.miss
-    val exception = Mux(req.cmd === M_XRD, tlb.io.resp.pf.ld || tlb.io.resp.ae.ld, tlb.io.resp.pf.st || tlb.io.resp.ae.st)
+    val exception = Mux(req.tlb_req.cmd === M_XRD, tlb.io.resp.pf.ld || tlb.io.resp.ae.ld, tlb.io.resp.pf.st || tlb.io.resp.ae.st)
 
     when (exception) {
       state := s_interrupt
@@ -84,7 +91,8 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 
 class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
   val lgMaxSize = log2Ceil(coreDataBytes)
-  val req = Decoupled(new TLBReq(lgMaxSize))
+  // val req = Decoupled(new TLBReq(lgMaxSize))
+  val req = Decoupled(new DecoupledTLBReq(lgMaxSize))
   val resp = Flipped(Valid(new TLBResp))
 }
 
@@ -97,7 +105,8 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
   })
 
   val lgMaxSize = log2Ceil(coreDataBytes)
-  val tlbArb = Module(new InOrderArbiter(new TLBReq(lgMaxSize), new TLBResp, nClients))
+  // val tlbArb = Module(new InOrderArbiter(new TLBReq(lgMaxSize), new TLBResp, nClients))
+  val tlbArb = Module(new InOrderArbiter(new DecoupledTLBReq(lgMaxSize), new TLBResp, nClients))
   val tlb = Module(new DecoupledTLB(entries, maxSize))
   tlb.io.req <> tlbArb.io.out_req
 

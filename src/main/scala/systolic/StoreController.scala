@@ -65,9 +65,12 @@ class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], co
     is (waiting_for_command) {
       when (cmd.valid) {
         when(DoConfig) {
-          stride := config_stride
           io.completed.valid := true.B
-          cmd.ready := true.B
+
+          when (io.completed.fire()) {
+            stride := config_stride
+            cmd.ready := true.B
+          }
         }
 
         .elsewhen(DoStore) {

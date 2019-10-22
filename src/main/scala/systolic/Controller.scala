@@ -106,7 +106,7 @@ class SystolicArrayModule[T <: Data: Arithmetic]
   tlb.io.exp.flush_skip := false.B
   tlb.io.exp.flush_retry := false.B
 
-  io.ptw.head <> tlb.io.ptw // TODO
+  io.ptw.head <> tlb.io.ptw
   /*io.ptw.head.req <> tlb.io.ptw.req
   tlb.io.ptw.resp <> io.ptw.head.resp
   tlb.io.ptw.ptbr := io.ptw.head.ptbr

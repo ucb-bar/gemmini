@@ -19,7 +19,6 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
                                                          sp_capacity: SystolicMemCapacity,
                                                          acc_capacity: SystolicMemCapacity,
                                                          shifter_banks: Int,
-                                                         depq_len: Int,
                                                          dataflow: Dataflow.Value,
                                                          mem_pipeline: Int,
                                                          dma_maxbytes: Int,
@@ -42,7 +41,7 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
 
   val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_rows)
 
-  val max_in_flight_reqs = 4 // TODO calculate this somehow
+  val max_in_flight_reqs = 16 // TODO calculate this somehow
 
   require(isPow2(sp_bank_entries), "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement
   require(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
@@ -81,8 +80,6 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
     header ++= s"#define MAX_BYTES 64\n"
     header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${inputType.getWidth/8}))\n"
     header ++= s"#define MAX_BLOCK_LEN_ACC (MAX_BYTES/(DIM*${accType.getWidth/8}))\n\n"
-
-    header ++= s"#define MAX_Q_LEN $depq_len\n\n"
 
     // Datatype of the systolic array
     val limits = limitsOfDataType(inputType)

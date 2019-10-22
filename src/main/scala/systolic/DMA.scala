@@ -6,6 +6,7 @@ import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
 import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters}
 import testchipip.TLHelper
+import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
 import Util._
 
@@ -13,6 +14,7 @@ class StreamReadRequest(val spad_rows: Int, val acc_rows: Int)(implicit p: Param
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W)
   val is_acc = Bool()
+  val status = new MStatus
   val len = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 }
@@ -57,6 +59,7 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     core.module.io.beatData.ready := beatPacker.io.in.ready
     beatPacker.io.req.valid := core.module.io.beatData.valid
     beatPacker.io.req.bits := xactTracker.io.peek.entry
+    beatPacker.io.req.bits.lg_len_req := core.module.io.beatData.bits.lg_len_req
     beatPacker.io.in.valid := core.module.io.beatData.valid
     beatPacker.io.in.bits := core.module.io.beatData.bits.data
 
@@ -72,9 +75,10 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
   }
 }
 
-class StreamReadBeat (val nXacts: Int, val beatBits: Int) extends Bundle {
+class StreamReadBeat (val nXacts: Int, val beatBits: Int, val maxReqBytes: Int) extends Bundle {
   val xactid = UInt(log2Up(nXacts).W)
   val data = UInt(beatBits.W)
+  val lg_len_req = UInt(log2Up(log2Up(maxReqBytes+1)+1).W)
   val last = Bool()
 }
 
@@ -99,7 +103,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows)))
       val reserve = new XactTrackerAllocIO(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes)
-      val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits))
+      val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits, maxBytes))
       val tlb = new FrontendTLBIO
     })
 
@@ -137,10 +141,11 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
 
     // Address translation
     io.tlb.req.valid := state === s_translate_req
-    io.tlb.req.bits.vaddr := Cat(vpn, 0.U(pgIdxBits.W))
-    io.tlb.req.bits.passthrough := false.B
-    io.tlb.req.bits.size := 0.U
-    io.tlb.req.bits.cmd := M_XRD
+    io.tlb.req.bits.tlb_req.vaddr := Cat(vpn, 0.U(pgIdxBits.W))
+    io.tlb.req.bits.tlb_req.passthrough := false.B
+    io.tlb.req.bits.tlb_req.size := 0.U
+    io.tlb.req.bits.tlb_req.cmd := M_XRD
+    io.tlb.req.bits.status := req.status
 
     val ppn = RegEnable(io.tlb.resp.bits.paddr(paddrBits-1, pgIdxBits),
       io.tlb.resp.fire())
@@ -220,7 +225,8 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
     io.reserve.entry.is_acc := req.is_acc
-    io.reserve.entry.lg_len_req := read_lg_size
+    // io.reserve.entry.lg_len_req := read_lg_size
+    io.reserve.entry.lg_len_req := DontCare // TODO just remove this from the IO completely
     io.reserve.entry.bytes_to_read := read_bytes_read
     io.reserve.entry.cmd_id := req.cmd_id
 
@@ -250,7 +256,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     io.beatData.valid := tl.d.valid
     io.beatData.bits.xactid := tl.d.bits.source
     io.beatData.bits.data := tl.d.bits.data
-    // io.beatData.bits.last := edge.first(tl.d)
+    io.beatData.bits.lg_len_req := tl.d.bits.size
     io.beatData.bits.last := edge.last(tl.d)
     // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
 
@@ -269,6 +275,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
 class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val data = UInt(dataWidth.W)
+  val status = new MStatus
 }
 
 class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int)
@@ -318,10 +325,11 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
 
     // Address translation
     io.tlb.req.valid := state === s_translate_req
-    io.tlb.req.bits.vaddr := Cat(vpn, 0.U(pgIdxBits.W))
-    io.tlb.req.bits.passthrough := false.B
-    io.tlb.req.bits.size := 0.U // send_size
-    io.tlb.req.bits.cmd := M_XWR
+    io.tlb.req.bits.tlb_req.vaddr := Cat(vpn, 0.U(pgIdxBits.W))
+    io.tlb.req.bits.tlb_req.passthrough := false.B
+    io.tlb.req.bits.tlb_req.size := 0.U // send_size
+    io.tlb.req.bits.tlb_req.cmd := M_XWR
+    io.tlb.req.bits.status := req.status
 
     val ppn = RegEnable(io.tlb.resp.bits.paddr(paddrBits-1, pgIdxBits),
       io.tlb.resp.fire())
