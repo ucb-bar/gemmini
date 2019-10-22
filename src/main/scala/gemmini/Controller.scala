@@ -8,7 +8,7 @@ import chisel3.util._
 import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
-import SystolicISA._
+import GemminiISA._
 
 class SystolicCmdWithDeps(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
@@ -74,7 +74,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_rows: Int) extends Bund
   override def cloneType: LocalAddr.this.type = new LocalAddr(sp_banks, sp_bank_entries, acc_rows).asInstanceOf[this.type]
 }
 
-class SystolicArray[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: SystolicArrayConfig[T])
+class SystolicArray[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: GemminiArrayConfig[T])
                                            (implicit p: Parameters)
   extends LazyRoCC (
     opcodes = OpcodeSet.custom3,

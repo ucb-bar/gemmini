@@ -2,7 +2,7 @@ package gemmini
 
 import chisel3._
 
-object SystolicISA {
+object GemminiISA {
   // funct values
   val CONFIG_CMD = 0.U
   val LOAD_CMD = 2.U

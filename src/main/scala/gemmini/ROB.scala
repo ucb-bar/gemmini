@@ -5,7 +5,7 @@ import chisel3.util._
 
 import freechips.rocketchip.tile.RoCCCommand
 
-import SystolicISA._
+import GemminiISA._
 import Util._
 
 class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {

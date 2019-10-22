@@ -2,13 +2,13 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import SystolicISA._
+import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
 // TODO handle reads from the same bank
 // TODO don't flush all 4 time steps when shorter flushes will work
-class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: SystolicArrayConfig[T])
+class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T])
                                   (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
   import config._
   import ev._

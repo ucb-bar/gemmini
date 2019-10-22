@@ -33,7 +33,7 @@ class WithMultiRoCC extends Config((site, here, up) => {
 // -----------------------
 
 object SystolicConfigs {
-  val defaultConfig = SystolicArrayConfig(
+  val defaultConfig = GemminiArrayConfig(
     tileRows = 1,
     tileColumns = 1,
     meshRows = 16,

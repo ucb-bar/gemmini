@@ -3,11 +3,11 @@ package gemmini
 import chisel3._
 import chisel3.util._
 
-sealed abstract trait SystolicMemCapacity
-case class CapacityInKilobytes(kilobytes: Int) extends SystolicMemCapacity
-case class CapacityInMatrices(matrices: Int) extends SystolicMemCapacity
+sealed abstract trait GemminiMemCapacity
+case class CapacityInKilobytes(kilobytes: Int) extends GemminiMemCapacity
+case class CapacityInMatrices(matrices: Int) extends GemminiMemCapacity
 
-case class SystolicArrayConfig[T <: Data : Arithmetic] (
+case class GemminiArrayConfig[T <: Data : Arithmetic](
                                                          tileRows: Int,
                                                          tileColumns: Int,
                                                          meshRows: Int,
@@ -16,8 +16,8 @@ case class SystolicArrayConfig[T <: Data : Arithmetic] (
                                                          ex_queue_length: Int,
                                                          rob_entries: Int,
                                                          sp_banks: Int, // TODO support one-bank designs
-                                                         sp_capacity: SystolicMemCapacity,
-                                                         acc_capacity: SystolicMemCapacity,
+                                                         sp_capacity: GemminiMemCapacity,
+                                                         acc_capacity: GemminiMemCapacity,
                                                          shifter_banks: Int,
                                                          dataflow: Dataflow.Value,
                                                          mem_pipeline: Int,

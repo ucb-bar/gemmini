@@ -5,7 +5,7 @@ import chisel3.util._
 
 import gemmini.Util._
 
-class BeatPackerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, val accRows: Int,
+class BeatMergerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, val accRows: Int,
                     val alignedTo: Int) extends Bundle {
   val data = UInt((spadWidth max accWidth).W)
   val addr = UInt(log2Up(spadRows max accRows).W)
@@ -13,11 +13,6 @@ class BeatPackerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, va
   val mask = Vec((spadWidth max accWidth)/(alignedTo*8) max 1, Bool())
   val last = Bool()
 }
-
-/*class BeatPackerIn(val beatBits: Int) extends Bundle {
-  val data = UInt(beatBits.W)
-  val last = Bool()
-}*/
 
 /*
   beatBits: in bits
@@ -29,13 +24,13 @@ class BeatPackerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, va
   maxReqBytes: in bytes
   aligned_to: in bytes
  */
-class BeatPacker(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, spadRows: Int, accRows: Int, maxReqBytes: Int, alignedTo: Int, meshRows: Int)
+class BeatMerger(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, spadRows: Int, accRows: Int, maxReqBytes: Int, alignedTo: Int, meshRows: Int)
   extends Module {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes)))
     val in = Flipped(Decoupled(UInt(beatBits.W)))
     // val in = Flipped(Decoupled(new BeatPackerIn(beatBits)))
-    val out = Decoupled(new BeatPackerOut(spadWidth, accWidth, spadRows, accRows, alignedTo))
+    val out = Decoupled(new BeatMergerOut(spadWidth, accWidth, spadRows, accRows, alignedTo))
   })
 
   val beatBytes = beatBits/8

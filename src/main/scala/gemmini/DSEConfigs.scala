@@ -11,7 +11,7 @@ import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet}
 // -----------------------------
 
 object DSEBaseConfig {
-  val baseConfig = SystolicArrayConfig(
+  val baseConfig = GemminiArrayConfig(
     tileRows = 1,
     tileColumns = 1,
     meshRows = 16,

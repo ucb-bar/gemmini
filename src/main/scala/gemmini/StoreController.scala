@@ -2,13 +2,13 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import SystolicISA._
+import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
-class StoreController[T <: Data : Arithmetic](config: SystolicArrayConfig[T], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
+class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
                      (implicit p: Parameters) extends Module {
   import config._
 

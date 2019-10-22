@@ -125,7 +125,7 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int) extends
 // TODO support unaligned accesses, for both multiple and single matrix loads
 // TODO scratchpad is currently broken when one row is larger than dataBits. The requests arrive out-of-order, meaning that half of one row might arrive after the first have of another row. Some kind of re-ordering buffer may be needed
 class Scratchpad[T <: Data: Arithmetic](
-    /*nBanks: Int, nRows: Int, local_addr_t: LocalAddr, sp_addr_t: SPAddr,*/ config: SystolicArrayConfig[T])
+    /*nBanks: Int, nRows: Int, local_addr_t: LocalAddr, sp_addr_t: SPAddr,*/ config: GemminiArrayConfig[T])
     (implicit p: Parameters) extends LazyModule {
 
   import config._

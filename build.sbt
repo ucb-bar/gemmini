@@ -26,7 +26,7 @@ def javacOptionsVersion(scalaVersion: String): Seq[String] = {
   }
 }
 
-name := "systolic"
+name := "gemmini"
 
 version := "3.1.0"
 
