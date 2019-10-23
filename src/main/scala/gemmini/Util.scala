@@ -75,6 +75,16 @@ object Util {
     val valid = Bool()
     val bits = t.cloneType
 
+    def push(b: T): Unit = {
+      valid := true.B
+      bits := b
+    }
+
+    def pop(dummy: Int = 0): T = {
+      valid := false.B
+      bits
+    }
+
     override def cloneType: this.type = new UDValid(t.cloneType).asInstanceOf[this.type]
   }
 

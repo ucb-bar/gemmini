@@ -8,6 +8,7 @@ import freechips.rocketchip.tile.RoCCCommand
 import GemminiISA._
 import Util._
 
+// TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {
   val valid = Output(Bool())
   val ready = Input(Bool())
@@ -20,7 +21,7 @@ class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {
 }
 
 // class ROB[T <: RoCCCommand](cmd_t: T, nEntries: Int, sprows: Int, block_rows: Int) extends Module {
-class ROB[T <: RoCCCommand](cmd_t: T, nEntries: Int, local_addr_t: LocalAddr, block_rows: Int) extends Module {
+class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows: Int) extends Module {
   val io = IO(new Bundle {
     val alloc = Flipped(Decoupled(cmd_t.cloneType))
 
@@ -53,6 +54,7 @@ class ROB[T <: RoCCCommand](cmd_t: T, nEntries: Int, local_addr_t: LocalAddr, bl
 
     val op1 = UDValid(local_addr_t.cloneType)
     val op2 = UDValid(local_addr_t.cloneType)
+    val op3 = UDValid(local_addr_t.cloneType)
 
     val dst = UDValid(new Bundle {
       val start = local_addr_t.cloneType
@@ -76,14 +78,16 @@ class ROB[T <: RoCCCommand](cmd_t: T, nEntries: Int, local_addr_t: LocalAddr, bl
       // We search for all entries which write to an address which we read from
       e.valid && !e.bits.completed && e.bits.dst.valid && (
         (entry.bits.op1.valid && e.bits.dst.bits.start <= entry.bits.op1.bits && e.bits.dst.bits.end() > entry.bits.op1.bits) ||
-          (entry.bits.op2.valid && e.bits.dst.bits.start <= entry.bits.op2.bits && e.bits.dst.bits.end() > entry.bits.op2.bits))
+          (entry.bits.op2.valid && e.bits.dst.bits.start <= entry.bits.op2.bits && e.bits.dst.bits.end() > entry.bits.op2.bits) ||
+            (entry.bits.op3.valid && e.bits.dst.bits.start <= entry.bits.op3.bits && e.bits.dst.bits.end() > entry.bits.op3.bits))
     }
 
     val wars = entries.map { e =>
       // We search for all entries which read from an address that we write to
       e.valid && !e.bits.completed && entry.bits.dst.valid && (
         (e.bits.op1.valid && entry.bits.dst.bits.start <= e.bits.op1.bits && entry.bits.dst.bits.end() > e.bits.op1.bits) ||
-          (e.bits.op2.valid && entry.bits.dst.bits.start <= e.bits.op2.bits && entry.bits.dst.bits.end() > e.bits.op2.bits))
+          (e.bits.op2.valid && entry.bits.dst.bits.start <= e.bits.op2.bits && entry.bits.dst.bits.end() > e.bits.op2.bits) ||
+            (e.bits.op3.valid && entry.bits.dst.bits.start <= e.bits.op3.bits && entry.bits.dst.bits.end() > e.bits.op3.bits))
     }
 
     val waws = entries.map { e =>
@@ -165,6 +169,7 @@ class ROB[T <: RoCCCommand](cmd_t: T, nEntries: Int, local_addr_t: LocalAddr, bl
     val spAddrBits = 32
     val cmd = io.alloc.bits
     val funct = cmd.inst.funct
+    val funct_is_compute = funct === COMPUTE_AND_STAY_CMD || funct === COMPUTE_AND_FLIP_CMD
     val config_cmd_type = cmd.rs1(1,0) // TODO magic numbers
 
     empty := false.B
@@ -178,28 +183,57 @@ class ROB[T <: RoCCCommand](cmd_t: T, nEntries: Int, local_addr_t: LocalAddr, bl
 
     entries(waddr).bits.is_config := funct === CONFIG_CMD
 
-    entries(waddr).bits.op1.valid := funct === PRELOAD_CMD || funct === COMPUTE_AND_STAY_CMD ||
-      funct === COMPUTE_AND_FLIP_CMD
+//    entries(waddr).bits.op1.valid := funct === PRELOAD_CMD || funct === COMPUTE_AND_STAY_CMD ||
+//      funct === COMPUTE_AND_FLIP_CMD
+    entries(waddr).bits.op1.valid := funct_is_compute
     entries(waddr).bits.op1.bits := cmd.rs1.asTypeOf(local_addr_t)
 
-    entries(waddr).bits.op2.valid := funct === COMPUTE_AND_STAY_CMD || funct === COMPUTE_AND_FLIP_CMD ||
-      funct === LOAD_CMD || funct === STORE_CMD
+    entries(waddr).bits.op2.valid := funct_is_compute || funct === LOAD_CMD || funct === STORE_CMD
     entries(waddr).bits.op2.bits := cmd.rs2.asTypeOf(local_addr_t)
 
-    entries(waddr).bits.dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD
-    entries(waddr).bits.dst.bits.start := cmd.rs2.asTypeOf(local_addr_t)
-    entries(waddr).bits.dst.bits.len := Mux(funct === PRELOAD_CMD, 1.U, cmd.rs2(63, spAddrBits)) // TODO magic number
+    entries(waddr).bits.op3.valid := funct_is_compute
+    entries(waddr).bits.op3.bits := cmd.rs1(63, 32).asTypeOf(local_addr_t)
+
+    // entries(waddr).bits.dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD
+    entries(waddr).bits.dst.valid := funct_is_compute || funct === LOAD_CMD
+    entries(waddr).bits.dst.bits.start := Mux(funct_is_compute, cmd.rs2(63, 32), cmd.rs2(31, 0)).asTypeOf(local_addr_t)
+    // entries(waddr).bits.dst.bits.len := Mux(funct === PRELOAD_CMD, 1.U, cmd.rs2(63, spAddrBits)) // TODO magic number
+    entries(waddr).bits.dst.bits.len := Mux(funct_is_compute, 1.U, cmd.rs2(63, spAddrBits)) // TODO magic number
 
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_store = (funct === STORE_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
-    val is_ex = (funct === COMPUTE_AND_FLIP_CMD || funct === COMPUTE_AND_STAY_CMD || funct === PRELOAD_CMD) ||
-      (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
+//    val is_ex = (funct === COMPUTE_AND_FLIP_CMD || funct === COMPUTE_AND_STAY_CMD || funct === PRELOAD_CMD) ||
+//      (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
+    val is_ex = funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
 
     entries(waddr).bits.q := Mux1H(Seq(
       is_load -> ldq,
       is_store -> stq,
       is_ex -> exq
     ))
+  }
+
+  val utilization = PopCount(entries.map(e => e.valid && !e.bits.completed))
+  val pop_head = entries(raddr)
+  val pop_head_q = WireInit(pop_head.bits.q)
+  val pop_head_funct = WireInit(pop_head.bits.cmd.inst.funct)
+  val utilization_ld_q_incomplete = PopCount(entries.map(e => e.valid && !e.bits.completed && e.bits.q === ldq))
+  val utilization_st_q_incomplete = PopCount(entries.map(e => e.valid && !e.bits.completed && e.bits.q === stq))
+  val utilization_ex_q_incomplete = PopCount(entries.map(e => e.valid && !e.bits.completed && e.bits.q === exq))
+  val utilization_ld_q = PopCount(entries.map(e => e.valid && e.bits.q === ldq))
+  val utilization_st_q = PopCount(entries.map(e => e.valid && e.bits.q === stq))
+  val utilization_ex_q = PopCount(entries.map(e => e.valid && e.bits.q === exq))
+  val cntr = Counter(10000000)
+  when (cntr.inc()) {
+    printf(p"Utilization: $utilization\n")
+    printf(p"Pop head q: $pop_head_q\n")
+    printf(p"Pop head funct: $pop_head_funct\n")
+    printf(p"Utilization ld q (incomplete): $utilization_ld_q_incomplete\n")
+    printf(p"Utilization st q (incomplete): $utilization_st_q_incomplete\n")
+    printf(p"Utilization ex q (incomplete): $utilization_ex_q_incomplete\n")
+    printf(p"Utilization ld q: $utilization_ld_q\n")
+    printf(p"Utilization st q: $utilization_st_q\n")
+    printf(p"Utilization ex q: $utilization_ex_q\n\n")
   }
 
   when (reset.toBool()) {

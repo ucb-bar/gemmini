@@ -28,11 +28,13 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val block_size = meshRows*tileRows
 
   val tag_with_deps = new Bundle with TagQueueTag {
-    val rob_ids = Vec(2, UDValid(UInt(log2Up(rob_entries).W)))
+    // val rob_ids = Vec(2, UDValid(UInt(log2Up(rob_entries).W)))
+    val rob_id = UDValid(UInt(log2Up(rob_entries).W))
     val addr = local_addr_t.cloneType
 
     override def make_this_garbage(dummy: Int = 0): Unit = {
-      rob_ids.foreach(_.valid := false.B)
+      // rob_ids.foreach(_.valid := false.B)
+      rob_id.valid := false.B
       addr.make_this_garbage()
     }
   }
@@ -87,6 +89,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   io.completed.valid := false.B
   io.completed.bits := DontCare
 
+  val pending_completed_rob_id = Reg(UDValid(UInt(log2Up(rob_entries).W)))
+
   // Instantiate a queue which queues up signals which must be fed into the mesh
   val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, mem_pipeline+1,
     pipe=true))
@@ -131,7 +135,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     !is_garbage && (mul_raw_haz || pre_raw_haz)
   }.reduce(_ || _)
 
-  val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_ids(0).valid).reduce(_ || _)
+  // val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_ids(0).valid).reduce(_ || _)
+  val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_id.valid).reduce(_ || _)
 
   // SRAM scratchpad
   val dataAbank = a_address_rs1.sp_bank()
@@ -281,7 +286,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
       when(cmd.valid(0))
       {
-        when(DoConfig && !matmul_in_progress) {
+        when(DoConfig && !matmul_in_progress && !pending_completed_rob_id.valid) {
           activation := rs1s(0)(4, 3)
           in_shift := rs2s(0)(31, 0) // TODO magic number
           acc_shift := cmd.bits(0).cmd.rs1(xLen-1, 32) // TODO magic number
@@ -366,6 +371,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
           cmd.pop := 2.U
           control_state := waiting_for_cmd
 
+          // pending_completed_rob_id.push(cmd.bits(0).rob_id)
+
           when (current_dataflow === Dataflow.OS.id.U) {
             in_s_flush := !rs2s(1).asTypeOf(local_addr_t).is_garbage()
           }
@@ -380,6 +387,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
         when (about_to_fire_all_rows) {
           cmd.pop := 1.U
           control_state := waiting_for_cmd
+
+          // pending_completed_rob_id.push(cmd.bits(0).rob_id)
         }
       }
     }
@@ -425,8 +434,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
     val c_addr = local_addr_t.cloneType
 
-    val rob_id_1 = UInt(log2Up(rob_entries).W)
-    val rob_id_2 = UDValid(UInt(log2Up(rob_entries).W))
+    val rob_id = UDValid(UInt(log2Up(rob_entries).W))
+    // val rob_id_2 = UDValid(UInt(log2Up(rob_entries).W))
 
     val dataflow = UInt(1.W)
     val s = UInt(1.W)
@@ -460,9 +469,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
   mesh_cntl_signals_q.io.enq.bits.c_addr := c_address_rs2
 
-  mesh_cntl_signals_q.io.enq.bits.rob_id_1 := cmd.bits(0).rob_id
-  mesh_cntl_signals_q.io.enq.bits.rob_id_2.valid := performing_mul_pre
-  mesh_cntl_signals_q.io.enq.bits.rob_id_2.bits := cmd.bits(1).rob_id
+  mesh_cntl_signals_q.io.enq.bits.rob_id.valid := !performing_single_mul
+  mesh_cntl_signals_q.io.enq.bits.rob_id.bits := Mux(performing_single_preload, cmd.bits(0).rob_id, cmd.bits(1).rob_id)
+  // mesh_cntl_signals_q.io.enq.bits.rob_id_2.valid := performing_mul_pre
+  // mesh_cntl_signals_q.io.enq.bits.rob_id_2.bits := cmd.bits(1).rob_id
 
   mesh_cntl_signals_q.io.enq.bits.dataflow := current_dataflow
   mesh_cntl_signals_q.io.enq.bits.s := Mux(performing_single_preload, in_s_flush, in_s)
@@ -503,9 +513,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
-    mesh.io.tag_in.bits.rob_ids(0).valid := true.B
-    mesh.io.tag_in.bits.rob_ids(0).bits := cntl.rob_id_1
-    mesh.io.tag_in.bits.rob_ids(1) := cntl.rob_id_2
+//    mesh.io.tag_in.bits.rob_ids(0).valid := true.B
+//    mesh.io.tag_in.bits.rob_ids(0).bits := cntl.rob_id
+//    mesh.io.tag_in.bits.rob_ids(1) := cntl.rob_id_2
+    mesh.io.tag_in.bits.rob_id := cntl.rob_id
     mesh.io.tag_in.bits.addr := cntl.c_addr
   }
 
@@ -532,7 +543,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     w_row + block_size.U - 1.U - output_counter.value)
 
   val is_garbage_addr = w_address.is_garbage()
-  val is_garbage_addr_and_no_deps = is_garbage_addr && !mesh.io.tag_out.rob_ids(0).valid // TODO is this actually necessary?
+  // val is_garbage_addr_and_no_deps = is_garbage_addr && !mesh.io.tag_out.rob_ids(0).valid // TODO is this actually necessary?
 
   // Write to normal scratchpad
   for(i <- 0 until sp_banks) {
@@ -560,34 +571,25 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   }
 
   // Handle dependencies and turn off outputs for garbage addresses
-  val rob_ids = Reg(Vec(2, UDValid(UInt(log2Up(rob_entries).W))))
+  val mesh_completed_rob_id_fire = WireInit(false.B)
 
   // when(mesh.io.out.fire() && !is_garbage_addr_and_no_deps) {
-  when(mesh.io.out.fire()) {
+  when(mesh.io.out.fire() && mesh.io.tag_out.rob_id.valid) {
     when(output_counter.inc()) {
-      rob_ids := mesh.io.tag_out.rob_ids
+      mesh_completed_rob_id_fire := true.B
+      io.completed.valid := true.B
+      io.completed.bits := mesh.io.tag_out.rob_id.bits
     }
 
     start_array_outputting :=  !is_garbage_addr
   }
 
-  when (rob_ids(0).valid) {
+  when (pending_completed_rob_id.valid && !mesh_completed_rob_id_fire) {
     io.completed.valid := true.B
-    io.completed.bits := rob_ids(0).bits
-
-    when (io.completed.fire()) {
-      rob_ids(0).valid := false.B
-    }
-  }.elsewhen(rob_ids(1).valid) {
-    io.completed.valid := true.B
-    io.completed.bits := rob_ids(1).bits
-
-    when (io.completed.fire()) {
-      rob_ids(1).valid := false.B
-    }
+    io.completed.bits := pending_completed_rob_id.pop()
   }
 
   when (reset.toBool()) {
-    rob_ids.foreach(_.valid := false.B)
+    pending_completed_rob_id.valid := false.B
   }
 }

@@ -115,12 +115,19 @@ class GemminiModule[T <: Data: Arithmetic]
   tlb.io.ptw.customCSRs := io.ptw.head.customCSRs*/
 
   // Incoming commands and ROB
-  val cmd = Queue(io.cmd)
-  cmd.ready := false.B
-
-  val funct = cmd.bits.inst.funct
+  val raw_cmd = Queue(io.cmd)
+  val compressed_cmd = InstCompressor(raw_cmd)
+  compressed_cmd.ready := false.B
 
   val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, meshRows*tileRows))
+  val cmd_decompressor = Module(new InstDecompressor(rob_entries))
+
+  cmd_decompressor.io.in.valid := rob.io.issue.ex.valid
+  cmd_decompressor.io.in.bits.cmd := rob.io.issue.ex.cmd
+  cmd_decompressor.io.in.bits.rob_id := rob.io.issue.ex.rob_id
+  rob.io.issue.ex.ready := cmd_decompressor.io.in.ready
+
+  val decompressed_cmd = cmd_decompressor.io.out
 
   // Controllers
   val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
@@ -139,11 +146,12 @@ class GemminiModule[T <: Data: Arithmetic]
   store_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.st.cmd.inst.funct
   store_controller.io.cmd.bits.rob_id := rob.io.issue.st.rob_id
 
-  ex_controller.io.cmd.valid := rob.io.issue.ex.valid
-  rob.io.issue.ex.ready := ex_controller.io.cmd.ready
-  ex_controller.io.cmd.bits.cmd := rob.io.issue.ex.cmd
-  ex_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ex.cmd.inst.funct
-  ex_controller.io.cmd.bits.rob_id := rob.io.issue.ex.rob_id
+//  ex_controller.io.cmd.valid := rob.io.issue.ex.valid
+//  rob.io.issue.ex.ready := ex_controller.io.cmd.ready
+//  ex_controller.io.cmd.bits.cmd := rob.io.issue.ex.cmd
+//  ex_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ex.cmd.inst.funct
+//  ex_controller.io.cmd.bits.rob_id := rob.io.issue.ex.rob_id
+  ex_controller.io.cmd <> decompressed_cmd
 
   // Wire up scratchpad to controllers
   spad.module.io.dma.read <> load_controller.io.dma
@@ -154,7 +162,7 @@ class GemminiModule[T <: Data: Arithmetic]
 
   // Wire up controllers to ROB
   rob.io.alloc.valid := false.B
-  rob.io.alloc.bits := cmd.bits
+  rob.io.alloc.bits := compressed_cmd.bits
 
   val rob_completed_arb = Module(new Arbiter(UInt(log2Up(rob_entries).W), 3))
 
@@ -170,13 +178,15 @@ class GemminiModule[T <: Data: Arithmetic]
 
   // Wire up global RoCC signals
   // io.busy := cmd.valid || load_controller.io.busy || store_controller.io.busy || spad.module.io.busy || rob.io.busy
-  io.busy := rob.io.busy
+  io.busy := rob.io.busy || spad.module.io.busy
   io.interrupt := tlb.io.exp.interrupt
 
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here
-  when (cmd.valid) {
+  when (compressed_cmd.valid) {
     // val config_cmd_type = cmd.bits.rs1(1,0) // TODO magic numbers
+
+    val funct = compressed_cmd.bits.inst.funct
 
     val is_flush = funct === FLUSH_CMD
     /*
@@ -187,18 +197,18 @@ class GemminiModule[T <: Data: Arithmetic]
     */
 
     when (is_flush) {
-      val skip = cmd.bits.rs1(0)
+      val skip = compressed_cmd.bits.rs1(0)
       tlb.io.exp.flush_skip := skip
       tlb.io.exp.flush_retry := !skip
 
-      cmd.ready := true.B // TODO should we wait for an acknowledgement from the TLB?
+      compressed_cmd.ready := true.B // TODO should we wait for an acknowledgement from the TLB?
     }
 
     .otherwise {
       rob.io.alloc.valid := true.B
 
       when(rob.io.alloc.fire()) {
-        cmd.ready := true.B
+        compressed_cmd.ready := true.B
       }
     }
 
