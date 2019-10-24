@@ -3,22 +3,27 @@ package gemmini
 import chisel3._
 import chisel3.util._
 
+class AccumulatorReadReq(val n: Int, val shift_width: Int) extends Bundle {
+  val addr = UInt(log2Ceil(n).W)
+  val shift = UInt(shift_width.W)
+  val relu6_shift = UInt(shift_width.W)
+  val act = UInt(2.W)
+
+  val fromDMA = Bool()
+}
+
+class AccumulatorReadResp[T <: Data: Arithmetic](rdataType: Vec[Vec[T]]) extends Bundle {
+  val data = rdataType.cloneType
+  val fromDMA = Bool()
+
+  override def cloneType: this.type = new AccumulatorReadResp(rdataType.cloneType).asInstanceOf[this.type]
+}
+
 class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, shift_width: Int, rdataType: Vec[Vec[T]]) extends Bundle {
-  val req = Decoupled(new Bundle {
-    val addr = UInt(log2Ceil(n).W)
-    val shift = UInt(shift_width.W)
-    val relu6_shift = UInt(shift_width.W)
-    val act = UInt(2.W)
+  val req = Decoupled(new AccumulatorReadReq(n, shift_width))
+  val resp = Flipped(Decoupled(new AccumulatorReadResp(rdataType.cloneType)))
 
-    val fromDMA = Bool()
-  })
-
-  val resp = Flipped(Decoupled(new Bundle {
-    val data = rdataType
-    val fromDMA = Bool()
-  }))
-
-  override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType).asInstanceOf[this.type]
+  override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType.cloneType).asInstanceOf[this.type]
 }
 
 class AccumulatorWriteIO[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
