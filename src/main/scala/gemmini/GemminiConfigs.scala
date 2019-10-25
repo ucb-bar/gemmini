@@ -12,7 +12,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
                                                          tileColumns: Int,
                                                          meshRows: Int,
                                                          meshColumns: Int,
-                                                         ld_str_queue_length: Int,
+                                                         ld_queue_length: Int,
+                                                         st_queue_length: Int,
                                                          ex_queue_length: Int,
                                                          rob_entries: Int,
                                                          sp_banks: Int, // TODO support one-bank designs

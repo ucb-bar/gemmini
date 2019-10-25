@@ -38,9 +38,10 @@ object GemminiConfigs {
     tileColumns = 1,
     meshRows = 16,
     meshColumns = 16,
-    ld_str_queue_length = 2,
-    ex_queue_length = 4,
-    rob_entries = 8,
+    ld_queue_length = 8,
+    st_queue_length = 2,
+    ex_queue_length = 8,
+    rob_entries = 16,
     sp_banks = 4,
     sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks

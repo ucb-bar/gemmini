@@ -357,6 +357,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
           when (current_dataflow === Dataflow.OS.id.U) {
             in_s_flush := !rs2s(0).asTypeOf(local_addr_t).is_garbage()
           }
+
+          // pending_completed_rob_id.valid := !c_address_rs2.is_garbage()
+          // pending_completed_rob_id.bits :=
         }
       }
 

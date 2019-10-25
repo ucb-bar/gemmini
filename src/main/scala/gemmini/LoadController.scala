@@ -29,7 +29,7 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
 
-  val cmd = Queue(io.cmd, ld_str_queue_length)
+  val cmd = Queue(io.cmd, ld_queue_length)
   val vaddr = cmd.bits.cmd.rs1
   val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
   val len = cmd.bits.cmd.rs2(coreMaxAddrBits-1, 32) // TODO we don't really need to read all the bits here
@@ -90,14 +90,10 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
   switch (control_state) {
     is (waiting_for_command) {
       when (cmd.valid) {
-        when(DoConfig && !cmd_tracker.io.cmd_completed.valid) {
-          io.completed.valid := true.B
-          io.completed.bits := cmd.bits.rob_id
-
-          when (io.completed.fire()) {
-            stride := config_stride
-            cmd.ready := true.B
-          }
+        // when(DoConfig && !cmd_tracker.io.cmd_completed.valid) {
+        when(DoConfig) {
+          stride := config_stride
+          cmd.ready := true.B
         }
 
         .elsewhen(DoLoad && cmd_tracker.io.alloc.fire()) {

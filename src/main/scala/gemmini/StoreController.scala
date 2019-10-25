@@ -30,7 +30,7 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
   val block_rows = meshRows * tileRows
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
 
-  val cmd = Queue(io.cmd, ld_str_queue_length)
+  val cmd = Queue(io.cmd, st_queue_length)
   val vaddr = cmd.bits.cmd.rs1
   val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
   val config_stride = cmd.bits.cmd.rs2
@@ -65,12 +65,8 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
     is (waiting_for_command) {
       when (cmd.valid) {
         when(DoConfig) {
-          io.completed.valid := true.B
-
-          when (io.completed.fire()) {
-            stride := config_stride
-            cmd.ready := true.B
-          }
+          stride := config_stride
+          cmd.ready := true.B
         }
 
         .elsewhen(DoStore) {
