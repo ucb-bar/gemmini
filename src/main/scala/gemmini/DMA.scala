@@ -10,6 +10,8 @@ import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
 import Util._
 
+import midas.targetutils.FpgaDebug
+
 class StreamReadRequest(val spad_rows: Int, val acc_rows: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W)
@@ -43,6 +45,8 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
     })
+
+    FpgaDebug(io)
 
     val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes))
 
@@ -260,6 +264,9 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     io.beatData.bits.last := edge.last(tl.d)
     // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
 
+    FpgaDebug(tl.a)
+    FpgaDebug(tl.d)
+
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
       req := io.req.bits
@@ -463,6 +470,10 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
         }
       }
     }
+
+    FpgaDebug(io)
+    FpgaDebug(tl.a)
+    FpgaDebug(tl.d)
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {

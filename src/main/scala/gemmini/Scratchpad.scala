@@ -9,6 +9,8 @@ import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar}
 import Util._
 
+import midas.targetutils.FpgaDebug
+
 // class ScratchpadMemReadRequest(val nBanks: Int, val nRows: Int, val acc_rows: Int)
 class ScratchpadMemReadRequest(local_addr_t: LocalAddr)
                               (implicit p: Parameters) extends CoreBundle {
@@ -222,6 +224,8 @@ class Scratchpad[T <: Data: Arithmetic](
     {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to)) }
       val bank_ios = VecInit(banks.map(_.io))
+
+      FpgaDebug(banks(0).io)
 
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.sp_bank())

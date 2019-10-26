@@ -6,6 +6,8 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
+import midas.targetutils.FpgaDebug
+
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
 class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
@@ -54,6 +56,8 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
 
   io.completed.valid := false.B
   io.completed.bits := cmd.bits.rob_id
+
+  FpgaDebug(io)
 
   // Row counter
   when (io.dma.req.fire()) {

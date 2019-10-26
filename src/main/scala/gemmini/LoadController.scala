@@ -6,6 +6,8 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
+import midas.targetutils.FpgaDebug
+
 // TODO deal with errors when reading scratchpad responses
 class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
                                (implicit p: Parameters) extends Module {
@@ -80,6 +82,8 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
 
   io.completed.valid := cmd_tracker.io.cmd_completed.valid
   io.completed.bits := cmd_tracker.io.cmd_completed.bits.tag.rob_id
+
+  FpgaDebug(io)
 
   // Row counter
   when (io.dma.req.fire()) {

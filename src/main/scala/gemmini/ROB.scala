@@ -9,6 +9,8 @@ import freechips.rocketchip.tile.RoCCCommand
 import GemminiISA._
 import Util._
 
+import midas.targetutils.FpgaDebug
+
 // TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {
   val valid = Output(Bool())
@@ -210,6 +212,19 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   // assert(min_pop_count < 2.U)
   dontTouch(pop_count_packed_deps)
   dontTouch(min_pop_count)
+
+  FpgaDebug(entries(0))
+  FpgaDebug(entries(1))
+  FpgaDebug(entries(2))
+  FpgaDebug(entries(3))
+  FpgaDebug(utilization)
+
+  FpgaDebug(io.issue.ld.valid)
+  FpgaDebug(io.issue.ld.ready)
+  FpgaDebug(io.issue.ld.rob_id)
+  FpgaDebug(io.issue.st.valid)
+  FpgaDebug(io.issue.st.ready)
+  FpgaDebug(io.issue.st.rob_id)
 
   val cycles_since_issue = RegInit(0.U(32.W))
 

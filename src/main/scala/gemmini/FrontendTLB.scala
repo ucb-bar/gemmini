@@ -2,12 +2,16 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
+
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile.{CoreBundle, CoreModule}
 import freechips.rocketchip.tilelink.TLEdgeOut
 import freechips.rocketchip.util.InOrderArbiter
+
 import Util._
+
+import midas.targetutils.FpgaDebug
 
 class DecoupledTLBReq(val lgMaxSize: Int)(implicit p: Parameters) extends CoreBundle {
   val tlb_req = new TLBReq(lgMaxSize)
@@ -39,6 +43,8 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(entries)))
   val req = RegEnableThru(io.req.bits, io.req.fire())
 
+  FpgaDebug(req)
+
   val s_idle :: s_waiting_for_resp :: s_interrupt :: Nil = Enum(3)
   val state = RegInit(s_idle)
 
@@ -60,6 +66,8 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 
   io.ptw <> tlb.io.ptw
   tlb.io.ptw.status := req.status
+
+  FpgaDebug(tlb.io)
 
   when (io.req.fire() || state === s_waiting_for_resp) {
     // We could actually check the response from the TLB instantaneously to get a response in the same cycle. However,

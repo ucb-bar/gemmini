@@ -10,6 +10,8 @@ import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
 import GemminiISA._
 
+import midas.targetutils.FpgaDebug
+
 class GemminiCmdWithDeps(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val rob_id = UInt(log2Up(rob_entries).W)
@@ -180,6 +182,10 @@ class GemminiModule[T <: Data: Arithmetic]
   // io.busy := cmd.valid || load_controller.io.busy || store_controller.io.busy || spad.module.io.busy || rob.io.busy
   io.busy := rob.io.busy || spad.module.io.busy
   io.interrupt := tlb.io.exp.interrupt
+
+  FpgaDebug(io.cmd.valid)
+  FpgaDebug(io.cmd.ready)
+  FpgaDebug(io.cmd.bits.inst.funct)
 
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here
