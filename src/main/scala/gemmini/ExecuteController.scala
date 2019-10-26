@@ -354,12 +354,12 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
           cmd.pop := 1.U
           control_state := waiting_for_cmd
 
+          pending_completed_rob_id.valid := c_address_rs2.is_garbage()
+          pending_completed_rob_id.bits := cmd.bits(0).rob_id
+
           when (current_dataflow === Dataflow.OS.id.U) {
             in_s_flush := !rs2s(0).asTypeOf(local_addr_t).is_garbage()
           }
-
-          // pending_completed_rob_id.valid := !c_address_rs2.is_garbage()
-          // pending_completed_rob_id.bits :=
         }
       }
 
@@ -374,7 +374,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
           cmd.pop := 2.U
           control_state := waiting_for_cmd
 
-          // pending_completed_rob_id.push(cmd.bits(0).rob_id)
+          pending_completed_rob_id.valid := c_address_rs2.is_garbage()
+          pending_completed_rob_id.bits := cmd.bits(1).rob_id
 
           when (current_dataflow === Dataflow.OS.id.U) {
             in_s_flush := !rs2s(1).asTypeOf(local_addr_t).is_garbage()
@@ -390,8 +391,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
         when (about_to_fire_all_rows) {
           cmd.pop := 1.U
           control_state := waiting_for_cmd
-
-          // pending_completed_rob_id.push(cmd.bits(0).rob_id)
         }
       }
     }
@@ -472,7 +471,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
   mesh_cntl_signals_q.io.enq.bits.c_addr := c_address_rs2
 
-  mesh_cntl_signals_q.io.enq.bits.rob_id.valid := !performing_single_mul
+  mesh_cntl_signals_q.io.enq.bits.rob_id.valid := !performing_single_mul && !c_address_rs2.is_garbage()
   mesh_cntl_signals_q.io.enq.bits.rob_id.bits := Mux(performing_single_preload, cmd.bits(0).rob_id, cmd.bits(1).rob_id)
   // mesh_cntl_signals_q.io.enq.bits.rob_id_2.valid := performing_mul_pre
   // mesh_cntl_signals_q.io.enq.bits.rob_id_2.bits := cmd.bits(1).rob_id
@@ -516,9 +515,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
-//    mesh.io.tag_in.bits.rob_ids(0).valid := true.B
-//    mesh.io.tag_in.bits.rob_ids(0).bits := cntl.rob_id
-//    mesh.io.tag_in.bits.rob_ids(1) := cntl.rob_id_2
     mesh.io.tag_in.bits.rob_id := cntl.rob_id
     mesh.io.tag_in.bits.addr := cntl.c_addr
   }
@@ -576,7 +572,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   // Handle dependencies and turn off outputs for garbage addresses
   val mesh_completed_rob_id_fire = WireInit(false.B)
 
-  // when(mesh.io.out.fire() && !is_garbage_addr_and_no_deps) {
   when(mesh.io.out.fire() && mesh.io.tag_out.rob_id.valid) {
     when(output_counter.inc()) {
       mesh_completed_rob_id_fire := true.B

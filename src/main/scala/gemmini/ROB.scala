@@ -207,7 +207,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
-  assert(min_pop_count < 2.U)
+  // assert(min_pop_count < 2.U)
   dontTouch(pop_count_packed_deps)
   dontTouch(min_pop_count)
 

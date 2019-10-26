@@ -431,9 +431,9 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
         val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
         req.vaddr := next_vaddr
 
-        when (write_beats === 1.U) {
-          bytesSent := bytesSent + bytes_written_this_beat
+        bytesSent := bytesSent + bytes_written_this_beat
 
+        when (write_beats === 1.U) {
           when (bytes_written_this_beat >= bytesLeft) {
             // We're done with this request at this point
             state_machine_ready_for_req := true.B
@@ -442,7 +442,6 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
             state := s_translate_req
           }
         }.otherwise {
-          bytesSent := bytesSent + bytes_written_this_beat
           state := s_writing_beats
         }
       }.elsewhen(state === s_writing_beats) {
