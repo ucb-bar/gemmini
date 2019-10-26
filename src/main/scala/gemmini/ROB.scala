@@ -213,12 +213,15 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   dontTouch(pop_count_packed_deps)
   dontTouch(min_pop_count)
 
-  FpgaDebug(entries(0))
-  FpgaDebug(entries(1))
-  FpgaDebug(entries(2))
-  FpgaDebug(entries(3))
-  FpgaDebug(utilization)
+  for (i <- 0 until 3) {
+    FpgaDebug(entries(i).valid)
+    FpgaDebug(entries(i).bits.deps)
+    FpgaDebug(entries(i).bits.cmd.inst.funct)
+    FpgaDebug(entries(i).bits.op1.valid)
+    FpgaDebug(entries(i).bits.dst.valid)
+  }
 
+  FpgaDebug(utilization)
   FpgaDebug(io.issue.ld.valid)
   FpgaDebug(io.issue.ld.ready)
   FpgaDebug(io.issue.ld.rob_id)

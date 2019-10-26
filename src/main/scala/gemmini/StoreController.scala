@@ -57,7 +57,10 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
   io.completed.valid := false.B
   io.completed.bits := cmd.bits.rob_id
 
-  FpgaDebug(io)
+  FpgaDebug(io.cmd.valid)
+  FpgaDebug(io.cmd.ready)
+  FpgaDebug(io.cmd.bits.cmd.inst.funct)
+  FpgaDebug(io.cmd.bits.rob_id)
 
   // Row counter
   when (io.dma.req.fire()) {

@@ -46,7 +46,10 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
       val busy = Output(Bool())
     })
 
-    FpgaDebug(io)
+    FpgaDebug(io.req)
+    FpgaDebug(io.resp.valid)
+    FpgaDebug(io.resp.ready)
+    FpgaDebug(io.resp.bits.addr)
 
     val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes))
 
@@ -264,8 +267,16 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     io.beatData.bits.last := edge.last(tl.d)
     // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
 
-    FpgaDebug(tl.a)
-    FpgaDebug(tl.d)
+    FpgaDebug(io.req)
+    FpgaDebug(tl.a.valid)
+    FpgaDebug(tl.a.ready)
+    FpgaDebug(tl.a.bits.address)
+    FpgaDebug(tl.a.bits.size)
+    FpgaDebug(tl.a.bits.source)
+    FpgaDebug(tl.d.valid)
+    FpgaDebug(tl.d.ready)
+    FpgaDebug(tl.d.bits.source)
+    FpgaDebug(tl.d.bits.size)
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
@@ -471,9 +482,17 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
       }
     }
 
-    FpgaDebug(io)
-    FpgaDebug(tl.a)
-    FpgaDebug(tl.d)
+    FpgaDebug(io.req.valid)
+    FpgaDebug(io.req.ready)
+    FpgaDebug(io.req.bits.vaddr)
+    FpgaDebug(tl.a.valid)
+    FpgaDebug(tl.a.ready)
+    FpgaDebug(tl.a.bits.address)
+    FpgaDebug(tl.a.bits.size)
+    FpgaDebug(tl.a.bits.source)
+    FpgaDebug(tl.d.valid)
+    FpgaDebug(tl.d.ready)
+    FpgaDebug(tl.d.bits.source)
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
