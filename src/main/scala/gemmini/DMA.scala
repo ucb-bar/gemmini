@@ -63,6 +63,9 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, beatPacker.io.req.fire())
     xactTracker.io.peek.pop := beatPacker.io.in.fire() && core.module.io.beatData.bits.last
 
+    FpgaDebug(xactTracker.io.peek.xactid)
+    FpgaDebug(xactTracker.io.peek.pop)
+
     core.module.io.beatData.ready := beatPacker.io.in.ready
     beatPacker.io.req.valid := core.module.io.beatData.valid
     beatPacker.io.req.bits := xactTracker.io.peek.entry
@@ -267,6 +270,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     io.beatData.bits.last := edge.last(tl.d)
     // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
 
+    FpgaDebug(state)
     FpgaDebug(io.req)
     FpgaDebug(tl.a.valid)
     FpgaDebug(tl.a.ready)
@@ -482,6 +486,7 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
       }
     }
 
+    FpgaDebug(state)
     FpgaDebug(io.req.valid)
     FpgaDebug(io.req.ready)
     FpgaDebug(io.req.bits.vaddr)
