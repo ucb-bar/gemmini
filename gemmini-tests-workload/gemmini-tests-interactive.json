@@ -1,0 +1,7 @@
+{
+  "name" : "gemmini-tests-interactive",
+  "workdir" : ".",
+  "base" : "br-base.json",
+  "overlay" : "overlay",
+  "host-init" : "host-init.sh"
+}

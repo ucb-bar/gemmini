@@ -1,0 +1,8 @@
+{
+  "name" : "gemmini-tests-full",
+  "workdir" : ".",
+  "base" : "br-base.json",
+  "overlay" : "overlay",
+  "host-init" : "host-init.sh",
+  "command": "/root/run-tests-full.sh"
+}
