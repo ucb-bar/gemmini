@@ -92,19 +92,23 @@ class BeatMerger(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, sp
   io.out.bits.is_acc := req.bits.is_acc
   io.out.bits.last := last_sending
 
+  when (bytesRead === (1.U << req.bits.lg_len_req).asUInt() &&
+    bytesSent === (1.U << req.bits.lg_len_req).asUInt()) {
+    req.pop()
+  }
+
   when (io.out.fire()) {
     val spad_row_offset = Mux(bytesSent === 0.U, req.bits.spad_row_offset, 0.U)
     bytesSent := satAdd(bytesSent, rowBytes - spad_row_offset, req.bits.bytes_to_read)
 
     when (last_sending && bytesRead === (1.U << req.bits.lg_len_req).asUInt()) {
-      req.valid := false.B
+      req.pop()
       io.req.ready := true.B
     }
   }
 
   when (io.req.fire()) {
-    req.valid := true.B
-    req.bits := io.req.bits
+    req.push(io.req.bits)
     bytesRead := 0.U
     bytesSent := 0.U
   }
@@ -130,7 +134,7 @@ class BeatMerger(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, sp
     bytesRead := satAdd(current_bytesRead, beatBytes.U, current_len_req)
 
     when (!io.req.fire() && bytesSent === req.bits.bytes_to_read && last_reading) {
-      req.valid := false.B
+      req.pop()
     }
   }
 
