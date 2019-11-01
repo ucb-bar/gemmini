@@ -93,7 +93,7 @@ class BeatMerger(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, sp
   io.out.bits.last := last_sending
 
   when (bytesRead === (1.U << req.bits.lg_len_req).asUInt() &&
-    bytesSent === (1.U << req.bits.lg_len_req).asUInt()) {
+    bytesSent === req.bits.bytes_to_read) {
     req.pop()
   }
 
