@@ -48,7 +48,7 @@ object GemminiConfigs {
     dataflow = Dataflow.BOTH,
     acc_capacity = CapacityInKilobytes(64),
     mem_pipeline = 1,
-    dma_maxbytes = 128, // TODO get this from cacheblockbytes
+    dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
     inputType = SInt(8.W),

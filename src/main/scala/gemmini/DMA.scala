@@ -205,6 +205,10 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     val read_bytes_read = read_packet.bytes_read
     val read_shift = read_packet.shift
 
+    for (read_packet <- read_packets) {
+      FpgaDebug(read_packet)
+    }
+
     // Firing off TileLink read requests and allocating space inside the reservation buffer for them
     /*
     val get = edge.Get(
@@ -272,6 +276,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
 
     FpgaDebug(state)
     FpgaDebug(io.req)
+    FpgaDebug(io.reserve)
     FpgaDebug(tl.a.valid)
     FpgaDebug(tl.a.ready)
     FpgaDebug(tl.a.bits.address)
