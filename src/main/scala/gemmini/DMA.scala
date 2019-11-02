@@ -208,6 +208,9 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     for (read_packet <- read_packets) {
       FpgaDebug(read_packet)
     }
+    FpgaDebug(read_packet)
+    FpgaDebug(bytesLeft)
+    FpgaDebug(bytesRequested)
 
     // Firing off TileLink read requests and allocating space inside the reservation buffer for them
     /*
