@@ -66,6 +66,7 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
 
     FpgaDebug(xactTracker.io.peek.xactid)
     FpgaDebug(xactTracker.io.peek.pop)
+    FpgaDebug(xactTracker.io.peek.entry)
 
     core.module.io.beatData.ready := beatPacker.io.in.ready
     beatPacker.io.req.valid := core.module.io.beatData.valid
