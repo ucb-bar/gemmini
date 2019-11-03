@@ -50,6 +50,7 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     FpgaDebug(io.resp.valid)
     FpgaDebug(io.resp.ready)
     FpgaDebug(io.resp.bits.addr)
+    FpgaDebug(io.resp.bits.bytes_read)
 
     val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes))
 
@@ -79,8 +80,10 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     io.resp.bits.addr := beatPacker.io.out.bits.addr
     io.resp.bits.mask := beatPacker.io.out.bits.mask
     io.resp.bits.is_acc := beatPacker.io.out.bits.is_acc
-    io.resp.bits.cmd_id := xactTracker.io.peek.entry.cmd_id
-    io.resp.bits.bytes_read := xactTracker.io.peek.entry.bytes_to_read // 1.U << xactTracker.io.peek.entry.lg_len_req
+    // io.resp.bits.cmd_id := xactTracker.io.peek.entry.cmd_id
+    // io.resp.bits.bytes_read := xactTracker.io.peek.entry.bytes_to_read
+    io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
+    io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
   }
 }
