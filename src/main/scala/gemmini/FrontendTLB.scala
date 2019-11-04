@@ -70,6 +70,8 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   FpgaDebug(tlb.io.req)
   FpgaDebug(tlb.io.resp)
   FpgaDebug(tlb.io.ptw.status)
+  FpgaDebug(tlb.io.ptw.req)
+  FpgaDebug(tlb.io.ptw.resp)
 
   when (io.req.fire() || state === s_waiting_for_resp) {
     // We could actually check the response from the TLB instantaneously to get a response in the same cycle. However,

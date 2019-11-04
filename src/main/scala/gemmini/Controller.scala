@@ -183,7 +183,6 @@ class GemminiModule[T <: Data: Arithmetic]
   io.busy := rob.io.busy || spad.module.io.busy
   io.interrupt := tlb.io.exp.interrupt
 
-  FpgaDebug(clock.asUInt().toBool())
   FpgaDebug(io.cmd.valid)
   FpgaDebug(io.cmd.ready)
   FpgaDebug(io.cmd.bits.inst.funct)

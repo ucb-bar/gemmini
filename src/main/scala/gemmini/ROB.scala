@@ -215,6 +215,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
   for (i <- 0 until 3) {
     FpgaDebug(entries(i).valid)
+    FpgaDebug(entries(i).bits.issued)
     FpgaDebug(entries(i).bits.deps)
     FpgaDebug(entries(i).bits.cmd.inst.funct)
     FpgaDebug(entries(i).bits.op1.valid)
