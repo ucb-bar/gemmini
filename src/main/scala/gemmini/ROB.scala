@@ -213,26 +213,26 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   dontTouch(pop_count_packed_deps)
   dontTouch(min_pop_count)
 
-  for (i <- 0 until 3) {
+  for (i <- 0 until 2) {
     FpgaDebug(entries(i).valid)
-    FpgaDebug(entries(i).bits.issued)
-    FpgaDebug(entries(i).bits.deps)
+    // FpgaDebug(entries(i).bits.issued)
+    FpgaDebug(entries(i).bits.deps(0))
+    FpgaDebug(entries(i).bits.deps(1))
     FpgaDebug(entries(i).bits.cmd.inst.funct)
-    FpgaDebug(entries(i).bits.op1.valid)
-    FpgaDebug(entries(i).bits.dst.valid)
+    // FpgaDebug(entries(i).bits.op1.valid)
+    // FpgaDebug(entries(i).bits.dst.valid)
   }
 
-  FpgaDebug(utilization)
   FpgaDebug(io.issue.ld.valid)
   FpgaDebug(io.issue.ld.ready)
-  FpgaDebug(io.issue.ld.rob_id)
+  // FpgaDebug(io.issue.ld.rob_id)
   FpgaDebug(io.issue.st.valid)
   FpgaDebug(io.issue.st.ready)
-  FpgaDebug(io.issue.st.rob_id)
+  // FpgaDebug(io.issue.st.rob_id)
 
   val cycles_since_issue = RegInit(0.U(32.W))
 
-  when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire()) {
+  when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire() || !io.busy) {
     cycles_since_issue := 0.U
   }.elsewhen(io.busy) {
     cycles_since_issue := cycles_since_issue + 1.U

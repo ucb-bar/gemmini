@@ -114,8 +114,8 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
     cmds(io.cmd_completed.bits.cmd_id).valid := false.B
   }
 
-  FpgaDebug(cmds(0))
-  FpgaDebug(cmds(1))
+  FpgaDebug(cmds(0).valid)
+  FpgaDebug(cmds(0).bytes_left)
 
   when (reset.toBool()) {
     cmds.foreach(_.init())

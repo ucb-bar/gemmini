@@ -85,9 +85,10 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
 
   FpgaDebug(io.cmd.valid)
   FpgaDebug(io.cmd.ready)
-  FpgaDebug(io.cmd.bits.cmd.inst.funct)
-  FpgaDebug(io.cmd.bits.rob_id)
-  FpgaDebug(io.dma)
+  // FpgaDebug(io.cmd.bits.cmd.inst.funct)
+  // FpgaDebug(io.cmd.bits.rob_id)
+  FpgaDebug(io.dma.req)
+  FpgaDebug(io.dma.resp.valid)
 
   // Row counter
   when (io.dma.req.fire()) {

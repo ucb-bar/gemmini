@@ -228,7 +228,7 @@ class Scratchpad[T <: Data: Arithmetic](
       FpgaDebug(banks(0).io.read.req)
       FpgaDebug(banks(0).io.read.resp.valid)
       FpgaDebug(banks(0).io.read.resp.ready)
-      FpgaDebug(banks(0).io.read.resp.bits.fromDMA)
+      // FpgaDebug(banks(0).io.read.resp.bits.fromDMA)
       FpgaDebug(banks(0).io.write.en)
       FpgaDebug(banks(0).io.write.addr)
 

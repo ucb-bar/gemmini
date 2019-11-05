@@ -49,7 +49,7 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     FpgaDebug(io.req)
     FpgaDebug(io.resp.valid)
     FpgaDebug(io.resp.ready)
-    FpgaDebug(io.resp.bits.addr)
+    // FpgaDebug(io.resp.bits.addr)
     FpgaDebug(io.resp.bits.bytes_read)
 
     val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes))
@@ -66,7 +66,6 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
 
     FpgaDebug(xactTracker.io.peek.xactid)
     FpgaDebug(xactTracker.io.peek.pop)
-    FpgaDebug(xactTracker.io.peek.entry)
 
     core.module.io.beatData.ready := beatPacker.io.in.ready
     beatPacker.io.req.valid := core.module.io.beatData.valid
@@ -209,9 +208,6 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     val read_bytes_read = read_packet.bytes_read
     val read_shift = read_packet.shift
 
-    for (read_packet <- read_packets) {
-      FpgaDebug(read_packet)
-    }
     FpgaDebug(read_packet)
     FpgaDebug(bytesLeft)
     FpgaDebug(bytesRequested)
@@ -283,11 +279,10 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
 
     FpgaDebug(state)
     FpgaDebug(io.req)
-    FpgaDebug(io.reserve)
     FpgaDebug(tl.a.valid)
     FpgaDebug(tl.a.ready)
-    FpgaDebug(tl.a.bits.address)
-    FpgaDebug(tl.a.bits.size)
+    // FpgaDebug(tl.a.bits.address)
+    // FpgaDebug(tl.a.bits.size)
     FpgaDebug(tl.a.bits.source)
     FpgaDebug(tl.d.valid)
     FpgaDebug(tl.d.ready)
@@ -501,7 +496,7 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
     FpgaDebug(state)
     FpgaDebug(io.req.valid)
     FpgaDebug(io.req.ready)
-    FpgaDebug(io.req.bits.vaddr)
+    // FpgaDebug(io.req.bits.vaddr)
     FpgaDebug(tl.a.valid)
     FpgaDebug(tl.a.ready)
     FpgaDebug(tl.a.bits.address)
