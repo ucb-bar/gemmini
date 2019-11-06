@@ -47,7 +47,21 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
 
   cmd.ready := false.B
 
-  io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad) ||
+  // Command tracker instantiation
+  val nCmds = 2 // TODO make this a config parameter
+
+  val deps_t = new Bundle {
+    val rob_id = UInt(log2Up(rob_entries).W)
+  }
+
+  val maxBytesInRowRequest = config.dma_maxbytes max (block_cols * config.inputType.getWidth / 8) max
+    (block_cols * config.accType.getWidth / 8)
+  val maxBytesInMatRequest = block_rows * maxBytesInRowRequest
+
+  val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, maxBytesInMatRequest, deps_t))
+
+  // DMA IO wiring
+  io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
     control_state === waiting_for_dma_req_ready ||
     (control_state === sending_rows && row_counter =/= 0.U)
   io.dma.req.bits.vaddr := vaddr + row_counter * stride
@@ -55,19 +69,7 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
   io.dma.req.bits.len := len
   io.dma.req.bits.status := mstatus
 
-  // Command tracker
-  val deps_t = new Bundle {
-    val rob_id = UInt(log2Up(rob_entries).W)
-  }
-
-  val nCmds = 2 // TODO make this a config parameter
-
-  val maxBytesInRowRequest = config.dma_maxbytes max (block_cols * config.inputType.getWidth / 8) max
-    (block_cols * config.accType.getWidth / 8)
-  val maxBytesInMatRequest = block_rows * maxBytesInRowRequest
-
-  // TODO we don't actually check that the instructions in the cmd_tracker push dependencies in order
-  val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, maxBytesInMatRequest, deps_t))
+  // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
   cmd_tracker.io.alloc.bits.bytes_to_read := len * block_rows.U * // TODO change len to lgLen so that the multiplier here can be removed
     block_cols.U * (Mux(localaddr.is_acc_addr, config.accType.getWidth.U, config.inputType.getWidth.U) / 8.U)
@@ -89,6 +91,7 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
   // FpgaDebug(io.cmd.bits.rob_id)
   FpgaDebug(io.dma.req)
   FpgaDebug(io.dma.resp.valid)
+  FpgaDebug(control_state)
 
   // Row counter
   when (io.dma.req.fire()) {

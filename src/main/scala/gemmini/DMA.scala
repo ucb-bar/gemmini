@@ -51,6 +51,7 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     FpgaDebug(io.resp.ready)
     // FpgaDebug(io.resp.bits.addr)
     FpgaDebug(io.resp.bits.bytes_read)
+    FpgaDebug(io.resp.bits.cmd_id)
 
     val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes))
 
