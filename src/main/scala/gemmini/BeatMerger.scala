@@ -69,9 +69,9 @@ class BeatMerger(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, sp
 
   FpgaDebug(bytesSent)
   FpgaDebug(bytesRead)
-  // FpgaDebug(bytesReadAfterShift)
-  // FpgaDebug(bytesDiscarded)
-  // FpgaDebug(usefulBytesRead)
+  FpgaDebug(bytesReadAfterShift)
+  FpgaDebug(bytesDiscarded)
+  FpgaDebug(usefulBytesRead)
   FpgaDebug(last_sending)
   FpgaDebug(last_reading)
 

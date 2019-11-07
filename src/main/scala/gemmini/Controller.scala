@@ -185,7 +185,7 @@ class GemminiModule[T <: Data: Arithmetic]
 
   FpgaDebug(io.cmd.valid)
   FpgaDebug(io.cmd.ready)
-  // FpgaDebug(io.cmd.bits.inst.funct)
+  FpgaDebug(io.cmd.bits.inst.funct)
 
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here

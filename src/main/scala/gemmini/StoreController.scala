@@ -47,19 +47,46 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
 
   cmd.ready := false.B
 
-  io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoStore) ||
+  // Command tracker instantiation
+  val nCmds = 2 // TODO make this a config parameter
+
+  val deps_t = new Bundle {
+    val rob_id = UInt(log2Up(rob_entries).W)
+  }
+
+  val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, block_rows, deps_t))
+
+  // DMA IO wiring
+  io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoStore && cmd_tracker.io.alloc.ready) ||
     control_state === waiting_for_dma_req_ready ||
     (control_state === sending_rows && row_counter =/= 0.U)
   io.dma.req.bits.vaddr := vaddr + row_counter * stride
   io.dma.req.bits.laddr := localaddr_plus_row_counter
   io.dma.req.bits.status := mstatus
 
+  // Command tracker IO
+  cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore
+  cmd_tracker.io.alloc.bits.bytes_to_read := block_rows.U
+  cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id
+  cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
+  cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
+  cmd_tracker.io.request_returned.bits.bytes_read := 1.U
+  cmd_tracker.io.cmd_completed.ready := io.completed.ready
+
+  val cmd_id = RegEnableThru(cmd_tracker.io.alloc.bits.cmd_id, cmd_tracker.io.alloc.fire()) // TODO is this really better than a simple RegEnable?
+  io.dma.req.bits.cmd_id := cmd_id
+
+  io.completed.valid := cmd_tracker.io.cmd_completed.valid
+  io.completed.bits := cmd_tracker.io.cmd_completed.bits.tag.rob_id
+
+  /*
   io.completed.valid := false.B
   io.completed.bits := cmd.bits.rob_id
+  */
 
   FpgaDebug(io.cmd.valid)
   FpgaDebug(io.cmd.ready)
-  //  FpgaDebug(io.cmd.bits.cmd.inst.funct)
+  // FpgaDebug(io.cmd.bits.cmd.inst.funct)
   // FpgaDebug(io.cmd.bits.rob_id)
 
   // Row counter
@@ -76,7 +103,7 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
           cmd.ready := true.B
         }
 
-        .elsewhen(DoStore) {
+        .elsewhen(DoStore && cmd_tracker.io.alloc.fire()) {
           control_state := Mux(io.dma.req.fire(), sending_rows, waiting_for_dma_req_ready)
         }
       }
@@ -91,9 +118,10 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
     is (sending_rows) {
       val last_row = row_counter === 0.U || (row_counter === (block_rows-1).U && io.dma.req.fire())
 
-      io.completed.valid := last_row
+      // io.completed.valid := last_row
 
-      when (io.completed.fire()) {
+      // when (io.completed.fire()) {
+      when (last_row) {
         control_state := waiting_for_command
         cmd.ready := true.B
       }

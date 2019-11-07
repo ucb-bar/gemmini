@@ -32,9 +32,15 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr)
   val vaddr = UInt(coreMaxAddrBits.W)
   val laddr = local_addr_t.cloneType
 
+  val cmd_id = UInt(8.W) // TODO don't use a magic number here
+
   val status = new MStatus
 
   override def cloneType: this.type = new ScratchpadMemWriteRequest(local_addr_t).asInstanceOf[this.type]
+}
+
+class ScratchpadMemWriteResponse extends Bundle {
+  val cmd_id = UInt(8.W) // TODO don't use a magic number here
 }
 
 class ScratchpadMemReadResponse extends Bundle {
@@ -55,6 +61,7 @@ class ScratchpadReadMemIO(local_addr_t: LocalAddr)
 class ScratchpadWriteMemIO(local_addr_t: LocalAddr)
                          (implicit p: Parameters) extends CoreBundle {
   val req = Decoupled(new ScratchpadMemWriteRequest(local_addr_t.cloneType))
+  val resp = Flipped(Valid(new ScratchpadMemWriteResponse))
 
   override def cloneType: this.type = new ScratchpadWriteMemIO(local_addr_t.cloneType).asInstanceOf[this.type]
 }
@@ -198,12 +205,14 @@ class Scratchpad[T <: Data: Arithmetic](
     writer.module.io.req.bits.data := writeData.bits
     writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
 
+    io.dma.write.resp.valid := false.B
+    io.dma.write.resp.bits.cmd_id := write_dispatch_q.bits.cmd_id
+
     read_issue_q.io.enq <> io.dma.read.req
 
     reader.module.io.req.valid := read_issue_q.io.deq.valid
     read_issue_q.io.deq.ready := reader.module.io.req.ready
     reader.module.io.req.bits.vaddr := read_issue_q.io.deq.bits.vaddr
-    // reader.module.io.req.bits.spaddr := read_issue_q.io.deq.bits.laddr.sp_bank() * sp_bank_entries.U + read_issue_q.io.deq.bits.laddr.sp_row()
     reader.module.io.req.bits.spaddr := Mux(read_issue_q.io.deq.bits.laddr.is_acc_addr,
       read_issue_q.io.deq.bits.laddr.acc_row(), read_issue_q.io.deq.bits.laddr.full_sp_addr())
     reader.module.io.req.bits.len := read_issue_q.io.deq.bits.len
@@ -226,11 +235,13 @@ class Scratchpad[T <: Data: Arithmetic](
       val bank_ios = VecInit(banks.map(_.io))
 
       FpgaDebug(banks(0).io.read.req)
-      FpgaDebug(banks(0).io.read.resp.valid)
-      FpgaDebug(banks(0).io.read.resp.ready)
+      // FpgaDebug(banks(0).io.read.resp.valid)
+      // FpgaDebug(banks(0).io.read.resp.ready)
       // FpgaDebug(banks(0).io.read.resp.bits.fromDMA)
+      FpgaDebug(banks(0).io.read.resp)
       FpgaDebug(banks(0).io.write.en)
       FpgaDebug(banks(0).io.write.addr)
+      FpgaDebug(banks(0).io.write.data)
 
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.sp_bank())
@@ -263,6 +274,8 @@ class Scratchpad[T <: Data: Arithmetic](
           when (bio.read.req.fire()) {
             write_dispatch_q.ready := true.B
             write_issue_q.io.enq.valid := true.B
+
+            io.dma.write.resp.valid := true.B
           }
         }.otherwise {
           bio.read.req.bits := DontCare
@@ -338,6 +351,8 @@ class Scratchpad[T <: Data: Arithmetic](
           when (accumulator.io.read.req.fire()) {
             write_dispatch_q.ready := true.B
             write_issue_q.io.enq.valid := true.B
+
+            io.dma.write.resp.valid := true.B
           }
         }.otherwise {
           accumulator.io.read.req.bits.addr := DontCare

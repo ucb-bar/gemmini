@@ -43,8 +43,6 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(entries)))
   val req = RegEnableThru(io.req.bits, io.req.fire())
 
-  // FpgaDebug(req.tlb_req)
-
   val s_idle :: s_waiting_for_resp :: s_interrupt :: Nil = Enum(3)
   val state = RegInit(s_idle)
 
@@ -72,6 +70,8 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   // FpgaDebug(tlb.io.ptw.status)
   FpgaDebug(tlb.io.ptw.req)
   FpgaDebug(tlb.io.ptw.resp)
+  FpgaDebug(tlb.io.sfence)
+  FpgaDebug(io.exp)
 
   when (io.req.fire() || state === s_waiting_for_resp) {
     // We could actually check the response from the TLB instantaneously to get a response in the same cycle. However,
