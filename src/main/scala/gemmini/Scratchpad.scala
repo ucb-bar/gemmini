@@ -183,6 +183,7 @@ class Scratchpad[T <: Data: Arithmetic](
 
       // Misc. ports
       val busy = Output(Bool())
+      val flush = Input(Bool())
     })
 
     val write_dispatch_q = Queue(io.dma.write.req)
@@ -227,6 +228,9 @@ class Scratchpad[T <: Data: Arithmetic](
 
     io.tlb(0) <> writer.module.io.tlb
     io.tlb(1) <> reader.module.io.tlb
+
+    writer.module.io.flush := io.flush
+    reader.module.io.flush := io.flush
 
     io.busy := writer.module.io.busy || reader.module.io.busy
 

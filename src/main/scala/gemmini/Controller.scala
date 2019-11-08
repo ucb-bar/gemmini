@@ -116,6 +116,8 @@ class GemminiModule[T <: Data: Arithmetic]
   tlb.io.ptw.pmp := io.ptw.head.pmp
   tlb.io.ptw.customCSRs := io.ptw.head.customCSRs*/
 
+  spad.module.io.flush := tlb.io.exp.flush()
+
   // Incoming commands and ROB
   val raw_cmd = Queue(io.cmd)
   val compressed_cmd = InstCompressor(raw_cmd)

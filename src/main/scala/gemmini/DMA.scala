@@ -2,12 +2,15 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
+import chisel3.core.withReset
+
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
 import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters}
 import testchipip.TLHelper
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
+
 import Util._
 
 import midas.targetutils.FpgaDebug
@@ -44,6 +47,7 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
       val resp = Decoupled(new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to))
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
+      val flush = Input(Bool())
     })
 
     FpgaDebug(io.req)
@@ -60,6 +64,7 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     core.module.io.req <> io.req
     io.tlb <> core.module.io.tlb
     io.busy := xactTracker.io.busy
+    core.module.io.flush := io.flush
 
     xactTracker.io.alloc <> core.module.io.reserve
     xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, beatPacker.io.req.fire())
@@ -119,10 +124,11 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
       val reserve = new XactTrackerAllocIO(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes)
       val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits, maxBytes))
       val tlb = new FrontendTLBIO
+      val flush = Input(Bool())
     })
 
     val s_idle :: s_translate_req :: s_translate_resp :: s_req_new_block :: Nil = Enum(4)
-    val  state = RegInit(s_idle)
+    val state = RegInit(s_idle)
 
     val req = Reg(new StreamReadRequest(spad_rows, acc_rows))
 
@@ -133,25 +139,6 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
     io.req.ready := state_machine_ready_for_req
-
-    /*
-    val send_sizes = (aligned_to to (spadWidthBytes max accWidthBytes max maxBytes) by aligned_to)
-      .filter(s => isPow2(s))
-      .reverse // The possible sizes of requests we can send over TileLink
-    val send_sizes_lg = send_sizes.map(s => log2Ceil(s).U)
-    val send_sizes_valid = send_sizes.map { s =>
-      val lgsz = log2Ceil(s)
-      val is_aligned = if (s == 1) { true.B } else { req.vaddr(lgsz - 1, 0) === 0.U }
-
-      val across_page_boundary = (req.vaddr + s.U - 1.U)(coreMaxAddrBits - 1, pgIdxBits) =/= vpn
-
-      val is_too_large = s.U > bytesLeft
-
-      is_aligned && !across_page_boundary && !is_too_large
-    }
-    val send_size = MuxCase(send_sizes.last.U, (send_sizes_valid zip send_sizes).map { case (v, sz) => v -> sz.U })
-    val lg_send_size = MuxCase(send_sizes_lg.last, (send_sizes_valid zip send_sizes_lg).map { case (v, lgsz) => v -> lgsz })
-     */
 
     // Address translation
     io.tlb.req.valid := state === s_translate_req
@@ -166,7 +153,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     val paddr = Cat(ppn, req.vaddr(pgIdxBits-1, 0))
 
     val last_vpn_translated = RegEnable(vpn, io.tlb.resp.fire())
-    val last_vpn_translated_valid = RegInit(false.B) // TODO check for flush
+    val last_vpn_translated_valid = withReset(reset.toBool() || io.flush) { RegInit(false.B) }
 
     when (io.tlb.resp.fire()) {
       last_vpn_translated_valid := true.B
@@ -328,6 +315,7 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
       val req = Flipped(Decoupled(new StreamWriteRequest(dataWidth)))
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
+      val flush = Input(Bool())
     })
 
     val (s_idle :: s_translate_req :: s_translate_resp ::
@@ -366,7 +354,7 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
     val paddr = Cat(ppn, req.vaddr(pgIdxBits-1, 0))
 
     val last_vpn_translated = RegEnable(vpn, io.tlb.resp.fire())
-    val last_vpn_translated_valid = RegInit(false.B) // TODO check for flush
+    val last_vpn_translated_valid = withReset(reset.toBool() || io.flush) { RegInit(false.B) }
 
     when (io.tlb.resp.fire()) {
       last_vpn_translated_valid := true.B
