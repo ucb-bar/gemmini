@@ -3,7 +3,6 @@ package gemmini
 import chisel3._
 import chisel3.util._
 
-import midas.targetutils.FpgaDebug
 
 class AccumulatorReadReq(val n: Int, val shift_width: Int) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
@@ -125,12 +124,6 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
 
   val read_write_same_address_1 = !(io.read.req.fire() && io.write.en && io.read.req.bits.addr === io.write.addr)
   val read_write_same_address_2 = !(io.read.req.fire() && w_buf_valid && waddr_buf === io.read.req.bits.addr)
-  FpgaDebug(read_write_same_address_1)
-  FpgaDebug(read_write_same_address_2)
-  FpgaDebug(io.read.req)
-  FpgaDebug(io.write.en)
-  FpgaDebug(io.write.addr)
-  FpgaDebug(io.write.acc)
 
   // assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
   assert(!(io.read.req.fire() && io.write.en && io.read.req.bits.addr === io.write.addr), "reading from and writing to same address is not supported")

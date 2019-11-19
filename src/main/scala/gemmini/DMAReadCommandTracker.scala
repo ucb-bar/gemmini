@@ -3,7 +3,6 @@ package gemmini
 import chisel3._
 import chisel3.util._
 
-import midas.targetutils.FpgaDebug
 
 // This module is meant to go inside the Load controller, where it can track which commands are currently
 // in flight and which are completed
@@ -114,14 +113,8 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
     cmds(io.cmd_completed.bits.cmd_id).valid := false.B
   }
 
-  FpgaDebug(cmds(0).valid)
-  FpgaDebug(cmds(0).bytes_left)
 
-  FpgaDebug(cmds(1).valid)
-  FpgaDebug(cmds(1).bytes_left)
 
-  FpgaDebug(io.alloc)
-  FpgaDebug(io.request_returned)
 
   when (reset.toBool()) {
     cmds.foreach(_.init())

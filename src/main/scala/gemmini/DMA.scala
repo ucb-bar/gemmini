@@ -13,7 +13,6 @@ import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
 import Util._
 
-import midas.targetutils.FpgaDebug
 
 class StreamReadRequest(val spad_rows: Int, val acc_rows: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
@@ -50,12 +49,6 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
       val flush = Input(Bool())
     })
 
-    FpgaDebug(io.req)
-    FpgaDebug(io.resp.valid)
-    FpgaDebug(io.resp.ready)
-    // FpgaDebug(io.resp.bits.addr)
-    FpgaDebug(io.resp.bits.bytes_read)
-    FpgaDebug(io.resp.bits.cmd_id)
 
     val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes))
 
@@ -70,8 +63,6 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, beatPacker.io.req.fire())
     xactTracker.io.peek.pop := beatPacker.io.in.fire() && core.module.io.beatData.bits.last
 
-    FpgaDebug(xactTracker.io.peek.xactid)
-    FpgaDebug(xactTracker.io.peek.pop)
 
     core.module.io.beatData.ready := beatPacker.io.in.ready
     beatPacker.io.req.valid := core.module.io.beatData.valid
@@ -196,9 +187,6 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     val read_bytes_read = read_packet.bytes_read
     val read_shift = read_packet.shift
 
-    FpgaDebug(read_packet)
-    FpgaDebug(bytesLeft)
-    FpgaDebug(bytesRequested)
 
     // Firing off TileLink read requests and allocating space inside the reservation buffer for them
     /*
@@ -265,17 +253,6 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     io.beatData.bits.last := edge.last(tl.d)
     // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
 
-    FpgaDebug(state)
-    FpgaDebug(io.req)
-    FpgaDebug(tl.a.valid)
-    FpgaDebug(tl.a.ready)
-    // FpgaDebug(tl.a.bits.address)
-    // FpgaDebug(tl.a.bits.size)
-    FpgaDebug(tl.a.bits.source)
-    FpgaDebug(tl.d.valid)
-    FpgaDebug(tl.d.ready)
-    FpgaDebug(tl.d.bits.source)
-    FpgaDebug(tl.d.bits.size)
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
@@ -482,18 +459,6 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
       }
     }
 
-    FpgaDebug(state)
-    FpgaDebug(io.req.valid)
-    FpgaDebug(io.req.ready)
-    // FpgaDebug(io.req.bits.vaddr)
-    FpgaDebug(tl.a.valid)
-    FpgaDebug(tl.a.ready)
-    FpgaDebug(tl.a.bits.address)
-    FpgaDebug(tl.a.bits.size)
-    FpgaDebug(tl.a.bits.source)
-    FpgaDebug(tl.d.valid)
-    FpgaDebug(tl.d.ready)
-    FpgaDebug(tl.d.bits.source)
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {

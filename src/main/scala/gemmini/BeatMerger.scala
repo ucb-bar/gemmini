@@ -5,7 +5,6 @@ import chisel3.util._
 
 import Util._
 
-import midas.targetutils.FpgaDebug
 
 class BeatMergerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, val accRows: Int,
                     val alignedTo: Int) extends Bundle {
@@ -55,25 +54,10 @@ class BeatMerger(beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, sp
   val last_sending = rowBytes >= req.bits.bytes_to_read - bytesSent
   val last_reading = beatBytes.U >= (1.U << req.bits.lg_len_req).asUInt() - bytesRead
 
-  FpgaDebug(io.req)
-  FpgaDebug(io.in.valid)
-  FpgaDebug(io.in.ready)
-  FpgaDebug(io.out.valid)
-  // FpgaDebug(io.out.ready)
-  FpgaDebug(io.out.bits.addr)
-  FpgaDebug(io.out.bits.last)
 
   for (i <- 0 until 16) {
-    FpgaDebug(io.out.bits.mask(i))
   }
 
-  FpgaDebug(bytesSent)
-  FpgaDebug(bytesRead)
-  FpgaDebug(bytesReadAfterShift)
-  FpgaDebug(bytesDiscarded)
-  FpgaDebug(usefulBytesRead)
-  FpgaDebug(last_sending)
-  FpgaDebug(last_reading)
 
   io.req.ready := !req.valid
 
