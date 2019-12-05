@@ -95,4 +95,28 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
     header ++= s"#endif // $guard"
     header.toString()
   }
+
+  def headerFilePath: String = {
+    val chipyard_directory = "./generators/gemmini/gemmini-tests-workload/gemmini-rocc-tests/include"
+    val project_template_directory = "./systolic-rocc-tests/include" // Old root directory; rendered obsolete by Chipyard
+    val default_directory = "."
+
+    val in_chipyard = {
+      val dir = new java.io.File(chipyard_directory)
+      dir.exists() && dir.isDirectory
+    }
+
+    val in_project_template = {
+      val dir = new java.io.File(project_template_directory)
+      dir.exists() && dir.isDirectory
+    }
+
+    if (in_chipyard) {
+      s"$chipyard_directory/$headerFileName"
+    } else if (in_project_template) {
+      s"$project_template_directory/$headerFileName"
+    } else {
+      s"$default_directory/$headerFileName"
+    }
+  }
 }

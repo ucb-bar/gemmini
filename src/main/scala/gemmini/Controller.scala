@@ -81,7 +81,7 @@ class Gemmini[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: GemminiArr
     opcodes = OpcodeSet.custom3,
     nPTWPorts = 1) {
 
-  Files.write(Paths.get(config.headerFileName), config.generateHeader().getBytes(StandardCharsets.UTF_8))
+  Files.write(Paths.get(config.headerFilePath), config.generateHeader().getBytes(StandardCharsets.UTF_8))
 
   val xLen = p(XLen)
   val spad = LazyModule(new Scratchpad(config))
