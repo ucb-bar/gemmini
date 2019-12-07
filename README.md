@@ -16,7 +16,7 @@ Alternatively, to build our example Gemmini-equipped SoC simulator, run the foll
     cd sims/vcs # or "cd sims/verilator"
     make CONFIG=GemminiAcceleratorConfig CONFIG_PACKAGE=gemmini MODEL_PACKAGE=freechips.rocketchip.system GENERATOR_PACKAGE=freechips.rocketchip.system TOP=ExampleRocketSystem
 
-.. image:: ./images/gemmini-system.png
+.. image:: ./gemmini-system.png
 
 Generator Parameters
 --------------------------
@@ -25,7 +25,7 @@ Major parameters of interest include:
 
 * Systolic array dimensions (``tileRows``, ``tileColumns``, ``meshRows``, ``meshColumns``): The systolic array is composed of a 2-level hierarchy, in which each tile is fully combinational, while a mesh of tiles has pipeline registers between each tile.
 
-.. image:: ./images/gemmini-systolic-array.png
+.. image:: ./gemmini-systolic-array.png
 
 * Dataflow parameters (``dataflow``): Determine whether the systolic array in Gemmini is output-stationary or weight-stationary, or whether it supports both dataflows so that programmers may choose between them at runtime.
 
