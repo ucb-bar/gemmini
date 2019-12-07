@@ -7,7 +7,7 @@ The Gemmini project is developing a systolic-array based matrix multiplication a
 
 Gemmini is implemented as a RoCC accelerator with non-standard RISC-V custom instructions. The Gemmini unit uses the RoCC port of a Rocket or BOOM `tile`, and by default connects to the memory system through the System Bus (i.e., directly to the L2 cache). 
 
-To add a Gemmini unit to an SoC, you should add the ``gemmini.DefaultGemminiConfig`` config mixin to the SoC configurations. To change the configuration of the Gemmini accelerator unit, you can write a custom configuration to replace the ``DefaultGemminiConfig``, which you can view under `generators/gemmini/src/main/scala/configs.scala <https://github.com/ucb-bar/gemmini/blob/master/src/main/scala/gemmini/configs.scala>`__ to see the possible configuration parameters.
+To add a Gemmini unit to an SoC, you should add the ``gemmini.DefaultGemminiConfig`` config mixin to the SoC configurations. To change the configuration of the Gemmini accelerator unit, you can write a custom configuration to replace the ``DefaultGemminiConfig``, which you can view under [generators/gemmini/src/main/scala/configs.scala](<https://github.com/ucb-bar/gemmini/blob/master/src/main/scala/gemmini/configs.scala) to see the possible configuration parameters.
 
 Alternatively, to build our example Gemmini-equipped SoC simulator, run the following commands:
 
@@ -39,7 +39,7 @@ Major parameters of interest include:
 Software
 ------------------
 
-The Gemmini non-standard ISA extension is specified in the `Gemmini repository <https://github.com/ucb-bar/gemmini/blob/master/README.md>`__.
+The Gemmini non-standard ISA extension is specified in the [Gemmini repository] (https://github.com/ucb-bar/gemmini/blob/master/README.md).
 The ISA includes configuration instructions, data movement instructions (from main memory to the Gemmini scratchpad, and from the Gemmini accumulators to main memory), and matrix multiplication execution instructions. 
 
 Since Gemmini instructions are not exposed through the GNU binutils assembler, several C macros are provided in order to construct the instruction encodings to call these instructions.
