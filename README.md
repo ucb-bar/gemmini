@@ -1,10 +1,10 @@
-Systolic Array Project
+Gemmini Array Project
 =======================
 Generator for configurable systolic arrays. Supports configurable dimensions, precision, and input and weight stationary dataflows. Integrates with Rocket as an RoCC accelerator.
 
 # Architecture
-## Core Systolic Architecture (PE/Tile/Mesh)
-## Systolic Array Driver + Controller
+## Core Gemmini Architecture (PE/Tile/Mesh)
+## Gemmini Array Driver + Controller
 ### Local Memory System
 ## Integration with Rocket
 ## Top-Level Generator Parameters

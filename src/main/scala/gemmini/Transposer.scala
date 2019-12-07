@@ -55,7 +55,7 @@ class PipelinedTransposer[T <: Data](val dim: Int, val dataType: T) extends Tran
     }
   }
 
-  // Propagate input from bottom row to top row systolically in the move up phase
+  // Propagate input from bottom row to top row gemminially in the move up phase
   // TODO: need to iterate over columns to connect Chisel values of type T
   // Should be able to operate directly on the Vec, but Seq and Vec don't mix (try Array?)
   for (colIdx <- 0 until dim) {
@@ -68,7 +68,7 @@ class PipelinedTransposer[T <: Data](val dim: Int, val dataType: T) extends Tran
     }
   }
 
-  // Propagate input from right side to left side systolically in the move left phase
+  // Propagate input from right side to left side gemminially in the move left phase
   for (rowIdx <- 0 until dim) {
     regArrayT.foldRight(io.inRow.bits(rowIdx)) {
       case (regCol, prevReg) =>
