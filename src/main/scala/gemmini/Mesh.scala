@@ -14,7 +14,7 @@ import chisel3.util._
   * @param meshColumns
   */
 class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
-                      df: Dataflow.Value,
+                      df: Dataflow.Value, pe_latency: Int,
                       val tileRows: Int, val tileColumns: Int,
                       val meshRows: Int, val meshColumns: Int)(implicit ev: Arithmetic[T]) extends Module {
   import ev._
@@ -35,7 +35,7 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   })
 
   // mesh(r)(c) => Tile at row r, column c
-  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, tileRows, tileColumns)))
+  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, pe_latency, tileRows, tileColumns)))
   val meshT = mesh.transpose
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)

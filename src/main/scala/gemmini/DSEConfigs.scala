@@ -16,7 +16,6 @@ object DSEBaseConfig {
     tileColumns = 1,
     meshRows = 16,
     meshColumns = 16,
-    // ld_str_queue_length = 2,
     ld_queue_length = 4,
     st_queue_length = 2,
     ex_queue_length = 8,
@@ -32,7 +31,8 @@ object DSEBaseConfig {
     aligned_to = 16,
     inputType = SInt(8.W),
     outputType = SInt(19.W),
-    accType = SInt(32.W)
+    accType = SInt(32.W),
+    pe_latency = 0
   )
 }
 

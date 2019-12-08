@@ -12,7 +12,7 @@ import chisel3.util._
   * @param rows Number of PEs on each row
   * @param columns Number of PEs on each column
   */
-class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, val rows: Int, val columns: Int)
+class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, pe_latency: Int, val rows: Int, val columns: Int)
                      (implicit ev: Arithmetic[T]) extends Module {
   import ev._
 
@@ -33,7 +33,7 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
     val out_garbage = Output(Vec(columns, Bool()))
   })
 
-  val tile = Seq.fill(rows, columns)(Module(new PE(inputType, outputType, accType, df)))
+  val tile = Seq.fill(rows, columns)(Module(new PE(inputType, outputType, accType, df, pe_latency)))
   val tileT = tile.transpose
 
   // TODO: abstract hori/vert broadcast, all these connections look the same

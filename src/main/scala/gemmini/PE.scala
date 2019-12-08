@@ -9,7 +9,7 @@ import chisel3.util._
   * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
   * @param width Data width of operands
   */
-class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
+class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, latency: Int)
                    (implicit ev: Arithmetic[T]) extends Module { // Debugging variables
   import ev._
 
@@ -32,23 +32,23 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
 
   val cType = if (df == Dataflow.WS) inputType else accType
 
-  val a  = io.in_a
-  val b  = io.in_b
-  val d  = io.in_d
-  // val c1 = Reg(accType)
-  // val c2 = Reg(accType)
+  val a  = ShiftRegister(io.in_a, latency)
+  val b  = ShiftRegister(io.in_b, latency)
+  val d  = ShiftRegister(io.in_d, latency)
   val c1 = Reg(cType)
   val c2 = Reg(cType)
-  val s  = io.in_s
-
-  val last_s = RegEnable(s, !io.in_garbage)
-  val flip = last_s =/= s
-  val shift_offset = Mux(flip, io.in_shift, 0.U)
+  val s  = ShiftRegister(io.in_s, latency)
+  val shift = ShiftRegister(io.in_shift, latency)
+  val garbage = ShiftRegister(io.in_garbage, latency) // TODO should we clockgate the rest of the ShiftRegisters based on the values in this ShiftRegisters
 
   io.out_s := s
   io.out_a := a
-  io.out_shift := io.in_shift
-  io.out_garbage := io.in_garbage
+  io.out_shift := shift
+  io.out_garbage := garbage
+
+  val last_s = RegEnable(s, !garbage)
+  val flip = last_s =/= s
+  val shift_offset = Mux(flip, shift, 0.U)
 
   val select = s(0)
   val mode = s(1)
@@ -62,25 +62,25 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
   val PROPAGATE = 1.U(1.W)
 
   when ((df == Dataflow.OS).B || ((df == Dataflow.BOTH).B && mode === OUTPUT_STATIONARY)) {
-    when(select === PROPAGATE){
+    when(select === PROPAGATE) {
       io.out_c := (c1 >> shift_offset).clippedToWidthOf(outputType)
       io.out_b := b
-      c2 := (a * b.withWidthOf(inputType)) + c2
+      c2 := c2.mac(a, b.withWidthOf(inputType))
       c1 := d
     }.otherwise {
       io.out_c := (c2 >> shift_offset).clippedToWidthOf(outputType)
       io.out_b := b
-      c1 := (a * b.withWidthOf(inputType)) + c1
+      c1 := c1.mac(a, b.withWidthOf(inputType))
       c2 := d
     }
   }.elsewhen ((df == Dataflow.WS).B || ((df == Dataflow.BOTH).B && mode === WEIGHT_STATIONARY)) {
-    when(select === PROPAGATE){
+    when(select === PROPAGATE) {
       io.out_c := c1
-      io.out_b := (a * c2.withWidthOf(inputType)) + b
+      io.out_b := b.mac(a, c2.withWidthOf(inputType))
       c1 := d
     }.otherwise {
       io.out_c := c2
-      io.out_b := (a * c1.withWidthOf(inputType)) + b
+      io.out_b := b.mac(a, c1.withWidthOf(inputType))
       c2 := d
     }
   }.otherwise {
@@ -89,7 +89,7 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value)
     io.out_b := DontCare
   }
 
-  when (io.in_garbage) {
+  when (garbage) {
     c1 := c1
     c2 := c2
   }

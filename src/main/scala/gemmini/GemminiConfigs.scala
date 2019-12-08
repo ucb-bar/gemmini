@@ -28,6 +28,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
                                                          inputType: T,
                                                          outputType: T,
                                                          accType: T,
+                                                         pe_latency: Int,
                                                          headerFileName: String = "systolic_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth
@@ -52,12 +53,31 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
     // Returns the (min,max) values for a dataType
     def limitsOfDataType(dataType: Data): (String, String) = {
       assert(dataType.getWidth <= 32) // Above 32 bits, we need to append UL to the number, which isn't done yet
-      if (dataType.isInstanceOf[UInt]) {
-        ("0", BigInt(2).pow(dataType.getWidth).-(1).toString)
-      } else if (dataType.isInstanceOf[SInt]) {
-        ("-" + BigInt(2).pow(dataType.getWidth - 1).toString ,BigInt(2).pow(dataType.getWidth - 1).-(1).toString)
-      } else {
-        throw new IllegalArgumentException(s"Data type $dataType isn't an integer")
+
+      dataType match {
+        case dt: UInt => ("0", BigInt(2).pow(dt.getWidth).-(1).toString)
+        case dt: SInt => ("-" + BigInt(2).pow(dt.getWidth - 1).toString, BigInt(2).pow(dt.getWidth - 1).-(1).toString)
+        case dt: Float =>
+          val max_sig = (1 << dt.recSigWidth) - 1
+          val max_exp = (1 << dt.recExpWidth) - 1
+
+          val max_float = (BigInt(max_sig) << max_exp).toFloat
+          (s"-$max_float", s"$max_float")
+        case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
+      }
+    }
+
+    def c_type(dataType: Data): String = {
+      dataType match {
+        case dt: UInt => s"uint${dt.getWidth}_t"
+        case dt: SInt => s"int${dt.getWidth}_t"
+        case dt: Float =>
+          (dt.expWidth, dt.sigWidth) match {
+            case (8, 23) => "float"
+            case (11, 53) => "double"
+            case _ => throw new IllegalArgumentException(s"Only single- and double-precision IEEE754 floating point types are currently supported")
+          }
+        case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
       }
     }
 
@@ -84,10 +104,10 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
 
     // Datatype of the systolic array
     val limits = limitsOfDataType(inputType)
-    header ++= s"typedef int${inputType.getWidth}_t elem_t;\n"
+    header ++= s"typedef ${c_type(inputType)} elem_t;\n"
     header ++= s"elem_t elem_t_max = ${limits._2};\n"
     header ++= s"elem_t elem_t_min = ${limits._1};\n"
-    header ++= s"typedef int${accType.getWidth}_t acc_t;\n\n"
+    header ++= s"typedef ${c_type(accType)} acc_t;\n\n"
 
     header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"
     header ++= s"#define row_align_acc(blocks) __attribute__((aligned(blocks*DIM*sizeof(acc_t))))\n\n"

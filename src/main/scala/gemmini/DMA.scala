@@ -224,7 +224,11 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     io.reserve.entry.cmd_id := req.cmd_id
 
     io.reserve.entry.addr := req.spaddr + meshRows.U *
-      Mux(req.is_acc, bytesRequested / accWidthBytes.U, bytesRequested / spadWidthBytes.U)
+      Mux(req.is_acc,
+        // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
+        // "if" condition and the "else" clause
+        if (bytesRequested.getWidth >= log2Up(accWidthBytes+1)) bytesRequested / accWidthBytes.U else 0.U,
+        if (bytesRequested.getWidth >= log2Up(spadWidthBytes+1)) bytesRequested / spadWidthBytes.U else 0.U)
     io.reserve.entry.spad_row_offset := Mux(req.is_acc, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
 
     when (tl.a.fire()) {

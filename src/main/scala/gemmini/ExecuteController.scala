@@ -28,12 +28,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val block_size = meshRows*tileRows
 
   val tag_with_deps = new Bundle with TagQueueTag {
-    // val rob_ids = Vec(2, UDValid(UInt(log2Up(rob_entries).W)))
     val rob_id = UDValid(UInt(log2Up(rob_entries).W))
     val addr = local_addr_t.cloneType
 
     override def make_this_garbage(dummy: Int = 0): Unit = {
-      // rob_ids.foreach(_.valid := false.B)
       rob_id.valid := false.B
       addr.make_this_garbage()
     }
@@ -100,8 +98,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val cntl = mesh_cntl_signals_q.io.deq.bits
 
   // Instantiate the actual mesh
-  val mesh = Module(new MeshWithDelays(inputType, outputType, accType, tag_with_deps, dataflow, tileRows,
-    tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
+  val mesh = Module(new MeshWithDelays(inputType, outputType, accType, tag_with_deps, dataflow, pe_latency,
+    tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
 
   mesh.io.a.valid := false.B
   mesh.io.b.valid := false.B
