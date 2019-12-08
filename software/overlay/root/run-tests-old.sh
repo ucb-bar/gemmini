@@ -35,45 +35,45 @@ echo "========ResNet152-32 OS=========" >> test_output.txt
 /root/resnet/resnet152-32 os >> test_output.txt
 echo "========ResNet152-32 WS=========" >> test_output.txt
 /root/resnet/resnet152-32 ws >> test_output.txt
-echo "========Systolic Library Test 1========="
-echo "========Systolic Library Test 1 OS=========" >> test_output.txt
-/root/systolic_library/test1 os >> test_output.txt
-echo "========Systolic Library Test 1 WS=========" >> test_output.txt
-/root/systolic_library/test1 ws >> test_output.txt
-echo "========Systolic Library Test 2========="
-echo "========Systolic Library Test 2 OS=========" >> test_output.txt
-/root/systolic_library/test2 os >> test_output.txt
-echo "========Systolic Library Test 2 WS=========" >> test_output.txt
-/root/systolic_library/test2 ws >> test_output.txt
-echo "========Systolic Library Test 3========="
-echo "========Systolic Library Test 3 OS=========" >> test_output.txt
-/root/systolic_library/test3 os >> test_output.txt
-echo "========Systolic Library Test 3 WS=========" >> test_output.txt
-/root/systolic_library/test3 ws >> test_output.txt
-echo "========Systolic Library Test 4========="
-echo "========Systolic Library Test 4 OS=========" >> test_output.txt
-/root/systolic_library/test4 os >> test_output.txt
-echo "========Systolic Library Test 4 WS=========" >> test_output.txt
-/root/systolic_library/test4 ws >> test_output.txt
-echo "========Systolic Library Test 5========="
-echo "========Systolic Library Test 5 OS=========" >> test_output.txt
-/root/systolic_library/test5 os >> test_output.txt
-echo "========Systolic Library Test 5 WS=========" >> test_output.txt
-/root/systolic_library/test5 ws >> test_output.txt
-echo "========Systolic Library Test 6========="
-echo "========Systolic Library Test 6 OS=========" >> test_output.txt
-/root/systolic_library/test6 os >> test_output.txt
-echo "========Systolic Library Test 6 WS=========" >> test_output.txt
-/root/systolic_library/test6 ws >> test_output.txt
-echo "========Systolic Library Test 7========="
-echo "========Systolic Library Test 7 OS=========" >> test_output.txt
-/root/systolic_library/test7 os >> test_output.txt
-echo "========Systolic Library Test 7 WS=========" >> test_output.txt
-/root/systolic_library/test7 ws >> test_output.txt
-echo "========Systolic Library Test 8========="
-echo "========Systolic Library Test 8 OS=========" >> test_output.txt
-/root/systolic_library/test8 os >> test_output.txt
-echo "========Systolic Library Test 8 WS=========" >> test_output.txt
-/root/systolic_library/test8 ws >> test_output.txt
+echo "========Gemmini Library Test 1========="
+echo "========Gemmini Library Test 1 OS=========" >> test_output.txt
+/root/gemmini_library/test1 os >> test_output.txt
+echo "========Gemmini Library Test 1 WS=========" >> test_output.txt
+/root/gemmini_library/test1 ws >> test_output.txt
+echo "========Gemmini Library Test 2========="
+echo "========Gemmini Library Test 2 OS=========" >> test_output.txt
+/root/gemmini_library/test2 os >> test_output.txt
+echo "========Gemmini Library Test 2 WS=========" >> test_output.txt
+/root/gemmini_library/test2 ws >> test_output.txt
+echo "========Gemmini Library Test 3========="
+echo "========Gemmini Library Test 3 OS=========" >> test_output.txt
+/root/gemmini_library/test3 os >> test_output.txt
+echo "========Gemmini Library Test 3 WS=========" >> test_output.txt
+/root/gemmini_library/test3 ws >> test_output.txt
+echo "========Gemmini Library Test 4========="
+echo "========Gemmini Library Test 4 OS=========" >> test_output.txt
+/root/gemmini_library/test4 os >> test_output.txt
+echo "========Gemmini Library Test 4 WS=========" >> test_output.txt
+/root/gemmini_library/test4 ws >> test_output.txt
+echo "========Gemmini Library Test 5========="
+echo "========Gemmini Library Test 5 OS=========" >> test_output.txt
+/root/gemmini_library/test5 os >> test_output.txt
+echo "========Gemmini Library Test 5 WS=========" >> test_output.txt
+/root/gemmini_library/test5 ws >> test_output.txt
+echo "========Gemmini Library Test 6========="
+echo "========Gemmini Library Test 6 OS=========" >> test_output.txt
+/root/gemmini_library/test6 os >> test_output.txt
+echo "========Gemmini Library Test 6 WS=========" >> test_output.txt
+/root/gemmini_library/test6 ws >> test_output.txt
+echo "========Gemmini Library Test 7========="
+echo "========Gemmini Library Test 7 OS=========" >> test_output.txt
+/root/gemmini_library/test7 os >> test_output.txt
+echo "========Gemmini Library Test 7 WS=========" >> test_output.txt
+/root/gemmini_library/test7 ws >> test_output.txt
+echo "========Gemmini Library Test 8========="
+echo "========Gemmini Library Test 8 OS=========" >> test_output.txt
+/root/gemmini_library/test8 os >> test_output.txt
+echo "========Gemmini Library Test 8 WS=========" >> test_output.txt
+/root/gemmini_library/test8 ws >> test_output.txt
 cat test_output.txt
 poweroff -f

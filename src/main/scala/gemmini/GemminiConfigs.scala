@@ -28,7 +28,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
                                                          inputType: T,
                                                          outputType: T,
                                                          accType: T,
-                                                         headerFileName: String = "systolic_params.h"
+                                                         headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth
   val sp_bank_entries = sp_capacity match {
@@ -48,7 +48,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
   require(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
   require(acc_rows % (meshRows * tileRows) == 0, "the number of rows in the accumulator must be a multiple of the dimensions of the systolic array")
 
-  def generateHeader(guard: String = "SYSTOLIC_PARAMS_H"): String = {
+  def generateHeader(guard: String = "GEMMINI_PARAMS_H"): String = {
     // Returns the (min,max) values for a dataType
     def limitsOfDataType(dataType: Data): (String, String) = {
       assert(dataType.getWidth <= 32) // Above 32 bits, we need to append UL to the number, which isn't done yet
@@ -98,7 +98,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
 
   def headerFilePath: String = {
     val chipyard_directory = "./generators/gemmini/gemmini-tests-workload/gemmini-rocc-tests/include"
-    val project_template_directory = "./systolic-rocc-tests/include" // Old root directory; rendered obsolete by Chipyard
+    val project_template_directory = "./gemmini-rocc-tests/include" // Old root directory; rendered obsolete by Chipyard
     val default_directory = "."
 
     val in_chipyard = {

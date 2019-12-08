@@ -1,4 +1,4 @@
-Systolic Array Project
+Gemmini Array Project
 =======================
 Gemmini
 ====================================
@@ -51,6 +51,11 @@ The Gemmini generator generates a C header file based on the generator parameter
 
 The Gemmini generator implements a custom non-standard version of the Spike functional ISA simulator. This implementation is based on the ``esp-tools`` Spike implementation that is mixed with the Hwacha vector accelerator. Is is currently a separate branch within the ``esp-tools`` Spike repository, but it is in the process of upstreaming to the main ``esp-tools`` branch.
 
+# Architecture
+## Core Gemmini Architecture (PE/Tile/Mesh)
+## Gemmini Array Driver + Controller
+### Local Memory System
+## Integration with Rocket
 ## Top-Level Generator Parameters
 - `tileRows`, `tileColumns`
     - A Tile is a fully combinational 2D array of PEs with dimension (`tileRows` x `tileColumns`)
