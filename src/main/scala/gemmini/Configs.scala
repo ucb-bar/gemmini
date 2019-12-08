@@ -118,7 +118,7 @@ class GemminiHostMiniCore extends Config((site, here, up) => {
 /**
  * Mixin which configures a smaller host processor for the systolic array.
    This mixin **adds** the small core to the default host rocket (as the last hart).
-   This is useful for software development purposes for the systolic accelerator
+   This is useful for software development purposes for the gemmini accelerator
    as a device with a control processor (rather than a rocc-attached accelerator)
  */
 class WithGemminiHostMiniCore extends Config((site, here, up) => {
@@ -160,15 +160,15 @@ class WithGemminiHostMiniCore extends Config((site, here, up) => {
 
 
 /**
- * Top level config with a default single core rocket and systolic rocc accelerator.
-   Useful for systolic performance evaluation and debugging.
+ * Top level config with a default single core rocket and gemmini rocc accelerator.
+   Useful for gemmini performance evaluation and debugging.
  */
 class GemminiConfig extends Config(new DefaultGemminiConfig ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
 
 /**
- * Top level config with a small host rocket and systolic rocc accelerator.
+ * Top level config with a small host rocket and gemmini rocc accelerator.
    Useful for physical design.
  */
 class GemminiAcceleratorConfig extends Config(
@@ -182,7 +182,7 @@ class GemminiAcceleratorConfig extends Config(
 
 /**
  * Top level config with a default single core rocket,
-   and a small mini-core rocket attached to a systolic rocc accelerator.
+   and a small mini-core rocket attached to a gemmini rocc accelerator.
    Useful for device driver development
  */
 class GemminiAcceleratorDeviceConfig extends Config(

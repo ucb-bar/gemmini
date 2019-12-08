@@ -240,7 +240,7 @@ class GemminiModule[T <: Data: Arithmetic]
         cmd.ready := true.B
       }
 
-      assert(is_ex, "unknown systolic command")
+      assert(is_ex, "unknown gemmini command")
     }
     */
   }

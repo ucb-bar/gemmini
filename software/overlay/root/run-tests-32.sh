@@ -23,25 +23,25 @@ echo "========ResNet152-32 OS=========" >> test_output.txt
 /root/resnet/resnet152-32 os >> test_output.txt
 echo "========ResNet152-32 WS=========" >> test_output.txt
 /root/resnet/resnet152-32 ws >> test_output.txt
-echo "========Systolic Library Test 5========="
-echo "========Systolic Library Test 5 OS=========" >> test_output.txt
-/root/systolic_library/test5 os >> test_output.txt
-echo "========Systolic Library Test 5 WS=========" >> test_output.txt
-/root/systolic_library/test5 ws >> test_output.txt
-echo "========Systolic Library Test 6========="
-echo "========Systolic Library Test 6 OS=========" >> test_output.txt
-/root/systolic_library/test6 os >> test_output.txt
-echo "========Systolic Library Test 6 WS=========" >> test_output.txt
-/root/systolic_library/test6 ws >> test_output.txt
-echo "========Systolic Library Test 7========="
-echo "========Systolic Library Test 7 OS=========" >> test_output.txt
-/root/systolic_library/test7 os >> test_output.txt
-echo "========Systolic Library Test 7 WS=========" >> test_output.txt
-/root/systolic_library/test7 ws >> test_output.txt
-echo "========Systolic Library Test 8========="
-echo "========Systolic Library Test 8 OS=========" >> test_output.txt
-/root/systolic_library/test8 os >> test_output.txt
-echo "========Systolic Library Test 8 WS=========" >> test_output.txt
-/root/systolic_library/test8 ws >> test_output.txt
+echo "========Gemmini Library Test 5========="
+echo "========Gemmini Library Test 5 OS=========" >> test_output.txt
+/root/gemmini_library/test5 os >> test_output.txt
+echo "========Gemmini Library Test 5 WS=========" >> test_output.txt
+/root/gemmini_library/test5 ws >> test_output.txt
+echo "========Gemmini Library Test 6========="
+echo "========Gemmini Library Test 6 OS=========" >> test_output.txt
+/root/gemmini_library/test6 os >> test_output.txt
+echo "========Gemmini Library Test 6 WS=========" >> test_output.txt
+/root/gemmini_library/test6 ws >> test_output.txt
+echo "========Gemmini Library Test 7========="
+echo "========Gemmini Library Test 7 OS=========" >> test_output.txt
+/root/gemmini_library/test7 os >> test_output.txt
+echo "========Gemmini Library Test 7 WS=========" >> test_output.txt
+/root/gemmini_library/test7 ws >> test_output.txt
+echo "========Gemmini Library Test 8========="
+echo "========Gemmini Library Test 8 OS=========" >> test_output.txt
+/root/gemmini_library/test8 os >> test_output.txt
+echo "========Gemmini Library Test 8 WS=========" >> test_output.txt
+/root/gemmini_library/test8 ws >> test_output.txt
 cat test_output.txt
 poweroff -f

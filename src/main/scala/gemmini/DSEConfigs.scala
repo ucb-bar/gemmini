@@ -38,28 +38,28 @@ object DSEBaseConfig {
 
 object DSEConfigs{
   import DSEBaseConfig.{baseConfig => base}
-  val baseConfig = base.copy(headerFileName = "systolic_params_dse1.h")
-  val wsOnlyConfig = baseConfig.copy(dataflow = Dataflow.WS, headerFileName = "systolic_params_dse2.h")
-  val bothDataflowsConfig = baseConfig.copy(dataflow = Dataflow.BOTH, headerFileName = "systolic_params_dse3.h")
+  val baseConfig = base.copy(headerFileName = "gemmini_params_dse1.h")
+  val wsOnlyConfig = baseConfig.copy(dataflow = Dataflow.WS, headerFileName = "gemmini_params_dse2.h")
+  val bothDataflowsConfig = baseConfig.copy(dataflow = Dataflow.BOTH, headerFileName = "gemmini_params_dse3.h")
   val highBitwidthConfig = baseConfig.copy(inputType = SInt(32.W), outputType = SInt(32.W),
-    headerFileName = "systolic_params_dse4.h")
+    headerFileName = "gemmini_params_dse4.h")
   val largerDimConfig = baseConfig.copy(meshRows = 32, meshColumns = 32, outputType = SInt(20.W),
-    headerFileName = "systolic_params_dse5.h")
+    headerFileName = "gemmini_params_dse5.h")
   val fullyCombinationalConfig = baseConfig.copy(tileRows = 16, tileColumns = 16, meshRows = 1, meshColumns = 1,
-    headerFileName = "systolic_params_dse6.h")
+    headerFileName = "gemmini_params_dse6.h")
   val moreMemoryConfig = baseConfig.copy(sp_capacity = CapacityInKilobytes(256), acc_capacity = CapacityInKilobytes(64),
-    headerFileName = "systolic_params_dse7.h") // 256kB
-  val moreBanksConfig = baseConfig.copy(sp_banks = 32, headerFileName = "systolic_params_dse8.h")
-  val narrowerBusConfig = baseConfig.copy(dma_maxbytes = 64, dma_buswidth = 64, headerFileName = "systolic_params_dse10.h")
+    headerFileName = "gemmini_params_dse7.h") // 256kB
+  val moreBanksConfig = baseConfig.copy(sp_banks = 32, headerFileName = "gemmini_params_dse8.h")
+  val narrowerBusConfig = baseConfig.copy(dma_maxbytes = 64, dma_buswidth = 64, headerFileName = "gemmini_params_dse10.h")
   val pnr16Config = baseConfig.copy(sp_capacity = CapacityInKilobytes(256), acc_capacity = CapacityInKilobytes(64),
-    dataflow = Dataflow.BOTH, headerFileName = "systolic_params_pnr16.h")
+    dataflow = Dataflow.BOTH, headerFileName = "gemmini_params_pnr16.h")
   val pnr32Config = baseConfig.copy(sp_capacity = CapacityInKilobytes(512), acc_capacity = CapacityInKilobytes(128),
     meshRows = 32, meshColumns = 32, outputType = SInt(20.W), dataflow = Dataflow.BOTH,
-    headerFileName = "systolic_params_pnr32.h")
+    headerFileName = "gemmini_params_pnr32.h")
 }
 
 //===========BASELINE=========
-class SystolicParamsDSE1 extends Config((site, here, up) => {
+class GemminiParamsDSE1 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
@@ -71,7 +71,7 @@ class SystolicParamsDSE1 extends Config((site, here, up) => {
 })
 
 //===========DATAFLOW CHANGE: WS=========
-class SystolicParamsDSE2 extends Config((site, here, up) => {
+class GemminiParamsDSE2 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
@@ -83,7 +83,7 @@ class SystolicParamsDSE2 extends Config((site, here, up) => {
 })
 
 //===========DATAFLOW CHANGE: BOTH=========
-class SystolicParamsDSE3 extends Config((site, here, up) => {
+class GemminiParamsDSE3 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
@@ -95,7 +95,7 @@ class SystolicParamsDSE3 extends Config((site, here, up) => {
 })
 
 //===========BITWIDTH CHANGE: 32 BITS=========
-class SystolicParamsDSE4 extends Config((site, here, up) => {
+class GemminiParamsDSE4 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
@@ -107,7 +107,7 @@ class SystolicParamsDSE4 extends Config((site, here, up) => {
 })
 
 //===========DIMENSIONS CHANGE: 32x32=========
-class SystolicParamsDSE5 extends Config((site, here, up) => {
+class GemminiParamsDSE5 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
@@ -119,7 +119,7 @@ class SystolicParamsDSE5 extends Config((site, here, up) => {
 })
 
 //===========PIPELINE DEPTH CHANGE: Fully Combinational=========
-class SystolicParamsDSE6 extends Config((site, here, up) => {
+class GemminiParamsDSE6 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
@@ -131,7 +131,7 @@ class SystolicParamsDSE6 extends Config((site, here, up) => {
 })
 
 //===========MEMORY CAPACITY CHANGE: 256 KB=========
-class SystolicParamsDSE7 extends Config((site, here, up) => {
+class GemminiParamsDSE7 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
@@ -143,7 +143,7 @@ class SystolicParamsDSE7 extends Config((site, here, up) => {
 })
 
 //===========MEMORY BANKS CHANGE: 33 Banks=========
-class SystolicParamsDSE8 extends Config((site, here, up) => {
+class GemminiParamsDSE8 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
@@ -155,7 +155,7 @@ class SystolicParamsDSE8 extends Config((site, here, up) => {
 })
 
 //===========BUS WIDTH CHANGE: 64 bits=========
-class SystolicParamsDSE10 extends Config((site, here, up) => {
+class GemminiParamsDSE10 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
          implicit val q = p
@@ -167,7 +167,7 @@ class SystolicParamsDSE10 extends Config((site, here, up) => {
 })
 
 //===========PnR 16-by-16=========
-class SystolicParamsPnR16 extends Config((site, here, up) => {
+class GemminiParamsPnR16 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
     (p: Parameters) => {
       implicit val q = p
@@ -179,7 +179,7 @@ class SystolicParamsPnR16 extends Config((site, here, up) => {
 })
 
 //===========PnR 32-by-32=========
-class SystolicParamsPnR32 extends Config((site, here, up) => {
+class GemminiParamsPnR32 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
     (p: Parameters) => {
       implicit val q = p
@@ -191,7 +191,7 @@ class SystolicParamsPnR32 extends Config((site, here, up) => {
 })
 
 //===========Scalar Processor Change=========
-class SystolicParamsDSE11 extends Config((site, here, up) => {
+class GemminiParamsDSE11 extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
@@ -206,38 +206,38 @@ class SystolicParamsDSE11 extends Config((site, here, up) => {
 // Design Space Exploration Top Level Configs
 // -----------------------------
 
-class SystolicDSE1Config extends Config(new SystolicParamsDSE1 ++
+class GemminiDSE1Config extends Config(new GemminiParamsDSE1 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
-class SystolicDSE2Config extends Config(new SystolicParamsDSE2 ++
+class GemminiDSE2Config extends Config(new GemminiParamsDSE2 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
-class SystolicDSE3Config extends Config(new SystolicParamsDSE3 ++
+class GemminiDSE3Config extends Config(new GemminiParamsDSE3 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
-class SystolicDSE4Config extends Config(new SystolicParamsDSE4 ++
+class GemminiDSE4Config extends Config(new GemminiParamsDSE4 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
-class SystolicDSE5Config extends Config(new SystolicParamsDSE5 ++
+class GemminiDSE5Config extends Config(new GemminiParamsDSE5 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
-class SystolicDSE6Config extends Config(new SystolicParamsDSE6 ++
+class GemminiDSE6Config extends Config(new GemminiParamsDSE6 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
-class SystolicDSE7Config extends Config(new SystolicParamsDSE7 ++
+class GemminiDSE7Config extends Config(new GemminiParamsDSE7 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
-class SystolicDSE8Config extends Config(new SystolicParamsDSE8 ++
+class GemminiDSE8Config extends Config(new GemminiParamsDSE8 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
-class SystolicDSE10Config extends Config(new SystolicParamsDSE10 ++
+class GemminiDSE10Config extends Config(new GemminiParamsDSE10 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
-class SystolicPnr16Config extends Config(new SystolicParamsPnR16 ++
+class GemminiPnr16Config extends Config(new GemminiParamsPnR16 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
-class SystolicPnr32Config extends Config(new SystolicParamsPnR32 ++
+class GemminiPnr32Config extends Config(new GemminiParamsPnR32 ++
                                     new freechips.rocketchip.system.DefaultConfig)
 
-/* class SystolicDSE11Config extends Config(new SystolicParamsDSE11 ++
+/* class GemminiDSE11Config extends Config(new GemminiParamsDSE11 ++
                                     new boom.system.SmallBoomConfig)*/
