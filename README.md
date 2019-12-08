@@ -1,11 +1,9 @@
-Gemmini Array Project
-=======================
 Gemmini
 ====================================
 
-The Gemmini project is developing a systolic-array based matrix multiplication acceleration generation for the investigation of SoC integration of such accelerators. It is inspired by recent trends in machine learning accelerators for edge and mobile SoCs.
+The Gemmini project is developing a systolic-array based matrix multiplication accelerator generator for the investigation of SoC integration of such accelerators. It is inspired by recent trends in machine learning accelerators for edge and mobile SoCs.
 
-Gemmini is implemented as a RoCC accelerator with non-standard RISC-V custom instructions. The Gemmini unit uses the RoCC port of a Rocket or BOOM `tile`, and by default connects to the memory system through the System Bus (i.e., directly to the L2 cache). 
+Gemmini is implemented as a RoCC accelerator with non-standard RISC-V custom instructions. The Gemmini unit uses the RoCC port of a Rocket or BOOM _tile_, and by default connects to the memory system through the System Bus (i.e., directly to the L2 cache). 
 
 To add a Gemmini unit to an SoC, you should add the ``gemmini.DefaultGemminiConfig`` config mixin to the SoC configurations. To change the configuration of the Gemmini accelerator unit, you can write a custom configuration to replace the ``DefaultGemminiConfig``, which you can view under [generators/gemmini/src/main/scala/configs.scala](https://github.com/ucb-bar/gemmini/blob/master/src/main/scala/gemmini/configs.scala) to see the possible configuration parameters.
 
@@ -39,7 +37,7 @@ Major parameters of interest include:
 Software
 ------------------
 
-The Gemmini non-standard ISA extension is specified in the [Gemmini repository](https://github.com/ucb-bar/gemmini/blob/master/README.md).
+The Gemmini non-standard ISA extension is specified in the *RoCC ISA* section below.
 The ISA includes configuration instructions, data movement instructions (from main memory to the Gemmini scratchpad, and from the Gemmini accumulators to main memory), and matrix multiplication execution instructions. 
 
 Since Gemmini instructions are not exposed through the GNU binutils assembler, several C macros are provided in order to construct the instruction encodings to call these instructions.
@@ -50,25 +48,6 @@ The ``software`` directory of the generator includes the aforementioned library 
 The Gemmini generator generates a C header file based on the generator parameters. This header files gets compiled together with the matrix multiplication library to tune library performance. The generated header file can be found under ``software/gemmini-rocc-tests/include/systolic_params.h``
 
 The Gemmini generator implements a custom non-standard version of the Spike functional ISA simulator. This implementation is based on the ``esp-tools`` Spike implementation that is mixed with the Hwacha vector accelerator. Is is currently a separate branch within the ``esp-tools`` Spike repository, but it is in the process of upstreaming to the main ``esp-tools`` branch.
-
-# Architecture
-## Core Gemmini Architecture (PE/Tile/Mesh)
-## Gemmini Array Driver + Controller
-### Local Memory System
-## Integration with Rocket
-## Top-Level Generator Parameters
-- `tileRows`, `tileColumns`
-    - A Tile is a fully combinational 2D array of PEs with dimension (`tileRows` x `tileColumns`)
-- `meshRows`, `meshColumns`
-    - A Mesh is a pipelined 2D array of Tiles with dimension (`meshRows` x `meshColumns`)
-    - A Mesh is the top-level 'core' systolic array structure
-    - It can natively perform a `matmul` of square and equal dimension matrices
-        - e.g. C = A (m x n) `matmul` B (n x k) where `m = n = k = tileRows x meshRows = tileColumns x meshColumns`
-    - To perform matmul with non-square matrices, arbitrary inner dimension `n`, or matrices larger than the Mesh, requires software to break the computation down into the Mesh's primitive `matmul`
-- `dataWidth` = `dataBytes` x 8
-    - The native elaboration-time data width (in bits) of the PEs MAC unit and input/output wires
-    - Nominally `dataWidth = 8, dataBytes = 1` as we are designing an INT8 accelerator
-- For simplicity, we assume `meshRows = meshColumns` and `tileRows = tileColumns`
 
 # RoCC ISA
 ## Data Movement
@@ -173,49 +152,3 @@ Example:
 - `rs1` and `rs2` have the same encoding as the `matmul.compute.preloaded` encoding
 - If output-stationary, this instruction will compute on the previously computed result (C) in the systolic array
 - If weight-stationary, this instruction will compute on the previously preloaded weights (B) in the systolic array
-
-# Semantics
-## Instruction Dependency Management
-### TODO: Include examples of all these dependencies
-- mvin -> multseq (handled by SW and instruction stream ordering)
-- multseq -> multseq (handled by HW, SW doesn't have to worry about polling for completion if there exists a mult -> mult RAW dependency)
-- multseq -> mvout (handled by HW, blocking on all previous mults completing)
-- mvout -> multseq (WAR dependency is handled by instruction ordering, mvout is blocking)
-
-# Software Examples
-## Basic Output Stationary Mapping
-We want to calculate C = A x B + D.
-- Dimensions: A (m x n), B (n x k), D (m x k), C (m x k)
-- For simplicity assume m = n = k = `tileRows` x `meshRows` = `tileCols` x `meshCols`
-    - In our typical systolic array parameterization, `tileRows = tileCols = 2`, and `meshRows = meshCols = 8`
-- Assume A.T (transposed A), B, D are stored in DRAM row-major
-- A needs to be fed into the systolic array column-wise (so it is stored transposed), while B needs to be fed in row-wise
-- D is fed in row-wise from the top of the systolic array (this is done before A and B are fed simultaneously)
-
-This sequence of instructions performs the matmul:
-- Assume A, B, D are stored at addresses DaddrA, DaddrB, DaddrD in DRAM
-- Assume there's space in DRAM at DaddrC for the C result matrix
-- Assume the SW has reserved scratchpad space for A, B, C, D at addresses SaddrA, SaddrB, SaddrC, SaddrD
-
-```
-for (i = 0; i < n; ++i) {
-    mvin (DaddrA + i*m*dataBytes) (SaddrA + i*m*dataBytes)
-}
-for (i = 0; i < n; ++i) {
-    mvin (DaddrB + i*k*dataBytes) (SaddrB + i*k*dataBytes)
-}
-for (i = 0; i < m; ++i) {
-    mvin (DaddrD + i*k*dataBytes) (SaddrD + i*k*dataBytes)
-}
-matmul.preload SaddrD
-matmul.os1 SaddrA, SaddrB
-matmul.os2 SaddrC
-for (i = 0; i < m; ++i) {
-    mvout (DaddrC + i*k*dataBytes) (SaddrD + i*k*dataBytes)
-}
-```
-
-## Exploiting Parallelism
-### Double Buffering Within PEs (Preloads)
-### Loads During Matmul
-### Scratchpad Banking For Max Throughput
