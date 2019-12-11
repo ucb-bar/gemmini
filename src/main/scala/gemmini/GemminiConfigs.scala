@@ -58,11 +58,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
         case dt: UInt => ("0", BigInt(2).pow(dt.getWidth).-(1).toString)
         case dt: SInt => ("-" + BigInt(2).pow(dt.getWidth - 1).toString, BigInt(2).pow(dt.getWidth - 1).-(1).toString)
         case dt: Float =>
-          val max_sig = (1 << dt.recSigWidth) - 1
-          val max_exp = (1 << dt.recExpWidth) - 1
-
-          val max_float = (BigInt(max_sig) << max_exp).toFloat
-          (s"-$max_float", s"$max_float")
+          (dt.expWidth, dt.sigWidth) match {
+            case (8, 24) => (scala.Float.MinValue.toString, scala.Float.MaxValue.toString)
+            case (11, 53) => (scala.Double.MinValue.toString, scala.Double.MaxValue.toString)
+            case _ => throw new IllegalArgumentException(s"Only single- and double-precision IEEE754 floating point types are currently supported")
+          }
         case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
       }
     }
@@ -73,10 +73,19 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
         case dt: SInt => s"int${dt.getWidth}_t"
         case dt: Float =>
           (dt.expWidth, dt.sigWidth) match {
-            case (8, 23) => "float"
+            case (8, 24) => "float"
             case (11, 53) => "double"
             case _ => throw new IllegalArgumentException(s"Only single- and double-precision IEEE754 floating point types are currently supported")
           }
+        case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
+      }
+    }
+
+    def full_c_type(dataType: Data): String = {
+      dataType match {
+        case dt: UInt => "uint64_t"
+        case dt: SInt => "int64_t"
+        case dt: Float => "double"
         case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
       }
     }
@@ -107,7 +116,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
     header ++= s"typedef ${c_type(inputType)} elem_t;\n"
     header ++= s"elem_t elem_t_max = ${limits._2};\n"
     header ++= s"elem_t elem_t_min = ${limits._1};\n"
-    header ++= s"typedef ${c_type(accType)} acc_t;\n\n"
+    header ++= s"typedef ${c_type(accType)} acc_t;\n"
+    header ++= s"typedef ${full_c_type(inputType)} full_t\n\n"
+
+    if (inputType.isInstanceOf[Float]) {
+      header ++= "#define ELEM_T_IS_FLOAT\n\n"
+    }
 
     header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"
     header ++= s"#define row_align_acc(blocks) __attribute__((aligned(blocks*DIM*sizeof(acc_t))))\n\n"
