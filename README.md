@@ -52,9 +52,38 @@ The ``software`` directory of the generator includes the aforementioned library 
 
 The Gemmini generator generates a C header file based on the generator parameters. This header files gets compiled together with the matrix multiplication library to tune library performance. The generated header file can be found under ``software/gemmini-rocc-tests/include/gemmini_params.h``
 
-Instructions to simulate Gemmini programs, or to write your own Gemmini programs, can be found in the [Chipyard documentation](https://chipyard.readthedocs.io/en/latest/Generators/Gemmini.html). This page is geared towards those who might want to hack on or contribute to Gemmini's hardware source code, so the next section will instead describe Gemmini's assembly-level ISA which is made up of custom RISC-V instructions.
+## Build and Run Gemmini Programs
+
+To build pre-packaged Gemmini programs:
+
+```shell
+cd software/gemmini-rocc-tests/
+./build.sh
+```
+
+Afterwards, the program binaries will be found in `software/gemmini-rocc-tests/build`. Binaries whose names end in `-baremetal` are meant to be run in a bare-metal environment, while binaries whose names end in `-linux` are meant to run in a Linux environment. You can run the programs either on a cycle-accurate RTL simulator, or on a (much faster) functional ISA simulator called Spike.
+
+We use a special fork of Spike, found [here](https://github.com/ucb-bar/esp-isa-sim), which has support for Gemmini instructions. If you are using Chipyard, you can easily build Spike by running `./scripts/build-toolchains.sh esp-tools` from Chipyard's root directory. Then, to run the `mvin_mvout` program, which simply moves a matrix into Gemmini's scratchpad before moving it back out into main memory, run the following commands:
+
+```shell
+cd build/bareMetalC
+spike --extension=gemmini mvin_mvout-baremetal
+```
+
+## Writing Your Own Gemmini Programs
+`software/gemmini-rocc-tests/bareMetalC/template.c` is a template Gemmini program that you can base your own Gemmini programs off of. To write your own Gemmini program, run:
+
+```bash
+cd software/gemmini-rocc-tests/
+cp bareMetalC/template.c bareMetalC/my_program.c
+```
+
+Then, add `my_program` to the `tests` list at the top of `bareMetalC/Makefile`. Afterwards, running `./build.sh` will install `my_program-baremetal` in `build/bareMetalC`.
 
 # ISA
+
+This section describes Gemmini's assembly-level ISA which is made up of custom RISC-V instructions.
+
 ## Data Movement
 ### `mvin` Move Data From L2/DRAM to Scratchpad
 **Format:** `mvin rs1, rs2`
