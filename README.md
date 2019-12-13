@@ -52,33 +52,33 @@ The ``software`` directory of the generator includes the aforementioned library 
 
 The Gemmini generator generates a C header file based on the generator parameters. This header files gets compiled together with the matrix multiplication library to tune library performance. The generated header file can be found under ``software/gemmini-rocc-tests/include/gemmini_params.h``
 
-## Build and Run Gemmini Programs
+## Build and Run Gemmini Tests
 
-To build pre-packaged Gemmini programs:
+To build the Gemmini tests:
 
 ```shell
 cd software/gemmini-rocc-tests/
 ./build.sh
 ```
 
-Afterwards, the program binaries will be found in `software/gemmini-rocc-tests/build`. Binaries whose names end in `-baremetal` are meant to be run in a bare-metal environment, while binaries whose names end in `-linux` are meant to run in a Linux environment. You can run the programs either on a cycle-accurate RTL simulator, or on a (much faster) functional ISA simulator called Spike.
+Afterwards, the test binaries will be found in `software/gemmini-rocc-tests/build`. Binaries whose names end in `-baremetal` are meant to be run in a bare-metal environment, while binaries whose names end in `-linux` are meant to run in a Linux environment. You can run the tests either on a cycle-accurate RTL simulator, or on a (much faster) functional ISA simulator called Spike.
 
-We use a special fork of Spike, found [here](https://github.com/ucb-bar/esp-isa-sim), which has support for Gemmini instructions. If you are using Chipyard, you can easily build Spike by running `./scripts/build-toolchains.sh esp-tools` from Chipyard's root directory. Then, to run the `mvin_mvout` program, which simply moves a matrix into Gemmini's scratchpad before moving it back out into main memory, run the following commands:
+We use a special fork of Spike, found [here](https://github.com/ucb-bar/esp-isa-sim), which has support for Gemmini instructions. If you are using Chipyard, you can easily build Spike by running `./scripts/build-toolchains.sh esp-tools` from Chipyard's root directory. Then, to run the `mvin_mvout` test, which simply moves a matrix into Gemmini's scratchpad before moving it back out into main memory, run the following commands:
 
 ```shell
 cd build/bareMetalC
 spike --extension=gemmini mvin_mvout-baremetal
 ```
 
-## Writing Your Own Gemmini Programs
-`software/gemmini-rocc-tests/bareMetalC/template.c` is a template Gemmini program that you can base your own Gemmini programs off of. To write your own Gemmini program, run:
+## Writing Your Own Gemmini Tests
+`software/gemmini-rocc-tests/bareMetalC/template.c` is a template Gemmini test that you can base your own Gemmini tests off of. To write your own Gemmini test, run:
 
 ```bash
 cd software/gemmini-rocc-tests/
-cp bareMetalC/template.c bareMetalC/my_program.c
+cp bareMetalC/template.c bareMetalC/my_test.c
 ```
 
-Then, add `my_program` to the `tests` list at the top of `bareMetalC/Makefile`. Afterwards, running `./build.sh` will install `my_program-baremetal` in `build/bareMetalC`.
+Then, add `my_test` to the `tests` list at the top of `bareMetalC/Makefile`. Afterwards, running `./build.sh` will install `my_test-baremetal` in `build/bareMetalC`.
 
 # ISA
 
