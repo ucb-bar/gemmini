@@ -62,10 +62,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val preload_cmd_place = Mux(DoPreloads(0), 0.U, 1.U)
   val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
 
-  val in_s = functs(0) === COMPUTE_AND_FLIP_CMD
-  val in_s_flush = Reg(Bool())
+  val in_prop = functs(0) === COMPUTE_AND_FLIP_CMD
+  val in_prop_flush = Reg(Bool())
   when (current_dataflow === Dataflow.WS.id.U) {
-    in_s_flush := 0.U
+    in_prop_flush := 0.U
   }
 
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
@@ -111,9 +111,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   mesh.io.b.bits := DontCare
   mesh.io.d.bits := DontCare
   mesh.io.tag_in.bits := DontCare
-  mesh.io.s := Mux(control_state === flush, in_s_flush, cntl.s)
-  mesh.io.m := cntl.dataflow
-  mesh.io.shift := cntl.shift
+  mesh.io.pe_control.propagate := Mux(control_state === flush, in_prop_flush, cntl.prop)
+  mesh.io.pe_control.dataflow := cntl.dataflow
+  mesh.io.pe_control.shift := cntl.shift
   mesh.io.flush.bits := 0.U
 
   // Hazards
@@ -356,7 +356,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
           pending_completed_rob_id.bits := cmd.bits(0).rob_id
 
           when (current_dataflow === Dataflow.OS.id.U) {
-            in_s_flush := !rs2s(0).asTypeOf(local_addr_t).is_garbage()
+            in_prop_flush := !rs2s(0).asTypeOf(local_addr_t).is_garbage()
           }
         }
       }
@@ -376,7 +376,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
           pending_completed_rob_id.bits := cmd.bits(1).rob_id
 
           when (current_dataflow === Dataflow.OS.id.U) {
-            in_s_flush := !rs2s(1).asTypeOf(local_addr_t).is_garbage()
+            in_prop_flush := !rs2s(1).asTypeOf(local_addr_t).is_garbage()
           }
         }
       }
@@ -435,10 +435,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     val c_addr = local_addr_t.cloneType
 
     val rob_id = UDValid(UInt(log2Up(rob_entries).W))
-    // val rob_id_2 = UDValid(UInt(log2Up(rob_entries).W))
 
     val dataflow = UInt(1.W)
-    val s = UInt(1.W)
+    val prop = UInt(1.W)
     val shift = UInt(log2Up(accType.getWidth).W)
   }
 
@@ -475,7 +474,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   // mesh_cntl_signals_q.io.enq.bits.rob_id_2.bits := cmd.bits(1).rob_id
 
   mesh_cntl_signals_q.io.enq.bits.dataflow := current_dataflow
-  mesh_cntl_signals_q.io.enq.bits.s := Mux(performing_single_preload, in_s_flush, in_s)
+  mesh_cntl_signals_q.io.enq.bits.prop := Mux(performing_single_preload, in_prop_flush, in_prop)
   mesh_cntl_signals_q.io.enq.bits.shift := in_shift
 
   val readData = VecInit(io.read.map(_.resp.bits.data))

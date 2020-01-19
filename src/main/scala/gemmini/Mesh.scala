@@ -23,15 +23,20 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
     val in_a   = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b   = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
     val in_d   = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
-    val in_s   = Input(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
+    // val in_s   = Input(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
+    val in_control   = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
     val out_b  = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
     val out_c  = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
-    val out_s  = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
+    // val out_s  = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
+    val out_control  = Output(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
 
-    val in_shift = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Ceil(accType.getWidth).W))))
+    // val in_shift = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Ceil(accType.getWidth).W))))
 
-    val in_garbage = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
-    val out_garbage = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
+    // val in_garbage = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
+    // val out_garbage = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
+
+    val in_valid = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
+    val out_valid = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
   })
 
   // mesh(r)(c) => Tile at row r, column c
@@ -49,79 +54,54 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   }
 
   // Chain tile_out_b -> tile_b_in (pipeline b across each column)
-  /*for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_b(c)) {
-      case (in_b, tile) =>
-        tile.io.in_b := RegNext(in_b)
-        tile.io.out_b
-    }
-  }*/
   for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft((io.in_b(c), io.in_garbage(c))) {
-      case ((in_b, garbage), tile) =>
-        tile.io.in_b := RegEnable(in_b, !garbage.head)
-        (tile.io.out_b, tile.io.out_garbage)
+    meshT(c).foldLeft((io.in_b(c), io.in_valid(c))) {
+      case ((in_b, valid), tile) =>
+        tile.io.in_b := RegEnable(in_b, valid.head)
+        (tile.io.out_b, tile.io.out_valid)
     }
   }
 
   // Chain tile_out -> tile_propag (pipeline output across each column)
-  /*for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_d(c)) {
-      case (in_propag, tile) =>
-        tile.io.in_d := RegNext(in_propag)
-        tile.io.out_c
-    }
-  }*/
   for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft((io.in_d(c), io.in_garbage(c))) {
-      case ((in_propag, garbage), tile) =>
-        tile.io.in_d := RegEnable(in_propag, !garbage.head)
-        (tile.io.out_c, tile.io.out_garbage)
+    meshT(c).foldLeft((io.in_d(c), io.in_valid(c))) {
+      case ((in_propag, valid), tile) =>
+        tile.io.in_d := RegEnable(in_propag, valid.head)
+        (tile.io.out_c, tile.io.out_valid)
     }
   }
 
-  // Chain s (pipeline s across each column)
-  // TODO should S also be clock-gated based on power?
+  // Chain control signals (pipeline across each column)
   for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_s(c)) {
-      case (in_s, tile) =>
-        tile.io.in_s := RegNext(in_s)
-        tile.io.out_s
+    meshT(c).foldLeft((io.in_control(c), io.in_valid(c))) {
+      case ((in_ctrl, valid), tile) =>
+        (tile.io.in_control, in_ctrl, valid).zipped.foreach { case (tile_ctrl, ctrl, v) =>
+          tile_ctrl.shift := RegEnable(ctrl.shift, v)
+          tile_ctrl.dataflow := RegEnable(ctrl.dataflow, v)
+          tile_ctrl.propagate := RegEnable(ctrl.propagate, v)
+        }
+        (tile.io.out_control, tile.io.out_valid)
     }
   }
 
-  // Chain in_shift (pipeline across each column)
-  /*for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_shift(c)) {
-      case (in_sh, tile) =>
-        tile.io.in_shift := RegNext(in_sh)
-        tile.io.out_shift
-    }
-  }*/
+  // Chain in_valid (pipeline across each column)
   for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft((io.in_shift(c), io.in_garbage(c))) {
-      case ((in_sh, garbage), tile) =>
-        tile.io.in_shift := RegEnable(in_sh, !garbage.head)
-        (tile.io.out_shift, tile.io.out_garbage)
+    meshT(c).foldLeft(io.in_valid(c)) {
+      case (in_v, tile) =>
+        tile.io.in_valid := RegNext(in_v)
+        tile.io.out_valid
     }
   }
 
-  // Chain in_garbage (pipeline across each column)
-  for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_garbage(c)) {
-      case (in_g, tile) =>
-        tile.io.in_garbage := RegNext(in_g)
-        tile.io.out_garbage
-    }
-  }
-
-  // Capture out_vec and out_s_vec (connect IO to bottom row of mesh)
+  // Capture out_vec and out_control_vec (connect IO to bottom row of mesh)
   // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple5)
-  for (((b, c), (s, g), tile) <- ((io.out_b zip io.out_c), (io.out_s zip io.out_garbage), mesh.last).zipped) {
+  for (((b, c), (ctrl, v), tile) <- ((io.out_b zip io.out_c), (io.out_control zip io.out_valid), mesh.last).zipped) {
     // TODO we pipelined this to make physical design easier. Consider removing these if possible
+    // TODO shouldn't we clock-gate these signals with "garbage" as well?
     b := RegNext(tile.io.out_b)
     c := RegNext(tile.io.out_c)
-    s := RegNext(tile.io.out_s)
-    g := RegNext(tile.io.out_garbage)
+    // s := RegNext(tile.io.out_s)
+    ctrl := RegNext(tile.io.out_control)
+    v := RegNext(tile.io.out_valid)
   }
 }

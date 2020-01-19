@@ -24,7 +24,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val B_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
   val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType))
   val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
-  val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(2.W)))
+  // val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(2.W)))
+  val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
 
   val tagqlen = (if (meshColumns == 1) 4 else 5) * (pe_latency+1) // TODO change the tag-queue so we can make this 3
 
@@ -34,17 +35,18 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val d = Flipped(Decoupled(D_TYPE))
 
     // TODO make s, m, and shift ready-valid interfaces as well
-    val s = Input(UInt(1.W))
-    val m = Input(UInt(1.W))
-    val shift = Input(UInt(log2Ceil(accType.getWidth).W))
+    // val s = Input(UInt(1.W))
+    // val m = Input(UInt(1.W))
+    // val shift = Input(UInt(log2Ceil(accType.getWidth).W))
+    // TODO make pe_control a ready-valid interface as well
+    val pe_control = Input(new PEControl(accType))
 
     val tag_in = Flipped(Decoupled(tagType))
     val tag_out = Output(tagType)
     val tags_in_progress = Output(Vec(tagqlen, tagType))
-    // val tag_garbage = Input(tagType) // TODO make this a constructor parameter instead
 
     val out = Valid(C_TYPE) // TODO make this ready-valid
-    val out_s = Output(S_TYPE)
+    // val out_s = Output(S_TYPE)
 
     val flush = Flipped(Decoupled(UInt(2.W)))
   })
@@ -89,8 +91,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val b_buf = RegEnable(io.b.bits, io.b.fire())
   val d_buf = RegEnable(io.d.bits, io.d.fire())
 
-  val in_s_reg = Reg(UInt(1.W)) // TODO inelegant
-  val in_s = WireInit(in_s_reg)
+  val in_prop_reg = Reg(UInt(1.W)) // TODO inelegant
+  val in_prop = WireInit(in_prop_reg)
 
   val a_written = RegInit(false.B)
   val b_written = RegInit(false.B)
@@ -132,7 +134,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   // Transposer
   val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
-  transposer.io.inRow.valid := !pause && io.m === Dataflow.OS.id.U
+  transposer.io.inRow.valid := !pause && io.pe_control.dataflow === Dataflow.OS.id.U
   transposer.io.inRow.bits := VecInit(Mux(io.a.fire(), io.a.bits, a_buf).flatten)
   transposer.io.outCol.ready := true.B
   val a_transposed = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
@@ -141,7 +143,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val mesh = Module(new Mesh(inputType, outputType, accType, df, pe_latency, tileRows, tileColumns, meshRows, meshColumns))
 
   // TODO wire only to *_buf here, instead of io.*.bits
-  val a_shifter_in = WireInit(Mux(io.m === Dataflow.OS.id.U, a_transposed, Mux(io.a.fire(), io.a.bits, a_buf)))
+  val a_shifter_in = WireInit(Mux(io.pe_control.dataflow === Dataflow.OS.id.U,
+    a_transposed, Mux(io.a.fire(), io.a.bits, a_buf)))
   val b_shifter_in = WireInit(Mux(io.b.fire(), io.b.bits, b_buf))
   val d_shifter_in = Mux(io.d.fire(), io.d.bits, d_buf)
 
@@ -149,24 +152,26 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   mesh.io.in_b := shifted(b_shifter_in, upBanks)
   mesh.io.in_d := shifted(d_shifter_in, upBanks)
 
-  mesh.io.in_s.zipWithIndex.foreach { case (ss, i) =>
-    ss.foreach(_ := ShiftRegister(Cat(io.m, in_s), i * (pe_latency + 1)))
+  mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>
+    // ss.foreach(_ := ShiftRegister(Cat(io.mesh_control.dataflow, in_s), i * (pe_latency + 1)))
+    ss.foreach(_.dataflow := ShiftRegister(io.pe_control.dataflow, i * (pe_latency + 1)))
+    ss.foreach(_.propagate := ShiftRegister(in_prop, i * (pe_latency + 1)))
   }
-  val result_shift = RegNext(io.shift) // TODO will this arrive at the right time if memory isn't pipelined?
-  mesh.io.in_shift.zipWithIndex.foreach { case (shs, i) =>
-    shs.foreach(_ := ShiftRegister(result_shift, i * (pe_latency + 1)))
+  val result_shift = RegNext(io.pe_control.shift) // TODO will this arrive at the right time if memory isn't pipelined?
+  mesh.io.in_control.zipWithIndex.foreach { case (ctrl, i) =>
+    ctrl.foreach(_.shift := ShiftRegister(result_shift, i * (pe_latency + 1)))
   }
 
-  val pause_vec = VecInit(Seq.fill(meshColumns)(VecInit(Seq.fill(tileColumns)(pause))))
-  mesh.io.in_garbage := shifted(pause_vec, upBanks)
+  val not_paused_vec = VecInit(Seq.fill(meshColumns)(VecInit(Seq.fill(tileColumns)(!pause))))
+  mesh.io.in_valid := shifted(not_paused_vec, upBanks)
 
   // We want to output C when we're output-stationary, but B when we're weight-stationary
   // TODO these would actually overlap when we switch from output-stationary to weight-stationary
   // TODO should we use io.m, or the mode output of the mesh?
-  io.out.bits := shifted(Mux(io.m === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
-  io.out_s := mesh.io.out_s.zip(mesh.io.out_s.indices.reverse).map{case (s, i) => ShiftRegister(s, i * (pe_latency + 1))}
+  io.out.bits := shifted(Mux(io.pe_control.dataflow === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
+  // io.out_s := mesh.io.out_control.zip(mesh.io.out_control.indices.reverse).map{case (s, i) => ShiftRegister(s, i * (pe_latency + 1))}
 
-  io.out.valid := !shifted(mesh.io.out_garbage, outBanks, reverse = true)(0)(0)
+  io.out.valid := shifted(mesh.io.out_valid, outBanks, reverse = true)(0)(0)
 
   // Tags
   val tag_queue = Module(new TagQueue(tagqlen, tagType)) // TODO understand the actual required size better
@@ -192,7 +197,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   io.tag_in.ready := !tag_written
   tag_queue.io.in.valid := io.tag_in.fire()
 
-  io.tag_out := tag_queue.io.out.bits(Mux(io.m === Dataflow.OS.id.U, 0.U, 1.U))
+  io.tag_out := tag_queue.io.out.bits(Mux(io.pe_control.dataflow === Dataflow.OS.id.U, 0.U, 1.U))
   io.tags_in_progress := tag_queue.io.out.all
 
   // Flipping logic
@@ -206,8 +211,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     tag_id_reg := tag_id
 
     when (!flushing) {
-      in_s := io.s ^ in_s_reg
-      in_s_reg := in_s
+      in_prop := io.pe_control.propagate ^ in_prop_reg
+      in_prop_reg := in_prop
     }
   }
 

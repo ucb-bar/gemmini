@@ -117,7 +117,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
     header ++= s"elem_t elem_t_max = ${limits._2};\n"
     header ++= s"elem_t elem_t_min = ${limits._1};\n"
     header ++= s"typedef ${c_type(accType)} acc_t;\n"
-    header ++= s"typedef ${full_c_type(inputType)} full_t\n\n"
+    header ++= s"typedef ${full_c_type(inputType)} full_t;\n\n"
 
     if (inputType.isInstanceOf[Float]) {
       header ++= "#define ELEM_T_IS_FLOAT\n\n"

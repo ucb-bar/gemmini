@@ -30,8 +30,6 @@ object Arithmetic {
       override def +(t: UInt) = self + t
 
       override def >>(u: UInt) = {
-        // Mux(u === 0.U, self, (self + (1.U << (u-1.U)).asUInt()) >> u).asUInt() // TODO is the mux necessary here? What is (1 << (0.U-1.U))?
-
         // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
 
         // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
@@ -68,15 +66,6 @@ object Arithmetic {
       override def +(t: SInt) = self + t
 
       override def >>(u: UInt) = {
-        /*
-        val pos_offset = (1.U << (u-1.U)).asUInt()
-        val neg_offset = ~((-1).S << (u-1.U))
-        val pos_sum = self + pos_offset.asSInt()
-        val neg_sum = self + neg_offset.asSInt()
-        Mux(u === 0.U, self,
-            (Mux(self >= 0.S, pos_sum, neg_sum) >> u).asSInt)
-        */
-
         // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
 
         // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
