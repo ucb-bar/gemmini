@@ -8,8 +8,6 @@ import gemmini.Util._
 
 // TODO Add io.out.ready back in. Before it was removed, it didn't work when banking, and it seemed to assume that SRAM outputs stay steady when ren is low
 // TODO Handle matrices where N1 =/= N2 =/= N3
-// TODO Change S to an enum
-// TODO cleanup tags to be like S
 // TODO do we flush for one cycle more than necessary?
 // TODO make all inputs go straight into registers to help with physical design
 
@@ -24,7 +22,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val B_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
   val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType))
   val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
-  // val S_TYPE = Vec(meshColumns, Vec(tileColumns, UInt(2.W)))
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
 
   val tagqlen = (if (meshColumns == 1) 4 else 5) * (pe_latency+1) // TODO change the tag-queue so we can make this 3
@@ -34,10 +31,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val b = Flipped(Decoupled(B_TYPE))
     val d = Flipped(Decoupled(D_TYPE))
 
-    // TODO make s, m, and shift ready-valid interfaces as well
-    // val s = Input(UInt(1.W))
-    // val m = Input(UInt(1.W))
-    // val shift = Input(UInt(log2Ceil(accType.getWidth).W))
     // TODO make pe_control a ready-valid interface as well
     val pe_control = Input(new PEControl(accType))
 
@@ -46,7 +39,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val tags_in_progress = Output(Vec(tagqlen, tagType))
 
     val out = Valid(C_TYPE) // TODO make this ready-valid
-    // val out_s = Output(S_TYPE)
 
     val flush = Flipped(Decoupled(UInt(2.W)))
   })
@@ -169,7 +161,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   // TODO these would actually overlap when we switch from output-stationary to weight-stationary
   // TODO should we use io.m, or the mode output of the mesh?
   io.out.bits := shifted(Mux(io.pe_control.dataflow === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
-  // io.out_s := mesh.io.out_control.zip(mesh.io.out_control.indices.reverse).map{case (s, i) => ShiftRegister(s, i * (pe_latency + 1))}
 
   io.out.valid := shifted(mesh.io.out_valid, outBanks, reverse = true)(0)(0)
 

@@ -13,27 +13,17 @@ import chisel3.util._
   * @param meshRows
   * @param meshColumns
   */
-class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
+class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
                       df: Dataflow.Value, pe_latency: Int,
                       val tileRows: Int, val tileColumns: Int,
-                      val meshRows: Int, val meshColumns: Int)(implicit ev: Arithmetic[T]) extends Module {
-  import ev._
-
+                      val meshRows: Int, val meshColumns: Int) extends Module {
   val io = IO(new Bundle {
     val in_a   = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b   = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
     val in_d   = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
-    // val in_s   = Input(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
     val in_control   = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
     val out_b  = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
     val out_c  = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
-    // val out_s  = Output(Vec(meshColumns, Vec(tileColumns, UInt(2.W))))
-    val out_control  = Output(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
-
-    // val in_shift = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Ceil(accType.getWidth).W))))
-
-    // val in_garbage = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
-    // val out_garbage = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
 
     val in_valid = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
     val out_valid = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
@@ -94,14 +84,12 @@ class Mesh[T <: Data](inputType: T, outputType: T, accType: T,
   }
 
   // Capture out_vec and out_control_vec (connect IO to bottom row of mesh)
-  // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple5)
-  for (((b, c), (ctrl, v), tile) <- ((io.out_b zip io.out_c), (io.out_control zip io.out_valid), mesh.last).zipped) {
+  // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple4)
+  for (((b, c), (v, tile)) <- ((io.out_b zip io.out_c), (io.out_valid zip mesh.last)).zipped) {
     // TODO we pipelined this to make physical design easier. Consider removing these if possible
     // TODO shouldn't we clock-gate these signals with "garbage" as well?
     b := RegNext(tile.io.out_b)
     c := RegNext(tile.io.out_c)
-    // s := RegNext(tile.io.out_s)
-    ctrl := RegNext(tile.io.out_control)
     v := RegNext(tile.io.out_valid)
   }
 }

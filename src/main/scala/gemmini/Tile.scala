@@ -12,24 +12,16 @@ import chisel3.util._
   * @param rows Number of PEs on each row
   * @param columns Number of PEs on each column
   */
-class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, pe_latency: Int, val rows: Int, val columns: Int)
-                     (implicit ev: Arithmetic[T]) extends Module {
-  import ev._
-
+class Tile[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T, df: Dataflow.Value, pe_latency: Int, val rows: Int, val columns: Int) extends Module {
   val io = IO(new Bundle {
     val in_a        = Input(Vec(rows, inputType))
     val in_b        = Input(Vec(columns, outputType)) // This is the output of the tile next to it
     val in_d        = Input(Vec(columns, outputType))
-    // val in_s     = Input(Vec(columns,UInt(2.W)))
     val in_control  = Input(Vec(columns, new PEControl(accType)))
     val out_a       = Output(Vec(rows, inputType))
     val out_c       = Output(Vec(columns, outputType))
     val out_b       = Output(Vec(columns, outputType))
-    // val out_s    = Output(Vec(columns, UInt(2.W)))
     val out_control = Output(Vec(columns, new PEControl(accType)))
-
-    // val in_shift = Input(Vec(columns, UInt(log2Ceil(accType.getWidth).W)))
-    // val out_shift = Output(Vec(columns, UInt(log2Ceil(accType.getWidth).W)))
 
     val in_valid = Input(Vec(columns, Bool()))
     val out_valid = Output(Vec(columns, Bool()))
@@ -88,8 +80,6 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
   for (c <- 0 until columns) {
     io.out_c(c) := tile(rows-1)(c).io.out_c
     io.out_b(c) := tile(rows-1)(c).io.out_b
-    // io.out_s(c) := tile(rows-1)(c).io.out_s
-    // io.out_shift(c) := tile(rows-1)(c).io.out_shift
     io.out_control(c) := tile(rows-1)(c).io.out_control
     io.out_valid(c) := tile(rows-1)(c).io.out_valid
   }

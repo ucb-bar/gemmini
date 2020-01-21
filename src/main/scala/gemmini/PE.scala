@@ -6,7 +6,7 @@ import chisel3.util._
 
 class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
   val dataflow = UInt(1.W) // TODO make this an Enum
-  val propagate = UInt(1.W)
+  val propagate = UInt(1.W) // Which register should be propagated (and which should be accumulated)?
   val shift = UInt(log2Up(accType.getWidth).W)
 
   override def cloneType: PEControl.this.type = new PEControl(accType).asInstanceOf[this.type]
@@ -25,14 +25,9 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
     val in_a = Input(inputType)
     val in_b = Input(outputType)
     val in_d = Input(outputType)
-    // val in_s = Input(UInt(2.W))
     val out_a = Output(inputType)
     val out_b = Output(outputType)
     val out_c = Output(outputType)
-    // val out_s = Output(UInt(2.W))
-
-    // val in_shift = Input(UInt(log2Ceil(accType.getWidth).W)) // TODO does this have to be able to shift everything?
-    // val out_shift = Output(UInt(log2Ceil(accType.getWidth).W))
 
     val in_control = Input(new PEControl(accType))
     val out_control = Output(new PEControl(accType))
@@ -53,9 +48,7 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   val shift = ShiftRegister(io.in_control.shift, latency)
   val valid = ShiftRegister(io.in_valid, latency) // TODO should we clockgate the rest of the ShiftRegisters based on the values in this ShiftRegisters
 
-  // io.out_s := prop
   io.out_a := a
-  // io.out_shift := shift
   io.out_control.dataflow := dataflow
   io.out_control.propagate := prop
   io.out_control.shift := shift
@@ -64,9 +57,6 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   val last_s = RegEnable(prop, valid)
   val flip = last_s =/= prop
   val shift_offset = Mux(flip, shift, 0.U)
-
-  // val select = prop(0)
-  // val mode = prop(1)
 
   // Which dataflow are we using?
   val OUTPUT_STATIONARY = Dataflow.OS.id.U(1.W)
