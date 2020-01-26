@@ -33,12 +33,14 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   val bb = Module(new MeshBlackBox(inputType=inputType, outputType=outputType,
     rows=meshRows*tileRows, columns=meshColumns*tileColumns))
 
+  bb.io.clock := clock
+  bb.io.reset := reset.asBool
   bb.io.in_a := io.in_a.asUInt()
   bb.io.in_b := io.in_b.asUInt()
   bb.io.in_d := io.in_d.asUInt()
 
-  bb.io.in_dataflow := Cat(io.in_control.flatten.map(_.dataflow))
-  bb.io.in_propagate := Cat(io.in_control.flatten.map(_.propagate))
+  bb.io.in_control_dataflow := Cat(io.in_control.flatten.map(_.dataflow))
+  bb.io.in_control_propagate := Cat(io.in_control.flatten.map(_.propagate))
 
   io.out_b := bb.io.out_b.asTypeOf(io.out_b)
   io.out_c := bb.io.out_c.asTypeOf(io.out_c)
@@ -49,18 +51,20 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
 
 class MeshBlackBox[T <: Data : Arithmetic](inputType: T, outputType: T,
                                            val rows: Int, val columns: Int) extends BlackBox(Map(
-  "ROWS" -> s"$rows",
-  "COLS" -> s"$columns",
-  "INPUT_BITWIDTH" -> s"${inputType.getWidth}",
-  "OUTPUT_BITWIDTH" -> s"${outputType.getWidth}"
-)) {
+  "MESHROWS" -> rows,
+  "MESHCOLUMNS" -> columns,
+  "INPUT_BITWIDTH" -> inputType.getWidth,
+  "OUTPUT_BITWIDTH" -> outputType.getWidth
+)) with HasBlackBoxResource {
   val io = IO(new Bundle {
+    val clock  = Input(Clock())
+    val reset  = Input(Bool())
     val in_a   = Input(UInt((rows * inputType.getWidth).W))
     val in_b   = Input(UInt((columns * inputType.getWidth).W))
     val in_d   = Input(UInt((columns * inputType.getWidth).W))
 
-    val in_dataflow = Input(UInt(columns.W))
-    val in_propagate = Input(UInt(columns.W))
+    val in_control_dataflow = Input(UInt(columns.W))
+    val in_control_propagate = Input(UInt(columns.W))
 
     val out_b  = Output(UInt((columns * outputType.getWidth).W))
     val out_c  = Output(UInt((columns * outputType.getWidth).W))
@@ -69,7 +73,7 @@ class MeshBlackBox[T <: Data : Arithmetic](inputType: T, outputType: T,
     val out_valid = Output(UInt(columns.W))
   })
 
-  setResource("/MeshBlackBox.v")
+  addResource("/vsrc/MeshBlackBox.v")
 }
 
 /*
