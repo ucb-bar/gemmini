@@ -2,7 +2,6 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import chisel3.core.dontTouch
 
 import freechips.rocketchip.tile.RoCCCommand
 
@@ -211,10 +210,6 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   // assert(min_pop_count < 2.U)
   dontTouch(pop_count_packed_deps)
   dontTouch(min_pop_count)
-
-  for (i <- 0 until 2) {
-  }
-
 
   val cycles_since_issue = RegInit(0.U(32.W))
 

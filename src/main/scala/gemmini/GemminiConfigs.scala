@@ -131,7 +131,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
   }
 
   def headerFilePath: String = {
-    val chipyard_directory = "./generators/gemmini/gemmini-tests-workload/gemmini-rocc-tests/include"
+    val chipyard_directory = "./generators/gemmini/software/gemmini-rocc-tests/include"
     val project_template_directory = "./gemmini-rocc-tests/include" // Old root directory; rendered obsolete by Chipyard
     val default_directory = "."
 

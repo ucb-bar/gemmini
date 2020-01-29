@@ -176,7 +176,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val tag_id_reg = RegInit(0.U(1.W)) // Used to keep track of when we should increment // TODO inelegant
   val tag_id = WireInit(tag_id_reg)
   // val tag_id_delayed = ShiftRegister(tag_id, meshRows + S_TYPE.size, 0.U, true.B)
-  val tag_id_delayed = ShiftRegister(tag_id, (meshRows + S_TYPE.size - 1) * (pe_latency + 1) + 1, 0.U, true.B)
+  val tag_id_delayed = ShiftRegister(tag_id, (meshRows + S_TYPE.size - 1) * (pe_latency + 1), 0.U, true.B)
 
   tag_queue.io.out.next := tag_id_delayed =/= RegNext(tag_id_delayed, 0.U)
 
@@ -190,6 +190,11 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   io.tag_out := tag_queue.io.out.bits(Mux(io.pe_control.dataflow === Dataflow.OS.id.U, 0.U, 1.U))
   io.tags_in_progress := tag_queue.io.out.all
+
+  // Add helper signals to make sure the Mesh is propagating signals for the correct number of cycles
+  val tag_id_delayed_shorter = ShiftRegister(tag_id, (meshRows - 1) * (pe_latency + 1), 0.U, true.B)
+  val new_matrix_being_output = tag_id_delayed_shorter =/= RegNext(tag_id_delayed_shorter, 0.U)
+  dontTouch(new_matrix_being_output)
 
   // Flipping logic
   when(buffering_done && (next_row_input || flushing_or_about_to)) {
