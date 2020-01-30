@@ -34,13 +34,13 @@ abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[Mes
   }
 
   def pokeAllInputValids(v: Boolean): Unit = {
-    val valids = Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid, c.io.s, c.io.tag_in.valid)
+    val valids = Seq(c.io.a__.valid, c.io.d__.valid, c.io.b__.valid, c.io.s, c.io.tag_in.valid)
     valids.foreach(vpin => poke(vpin, v))
   }
 
   def allMatrixInputsAreReady(): Boolean = {
     // Ignore m and s here, since they're only supposed to be set once per multiplication
-    Seq(c.io.a.ready, c.io.b.ready, c.io.d.ready).forall(r => peek(r) != 0)
+    Seq(c.io.a__.ready, c.io.d__.ready, c.io.b__.ready).forall(r => peek(r) != 0)
   }
 
   assert(ms.head.flipS != 0, "Cannot re-use D for first input")
@@ -111,9 +111,9 @@ abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[Mes
     for ((a, b, d) <- (meshIn.A, meshIn.B, meshIn.D).zipped) {
       pokeAllInputValids(true)
 
-      strobeInputs(a, c.io.a.bits, c.io.a.valid)
-      strobeInputs(b, c.io.b.bits, c.io.b.valid)
-      strobeInputs(d, c.io.d.bits, c.io.d.valid)
+      strobeInputs(a, c.io.a__.bits, c.io.a__.valid)
+      strobeInputs(b, c.io.d__.bits, c.io.d__.valid)
+      strobeInputs(d, c.io.b__.bits, c.io.b__.valid)
 
       var garbage_cycles = inputGarbageCycles() + 1
 

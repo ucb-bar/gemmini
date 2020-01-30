@@ -18,18 +18,18 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
    leftBanks: Int, upBanks: Int, outBanks: Int = 1)
   extends Module {
 
-  val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
-  val B_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
-  val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType))
-  val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
+  val A_TYPE__ = Vec(meshRows, Vec(tileRows, inputType))
+  val D_TYPE__ = Vec(meshColumns, Vec(tileColumns, inputType))
+  val C_TYPE__ = Vec(meshColumns, Vec(tileColumns, outputType))
+  val B_TYPE__ = Vec(meshColumns, Vec(tileColumns, inputType))
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
 
   val tagqlen = (if (meshColumns == 1) 4 else 5) * (pe_latency+1) // TODO change the tag-queue so we can make this 3
 
   val io = IO(new Bundle {
-    val a = Flipped(Decoupled(A_TYPE))
-    val b = Flipped(Decoupled(B_TYPE))
-    val d = Flipped(Decoupled(D_TYPE))
+    val a__ = Flipped(Decoupled(A_TYPE__))
+    val d__ = Flipped(Decoupled(D_TYPE__))
+    val b__ = Flipped(Decoupled(B_TYPE__))
 
     // TODO make pe_control a ready-valid interface as well
     val pe_control = Input(new PEControl(accType))
@@ -38,7 +38,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val tag_out = Output(tagType)
     val tags_in_progress = Output(Vec(tagqlen, tagType))
 
-    val out = Valid(C_TYPE) // TODO make this ready-valid
+    val out = Valid(C_TYPE__) // TODO make this ready-valid
 
     val flush = Flipped(Decoupled(UInt(2.W)))
   })
@@ -79,9 +79,9 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val fire_counter = RegInit(0.U((log2Ceil(block_size) max 1).W))
   val fire_started = RegInit(false.B)
 
-  val a_buf = RegEnable(io.a.bits, io.a.fire())
-  val b_buf = RegEnable(io.b.bits, io.b.fire())
-  val d_buf = RegEnable(io.d.bits, io.d.fire())
+  val a_buf__ = RegEnable(io.a__.bits, io.a__.fire())
+  val d_buf__ = RegEnable(io.d__.bits, io.d__.fire())
+  val b_buf__ = RegEnable(io.b__.bits, io.b__.fire())
 
   val in_prop_reg = Reg(UInt(1.W)) // TODO inelegant
   val in_prop = WireInit(in_prop_reg)
@@ -95,19 +95,19 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val buffering_done = fire_counter === 0.U && fire_started && tag_written
   val waiting_on_non_matrix_inputs = fire_counter === 0.U && !(tag_written || io.tag_in.fire()) // TODO change when more non-matrix inputs are buffered
 
-  when (io.a.fire()) {
+  when (io.a__.fire()) {
     a_written := true.B
   }
 
-  when (io.b.fire()) {
+  when (io.d__.fire()) {
     b_written := true.B
   }
 
-  when (io.d.fire()) {
+  when (io.b__.fire()) {
     d_written := true.B
   }
 
-  val next_row_input = (io.a.fire() || a_written) && (io.b.fire() || b_written) && (io.d.fire() || d_written)
+  val next_row_input = (io.a__.fire() || a_written) && (io.d__.fire() || b_written) && (io.b__.fire() || d_written)
 
   when (next_row_input || flushing_or_about_to) {
     a_written := false.B
@@ -118,31 +118,31 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     fire_started := true.B // We only need to write to this here, rather than in a "when (buffering_done)" statement
   }
 
-  io.a.ready := !a_written
-  io.b.ready := !b_written
-  io.d.ready := !d_written
+  io.a__.ready := !a_written
+  io.d__.ready := !b_written
+  io.b__.ready := !d_written
 
   val pause = (waiting_on_non_matrix_inputs || !next_row_input) && !flushing_or_about_to
 
   // Transposer
   val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
   transposer.io.inRow.valid := !pause && io.pe_control.dataflow === Dataflow.OS.id.U
-  transposer.io.inRow.bits := VecInit(Mux(io.a.fire(), io.a.bits, a_buf).flatten)
+  transposer.io.inRow.bits := VecInit(Mux(io.a__.fire(), io.a__.bits, a_buf__).flatten)
   transposer.io.outCol.ready := true.B
-  val a_transposed = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
+  val a_transposed__ = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
 
   // Wire up mesh's IO to this module's IO
   val mesh = Module(new Mesh(inputType, outputType, accType, df, pe_latency, tileRows, tileColumns, meshRows, meshColumns))
 
   // TODO wire only to *_buf here, instead of io.*.bits
-  val a_shifter_in = WireInit(Mux(io.pe_control.dataflow === Dataflow.OS.id.U,
-    a_transposed, Mux(io.a.fire(), io.a.bits, a_buf)))
-  val b_shifter_in = WireInit(Mux(io.b.fire(), io.b.bits, b_buf))
-  val d_shifter_in = Mux(io.d.fire(), io.d.bits, d_buf)
+  val a_shifter_in__ = WireInit(Mux(io.pe_control.dataflow === Dataflow.OS.id.U,
+    a_transposed__, Mux(io.a__.fire(), io.a__.bits, a_buf__)))
+  val d_shifter_in__ = WireInit(Mux(io.d__.fire(), io.d__.bits, d_buf__))
+  val b_shifter_in__ = Mux(io.b__.fire(), io.b__.bits, b_buf__)
 
-  mesh.io.in_a := shifted(a_shifter_in, leftBanks)
-  mesh.io.in_b := shifted(b_shifter_in, upBanks)
-  mesh.io.in_d := shifted(d_shifter_in, upBanks)
+  mesh.io.in_a__ := shifted(a_shifter_in__, leftBanks)
+  mesh.io.in_d__ := shifted(d_shifter_in__, upBanks)
+  mesh.io.in_b__ := shifted(b_shifter_in__, upBanks)
 
   mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>
     // ss.foreach(_ := ShiftRegister(Cat(io.mesh_control.dataflow, in_s), i * (pe_latency + 1)))
@@ -160,7 +160,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   // We want to output C when we're output-stationary, but B when we're weight-stationary
   // TODO these would actually overlap when we switch from output-stationary to weight-stationary
   // TODO should we use io.m, or the mode output of the mesh?
-  io.out.bits := shifted(Mux(io.pe_control.dataflow === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
+  io.out.bits := shifted(Mux(io.pe_control.dataflow === Dataflow.OS.id.U, mesh.io.out_b__, mesh.io.out_c__), outBanks, true)
 
   io.out.valid := shifted(mesh.io.out_valid, outBanks, reverse = true)(0)(0)
 
@@ -223,14 +223,14 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     flush_counter := io.flush.bits
 
     // Avoid overwriting accumulated values
-    a_buf := 0.U.asTypeOf(A_TYPE) // TODO make 0 an Arithmetic member function
-    b_buf := 0.U.asTypeOf(B_TYPE)
-    a_shifter_in := 0.U.asTypeOf(A_TYPE)
-    b_shifter_in := 0.U.asTypeOf(B_TYPE)
+    a_buf__ := 0.U.asTypeOf(A_TYPE__) // TODO make 0 an Arithmetic member function
+    d_buf__ := 0.U.asTypeOf(D_TYPE__)
+    a_shifter_in__ := 0.U.asTypeOf(A_TYPE__)
+    d_shifter_in__ := 0.U.asTypeOf(D_TYPE__)
   }
 
   when (flushing) {
-    Seq(io.a.ready, io.b.ready, io.d.ready, io.tag_in.ready).foreach(_ := false.B)
+    Seq(io.a__.ready, io.d__.ready, io.b__.ready, io.tag_in.ready).foreach(_ := false.B)
 
     tag_written := true.B
 
