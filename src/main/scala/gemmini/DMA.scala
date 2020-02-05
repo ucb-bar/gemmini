@@ -2,7 +2,6 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import chisel3.core.withReset
 
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
@@ -49,7 +48,6 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
       val flush = Input(Bool())
     })
 
-
     val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes))
 
     val beatPacker = Module(new BeatMerger(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows))
@@ -62,7 +60,6 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     xactTracker.io.alloc <> core.module.io.reserve
     xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, beatPacker.io.req.fire())
     xactTracker.io.peek.pop := beatPacker.io.in.fire() && core.module.io.beatData.bits.last
-
 
     core.module.io.beatData.ready := beatPacker.io.in.ready
     beatPacker.io.req.valid := core.module.io.beatData.valid
@@ -162,6 +159,8 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
       val paddr = UInt(paddrBits.W)
     }
 
+    // TODO Can we filter out the larger read_sizes here if the systolic array is small, in the same way that we do so
+    // for the write_sizes down below?
     val read_sizes = ((aligned_to max beatBytes) to maxBytes by aligned_to).
       filter(s => isPow2(s)).
       filter(s => s % beatBytes == 0)
@@ -320,7 +319,7 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
     io.req.ready := state_machine_ready_for_req
-    io.busy := xactBusy.orR
+    io.busy := xactBusy.orR || (state =/= s_idle)
 
     // Address translation
     io.tlb.req.valid := state === s_translate_req
@@ -353,13 +352,14 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
       val is_full = Bool()
 
       def bytes_written(dummy: Int = 0) = PopCount(mask.flatten)
-      def total_beats(dummy: Int = 0) = size / beatBytes.U
+      def total_beats(dummy: Int = 0) = Mux(size < beatBytes.U, 1.U, size / beatBytes.U)
     }
 
-    val write_sizes = ((aligned_to max beatBytes) to maxBytes by aligned_to).
+    val smallest_write_size = aligned_to max beatBytes
+    val write_sizes = (smallest_write_size to maxBytes by aligned_to).
       filter(s => isPow2(s)).
       filter(s => s % beatBytes == 0).
-      filter(s => s <= dataBytes*2)
+      filter(s => s <= dataBytes*2 || s == smallest_write_size)
     val write_packets = write_sizes.map { s =>
       val lg_s = log2Ceil(s)
       val paddr_aligned_to_size = if (s == 1) paddr else Cat(paddr(paddrBits-1, lg_s), 0.U(lg_s.W))
@@ -367,8 +367,9 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
       val mask = (0 until maxBytes).map { i =>
         if (s > 1) {
           val paddr_offset = paddr(lg_s-1, 0)
+
           i.U >= paddr_offset &&
-            i.U < paddr_offset + bytesLeft
+            i.U < paddr_offset +& bytesLeft
         } else {
           true.B
         } && (i < s).B
@@ -462,7 +463,6 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
         }
       }
     }
-
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {

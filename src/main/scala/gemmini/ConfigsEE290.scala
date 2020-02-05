@@ -13,7 +13,11 @@ import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet}
 object GemminiEE290Configs{
   import GemminiConfigs.{defaultConfig => base}
   val defaultConfig = base.copy()
+
+  // Change meshRows and meshColumns to change the size of your systolic array
   val Lab2Config = defaultConfig.copy(meshRows = 8, meshColumns = 8, dataflow = Dataflow.WS)
+
+  // For Part 3.6
   val Lab2LargeSPConfig = defaultConfig.copy(meshRows = 8, meshColumns = 8, dataflow = Dataflow.WS, sp_capacity = CapacityInKilobytes(2048))
 }
 

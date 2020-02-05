@@ -237,7 +237,6 @@ class Scratchpad[T <: Data: Arithmetic](
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to)) }
       val bank_ios = VecInit(banks.map(_.io))
 
-
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.sp_bank())
 

@@ -36,8 +36,8 @@ object GemminiConfigs {
   val defaultConfig = GemminiArrayConfig(
     tileRows = 1,
     tileColumns = 1,
-    meshRows = 4,
-    meshColumns = 4,
+    meshRows = 8,
+    meshColumns = 8,
     ld_queue_length = 8,
     st_queue_length = 2,
     ex_queue_length = 8,
@@ -45,17 +45,14 @@ object GemminiConfigs {
     sp_banks = 4,
     sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
-    dataflow = Dataflow.BOTH,
+    dataflow = Dataflow.WS,
     acc_capacity = CapacityInKilobytes(64),
     mem_pipeline = 1,
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
-//    inputType = SInt(8.W),
-//    outputType = SInt(19.W),
-//    accType = SInt(32.W),
-    inputType = SInt(32.W),
-    outputType = SInt(32.W),
+    inputType = SInt(8.W),
+    outputType = SInt(19.W),
     accType = SInt(32.W),
     pe_latency = 0
   )
