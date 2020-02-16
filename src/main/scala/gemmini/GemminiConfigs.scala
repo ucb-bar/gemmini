@@ -18,6 +18,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
                                                          rob_entries: Int,
                                                          sp_banks: Int, // TODO support one-bank designs
                                                          sp_capacity: GemminiMemCapacity,
+                                                         acc_banks: Int,
                                                          acc_capacity: GemminiMemCapacity,
                                                          shifter_banks: Int,
                                                          dataflow: Dataflow.Value,
@@ -36,21 +37,21 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (sp_banks * sp_width)
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / sp_banks
   }
-  val acc_rows = acc_capacity match {
-    case CapacityInKilobytes(kb) => kb * 1024 * 8 / (meshColumns * tileColumns * accType.getWidth)
-    case CapacityInMatrices(ms) => ms * meshRows * tileRows
+  val acc_bank_entries = acc_capacity match {
+    case CapacityInKilobytes(kb) => kb * 1024 * 8 / (acc_banks * meshColumns * tileColumns * accType.getWidth)
+    case CapacityInMatrices(ms) => ms * meshRows * tileRows / acc_banks
   }
 
-  val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_rows)
+  val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries)
 
   val max_in_flight_reqs = 16 // TODO calculate this somehow
 
   require(isPow2(sp_bank_entries), "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement
   require(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
-  require(acc_rows % (meshRows * tileRows) == 0, "the number of rows in the accumulator must be a multiple of the dimensions of the systolic array")
   require(meshColumns * tileColumns == meshRows * tileRows, "the systolic array must be square") // TODO remove this requirement
   require(meshColumns * tileColumns >= 2, "the systolic array must have a dimension of at least 2") // TODO remove this requirement
   require(isPow2(meshColumns * tileColumns), "the systolic array's dimensions must be powers of 2") // TODO remove this requirement
+  require(acc_bank_entries % (meshRows * tileRows) == 0, "the number of rows in an accumulator bank must be a multiple of the dimensions of the systolic array")
 
   def generateHeader(guard: String = "GEMMINI_PARAMS_H"): String = {
     // Returns the (min,max) values for a dataType
@@ -108,8 +109,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
     header ++= s"#define DIM ${tileColumns*meshColumns}\n"
     header ++= s"#define ADDR_LEN 32\n"
     header ++= s"#define BANK_NUM $sp_banks\n"
-    header ++= s"#define BANK_ROWS $sp_bank_entries\n" // TODO: check
-    header ++= s"#define ACC_ROWS $acc_rows\n" // TODO: check
+    header ++= s"#define BANK_ROWS $sp_bank_entries\n"
+    header ++= s"#define ACC_ROWS ${acc_banks * acc_bank_entries}\n" // TODO add ACC_BANKS as well
     header ++= s"#define MAX_BYTES 64\n"
     header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${inputType.getWidth/8}))\n"
     header ++= s"#define MAX_BLOCK_LEN_ACC (MAX_BYTES/(DIM*${accType.getWidth/8}))\n\n"

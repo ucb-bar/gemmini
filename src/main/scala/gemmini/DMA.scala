@@ -74,8 +74,6 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     io.resp.bits.addr := beatPacker.io.out.bits.addr
     io.resp.bits.mask := beatPacker.io.out.bits.mask
     io.resp.bits.is_acc := beatPacker.io.out.bits.is_acc
-    // io.resp.bits.cmd_id := xactTracker.io.peek.entry.cmd_id
-    // io.resp.bits.bytes_read := xactTracker.io.peek.entry.bytes_to_read
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
@@ -188,14 +186,6 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
 
 
     // Firing off TileLink read requests and allocating space inside the reservation buffer for them
-    /*
-    val get = edge.Get(
-      fromSource = io.reserve.xactid,
-      toAddress = paddr,
-      lgSize = lg_send_size
-    )._2
-    */
-
     val get = edge.Get(
       fromSource = io.reserve.xactid,
       toAddress = read_paddr,
@@ -204,15 +194,6 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
 
     tl.a.valid := state === s_req_new_block && io.reserve.ready
     tl.a.bits := get
-
-    /*
-    io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
-    io.reserve.entry.shift := 0.U // TODO
-    io.reserve.entry.is_acc := req.is_acc
-    io.reserve.entry.lg_len_req := lg_send_size
-    io.reserve.entry.bytes_to_read := send_size
-    io.reserve.entry.cmd_id := req.cmd_id
-    */
 
     io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
@@ -255,7 +236,6 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     io.beatData.bits.lg_len_req := tl.d.bits.size
     io.beatData.bits.last := edge.last(tl.d)
     // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
-
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {

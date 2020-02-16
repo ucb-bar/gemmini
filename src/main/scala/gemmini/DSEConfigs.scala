@@ -21,6 +21,7 @@ object DSEBaseConfig {
     ex_queue_length = 8,
     rob_entries = 8,
     sp_banks = 4, // TODO support one-bank designs
+    acc_banks = 1,
     sp_capacity = CapacityInKilobytes(64),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     dataflow = Dataflow.OS,

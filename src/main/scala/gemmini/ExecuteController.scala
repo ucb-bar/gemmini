@@ -16,9 +16,16 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmdWithDeps(rob_entries)))
 
-    val read  = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
-    val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1))
-    val acc = Flipped(new AccumulatorMemIO(acc_rows, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType))))
+    val srams = new Bundle {
+      val read = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
+      val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1))
+    }
+
+    // val acc = Flipped(new AccumulatorMemIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType))))
+    val acc = new Bundle {
+      val read = Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType))))
+      val write = Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))))
+    }
 
     val completed = Valid(UInt(log2Up(rob_entries).W))
 
@@ -145,6 +152,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val d_read_from_acc = d_address_rs2.is_acc_addr
   val b_read_from_acc = b_address_rs1.is_acc_addr
 
+  val dataABankAcc = a_address_rs1.acc_bank()
+  val dataBBankAcc = b_address_rs1.acc_bank()
+  val dataDBankAcc = d_address_rs2.acc_bank()
+
   val start_inputting_a = WireInit(false.B)
   val start_inputting_d = WireInit(false.B)
   val start_inputting_b = WireInit(false.B)
@@ -192,23 +203,12 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val b_operand = Operand(b_address_rs1, start_inputting_b, b_fire_counter, b_fire_started, 2)
   val operands = Seq(a_operand, d_operand, b_operand)
 
-  val d_same_banks = Wire(Vec(2, Bool()))
-  val d_same_counter = Wire(Vec(2, Bool()))
-  val d_one_ahead = Wire(Vec(2, Bool()))
-  val d_higher_priorities = Wire(Vec(2, Bool()))
-  val d_must_wait_for = Wire(Vec(2, Bool()))
-  dontTouch(start_inputting_d)
-  dontTouch(d_same_banks)
-  dontTouch(d_same_counter)
-  dontTouch(d_one_ahead)
-  dontTouch(d_higher_priorities)
-  dontTouch(d_must_wait_for)
-
   val Seq(a_valid, d_valid, b_valid) = operands.map { case Operand(addr, start_inputting, counter, started, priority) =>
       val others = operands.filter(_.priority != priority)
 
       val same_banks = others.map(o => same_bank(addr, o.addr, start_inputting, o.start_inputting))
       val same_counter = others.map(o => counter === o.counter)
+
       val one_ahead = {
         if (block_size > 2)
           others.map(o => counter === wrappingAdd(o.counter, 1.U, block_size))
@@ -222,14 +222,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
       val must_wait_for = ((same_banks zip same_counter) zip (one_ahead zip higher_priorities)).map {
         case ((sb, sc), (oa, hp)) =>
           (sb && hp && sc) || oa
-      }
-
-      if (priority == 1) {
-        d_same_banks := same_banks
-        d_same_counter := same_counter
-        d_one_ahead := one_ahead
-        d_higher_priorities := higher_priorities
-        d_must_wait_for := must_wait_for
       }
 
       !must_wait_for.reduce(_ || _)
@@ -286,20 +278,46 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     val read_b = b_valid && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !preload_zeros
 
     Seq((read_a, a_ready), (read_d, d_ready), (read_b, b_ready)).foreach { case (rd, r) =>
-      when (rd && !io.read(i).req.ready) {
+      when (rd && !io.srams.read(i).req.ready) {
         r := false.B
       }
     }
 
-    io.read(i).req.valid := read_a || read_d || read_b
-    io.read(i).req.bits.fromDMA := false.B
-    io.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
+    io.srams.read(i).req.valid := read_a || read_d || read_b
+    io.srams.read(i).req.bits.fromDMA := false.B
+    io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
       Seq(read_d -> (d_address_rs2.sp_row() + d_fire_counter),
         read_b -> (b_address_rs1.sp_row() + block_size.U - 1.U - b_fire_counter)))
 
-    io.read(i).resp.ready := true.B
+    io.srams.read(i).resp.ready := true.B
   }
 
+  // Accumulator read
+  for (i <- 0 until acc_banks) {
+    val read_a_from_acc = a_valid && a_read_from_acc && dataABankAcc === i.U && start_inputting_a && !multiply_garbage
+    val read_b_from_acc = b_valid && b_read_from_acc && dataBBankAcc === i.U && start_inputting_b && !accumulate_zeros
+    val read_d_from_acc = d_valid && d_read_from_acc && dataDBankAcc === i.U && start_inputting_d && !preload_zeros
+
+    Seq((read_a_from_acc, a_ready), (read_b_from_acc, b_ready), (read_d_from_acc, d_ready)).foreach { case (rd, r) =>
+      when(rd && !io.acc.read(i).req.ready) {
+        r := false.B
+      }
+    }
+
+    io.acc.read(i).req.valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
+    io.acc.read(i).req.bits.shift := acc_shift
+    io.acc.read(i).req.bits.relu6_shift := relu6_shift
+    io.acc.read(i).req.bits.act := activation
+    io.acc.read(i).req.bits.fromDMA := false.B
+
+    io.acc.read(i).req.bits.addr := MuxCase(a_address_rs1.acc_row() + a_fire_counter,
+      Seq(read_b_from_acc -> (b_address_rs1.acc_row() + b_fire_counter),
+        read_d_from_acc -> (d_address_rs2.acc_row() + block_size.U - 1.U - d_fire_counter)))
+
+    io.acc.read(i).resp.ready := true.B
+  }
+
+  /*
   // Accumulator read // TODO can only handle one acc read for now
   {
     val read_a_from_acc = a_valid && a_read_from_acc && start_inputting_a && !multiply_garbage
@@ -318,6 +336,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
     io.acc.read.resp.ready := true.B
   }
+  */
 
   // FSM logic
   switch (control_state) {
@@ -466,6 +485,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     val d_read_from_acc = Bool()
     val b_read_from_acc = Bool()
 
+    val a_bank_acc = UInt(log2Up(acc_banks).W)
+    val b_bank_acc = UInt(log2Up(acc_banks).W)
+    val d_bank_acc = UInt(log2Up(acc_banks).W)
+
     val a_garbage = Bool()
     val d_garbage = Bool()
     val b_garbage = Bool()
@@ -496,6 +519,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   mesh_cntl_signals_q.io.enq.bits.d_bank := dataDbank
   mesh_cntl_signals_q.io.enq.bits.b_bank := dataBbank
 
+  mesh_cntl_signals_q.io.enq.bits.a_bank_acc := dataABankAcc
+  mesh_cntl_signals_q.io.enq.bits.b_bank_acc := dataBBankAcc
+  mesh_cntl_signals_q.io.enq.bits.d_bank_acc := dataDBankAcc
+
   mesh_cntl_signals_q.io.enq.bits.a_garbage := a_address_rs1.is_garbage() || !start_inputting_a
   mesh_cntl_signals_q.io.enq.bits.d_garbage := d_address_rs2.is_garbage() || !start_inputting_d
   mesh_cntl_signals_q.io.enq.bits.b_garbage := b_address_rs1.is_garbage() || !start_inputting_b
@@ -522,29 +549,31 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   mesh_cntl_signals_q.io.enq.bits.prop := Mux(performing_single_preload, in_prop_flush, in_prop)
   mesh_cntl_signals_q.io.enq.bits.shift := in_shift
 
-  val readData = VecInit(io.read.map(_.resp.bits.data))
-  val accReadData = io.acc.read.resp.bits.data.asUInt()
+  val readData = VecInit(io.srams.read.map(_.resp.bits.data))
+  // val accReadData = io.acc.read.resp.bits.data.asUInt()
+  val accReadData = VecInit(io.acc.read.map(_.resp.bits.data.asUInt()))
 
-  val readValid = VecInit(io.read.map(bank => bank.resp.valid && !bank.resp.bits.fromDMA))
-  val accReadValid = io.acc.read.resp.valid && !io.acc.read.resp.bits.fromDMA
+  val readValid = VecInit(io.srams.read.map(bank => bank.resp.valid && !bank.resp.bits.fromDMA))
+  // val accReadValid = io.acc.read.resp.valid && !io.acc.read.resp.bits.fromDMA
+  val accReadValid = VecInit(io.acc.read.map(bank => bank.resp.valid && !bank.resp.bits.fromDMA))
 
   mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) &&
     (!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready) &&
     (!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready)
 
-  val dataA_valid = cntl.a_garbage || Mux(cntl.a_read_from_acc, accReadValid, readValid(cntl.a_bank))
+  val dataA_valid = cntl.a_garbage || Mux(cntl.a_read_from_acc, accReadValid(cntl.a_bank_acc), readValid(cntl.a_bank))
   val dataD_valid = cntl.d_garbage || MuxCase(readValid(cntl.d_bank), Seq(
     cntl.accumulate_zeros -> false.B,
-    cntl.d_read_from_acc -> accReadValid
+    cntl.d_read_from_acc -> accReadValid(cntl.d_bank_acc)
   ))
   val dataB_valid = cntl.b_garbage || MuxCase(readValid(cntl.b_bank), Seq(
     cntl.preload_zeros -> false.B,
-    cntl.b_read_from_acc -> accReadValid
+    cntl.b_read_from_acc -> accReadValid(cntl.b_bank_acc)
   ))
 
-  val dataA = Mux(cntl.a_read_from_acc, accReadData, readData(cntl.a_bank))
-  val dataD = MuxCase(readData(cntl.d_bank), Seq(cntl.accumulate_zeros -> 0.U, cntl.d_read_from_acc -> accReadData))
-  val dataB = MuxCase(readData(cntl.b_bank), Seq(cntl.preload_zeros -> 0.U, cntl.b_read_from_acc -> accReadData))
+  val dataA = Mux(cntl.a_read_from_acc, accReadData(cntl.a_bank_acc), readData(cntl.a_bank))
+  val dataD = MuxCase(readData(cntl.d_bank), Seq(cntl.accumulate_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
+  val dataB = MuxCase(readData(cntl.b_bank), Seq(cntl.preload_zeros -> 0.U, cntl.b_read_from_acc -> accReadData(cntl.b_bank_acc)))
 
   when (cntl_valid) {
     // Default inputs
@@ -575,7 +604,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val w_address = mesh.io.tag_out.addr
   val write_to_acc = w_address.is_acc_addr
 
-  val w_bank = w_address.sp_bank()
+  val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address.sp_bank())
   val w_row = Mux(write_to_acc, w_address.acc_row(), w_address.sp_row())
 
   val output_counter = new Counter(block_size)
@@ -597,18 +626,19 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
       e_act
     })))
 
-    io.write(i).en := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr
-    io.write(i).addr := current_w_bank_address
-    io.write(i).data := activated_wdata.asUInt()
-    io.write(i).mask := VecInit(Seq.fill(io.write(0).mask.length)(true.B))
+    io.srams.write(i).en := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr
+    io.srams.write(i).addr := current_w_bank_address
+    io.srams.write(i).data := activated_wdata.asUInt()
+    io.srams.write(i).mask := VecInit(Seq.fill(io.srams.write(0).mask.length)(true.B))
   }
 
   // Write to accumulator
-  {
-    io.acc.write.en := start_array_outputting && write_to_acc && !is_garbage_addr
-    io.acc.write.addr := current_w_bank_address
-    io.acc.write.data := mesh.io.out.bits
-    io.acc.write.acc := w_address.accumulate
+  for (i <- 0 until acc_banks) {
+    io.acc.write(i).en := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr
+    io.acc.write(i).addr := current_w_bank_address
+    io.acc.write(i).data := mesh.io.out.bits
+    io.acc.write(i).acc := w_address.accumulate
+    // TODO add mask for accumulator mem here
   }
 
   // Handle dependencies and turn off outputs for garbage addresses
