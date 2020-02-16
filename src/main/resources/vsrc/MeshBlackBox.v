@@ -51,12 +51,12 @@ module MeshBlackBoxAdapter
   wire signed [INPUT_BITWIDTH-1:0]  in_a_2d[MESHROWS-1:0][TILEROWS-1:0];
   wire signed [INPUT_BITWIDTH-1:0]  in_d_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
   wire signed [INPUT_BITWIDTH-1:0]  in_b_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
-  wire                       in_control_dataflow_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
-  wire                       in_control_propagate_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
-  wire                       in_valid_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
+  wire                              in_control_dataflow_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
+  wire                              in_control_propagate_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
+  wire                              in_valid_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
   wire signed [OUTPUT_BITWIDTH-1:0] out_c_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
   wire signed [OUTPUT_BITWIDTH-1:0] out_b_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
-  wire                       out_valid_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
+  wire                              out_valid_2d[MESHCOLUMNS-1:0][TILECOLUMNS-1:0];
 
   // Convert wide signals into "cleaner" 2D Verilog arrays
   genvar i;
@@ -64,7 +64,7 @@ module MeshBlackBoxAdapter
   generate
   for (i = 0; i < MESHROWS ; i++) begin
     for (j = 0; j < TILEROWS ; j++) begin
-           assign in_a_2d[i][j] = in_a[i*(TILEROWS*INPUT_BITWIDTH)+(j+1)*(INPUT_BITWIDTH)-1:i*(TILEROWS*INPUT_BITWIDTH)+j*(INPUT_BITWIDTH)];
+      assign in_a_2d[i][j] = in_a[i*(TILEROWS*INPUT_BITWIDTH)+(j+1)*(INPUT_BITWIDTH)-1:i*(TILEROWS*INPUT_BITWIDTH)+j*(INPUT_BITWIDTH)];
     end
   end
   endgenerate
