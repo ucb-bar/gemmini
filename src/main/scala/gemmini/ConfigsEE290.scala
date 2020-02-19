@@ -17,8 +17,15 @@ object GemminiEE290Configs{
   // Change meshRows and meshColumns to change the size of your systolic array
   val Lab2Config = defaultConfig.copy(meshRows = 8, meshColumns = 8, dataflow = Dataflow.WS)
 
-  // For Part 3.6
+  // For Lab2 Part 3.6
   val Lab2LargeSPConfig = defaultConfig.copy(meshRows = 8, meshColumns = 8, dataflow = Dataflow.WS, sp_capacity = CapacityInKilobytes(2048))
+  
+  // For Lab3
+  val Lab3Config = defaultConfig.copy(meshRows = 64, meshColumns =64, dataflow = Dataflow.WS)
+
+  // For Lab3, large scratchpad
+  val Lab3LargeSPConfig = defaultConfig.copy(meshRows = 64, meshColumns = 64, dataflow = Dataflow.WS, sp_capacity = CapacityInKilobytes(2048))
+  
 }
 
 
@@ -41,6 +48,30 @@ class GemminiEE290Lab2LargeSPConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab2LargeSPConfig))
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
+
+//===========EE290 Lab3 Config=========
+class GemminiEE290Lab3Config extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab3Config))
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
+
+//===========EE290 Lab3 Large Scratchpad Config=========
+class GemminiEE290Lab3LargeSPConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab3LargeSPConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
