@@ -295,24 +295,24 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   // Accumulator read
   for (i <- 0 until acc_banks) {
     val read_a_from_acc = a_valid && a_read_from_acc && dataABankAcc === i.U && start_inputting_a && !multiply_garbage
-    val read_b_from_acc = b_valid && b_read_from_acc && dataBBankAcc === i.U && start_inputting_b && !accumulate_zeros
-    val read_d_from_acc = d_valid && d_read_from_acc && dataDBankAcc === i.U && start_inputting_d && !preload_zeros
+    val read_d_from_acc = d_valid && d_read_from_acc && dataDBankAcc === i.U && start_inputting_d && !accumulate_zeros
+    val read_b_from_acc = b_valid && b_read_from_acc && dataBBankAcc === i.U && start_inputting_b && !preload_zeros
 
-    Seq((read_a_from_acc, a_ready), (read_b_from_acc, b_ready), (read_d_from_acc, d_ready)).foreach { case (rd, r) =>
+    Seq((read_a_from_acc, a_ready), (read_d_from_acc, d_ready), (read_b_from_acc, b_ready)).foreach { case (rd, r) =>
       when(rd && !io.acc.read(i).req.ready) {
         r := false.B
       }
     }
 
-    io.acc.read(i).req.valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
+    io.acc.read(i).req.valid := read_a_from_acc || read_d_from_acc || read_b_from_acc
     io.acc.read(i).req.bits.shift := acc_shift
     io.acc.read(i).req.bits.relu6_shift := relu6_shift
     io.acc.read(i).req.bits.act := activation
     io.acc.read(i).req.bits.fromDMA := false.B
 
     io.acc.read(i).req.bits.addr := MuxCase(a_address_rs1.acc_row() + a_fire_counter,
-      Seq(read_b_from_acc -> (b_address_rs1.acc_row() + b_fire_counter),
-        read_d_from_acc -> (d_address_rs2.acc_row() + block_size.U - 1.U - d_fire_counter)))
+      Seq(read_d_from_acc -> (d_address_rs2.acc_row() + d_fire_counter),
+        read_b_from_acc -> (b_address_rs1.acc_row() + block_size.U - 1.U - b_fire_counter)))
 
     io.acc.read(i).resp.ready := true.B
   }

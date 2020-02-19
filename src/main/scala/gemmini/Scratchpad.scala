@@ -150,7 +150,7 @@ class Scratchpad[T <: Data: Arithmetic](
   val xbar_node = TLXbar()
 
   val reader = LazyModule(new StreamReader(max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
-    sp_banks * sp_bank_entries, acc_bank_entries, block_rows))
+    sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows))
   val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes, spad_w, aligned_to))
 
   // TODO make a cross-bar vs two separate ports a config option
@@ -220,7 +220,7 @@ class Scratchpad[T <: Data: Arithmetic](
     read_issue_q.io.deq.ready := reader.module.io.req.ready
     reader.module.io.req.bits.vaddr := read_issue_q.io.deq.bits.vaddr
     reader.module.io.req.bits.spaddr := Mux(read_issue_q.io.deq.bits.laddr.is_acc_addr,
-      read_issue_q.io.deq.bits.laddr.acc_row(), read_issue_q.io.deq.bits.laddr.full_sp_addr())
+      read_issue_q.io.deq.bits.laddr.full_acc_addr(), read_issue_q.io.deq.bits.laddr.full_sp_addr())
     reader.module.io.req.bits.len := read_issue_q.io.deq.bits.len
     reader.module.io.req.bits.is_acc := read_issue_q.io.deq.bits.laddr.is_acc_addr
     reader.module.io.req.bits.status := read_issue_q.io.deq.bits.status

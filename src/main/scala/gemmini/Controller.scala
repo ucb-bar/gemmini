@@ -121,7 +121,9 @@ class GemminiModule[T <: Data: Arithmetic]
 
   // Incoming commands and ROB
   val raw_cmd = Queue(io.cmd)
-  val compressed_cmd = InstCompressor(raw_cmd)
+  val unrolled_cmd = LoopUnroller(raw_cmd, outer.config.meshRows * outer.config.tileRows)
+  // val compressed_cmd = InstCompressor(raw_cmd)
+  val compressed_cmd = InstCompressor(unrolled_cmd)
   compressed_cmd.ready := false.B
 
   val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, meshRows*tileRows))
