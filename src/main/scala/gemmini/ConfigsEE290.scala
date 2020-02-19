@@ -23,8 +23,8 @@ object GemminiEE290Configs{
   // For Lab3
   val Lab3Config = defaultConfig.copy(meshRows = 64, meshColumns =64, dataflow = Dataflow.WS)
 
-  // For Lab3, large scratchpad
-  val Lab3LargeSPConfig = defaultConfig.copy(meshRows = 64, meshColumns = 64, dataflow = Dataflow.WS, sp_capacity = CapacityInKilobytes(2048))
+  // For Lab3, small scratchpad
+  val Lab3SmallSPConfig = defaultConfig.copy(meshRows = 64, meshColumns = 64, dataflow = Dataflow.WS, sp_capacity = CapacityInKilobytes(128), acc_capcity = CapacityInKilobytes(32))
   
 }
 
@@ -65,13 +65,13 @@ class GemminiEE290Lab3Config extends Config((site, here, up) => {
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
-//===========EE290 Lab3 Large Scratchpad Config=========
-class GemminiEE290Lab3LargeSPConfig extends Config((site, here, up) => {
+//===========EE290 Lab3 Small Scratchpad Config=========
+class GemminiEE290Lab3SmallSPConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab3LargeSPConfig))
+        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab3SmallSPConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
