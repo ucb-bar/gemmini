@@ -385,19 +385,19 @@ class Scratchpad[T <: Data: Arithmetic](
           bio.write.addr := io.acc.write(i).addr
           bio.write.data := io.acc.write(i).data
           bio.write.acc := io.acc.write(i).acc
-          // bio.write.mask := io.acc.write(i).mask // TODO add wmask to AccumulatorMem as well, so that we support non-aligned accesses
+          bio.write.mask := io.acc.write(i).mask // TODO add wmask to AccumulatorMem as well, so that we support non-aligned accesses
         }.elsewhen (dmaread) {
           bio.write.addr := reader.module.io.resp.bits.addr
           bio.write.data := reader.module.io.resp.bits.data.asTypeOf(acc_row_t)
           bio.write.acc := false.B
-          // bio.write.mask := reader.module.io.resp.bits.mask // TODO add wmask to AccumulatorMem as well, so that we support non-aligned accesses
+          bio.write.mask := reader.module.io.resp.bits.mask // TODO add wmask to AccumulatorMem as well, so that we support non-aligned accesses
 
           reader.module.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
         }.otherwise {
           bio.write.addr := DontCare
           bio.write.data := DontCare
           bio.write.acc := DontCare
-          // bio.write.mask := DontCare // TODO wadd mask to AccumulatorMem as well, so that we support non-aligned accesses
+          bio.write.mask := DontCare // TODO add wmask to AccumulatorMem as well, so that we support non-aligned accesses
         }
       }
     }

@@ -111,9 +111,21 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
     header ++= s"#define BANK_NUM $sp_banks\n"
     header ++= s"#define BANK_ROWS $sp_bank_entries\n"
     header ++= s"#define ACC_ROWS ${acc_banks * acc_bank_entries}\n" // TODO add ACC_BANKS as well
-    header ++= s"#define MAX_BYTES 64\n"
-    header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${inputType.getWidth/8}))\n"
-    header ++= s"#define MAX_BLOCK_LEN_ACC (MAX_BYTES/(DIM*${accType.getWidth/8}))\n\n"
+
+    val max_bytes = 64
+    header ++= s"#define MAX_BYTES $max_bytes\n"
+
+    if (tileColumns*meshColumns*inputType.getWidth/8 <= max_bytes) {
+      header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${inputType.getWidth/8}))\n"
+    } else {
+      header ++= s"#define MAX_BLOCK_LEN 1\n"
+    }
+
+    if (tileColumns*meshColumns*accType.getWidth/8 <= max_bytes) {
+      header ++= s"#define MAX_BLOCK_LEN_ACC (MAX_BYTES/(DIM*${accType.getWidth / 8}))\n\n"
+    } else {
+      header ++= s"#define MAX_BLOCK_LEN_ACC 1\n\n"
+    }
 
     // Datatype of the systolic array
     val limits = limitsOfDataType(inputType)

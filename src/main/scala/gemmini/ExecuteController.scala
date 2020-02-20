@@ -638,7 +638,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     io.acc.write(i).addr := current_w_bank_address
     io.acc.write(i).data := mesh.io.out.bits
     io.acc.write(i).acc := w_address.accumulate
-    // TODO add mask for accumulator mem here
+    io.acc.write(i).mask := VecInit(Seq.fill(io.acc.write(0).mask.length)(true.B))
   }
 
   // Handle dependencies and turn off outputs for garbage addresses
