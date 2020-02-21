@@ -21,10 +21,10 @@ object GemminiEE290Configs{
   val Lab2LargeSPConfig = defaultConfig.copy(meshRows = 8, meshColumns = 8, dataflow = Dataflow.WS, sp_capacity = CapacityInKilobytes(2048))
   
   // For Lab3
-  val Lab3Config = defaultConfig.copy(meshRows = 64, meshColumns = 64, dataflow = Dataflow.WS, outputType = SInt(22.W))
+  val Lab3Config = defaultConfig.copy(meshRows = 32, meshColumns = 32, dataflow = Dataflow.WS, outputType = SInt(21.W))
 
   // For Lab3, small scratchpad
-  val Lab3SmallSPConfig = defaultConfig.copy(meshRows = 64, meshColumns = 64, dataflow = Dataflow.WS, sp_capacity = CapacityInKilobytes(128), acc_capacity = CapacityInKilobytes(32), outputType = SInt(22.W))
+  val Lab3SmallSPConfig = defaultConfig.copy(meshRows = 32, meshColumns = 32, dataflow = Dataflow.WS, sp_capacity = CapacityInKilobytes(128), acc_capacity = CapacityInKilobytes(32), outputType = SInt(21.W))
 }
 
 
