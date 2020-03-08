@@ -11,6 +11,7 @@ object GemminiISA {
   val COMPUTE_AND_STAY_CMD = 5.U
   val PRELOAD_CMD = 6.U
   val FLUSH_CMD = 7.U
+  val LOOP_WS = 8.U
 
   // rs1[1:0] values
   val CONFIG_LOAD = 1.U

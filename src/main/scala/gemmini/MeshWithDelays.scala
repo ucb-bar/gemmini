@@ -145,7 +145,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   mesh.io.in_d := shifted(d_shifter_in, upBanks)
 
   mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>
-    // ss.foreach(_ := ShiftRegister(Cat(io.mesh_control.dataflow, in_s), i * (pe_latency + 1)))
     ss.foreach(_.dataflow := ShiftRegister(io.pe_control.dataflow, i * (pe_latency + 1)))
     ss.foreach(_.propagate := ShiftRegister(in_prop, i * (pe_latency + 1)))
   }
@@ -175,7 +174,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   val tag_id_reg = RegInit(0.U(1.W)) // Used to keep track of when we should increment // TODO inelegant
   val tag_id = WireInit(tag_id_reg)
-  // val tag_id_delayed = ShiftRegister(tag_id, meshRows + S_TYPE.size, 0.U, true.B)
   val tag_id_delayed = ShiftRegister(tag_id, (meshRows + S_TYPE.size - 1) * (pe_latency + 1) + 1, 0.U, true.B)
 
   tag_queue.io.out.next := tag_id_delayed =/= RegNext(tag_id_delayed, 0.U)
