@@ -89,6 +89,7 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 **Format:** `mvin rs1, rs2`
 - `rs1` = virtual DRAM address (byte addressed) to load into scratchpad
 - `rs2` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
+    - if the 32nd bit is 1, `rs2` refers the accumulator memory space. In this case, the bitwidth of the elements is the accumulated result bitwidth
 - `funct` = 2
 
 **Action:** Scratchpad[rs2] <= DRAM[Translate[rs1]]
