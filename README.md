@@ -88,7 +88,7 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 ### `mvin` Move Data From L2/DRAM to Scratchpad
 **Format:** `mvin rs1, rs2`
 - `rs1` = virtual DRAM address (byte addressed) to load into scratchpad
-- `rs2` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x inputType.getWidth` bytes of data are captured in 1 address)
+- `rs2` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
 - `funct` = 2
 
 **Action:** Scratchpad[rs2] <= DRAM[Translate[rs1]]
