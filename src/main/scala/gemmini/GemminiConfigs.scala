@@ -25,7 +25,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
                                                          mem_pipeline: Int,
                                                          dma_maxbytes: Int,
                                                          dma_buswidth: Int,
-                                                         aligned_to: Int,
+                                                         aligned_to: Int, // TODO we should align to inputType and outputType instead
                                                          inputType: T,
                                                          outputType: T,
                                                          accType: T,
@@ -45,6 +45,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
   val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries)
 
   val max_in_flight_reqs = 16 // TODO calculate this somehow
+
+  val mvin_len_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
+  val mvout_len_bits = log2Up(meshColumns * tileColumns + 1)
+  val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
 
   require(isPow2(sp_bank_entries), "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement
   require(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")

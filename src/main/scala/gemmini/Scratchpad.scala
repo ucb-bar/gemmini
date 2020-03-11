@@ -31,6 +31,8 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr)
   val vaddr = UInt(coreMaxAddrBits.W)
   val laddr = local_addr_t.cloneType
 
+  val len = UInt(8.W) // TODO don't use a magic number for the width here
+
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
 
   val status = new MStatus
@@ -132,8 +134,7 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int) extends
 // TODO replace the SRAM types with Vec[Vec[inputType]], rather than just simple UInts
 // TODO support unaligned accesses, for both multiple and single matrix loads
 // TODO scratchpad is currently broken when one row is larger than dataBits. The requests arrive out-of-order, meaning that half of one row might arrive after the first have of another row. Some kind of re-ordering buffer may be needed
-class Scratchpad[T <: Data: Arithmetic](
-    /*nBanks: Int, nRows: Int, local_addr_t: LocalAddr, sp_addr_t: SPAddr,*/ config: GemminiArrayConfig[T])
+class Scratchpad[T <: Data: Arithmetic](config: GemminiArrayConfig[T])
     (implicit p: Parameters) extends LazyModule {
 
   import config._
@@ -149,7 +150,7 @@ class Scratchpad[T <: Data: Arithmetic](
   val id_node = TLIdentityNode()
   val xbar_node = TLXbar()
 
-  val reader = LazyModule(new StreamReader(max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
+  val reader = LazyModule(new StreamReader(config, max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows))
   val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes, spad_w, aligned_to))
 
@@ -207,6 +208,7 @@ class Scratchpad[T <: Data: Arithmetic](
     writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid
     write_issue_q.io.deq.ready := writer.module.io.req.ready && writeData.valid
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
+    writer.module.io.req.bits.len := write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U
     writer.module.io.req.bits.data := writeData.bits
     writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
 
@@ -236,7 +238,7 @@ class Scratchpad[T <: Data: Arithmetic](
     writer.module.io.flush := io.flush
     reader.module.io.flush := io.flush
 
-    io.busy := writer.module.io.busy || reader.module.io.busy
+    io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid
 
     {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to)) }

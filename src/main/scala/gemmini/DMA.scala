@@ -33,10 +33,10 @@ class StreamReadResponse(val spadWidth: Int, val accWidth: Int, val spad_rows: I
   val cmd_id = UInt(8.W) // TODO magic number
 }
 
-class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
+class StreamReader[T <: Data](config: GemminiArrayConfig[T], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
                    spad_rows: Int, acc_rows: Int, meshRows: Int)
                   (implicit p: Parameters) extends LazyModule {
-  val core = LazyModule(new StreamReaderCore(nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows))
+  val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows))
   val node = core.node
 
   lazy val module = new LazyModuleImp(this) {
@@ -88,9 +88,10 @@ class StreamReadBeat (val nXacts: Int, val beatBits: Int, val maxReqBytes: Int) 
 }
 
 // TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
-class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int,
-                       aligned_to: Int, spad_rows: Int, acc_rows: Int, meshRows: Int)
-                      (implicit p: Parameters) extends LazyModule {
+class StreamReaderCore[T <: Data](config: GemminiArrayConfig[T], nXacts: Int, beatBits: Int, maxBytes: Int,
+                                  spadWidth: Int, accWidth: Int, aligned_to: Int,
+                                  spad_rows: Int, acc_rows: Int, meshRows: Int)
+                                 (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-reader", sourceId = IdRange(0, nXacts))
 
@@ -121,7 +122,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     val vpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
 
     val bytesRequested = Reg(UInt(log2Ceil(spadWidthBytes max accWidthBytes max maxBytes).W)) // TODO this only needs to count up to (dataBytes/aligned_to), right?
-    val bytesLeft = Mux(req.is_acc, req.len * accWidthBytes.U, req.len * spadWidthBytes.U) - bytesRequested
+    val bytesLeft = Mux(req.is_acc, req.len * (config.accType.getWidth / 8).U, req.len * (config.inputType.getWidth / 8).U) - bytesRequested
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
     io.req.ready := state_machine_ready_for_req
@@ -183,7 +184,6 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     val read_lg_size = read_packet.lg_size
     val read_bytes_read = read_packet.bytes_read
     val read_shift = read_packet.shift
-
 
     // Firing off TileLink read requests and allocating space inside the reservation buffer for them
     val get = edge.Get(
@@ -252,6 +252,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
 class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val data = UInt(dataWidth.W)
+  val len = UInt(16.W) // The number of bytes to write // TODO magic number
   val status = new MStatus
 }
 
@@ -287,7 +288,8 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
     val vpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
 
     val bytesSent = Reg(UInt(log2Ceil(dataBytes).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
-    val bytesLeft = dataBytes.U - bytesSent
+    // val bytesLeft = dataBytes.U - bytesSent
+    val bytesLeft = req.len - bytesSent
 
     val xactBusy = RegInit(0.U(nXacts.W))
     val xactOnehot = PriorityEncoderOH(~xactBusy)
