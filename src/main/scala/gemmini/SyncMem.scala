@@ -28,7 +28,7 @@ class SinglePortSyncMem[T <: Data](n: Int, t: T) extends Module {
   }
 }
 
-class TwoPortSyncMem[T <: Data](n: Int, t: T) extends Module {
+class TwoPortSyncMem[T <: Data](n: Int, t: T, mask_len: Int) extends Module {
   val io = IO(new Bundle {
     val waddr = Input(UInt((log2Ceil(n) max 1).W))
     val raddr = Input(UInt((log2Ceil(n) max 1).W))
@@ -36,16 +36,19 @@ class TwoPortSyncMem[T <: Data](n: Int, t: T) extends Module {
     val rdata = Output(t)
     val wen = Input(Bool())
     val ren = Input(Bool())
+    val mask = Input(Vec(mask_len, Bool()))
   })
 
   assert(!(io.wen && io.ren && io.raddr === io.waddr), "undefined behavior in dual-ported SRAM")
 
-  val mem = SyncReadMem(n, t)
+  // val mem = SyncReadMem(n, t)
+  val mask_elem = UInt((t.getWidth / mask_len).W)
+  val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
 
-  io.rdata := mem.read(io.raddr, io.ren)
+  io.rdata := mem.read(io.raddr, io.ren).asTypeOf(t)
 
   when (io.wen) {
-    mem.write(io.waddr, io.wdata)
+    mem.write(io.waddr, io.wdata.asTypeOf(Vec(mask_len, mask_elem)), io.mask)
   }
 }
 
@@ -100,7 +103,7 @@ object SinglePortSyncMem {
 }
 
 object TwoPortSyncMem {
-  def apply[T <: Data](n: Int, t: T): TwoPortSyncMem[T] = Module(new TwoPortSyncMem(n, t))
+  def apply[T <: Data](n: Int, t: T, mask_len: Int): TwoPortSyncMem[T] = Module(new TwoPortSyncMem(n, t, mask_len))
 }
 
 object SplitSinglePortSyncMem {

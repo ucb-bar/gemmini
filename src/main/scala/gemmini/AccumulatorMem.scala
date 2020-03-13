@@ -32,6 +32,7 @@ class AccumulatorWriteIO[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends 
   val addr = Output(UInt(log2Ceil(n).W))
   val data = Output(t)
   val acc = Output(Bool())
+  val mask = Output(Vec(t.getWidth / 8, Bool())) // TODO Use aligned_to here
 
   override def cloneType: this.type = new AccumulatorWriteIO(n, t).asInstanceOf[this.type]
 }
@@ -51,18 +52,22 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
 
   // TODO Refuse a read from an address which has only just been written to
 
+  // TODO make a new aligned_to variable specifically for AccumulatorMem. We should assume that inputs are at least
+  // accType.getWidth/8 aligned, because it won't make sense to do matrix additions directly in the DMA otherwise.
+
   import ev._
 
   // TODO unify this with TwoPortSyncMemIO
   val io = IO(new AccumulatorMemIO(n, t, rdataType))
 
-  val mem = TwoPortSyncMem(n, t)
+  val mem = TwoPortSyncMem(n, t, t.getWidth / 8) // TODO We assume byte-alignment here. Use aligned_to instead
 
   // For any write operation, we spend 2 cycles reading the existing address out, buffering it in a register, and then
   // accumulating on top of it (if necessary)
   val wdata_buf = ShiftRegister(io.write.data, 2)
   val waddr_buf = ShiftRegister(io.write.addr, 2)
   val acc_buf = ShiftRegister(io.write.acc, 2)
+  val mask_buf = ShiftRegister(io.write.mask, 2)
   val w_buf_valid = ShiftRegister(io.write.en, 2)
 
   val w_sum = VecInit((RegNext(mem.io.rdata) zip wdata_buf).map { case (rv, wv) =>
@@ -72,6 +77,7 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   mem.io.waddr := waddr_buf
   mem.io.wen := w_buf_valid
   mem.io.wdata := Mux(acc_buf, w_sum, wdata_buf)
+  mem.io.mask := mask_buf
 
   mem.io.raddr := Mux(io.write.en && io.write.acc, io.write.addr, io.read.req.bits.addr)
   mem.io.ren := io.read.req.fire() || (io.write.en && io.write.acc)

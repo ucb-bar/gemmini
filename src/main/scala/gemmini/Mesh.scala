@@ -3,6 +3,7 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
+import chisel3.experimental._
 
 /**
   * A Grid is a 2D array of Tile modules with registers in between each tile and
@@ -14,9 +15,9 @@ import chisel3.util._
   * @param meshColumns
   */
 class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
-                      df: Dataflow.Value, pe_latency: Int,
-                      val tileRows: Int, val tileColumns: Int,
-                      val meshRows: Int, val meshColumns: Int) extends Module {
+                                   df: Dataflow.Value, pe_latency: Int,
+                                   val tileRows: Int, val tileColumns: Int,
+                                   val meshRows: Int, val meshColumns: Int) extends Module {
   val io = IO(new Bundle {
     val in_a   = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b   = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
@@ -24,15 +25,12 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
     val in_control   = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
     val out_b  = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
     val out_c  = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
-
     val in_valid = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
     val out_valid = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
   })
-
   // mesh(r)(c) => Tile at row r, column c
   val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, pe_latency, tileRows, tileColumns)))
   val meshT = mesh.transpose
-
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
   for (r <- 0 until meshRows) {
@@ -42,7 +40,6 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
         tile.io.out_a
     }
   }
-
   // Chain tile_out_b -> tile_b_in (pipeline b across each column)
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_b(c), io.in_valid(c))) {
@@ -51,7 +48,6 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
         (tile.io.out_b, tile.io.out_valid)
     }
   }
-
   // Chain tile_out -> tile_propag (pipeline output across each column)
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_d(c), io.in_valid(c))) {
@@ -60,7 +56,6 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
         (tile.io.out_c, tile.io.out_valid)
     }
   }
-
   // Chain control signals (pipeline across each column)
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_control(c), io.in_valid(c))) {
@@ -73,7 +68,6 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
         (tile.io.out_control, tile.io.out_valid)
     }
   }
-
   // Chain in_valid (pipeline across each column)
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_valid(c)) {
@@ -82,7 +76,6 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
         tile.io.out_valid
     }
   }
-
   // Capture out_vec and out_control_vec (connect IO to bottom row of mesh)
   // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple4)
   for (((b, c), (v, tile)) <- ((io.out_b zip io.out_c), (io.out_valid zip mesh.last)).zipped) {

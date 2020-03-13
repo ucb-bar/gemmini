@@ -64,7 +64,6 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   io.ptw <> tlb.io.ptw
   tlb.io.ptw.status := req.status
 
-
   when (io.req.fire() || state === s_waiting_for_resp) {
     // We could actually check the response from the TLB instantaneously to get a response in the same cycle. However,
     // our current arbiters don't play well with that scenario. To get the instantaneous response, simple erase the

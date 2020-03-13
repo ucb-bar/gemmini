@@ -15,7 +15,7 @@ class ShiftSRAM[T <: Data](n: Int, t: T) extends Module {
 
   assert(n >= 2)
 
-  val mem = TwoPortSyncMem(n, t)
+  val mem = TwoPortSyncMem(n, t, 1)
 
   val waddr = Reg(UInt(log2Ceil(n).W))
   val raddr = wrappingAdd(waddr, 1.U, n)
@@ -26,6 +26,7 @@ class ShiftSRAM[T <: Data](n: Int, t: T) extends Module {
   mem.io.wen := io.en
   mem.io.wdata := io.in
   mem.io.waddr := waddr
+  mem.io.mask.foreach(_ := true.B) // TODO use a TwoPortSyncMem without a mask. That should also be an option
 
   mem.io.ren := io.en
   mem.io.raddr := raddr

@@ -2,13 +2,11 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import chisel3.core.dontTouch
 
 import freechips.rocketchip.tile.RoCCCommand
 
 import GemminiISA._
 import Util._
-
 
 // TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {
@@ -22,8 +20,7 @@ class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {
   override def cloneType: this.type = new ROBIssue(cmd_t, nEntries).asInstanceOf[this.type]
 }
 
-// class ROB[T <: RoCCCommand](cmd_t: T, nEntries: Int, sprows: Int, block_rows: Int) extends Module {
-class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows: Int) extends Module {
+class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows: Int, block_cols: Int) extends Module {
   val io = IO(new Bundle {
     val alloc = Flipped(Decoupled(cmd_t.cloneType))
 
@@ -48,7 +45,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
     val op1 = UDValid(local_addr_t.cloneType)
     val op2 = UDValid(local_addr_t.cloneType)
-    val op3 = UDValid(local_addr_t.cloneType)
+    // val op3 = UDValid(local_addr_t.cloneType)
 
     val dst = UDValid(new Bundle {
       val start = local_addr_t.cloneType
@@ -79,6 +76,11 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
   val last_allocated = Reg(UInt(log2Up(nEntries).W))
 
+  val new_entry = Wire(new Entry)
+  new_entry := DontCare
+  val new_entry_id = MuxCase((nEntries-1).U, entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+  val alloc_fire = io.alloc.fire()
+
   when (io.alloc.fire()) {
     val spAddrBits = 32
     val cmd = io.alloc.bits
@@ -86,30 +88,30 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     val funct_is_compute = funct === COMPUTE_AND_STAY_CMD || funct === COMPUTE_AND_FLIP_CMD
     val config_cmd_type = cmd.rs1(1,0) // TODO magic numbers
 
-    val waddr = MuxCase((nEntries-1).U, entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
-
-    val new_entry = Wire(new Entry)
     new_entry.issued := false.B
     new_entry.cmd := cmd
 
     new_entry.is_config := funct === CONFIG_CMD
 
-    new_entry.op1.valid := funct_is_compute
+    new_entry.op1.valid := funct === PRELOAD_CMD || funct_is_compute
     new_entry.op1.bits := cmd.rs1.asTypeOf(local_addr_t)
 
     new_entry.op2.valid := funct_is_compute || funct === LOAD_CMD || funct === STORE_CMD
     new_entry.op2.bits := cmd.rs2.asTypeOf(local_addr_t)
 
-    new_entry.op3.valid := funct_is_compute
-    new_entry.op3.bits := cmd.rs1(63, 32).asTypeOf(local_addr_t)
+    // new_entry.op3.valid := funct_is_compute
+    // new_entry.op3.bits := cmd.rs1(63, 32).asTypeOf(local_addr_t)
 
-    new_entry.dst.valid := funct_is_compute || funct === LOAD_CMD
-    new_entry.dst.bits.start := Mux(funct_is_compute, cmd.rs2(63, 32), cmd.rs2(31, 0)).asTypeOf(local_addr_t)
-    new_entry.dst.bits.len := Mux(funct_is_compute, 1.U, cmd.rs2(63, spAddrBits)) // TODO magic number
+    val mvin_mvout_len = cmd.rs2(48, spAddrBits)
+    // new_entry.dst.valid := funct_is_compute || funct === LOAD_CMD
+    // new_entry.dst.bits.start := Mux(funct_is_compute, cmd.rs2(63, 32), cmd.rs2(31, 0)).asTypeOf(local_addr_t)
+    new_entry.dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD
+    new_entry.dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
+    new_entry.dst.bits.len := Mux(funct === PRELOAD_CMD, 1.U, mvin_mvout_len / block_cols.U + (mvin_mvout_len % block_cols.U =/= 0.U))
 
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_store = (funct === STORE_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
-    val is_ex = funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
+    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
 
     new_entry.q := Mux1H(Seq(
       is_load -> ldq,
@@ -121,16 +123,16 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
       // We search for all entries which write to an address which we read from
       e.valid && e.bits.dst.valid && (
         (new_entry.op1.valid && e.bits.dst.bits.start <= new_entry.op1.bits && e.bits.dst.bits.end() > new_entry.op1.bits) ||
-          (new_entry.op2.valid && e.bits.dst.bits.start <= new_entry.op2.bits && e.bits.dst.bits.end() > new_entry.op2.bits) ||
-          (new_entry.op3.valid && e.bits.dst.bits.start <= new_entry.op3.bits && e.bits.dst.bits.end() > new_entry.op3.bits))
+          (new_entry.op2.valid && e.bits.dst.bits.start <= new_entry.op2.bits && e.bits.dst.bits.end() > new_entry.op2.bits)) /* ||
+          (new_entry.op3.valid && e.bits.dst.bits.start <= new_entry.op3.bits && e.bits.dst.bits.end() > new_entry.op3.bits)) */
     }
 
     val wars = entries.map { e =>
       // We search for all entries which read from an address that we write to
       e.valid && new_entry.dst.valid && (
         (e.bits.op1.valid && new_entry.dst.bits.start <= e.bits.op1.bits && new_entry.dst.bits.end() > e.bits.op1.bits) ||
-          (e.bits.op2.valid && new_entry.dst.bits.start <= e.bits.op2.bits && new_entry.dst.bits.end() > e.bits.op2.bits) ||
-          (e.bits.op3.valid && new_entry.dst.bits.start <= e.bits.op3.bits && new_entry.dst.bits.end() > e.bits.op3.bits))
+          (e.bits.op2.valid && new_entry.dst.bits.start <= e.bits.op2.bits && new_entry.dst.bits.end() > e.bits.op2.bits)) /* ||
+          (e.bits.op3.valid && new_entry.dst.bits.start <= e.bits.op3.bits && new_entry.dst.bits.end() > e.bits.op3.bits)) */
     }
 
     val waws = entries.map { e =>
@@ -157,10 +159,10 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
-    entries(waddr).valid := true.B
-    entries(waddr).bits := new_entry
+    entries(new_entry_id).valid := true.B
+    entries(new_entry_id).bits := new_entry
 
-    last_allocated := waddr
+    last_allocated := new_entry_id
   }
 
   // Issue commands which are ready to be issued
@@ -177,8 +179,12 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
       entries(issue_id).bits.issued := true.B
 
       // Clear out all the dependency bits for instructions which depend on the same queue
-      entries.foreach { e =>
-        when (e.bits.q === entries(issue_id).bits.q || entries(issue_id).bits.complete_on_issue) {
+      entries.zipWithIndex.foreach { case (e, i) =>
+        val is_same_q = Mux(alloc_fire && new_entry_id === i.U,
+          new_entry.q === entries(issue_id).bits.q,
+          e.bits.q === entries(issue_id).bits.q)
+
+        when (is_same_q || entries(issue_id).bits.complete_on_issue) {
           e.bits.deps(issue_id) := false.B
         }
       }
@@ -211,10 +217,6 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   // assert(min_pop_count < 2.U)
   dontTouch(pop_count_packed_deps)
   dontTouch(min_pop_count)
-
-  for (i <- 0 until 2) {
-  }
-
 
   val cycles_since_issue = RegInit(0.U(32.W))
 

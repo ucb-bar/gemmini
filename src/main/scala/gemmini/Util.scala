@@ -16,8 +16,9 @@ object Util {
 
   def wrappingAdd(u: UInt, n: UInt, max_plus_one: UInt): UInt = {
     val max = max_plus_one - 1.U
-    assert(n <= max, "cannot wrapAdd when n is larger than max")
-    Mux(u >= max - n + 1.U && n =/= 0.U, n - (max - u) - 1.U, u + n)
+    assert(n <= max || max === 0.U, "cannot wrapAdd when n is larger than max, unless max is 0")
+    Mux (max === 0.U, 0.U,
+      Mux(u >= max - n + 1.U && n =/= 0.U, n - (max - u) - 1.U, u + n))
   }
 
   def satAdd(u: UInt, v: UInt, max: UInt): UInt = {

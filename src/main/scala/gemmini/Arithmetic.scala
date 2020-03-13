@@ -20,6 +20,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def clippedToWidthOf(t: T): T // Like "withWidthOf", except that it saturates
   def relu: T
   def relu6(shift: UInt): T
+  def zero: T
 }
 
 object Arithmetic {
@@ -56,6 +57,8 @@ object Arithmetic {
         val max = Mux(max6 > maxwidth, maxwidth, max6)(self.getWidth-1, 0).asUInt()
         Mux(self < max, self, max)
       }
+
+      override def zero: UInt = 0.U
     }
   }
 
@@ -93,6 +96,8 @@ object Arithmetic {
         val max = Mux(max6 > maxwidth, maxwidth, max6)(self.getWidth-1, 0).asSInt()
         MuxCase(self, Seq((self < 0.S) -> 0.S, (self > max) -> max))
       }
+
+      override def zero: SInt = 0.S
     }
   }
 
@@ -296,6 +301,8 @@ object Arithmetic {
         result.bits := fNFromRecFN(self.expWidth, self.sigWidth, self_rec)
         result
       }
+
+      override def zero: Float = 0.U.asTypeOf(self)
     }
   }
 }
