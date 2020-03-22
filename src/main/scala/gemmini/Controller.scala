@@ -136,6 +136,9 @@ class GemminiModule[T <: Data: Arithmetic]
 
   // val decompressed_cmd = cmd_decompressor.io.out
 
+  // Im2Col unit
+  val im2col = Module(new Im2Col(outer.config))
+
   // Controllers
   val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
   val store_controller = Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t))
@@ -167,6 +170,11 @@ class GemminiModule[T <: Data: Arithmetic]
   ex_controller.io.srams.write <> spad.module.io.srams.write
   ex_controller.io.acc.read <> spad.module.io.acc.read
   ex_controller.io.acc.write <> spad.module.io.acc.write
+
+  // Wire up Im2col
+  im2col.io.sram_reads <> spad.module.io.srams.read
+  im2col.io.req <> ex_controller.io.im2col.req
+  ex_controller.io.im2col.resp <> im2col.io.resp
 
   // Wire up controllers to ROB
   rob.io.alloc.valid := false.B
