@@ -334,6 +334,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     io.acc.read(i).req.valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
     io.acc.read(i).req.bits.shift := acc_shift
     io.acc.read(i).req.bits.relu6_shift := relu6_shift
+    io.acc.read(i).req.bits.relu6_shift := relu6_shift
     io.acc.read(i).req.bits.act := activation
     io.acc.read(i).req.bits.fromDMA := false.B
 
