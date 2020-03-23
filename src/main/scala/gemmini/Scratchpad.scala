@@ -69,12 +69,12 @@ class ScratchpadWriteMemIO(local_addr_t: LocalAddr)
 
 class ScratchpadReadReq(val n: Int) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
-  val fromDMA = Bool()
+  val fromDMA = Bool() // TODO add fromIm2Col
 }
 
 class ScratchpadReadResp(val w: Int) extends Bundle {
   val data = UInt(w.W)
-  val fromDMA = Bool()
+  val fromDMA = Bool() // TODO add fromIm2Col
 }
 
 class ScratchpadReadIO(val n: Int, val w: Int) extends Bundle {
@@ -402,83 +402,5 @@ class Scratchpad[T <: Data: Arithmetic](config: GemminiArrayConfig[T])
         }
       }
     }
-
-    /*
-    {
-      val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
-      val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
-
-      val accumulator = Module(new AccumulatorMem(acc_bank_entries, acc_row_t, spad_row_t, mem_pipeline))
-
-      when (write_issue_q.io.deq.bits.laddr.is_acc_addr) {
-        writeData.valid := accumulator.io.read.resp.valid && accumulator.io.read.resp.bits.fromDMA
-        writeData.bits := accumulator.io.read.resp.bits.data.asUInt()
-      }
-
-      // Accumulator reads
-      {
-        val exread = io.acc.read.req.valid
-
-        // TODO we tie the write dispatch queue's, and write issue queue's, ready and valid signals together here
-        val dmawrite = write_dispatch_q.valid && write_issue_q.io.enq.ready && write_dispatch_q.bits.laddr.is_acc_addr
-
-        accumulator.io.read.req.valid := exread || dmawrite
-        accumulator.io.read.req.bits.shift := io.acc.read.req.bits.shift
-        accumulator.io.read.req.bits.relu6_shift := io.acc.read.req.bits.relu6_shift
-        accumulator.io.read.req.bits.act := io.acc.read.req.bits.act
-        io.acc.read.req.ready := accumulator.io.read.req.ready
-
-        // The ExecuteController gets priority when reading from the accumulator
-        when (exread) {
-          accumulator.io.read.req.bits.addr := io.acc.read.req.bits.addr
-          accumulator.io.read.req.bits.fromDMA := false.B
-        }.elsewhen(dmawrite) {
-          accumulator.io.read.req.bits.addr := write_dispatch_q.bits.laddr.acc_row()
-          accumulator.io.read.req.bits.fromDMA := true.B
-
-          when (accumulator.io.read.req.fire()) {
-            write_dispatch_q.ready := true.B
-            write_issue_q.io.enq.valid := true.B
-
-            io.dma.write.resp.valid := true.B
-          }
-        }.otherwise {
-          accumulator.io.read.req.bits.addr := DontCare
-          accumulator.io.read.req.bits.fromDMA := DontCare
-        }
-
-        val ex_resp_ready = io.acc.read.resp.ready
-        val dma_resp_ready = writer.module.io.req.ready && write_issue_q.io.deq.bits.laddr.is_acc_addr // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
-
-        accumulator.io.read.resp.ready := Mux(accumulator.io.read.resp.bits.fromDMA, dma_resp_ready, ex_resp_ready)
-        io.acc.read.resp.valid := accumulator.io.read.resp.valid // TODO should we AND this with fromDMA?
-        io.acc.read.resp.bits := accumulator.io.read.resp.bits
-      }
-
-      // Accumulator writes
-      {
-        val exwrite = io.acc.write.en
-        val dmaread = reader.module.io.resp.valid && reader.module.io.resp.bits.is_acc
-
-        accumulator.io.write.en := exwrite || dmaread
-
-        when (exwrite) {
-          accumulator.io.write.addr := io.acc.write.addr
-          accumulator.io.write.data := io.acc.write.data
-          accumulator.io.write.acc := io.acc.write.acc
-        }.elsewhen (dmaread) {
-          accumulator.io.write.addr := reader.module.io.resp.bits.addr
-          accumulator.io.write.data := reader.module.io.resp.bits.data.asTypeOf(acc_row_t)
-          accumulator.io.write.acc := false.B
-
-          reader.module.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
-        }.otherwise {
-          accumulator.io.write.addr := DontCare
-          accumulator.io.write.data := DontCare
-          accumulator.io.write.acc := DontCare
-        }
-      }
-    }
-    */
   }
 }
