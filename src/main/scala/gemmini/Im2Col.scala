@@ -105,24 +105,33 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
 
   val window_address = WireInit(0.U(log2Up(2*block_size).W))
   window_address := window_start_counter + window_row_counter
+  val sram_read_req = RegInit(true.B)
 
-  io.sram_reads(req.addr.sp_bank()).req.valid := true.B
+
+  io.sram_reads(req.addr.sp_bank()).req.valid := sram_read_req
   val sram_read_valid = (req.bank === req.addr.sp_bank()) && io.sram_reads(req.addr.sp_bank()).req.valid
   io.sram_reads(req.addr.sp_bank()).req.bits.addr := req.addr.sp_row() + window_address
   dontTouch(window_start_counter)
   dontTouch(window_row_counter)
   dontTouch(window_address)
-  val im2col_fin = RegInit(false.B)
-  val im2col_fin_reg = RegInit(false.B)
-  val im2col_start = RegInit(false.B)
+  val im2col_fin = RegInit(false.B) //when reading out necessary row is done
+  val im2col_fin_reg = RegInit(false.B) // when 16 rows are all created - to outside
+  val im2col_start = RegInit(false.B) //starting pulse of im2col
   io.resp.bits.im2col_end := im2col_fin_reg
   val sram_read_valid_d = RegInit(false.B)
-  im2col_start := sram_read_valid && !sram_read_valid_d //start pulse
+  val sram_resp_valid = (req.bank === req.addr.sp_bank()) && io.sram_reads(req.addr.sp_bank()).resp.valid
+  dontTouch(sram_resp_valid)
+  im2col_start := sram_read_valid && !sram_read_valid_d
   io.resp.bits.im2col_begin := im2col_start
   when(column_counter === block_size.U - 1.U){
     im2col_fin_reg := true.B
-  }.otherwise{
+  }.otherwise{ // when tiling, need to make it false again
     im2col_fin_reg := false.B
+  }
+  when(im2col_fin_reg){
+    sram_read_req := false.B
+  }.elsewhen(!io.req.valid){ //when tiling, need to make the request true again
+    //sram_read_req := true.B
   }
 
   when (!io.req.valid) {
@@ -130,7 +139,7 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
     //busy_reg := false.B //??
     //valid_reg := false.B
     //im2col_reg := 0.S.asTypeOf(Vec(block_size, inputType))
-  }.elsewhen(sram_read_valid) { //firing && a_fire && cntl_ready
+  }.elsewhen(sram_resp_valid && sram_read_valid) { //firing && a_fire && cntl_ready
     sram_read_valid_d := sram_read_valid //delay to make start pulse
     //im2col_fin_reg := im2col_fin //delay once for synchronize with resp_valid
     when(im2col_width <= block_size.U) { //when whole im2col fits within 1 mesh

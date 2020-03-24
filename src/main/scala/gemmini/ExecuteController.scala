@@ -94,7 +94,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val activation = Reg(UInt(2.W))
 
   //fix by input
-  val im2col_en = WireInit(true.B)
+  val im2col_en = WireInit(false.B)
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = rs1s(a_address_place).asTypeOf(local_addr_t)
@@ -210,7 +210,32 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val a_row_is_not_all_zeros = a_fire_counter < a_rows
   val b_row_is_not_all_zeros = b_fire_counter < b_rows
   val d_row_is_not_all_zeros = block_size.U - 1.U - d_fire_counter < d_rows
-  val im2col_wire = im2col_en && !io.im2col.resp.bits.im2col_end
+  val tile_im2col_en = RegInit(false.B) //larger matrix (for future)
+
+  val waiting_for_im2col :: doing_im2col :: im2col_done :: Nil = Enum(3)
+  val im2col_state = RegInit(waiting_for_im2col)
+
+  switch(im2col_state){
+    is(waiting_for_im2col){ //default state
+      when(im2col_en){ //receive im2col command from instruction
+        im2col_state := doing_im2col
+      }
+    }
+    is(doing_im2col){
+      when(io.im2col.resp.bits.im2col_end){
+        im2col_state := im2col_done
+      }
+    }
+    is(im2col_done){
+      when(tile_im2col_en){
+        im2col_state := doing_im2col
+      }
+    }
+
+  }
+
+  //val im2col_wire = im2col_en && !io.im2col.resp.bits.im2col_end
+  val im2col_wire = (im2col_state === doing_im2col) && !io.im2col.resp.bits.im2col_end
   dontTouch(im2col_wire)
 
   def same_bank(addr1: LocalAddr, addr2: LocalAddr, start_inputting1: Bool, start_inputting2: Bool, can_be_im2colled: Boolean): Bool = {
