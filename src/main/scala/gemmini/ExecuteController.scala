@@ -94,7 +94,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val activation = Reg(UInt(2.W))
 
   //fix by input
-  val im2col_en = WireInit(false.B)
+  val im2col_en = RegInit(false.B)
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = rs1s(a_address_place).asTypeOf(local_addr_t)
@@ -166,7 +166,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     !is_garbage && (mul_raw_haz || pre_raw_haz)
   }.reduce(_ || _)
 
-  // val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_ids(0).valid).reduce(_ || _)
   val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_id.valid).reduce(_ || _)
 
   // SRAM scratchpad
@@ -210,33 +209,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val a_row_is_not_all_zeros = a_fire_counter < a_rows
   val b_row_is_not_all_zeros = b_fire_counter < b_rows
   val d_row_is_not_all_zeros = block_size.U - 1.U - d_fire_counter < d_rows
-  val tile_im2col_en = RegInit(false.B) //larger matrix (for future)
 
-  val waiting_for_im2col :: doing_im2col :: im2col_done :: Nil = Enum(3)
-  val im2col_state = RegInit(waiting_for_im2col)
 
-  switch(im2col_state){
-    is(waiting_for_im2col){ //default state
-      when(im2col_en){ //receive im2col command from instruction
-        im2col_state := doing_im2col
-      }
-    }
-    is(doing_im2col){
-      when(io.im2col.resp.bits.im2col_end){
-        im2col_state := im2col_done
-      }
-    }
-    is(im2col_done){
-      when(tile_im2col_en){
-        im2col_state := doing_im2col
-      }
-    }
-
-  }
-
-  //val im2col_wire = im2col_en && !io.im2col.resp.bits.im2col_end
-  val im2col_wire = (im2col_state === doing_im2col) && !io.im2col.resp.bits.im2col_end
-  dontTouch(im2col_wire)
+  val im2col_wire = io.im2col.req.ready
 
   def same_bank(addr1: LocalAddr, addr2: LocalAddr, start_inputting1: Bool, start_inputting2: Bool, can_be_im2colled: Boolean): Bool = {
     val addr1_read_from_acc = addr1.is_acc_addr
@@ -245,7 +220,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     val is_garbage = addr1.is_garbage() || addr2.is_garbage() ||
       !start_inputting1 || !start_inputting2
 
-    val is_being_im2colled = can_be_im2colled.B && im2col_en && !im2col_wire
+    val is_being_im2colled = can_be_im2colled.B && im2col_wire//!im2col_wire && im2col_en
 
     !is_garbage && !is_being_im2colled && ((addr1_read_from_acc && addr2_read_from_acc) ||
       (!addr1_read_from_acc && !addr2_read_from_acc && addr1.sp_bank() === addr2.sp_bank()))
@@ -295,21 +270,21 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
   val firing = start_inputting_a || start_inputting_b || start_inputting_d
 
-  when (!firing || io.im2col.resp.bits.im2col_begin) {
-    a_fire_counter := 0.U
-  }.elsewhen (firing && a_fire && cntl_ready) {
+  when (!firing) {
+      a_fire_counter := 0.U
+    }.elsewhen (firing && a_fire && cntl_ready) {
     a_fire_counter := wrappingAdd(a_fire_counter, 1.U, block_size)
     a_fire_started := true.B
   }
 
-  when (!firing || io.im2col.resp.bits.im2col_begin) {
+  when (!firing) {
     b_fire_counter := 0.U
   }.elsewhen (firing && b_fire && cntl_ready) {
     b_fire_counter := wrappingAdd(b_fire_counter, 1.U, block_size)
     b_fire_started := true.B
   }
 
-  when (!firing || io.im2col.resp.bits.im2col_begin) {
+  when (!firing) {
     d_fire_counter := 0.U
   }.elsewhen (firing && d_fire && cntl_ready) {
     d_fire_counter := wrappingAdd(d_fire_counter, 1.U, block_size)
@@ -335,8 +310,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   // Scratchpad reads
   for (i <- 0 until sp_banks) {
     val read_a = a_valid && !a_read_from_acc && dataAbank === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros && !im2col_wire
-    val read_b = b_valid && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros
-    val read_d = d_valid && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros
+    val read_b = b_valid && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
+    val read_d = d_valid && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
 
     Seq((read_a, a_ready), (read_b, b_ready), (read_d, d_ready)).foreach { case (rd, r) =>
       when (rd && !io.srams.read(i).req.ready) {
@@ -355,9 +330,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
   // Accumulator read
   for (i <- 0 until acc_banks) {
-    val read_a_from_acc = a_valid && a_read_from_acc && dataABankAcc === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros  && !im2col_wire
-    val read_b_from_acc = b_valid && b_read_from_acc && dataBBankAcc === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros
-    val read_d_from_acc = d_valid && d_read_from_acc && dataDBankAcc === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros
+    val read_a_from_acc = a_valid && a_read_from_acc && dataABankAcc === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros && !im2col_wire
+    val read_b_from_acc = b_valid && b_read_from_acc && dataBBankAcc === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
+    val read_d_from_acc = d_valid && d_read_from_acc && dataDBankAcc === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
 
     Seq((read_a_from_acc, a_ready), (read_b_from_acc, b_ready), (read_d_from_acc, d_ready)).foreach { case (rd, r) =>
       when(rd && !io.acc.read(i).req.ready) {
@@ -395,7 +370,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     io.im2col.req.bits.input_width := input_width
     io.im2col.req.bits.weight_width := weight_width
     io.im2col.req.bits.channel := channel
-    io.im2col.req.bits.bank := dataAbank
+    io.im2col.req.bits.im2col_cmd := im2col_en
+    io.im2col.req.bits.start_inputting := start_inputting_a
 
     io.im2col.resp.ready := mesh.io.a.ready
   }
@@ -639,7 +615,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
   val readData = VecInit(io.srams.read.map(_.resp.bits.data))
   val accReadData = VecInit(io.acc.read.map(_.resp.bits.data.asUInt()))
-  val im2ColData = io.im2col.resp.bits.asUInt()
+  val im2ColData = io.im2col.resp.bits.a_im2col.asUInt()
 
   val readValid = VecInit(io.srams.read.map(bank => bank.resp.valid && !bank.resp.bits.fromDMA))
   val accReadValid = VecInit(io.acc.read.map(bank => bank.resp.valid && !bank.resp.bits.fromDMA))
@@ -671,8 +647,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   when (cntl_valid) {
     // Default inputs
     mesh.io.a.valid := cntl.a_fire && dataA_valid
-    mesh.io.b.valid := cntl.b_fire && dataB_valid
-    mesh.io.d.valid := cntl.d_fire && dataD_valid
+    mesh.io.b.valid := (cntl.b_fire && dataB_valid)
+    mesh.io.d.valid := (cntl.d_fire && dataD_valid)
     mesh.io.tag_in.valid := true.B
 
     mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
