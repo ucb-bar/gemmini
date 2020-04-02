@@ -310,6 +310,18 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     }
   }
 
+  //Seah: for OS counter address sync
+  val counter_save = WireInit(b_fire_counter)
+  when(io.im2col.resp.bits.im2col_end){
+    when(io.im2col.resp.valid){
+      counter_save := b_fire_counter
+    }.otherwise{
+      counter_save := b_fire_counter - 1.U
+    }
+  }.otherwise{
+    counter_save := b_fire_counter
+  }
+
   // Scratchpad reads
   for (i <- 0 until sp_banks) {
     val read_a = a_valid && !a_read_from_acc && dataAbank === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros && !im2col_wire
@@ -325,8 +337,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     io.srams.read(i).req.valid := read_a || read_b || read_d
     io.srams.read(i).req.bits.fromDMA := false.B
     io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
-      Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
-        read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter)))
+      Seq(read_b -> (b_address_rs2.sp_row() + counter_save),
+        read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - counter_save))) //Seah: fixed for OS b counter sync
+//      Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
+//        read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter)))
 
     io.srams.read(i).resp.ready := true.B
   }
