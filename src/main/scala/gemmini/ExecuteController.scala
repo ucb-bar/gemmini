@@ -78,6 +78,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
 
   val in_prop = functs(0) === COMPUTE_AND_FLIP_CMD
+
+
   val in_prop_flush = Reg(Bool())
   when (current_dataflow === Dataflow.WS.id.U) {
     in_prop_flush := 0.U
@@ -151,6 +153,20 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   mesh.io.pe_control.dataflow := cntl.dataflow
   mesh.io.pe_control.shift := cntl.shift
   mesh.io.flush.bits := 0.U
+
+  //Seah: added for WS accumulator prop disenable
+  val prop = WireInit(false.B)
+  val prop_lock = RegInit(false.B)
+  when(current_dataflow =/= Dataflow.WS.id.U){
+    prop := in_prop
+  }.otherwise{
+    when(cntl.perform_single_mul && mesh.io.a.valid){
+      prop_lock := true.B
+      prop := false.B
+    }.elsewhen(!prop_lock){
+      prop := in_prop
+    }
+  }
 
   // Hazards
   val raw_hazard_pre = mesh.io.tags_in_progress.map { t =>
@@ -300,7 +316,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     ((b_fire_counter === (block_size-1).U && b_valid) || b_fire_counter === 0.U) &&
     ((d_fire_counter === (block_size-1).U && d_valid) || d_fire_counter === 0.U) &&
     (a_fire_counter =/= 0.U || b_fire_counter =/= 0.U || d_fire_counter =/= 0.U) &&
-    cntl_ready
+    cntl_ready && !io.im2col.resp.bits.continue_fire
 
   if (block_size == 2) {
     when (about_to_fire_all_rows) {
@@ -395,6 +411,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
     io.im2col.resp.ready := mesh.io.a.ready
   }
+  val turn_counter = RegInit(0.U(9.W))
 
   // FSM logic
   switch (control_state) {
@@ -477,6 +494,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     is (compute) {
       // Only preloading
       when(perform_single_preload) {
+        turn_counter := im2col_turn - 1.U
         start_inputting_a := current_dataflow === Dataflow.OS.id.U
         start_inputting_d := true.B
 
@@ -632,7 +650,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   mesh_cntl_signals_q.io.enq.bits.rob_id.bits := cmd.bits(preload_cmd_place).rob_id
 
   mesh_cntl_signals_q.io.enq.bits.dataflow := current_dataflow
-  mesh_cntl_signals_q.io.enq.bits.prop := Mux(performing_single_preload, in_prop_flush, in_prop)
+  mesh_cntl_signals_q.io.enq.bits.prop := Mux(performing_single_preload, in_prop_flush, prop)//in_prop)
   mesh_cntl_signals_q.io.enq.bits.shift := in_shift
 
   mesh_cntl_signals_q.io.enq.bits.im2colling := im2col_wire
@@ -695,6 +713,26 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     mesh.io.tag_in.bits.addr.make_this_garbage()
   }
 
+  //Seah: added
+  //val overlap_ws = RegInit(rs2s(preload_cmd_place).asTypeOf(local_addr_t))
+  val overlap_ws = RegInit(mesh.io.tag_in.bits)
+  when(perform_single_preload) {
+    overlap_ws.addr := cntl.c_addr
+    overlap_ws.rob_id := cntl.rob_id
+    overlap_ws.cols := cntl.c_cols
+    overlap_ws.rows := cntl.c_rows
+  }
+
+  when (cntl_valid && cntl.perform_single_mul) {
+    mesh.io.a.bits := Mux(cntl.dataflow === Dataflow.OS.id.U, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+    when(io.im2col.resp.bits.continue_fire && dataA_valid){
+      mesh.io.tag_in.bits.addr := overlap_ws.addr//cntl.c_addr
+      mesh.io.tag_in.bits.rob_id := overlap_ws.rob_id
+      mesh.io.tag_in.bits.cols := overlap_ws.cols
+      mesh.io.tag_in.bits.rows := overlap_ws.rows
+    }.otherwise{mesh.io.tag_in.bits.addr.make_this_garbage()} //Seah: when statement added (original: only make this garbage)
+  }
+
   // Scratchpad writes
   val w_address = mesh.io.tag_out.addr
   val write_to_acc = w_address.is_acc_addr
@@ -739,7 +777,15 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     io.acc.write(i).en := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
     io.acc.write(i).addr := current_w_bank_address
     io.acc.write(i).data := mesh.io.out.bits
-    io.acc.write(i).acc := w_address.accumulate
+    when(im2col_turn > 1.U) { //Seah: added for WS accumulator
+      when(turn_counter + 1.U < im2col_turn){
+        io.acc.write(i).acc := true.B //adding things
+      }.otherwise{
+        io.acc.write(i).acc := w_address.accumulate
+      }
+    }.otherwise{
+      io.acc.write(i).acc := w_address.accumulate //when only one im2col matrix
+    }
     // io.acc.write(i).mask := VecInit(Seq.fill(io.acc.write(0).mask.length)(true.B))
     io.acc.write(i).mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
   }
@@ -747,11 +793,16 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   // Handle dependencies and turn off outputs for garbage addresses
   val mesh_completed_rob_id_fire = WireInit(false.B)
 
+  //Seah: added for WS accumulator
   when(mesh.io.out.fire() && mesh.io.tag_out.rob_id.valid) {
     when(output_counter.inc()) {
-      mesh_completed_rob_id_fire := true.B
-      io.completed.valid := true.B
-      io.completed.bits := mesh.io.tag_out.rob_id.bits
+      when(turn_counter =/= 0.U){//Seah: added for multiple WS multiplication
+        turn_counter := turn_counter - 1.U
+      }.otherwise {
+        mesh_completed_rob_id_fire := true.B
+        io.completed.valid := true.B
+        io.completed.bits := mesh.io.tag_out.rob_id.bits
+      }
     }
 
     start_array_outputting :=  !is_garbage_addr
@@ -765,12 +816,15 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   */
 
   when (!mesh_completed_rob_id_fire) {
-    when (pending_completed_rob_ids(0).valid) {
-      io.completed.valid := true.B
-      io.completed.bits := pending_completed_rob_ids(0).pop()
-    }.elsewhen (pending_completed_rob_ids(1).valid) {
-      io.completed.valid := true.B
-      io.completed.bits := pending_completed_rob_ids(1).pop()
+    // when(io.im2col.resp.bits.im2col_turn === 0.U) { //Seah: added for same reason
+    when(turn_counter === 0.U){
+      when(pending_completed_rob_ids(0).valid) {
+        io.completed.valid := true.B
+        io.completed.bits := pending_completed_rob_ids(0).pop()
+      }.elsewhen(pending_completed_rob_ids(1).valid) {
+        io.completed.valid := true.B
+        io.completed.bits := pending_completed_rob_ids(1).pop()
+      }
     }
   }
 
