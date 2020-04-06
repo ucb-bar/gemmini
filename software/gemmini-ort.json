@@ -1,0 +1,8 @@
+{
+    "name" : "gemmini-ort",
+    "base" : "br-base.json",
+    "overlay" : "../onnxruntime-riscv/systolic_runner/imagenet_runner",
+    "rootfs-size" : "1GiB",
+    "outputs" : [ "/output/cpu_trace.json", "/output/os_trace.json", "/output/ws_trace.json" ],
+    "run" : "run-ort.sh"
+}
