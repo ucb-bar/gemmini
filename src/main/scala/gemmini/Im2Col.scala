@@ -225,17 +225,17 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
   }
 
 
-  //saving for multiple im2col output (horizontal)
+  //saving bigger weight dimension than 4x4
   val row_counter_saver = RegInit(0.U((column_counter.getWidth).W)) //saves place in the weight
-  //no need to save column and window_start_counter
+
+  //saving for not 2x2
   val window_row_counter_saver = RegInit(0.U((column_counter.getWidth).W)) //saves place within row
 
-  val window_address = WireInit(0.U(log2Up(2*block_size).W))
+  val window_address = WireInit(0.U(log2Up(block_size*block_size).W))
   window_address := window_start_counter + window_row_counter + window_row_counter_saver
 
 
-  //io.sram_reads(req.addr.sp_bank()).req.valid := sram_read_req && !im2col_fin_reg
-  //io.sram_reads(req.addr.sp_bank()).req.bits.addr := req.addr.sp_row() + window_address
+  io.sram_reads(copy_addr.sp_bank()).req.valid := sram_read_req && !im2col_fin_reg
   io.sram_reads(copy_addr.sp_bank()).req.valid := sram_read_req && !im2col_fin_reg
   io.sram_reads(copy_addr.sp_bank()).req.bits.addr := copy_addr.sp_row() + window_address
   dontTouch(window_start_counter)
@@ -252,46 +252,51 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
   dontTouch(start_inputting_A_deq)
 
   val channel_wrap = RegInit(0.U((column_counter.getWidth).W)) // for overflowing detection
+  val row_residue = (im2col_width - turn_done * block_size.U) // row left on the last horizontal block (im2col_turn = 1)
 
   //when(column_counter === block_size.U - 1.U && row_counter === filter_dim2 - 1.U){
-  when(column_counter === block_size.U - 1.U && (row_counter + row_counter_saver === filter_dim2 - 1.U)){ //changed for row-wise multiple im2col blocks
+  when(column_counter === block_size.U - 1.U && ((row_counter === filter_dim2 - 1.U) || (row_counter === block_size.U - 1.U) || (row_counter === row_residue - 1.U))){ //changed for row-wise multiple im2col blocks
     im2col_fin_reg := true.B
     when((req.turn - im2col_turn + 1.U)*(block_size.U - filter_dim2*req.ch_per_turn) - filter_dim2 * channel_wrap >= filter_dim2) { // have to test
       channel_wrap := channel_wrap + 1.U
     }
-    when(row_counter === filter_dim2 - 1.U){
-      row_counter_saver := 0.U
-    }.otherwise{
-      row_counter_saver := row_counter
-    }
+    //need window_row_counter_saver or not?
+    /*
     when((window_row_counter + 1.U) % weight === 0.U) {
       window_row_counter_saver := window_row_counter + input - weight + 1.U
     }.otherwise{
       window_row_counter_saver := window_row_counter + 1.U
     }
+    */
   }.otherwise{ // when tiling, need to make it false again
     im2col_fin_reg := false.B
-    row_counter_saver := 0.U
     window_row_counter_saver := 0.U //where to initialize saver?
   }
 
   val row_counter_deq = sram_read_signals_q.io.deq.bits.row_counter
   val row_counter_deq_d = RegInit(sram_read_signals_q.io.deq.bits.row_counter) //Seah: changed - 1 clock delayed version
   val column_counter_deq_d = RegNext(sram_read_signals_q.io.deq.bits.column_counter)
-  //val sram_req_output = io.sram_reads(req.addr.sp_bank()).resp.bits.data.asTypeOf(Vec(block_size, inputType)) //Reg or Wire?
   val sram_req_output = io.sram_reads(copy_addr.sp_bank()).resp.bits.data.asTypeOf(Vec(block_size, inputType))
   val window_start_counter_prev = RegInit(0.U((window_start_counter.getWidth).W)) //to store in which window_start_counter on this phase, and loaded it when the next vertical block starts
   val window_row_left = RegInit(0.U((window_start_counter.getWidth).W)) // to figure out starting point
-  val row_residue = (im2col_width - turn_done * block_size.U) // row left on the last horizontal block (im2col_turn = 1)
 
-  when(row_counter === filter_dim2 -(im2col_width - (req.turn - 1.U) * block_size.U) && im2col_turn =/= 1.U){
+  when(req.ch_per_turn === 0.U) { //when filter_dim > block_size
+    when(row_counter=== block_size.U - 1.U && im2col_turn =/= 1.U &&(column_counter + block_done * block_size.U === output_width * output_width - 1.U)) {
+      when((row_counter + 1.U + row_counter_saver) % weight === 0.U) { //when finishing 1 weight row
+        window_row_left := window_row_counter + input - weight + 1.U //copy window_row_counter below
+      }.otherwise{window_row_left := window_row_counter + 1.U}
+    }
+    when(im2col_fin_reg){ //only have to update row_counter_saver once
+      when(row_counter_saver >= filter_dim2 - block_size.U){
+        row_counter_saver := row_counter_saver + block_size.U - filter_dim2
+      }.otherwise {
+        row_counter_saver := row_counter_saver + block_size.U
+      }
+    }
+  }.elsewhen(row_counter === filter_dim2 -(im2col_width - (req.turn - 1.U) * block_size.U) && im2col_turn =/= 1.U){
     window_row_left := window_row_counter
   }
-  when(sram_read_signals_q.io.deq.bits.im2col_turn === 1.U && sram_read_signals_q.io.deq.bits.row_residue < filter_dim2){
-    row_counter_deq_d := filter_dim2 - (sram_read_signals_q.io.deq.bits.row_residue - sram_read_signals_q.io.deq.bits.row_counter - 1.U) - 1.U
-  }.otherwise{
-    row_counter_deq_d := sram_read_signals_q.io.deq.bits.row_counter
-  }
+
   //caculating sram read address
   when(!io.req.valid && !start_inputting_A && !sram_resp_valid){
     window_start_counter := 0.U
@@ -301,7 +306,9 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
     im2col_fin := false.B
   }.elsewhen(!sram_resp_valid&&sram_read_req){ // transition -> loading saved values
     window_start_counter := window_start_counter_prev //load
-    when(im2col_turn === 1.U && (row_residue < filter_dim2)){
+    when(req.ch_per_turn === 0.U){
+      window_row_counter := window_row_left
+    }.elsewhen(im2col_turn === 1.U && (row_residue < filter_dim2)){
       window_row_counter := window_row_left // for unnecessary reading out for last horizontal block
     }
   }.elsewhen(sram_resp_valid && sram_read_req) { //firing && a_fire && cntl_ready
@@ -315,7 +322,7 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
             when(im2col_row_turn_counter === 0.U) { // on the last block of row
               when((column_counter + 1.U + block_done * block_size.U) % output_width === 0.U) { // end of one im2col row
                 //when((column_counter === output_width * output_width - 1.U) && (row_counter === filter_dim2 - 1.U)) { //im2col reached end (filter_dim2 -> assume 2x2 weight matrix => have to fix later)
-                when((column_counter + block_done * block_size.U === output_width * output_width - 1.U) && (row_counter === filter_dim2 - 1.U)) { // on the last block -> finish
+                when((column_counter + block_done * block_size.U === output_width * output_width - 1.U)) { // on the last block -> finish
                   im2col_fin := true.B
                   row_counter := filter_dim2 - 1.U
                   //im2col_start := false.B
@@ -363,18 +370,78 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
           column_counter := column_counter + 1.U
         }
       }
+    }.elsewhen(req.ch_per_turn === 0.U) { //when it does not fit into 1 mesh (row-wise)
+      //ToDo
+      //row_counter_saver implement
+      when(!im2col_fin) {
+        row_counter := wrappingAdd(row_counter, 1.U, block_size) //elements to multiply with weight window (does row_counter reset? -> check)
+        window_row_counter := window_row_counter + 1.U
+
+        when(im2col_turn =/= 1.U || (row_residue >= filter_dim2 && row_residue >= block_size.U)) { // not on the last horizontal block
+          //when(im2col_row_turn_counter === 0.U) { // on the last vertical block
+          when((row_counter + 1.U + row_counter_saver) % weight === 0.U) { //when finishing 1 weight row
+            window_row_counter := window_row_counter + input - weight + 1.U
+            when(window_row_counter === input * (weight - 1.U) + weight - 1.U){
+              window_row_counter := 0.U
+            } //when it hits the last counter value
+          }
+          when(row_counter === block_size.U - 1.U){
+            column_counter := column_counter + 1.U
+            window_row_counter := window_row_left
+            when((column_counter + block_done * block_size.U === output_width * output_width - 1.U) || column_counter === block_size.U - 1.U){
+              im2col_fin := true.B
+              row_counter := filter_dim2 - 1.U
+            }.elsewhen((column_counter + 1.U + block_done * block_size.U) % output_width === 0.U){
+              window_start_counter := window_start_counter + input - output_width + 1.U
+            }.otherwise{
+              window_start_counter := window_start_counter + 1.U
+            }
+          }
+
+        }.otherwise{ //on the last horizontal block (can merge with previous case)
+          row_counter := wrappingAdd(row_counter, 1.U, row_residue) //count up to remainder
+          //when(im2col_row_turn_counter === 0.U) { // on the last vertical block
+            when((row_counter + 1.U + row_counter_saver) % weight === 0.U) { //when finishing 1 weight row
+              window_row_counter := window_row_counter + input - weight + 1.U
+            }
+            when(row_counter === row_residue - 1.U) { // count up to last row -> need to start new column
+              column_counter := column_counter + 1.U
+              window_row_counter := window_row_left
+              when((column_counter + block_done * block_size.U === output_width * output_width - 1.U) || column_counter === block_size.U - 1.U) { // condition for finishing im2col
+                im2col_fin := true.B
+                row_counter := filter_dim2 - 1.U
+              }.elsewhen((column_counter + 1.U + block_done * block_size.U) % output_width === 0.U) { //finishing one output row
+                window_start_counter := window_start_counter + input - output_width + 1.U
+              }.otherwise {
+                window_start_counter := window_start_counter + 1.U
+              } //default
+            }
+          //}
+
+        }
+      }.otherwise { //when im2col_fin
+        window_start_counter := 0.U
+        when(im2col_turn === 1.U) {
+          window_start_counter_prev := window_start_counter + 1.U //store
+        }
+        when(column_counter === block_size.U - 1.U){
+          column_counter := 0.U
+        }.elsewhen(column_counter >= output_width*output_width - block_done*block_size.U){
+          column_counter := column_counter + 1.U
+        }
+      }
     }.otherwise { //when it does not fit into 1 mesh (row-wise) but still filter_dim2<16 (row savers are all 0)
       //ToDo
       when(!im2col_fin) {
         when(im2col_turn =/= 1.U || (row_residue >= filter_dim2)) { // not on the last horizontal block
           row_counter := wrappingAdd(row_counter, 1.U, filter_dim2) //elements to multiply with weight window (does row_counter reset? -> check)
-          when((row_counter + 1.U + row_counter_saver) % weight === 0.U) {
-            when(row_counter + row_counter_saver === filter_dim2 - 1.U) { // finish 1 weight filter (1 im2col row); need to jump on next im2col row
+          when((row_counter + 1.U) % weight === 0.U) {
+            when(row_counter === filter_dim2 - 1.U) { // finish 1 weight filter (1 im2col row); need to jump on next im2col row
               window_row_counter := 0.U // reset to new im2col row
               column_counter := column_counter + 1.U
               when(im2col_row_turn_counter === 0.U) { // on the last vertical block
                 when((column_counter + 1.U + block_done * block_size.U) % output_width === 0.U) { // end of one im2col row
-                  when((column_counter + block_done * block_size.U === output_width * output_width - 1.U) && (row_counter + row_counter_saver === filter_dim2 - 1.U)) { // on the last block -> finish
+                  when((column_counter + block_done * block_size.U === output_width * output_width - 1.U) && (row_counter === filter_dim2 - 1.U)) { // on the last block -> finish
                     im2col_fin := true.B
                     row_counter := filter_dim2 - 1.U
                     //im2col_start := false.B
@@ -410,13 +477,13 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
           }
         }.otherwise{ //on the last horizontal block, don't have to read out all rows
           row_counter := wrappingAdd(row_counter, 1.U, row_residue) //does it overwrite?
-          when((row_counter + 1.U + row_counter_saver + filter_dim2 - row_residue) % weight === 0.U) {
-            when(row_counter + row_counter_saver === row_residue - 1.U) { // finish 1 weight filter (1 im2col row); need to jump on next im2col row
+          when((row_counter + 1.U + filter_dim2 - row_residue) % weight === 0.U) {
+            when(row_counter === row_residue - 1.U) { // finish 1 weight filter (1 im2col row); need to jump on next im2col row
               window_row_counter := window_row_left // reset to new im2col row
               column_counter := column_counter + 1.U
               when(im2col_row_turn_counter === 0.U) { // on the last vertical block
                 when((column_counter + 1.U + block_done * block_size.U) % output_width === 0.U) { // end of one im2col row
-                  when((column_counter + block_done * block_size.U === output_width * output_width - 1.U) && (row_counter + row_counter_saver === row_residue - 1.U)) { // on the last block -> finish
+                  when((column_counter + block_done * block_size.U === output_width * output_width - 1.U) && (row_counter === row_residue - 1.U)) { // on the last block -> finish
                     im2col_fin := true.B
                     row_counter := filter_dim2 - 1.U
                     //im2col_start := false.B
@@ -466,8 +533,6 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
         }
       }
 
-
-
     }
   }.elsewhen(!sram_read_valid && !sram_resp_valid){
     when(tile_im2col_en){im2col_fin := false.B}
@@ -481,10 +546,33 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
   val sram_req_deq_valid_d = RegNext(sram_read_signals_q.io.deq.valid)
   val row_counter_valid = RegInit(sram_read_signals_q.io.deq.bits.row_counter)
   when(sram_read_signals_q.io.deq.bits.im2col_turn === 1.U){
-    row_counter_valid := sram_read_signals_q.io.deq.bits.row_counter + filter_dim2 * req.ch_per_turn - sram_read_signals_q.io.deq.bits.row_residue
+    row_counter_valid := sram_read_signals_q.io.deq.bits.row_counter
+    when(sram_read_signals_q.io.deq.bits.row_residue < filter_dim2) {
+      row_counter_valid := sram_read_signals_q.io.deq.bits.row_counter + filter_dim2 * req.ch_per_turn - sram_read_signals_q.io.deq.bits.row_residue
+    }
+    when(req.ch_per_turn === 0.U){ //when filter_dim > block_size
+      //row_counter_valid := sram_read_signals_q.io.deq.bits.row_counter + (block_size.U - sram_read_signals_q.io.deq.bits.row_residue)
+      row_counter_valid := sram_read_signals_q.io.deq.bits.row_counter_save + sram_read_signals_q.io.deq.bits.row_counter
+    }
   }.otherwise{
     row_counter_valid := sram_read_signals_q.io.deq.bits.row_counter
   }
+
+  when(sram_read_signals_q.io.deq.bits.im2col_turn === 1.U && sram_read_signals_q.io.deq.bits.row_residue < filter_dim2){
+    row_counter_deq_d := filter_dim2 - (sram_read_signals_q.io.deq.bits.row_residue - sram_read_signals_q.io.deq.bits.row_counter - 1.U) - 1.U
+    when(req.ch_per_turn === 0.U){
+      row_counter_deq_d := sram_read_signals_q.io.deq.bits.row_counter + sram_read_signals_q.io.deq.bits.row_counter_save
+    }
+  }.otherwise{
+    row_counter_deq_d := sram_read_signals_q.io.deq.bits.row_counter
+    when(req.ch_per_turn === 0.U){ //when filter_dim > block_size -> need to check
+      row_counter_deq_d := sram_read_signals_q.io.deq.bits.row_counter + sram_read_signals_q.io.deq.bits.row_counter_save
+      when(sram_read_signals_q.io.deq.bits.row_counter + sram_read_signals_q.io.deq.bits.row_counter_save >= filter_dim2){
+        row_counter_deq_d := sram_read_signals_q.io.deq.bits.row_counter + sram_read_signals_q.io.deq.bits.row_counter_save - filter_dim2
+      }
+    }
+  }
+
   //making output data valid signal
   //when(sram_resp_valid && sram_read_req){
   when(sram_req_deq_valid_d){
@@ -495,10 +583,15 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
       valid_reg := true.B
     }.otherwise {
       when((column_counter_deq_d === output_width * output_width - 1.U) && (row_counter_valid === filter_dim2 - 1.U)) {
-        //busy_reg := false.B //finished im2col
         valid_reg := true.B
-      }.elsewhen(row_counter_valid === filter_dim2 - 1.U) {
-        valid_reg := true.B //one row of im2col is finished
+      }.elsewhen(sram_read_signals_q.io.deq.bits.im2col_turn === 1.U){
+        when(req.ch_per_turn === 0.U && row_counter_valid === filter_dim2 - 1.U){
+          valid_reg := true.B
+        }.elsewhen(req.ch_per_turn =/= 0.U && (row_counter_valid === block_size.U - 1.U || row_counter_valid === filter_dim2 - 1.U)){
+          valid_reg := true.B
+        }.otherwise{valid_reg := false.B}
+      }.elsewhen(row_counter_valid === filter_dim2 - 1.U || row_counter_valid === block_size.U - 1.U) {
+        valid_reg := true.B
       }.otherwise {
         busy_reg := true.B
         valid_reg := false.B
@@ -537,17 +630,18 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
     val start_inputting = Bool()
     val channel_wrap = UInt(5.W)
     val row_residue = UInt(log2Up(block_size*block_size).W)
+    val row_counter_save = UInt(log2Up(block_size*block_size).W)
     //val read_output = Vec(block_size, inputType)
 
   }
 
   val row_address = WireInit(row_counter)
   when((row_counter + row_counter_saver) > filter_dim2 - 1.U){
-    row_address := row_counter + row_counter_saver - filter_dim2
-  }.otherwise{row_address := row_counter + row_counter_saver} //saver for 0 now
+    row_address := row_counter - filter_dim2
+  }.otherwise{row_address := row_counter} //saver for 0 now
 
   sram_read_signals_q.io.enq.valid := sram_read_req
-  sram_read_signals_q.io.enq.bits.row_counter := row_address
+  sram_read_signals_q.io.enq.bits.row_counter := row_counter//row_address
   sram_read_signals_q.io.enq.bits.column_counter := column_counter
   sram_read_signals_q.io.enq.bits.im2col_fin := im2col_fin
   sram_read_signals_q.io.enq.bits.im2col_fin_pulse := im2col_fin_reg
@@ -555,6 +649,7 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
   sram_read_signals_q.io.enq.bits.start_inputting := start_inputting_A
   sram_read_signals_q.io.enq.bits.channel_wrap := channel_wrap
   sram_read_signals_q.io.enq.bits.row_residue := row_residue
+  sram_read_signals_q.io.enq.bits.row_counter_save := row_counter_saver
 
   sram_read_signals_q.io.deq.ready := true.B//sram_resp_valid
 
