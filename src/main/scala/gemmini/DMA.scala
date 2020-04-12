@@ -13,44 +13,51 @@ import freechips.rocketchip.rocket.constants.MemoryOpConstants
 import Util._
 
 
-class StreamReadRequest(val spad_rows: Int, val acc_rows: Int)(implicit p: Parameters) extends CoreBundle {
+class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W)
   val is_acc = Bool()
+  val scale = UInt(mvin_scale_t_bits.W)
   val status = new MStatus
   val len = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
+
+  override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
 }
 
-class StreamReadResponse(val spadWidth: Int, val accWidth: Int, val spad_rows: Int, val acc_rows: Int,
-                         val aligned_to: Int) (implicit p: Parameters) extends CoreBundle {
+class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: Int, acc_rows: Int, aligned_to: Int, mvin_scale_t_bits: Int)
+                        (implicit p: Parameters) extends CoreBundle {
   val data = UInt((spadWidth max accWidth).W)
   val addr = UInt(log2Up(spad_rows max acc_rows).W)
   val mask = Vec((spadWidth max accWidth) / (aligned_to * 8) max 1, Bool())
   val is_acc = Bool()
+  val scale = UInt(mvin_scale_t_bits.W)
   val last = Bool()
   val bytes_read = UInt(8.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
+
+  override def cloneType: StreamReadResponse.this.type = new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to, mvin_scale_t_bits).asInstanceOf[this.type]
 }
 
-class StreamReader[T <: Data](config: GemminiArrayConfig[T], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
+class StreamReader[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
                    spad_rows: Int, acc_rows: Int, meshRows: Int)
                   (implicit p: Parameters) extends LazyModule {
   val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows))
   val node = core.node
 
   lazy val module = new LazyModuleImp(this) {
+
     val io = IO(new Bundle {
-      val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows)))
-      val resp = Decoupled(new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to))
+      val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits)))
+      val resp = Decoupled(new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to, config.mvin_scale_t_bits))
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
       val flush = Input(Bool())
     })
 
-    val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes))
+    val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits))
 
-    val beatPacker = Module(new BeatMerger(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows))
+    val beatPacker = Module(new BeatMerger(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows, config.mvin_scale_t_bits))
 
     core.module.io.req <> io.req
     io.tlb <> core.module.io.tlb
@@ -74,6 +81,7 @@ class StreamReader[T <: Data](config: GemminiArrayConfig[T], nXacts: Int, beatBi
     io.resp.bits.addr := beatPacker.io.out.bits.addr
     io.resp.bits.mask := beatPacker.io.out.bits.mask
     io.resp.bits.is_acc := beatPacker.io.out.bits.is_acc
+    io.resp.bits.scale := RegEnable(xactTracker.io.peek.entry.scale, beatPacker.io.req.fire())
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
@@ -88,7 +96,7 @@ class StreamReadBeat (val nXacts: Int, val beatBits: Int, val maxReqBytes: Int) 
 }
 
 // TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
-class StreamReaderCore[T <: Data](config: GemminiArrayConfig[T], nXacts: Int, beatBits: Int, maxBytes: Int,
+class StreamReaderCore[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], nXacts: Int, beatBits: Int, maxBytes: Int,
                                   spadWidth: Int, accWidth: Int, aligned_to: Int,
                                   spad_rows: Int, acc_rows: Int, meshRows: Int)
                                  (implicit p: Parameters) extends LazyModule {
@@ -107,8 +115,8 @@ class StreamReaderCore[T <: Data](config: GemminiArrayConfig[T], nXacts: Int, be
     val beatBytes = beatBits / 8
 
     val io = IO(new Bundle {
-      val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows)))
-      val reserve = new XactTrackerAllocIO(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes)
+      val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits)))
+      val reserve = new XactTrackerAllocIO(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits)
       val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits, maxBytes))
       val tlb = new FrontendTLBIO
       val flush = Input(Bool())
@@ -117,7 +125,7 @@ class StreamReaderCore[T <: Data](config: GemminiArrayConfig[T], nXacts: Int, be
     val s_idle :: s_translate_req :: s_translate_resp :: s_req_new_block :: Nil = Enum(4)
     val state = RegInit(s_idle)
 
-    val req = Reg(new StreamReadRequest(spad_rows, acc_rows))
+    val req = Reg(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits))
 
     val vpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
 
@@ -198,7 +206,7 @@ class StreamReaderCore[T <: Data](config: GemminiArrayConfig[T], nXacts: Int, be
     io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
     io.reserve.entry.is_acc := req.is_acc
-    // io.reserve.entry.lg_len_req := read_lg_size
+    io.reserve.entry.scale := req.scale
     io.reserve.entry.lg_len_req := DontCare // TODO just remove this from the IO completely
     io.reserve.entry.bytes_to_read := read_bytes_read
     io.reserve.entry.cmd_id := req.cmd_id

@@ -33,7 +33,7 @@ class WithMultiRoCC extends Config((site, here, up) => {
 // -----------------------
 
 object GemminiConfigs {
-  val defaultConfig = GemminiArrayConfig(
+  val defaultConfig = GemminiArrayConfig[SInt, SInt](
     tileRows = 1,
     tileColumns = 1,
     meshRows = 16,
@@ -55,6 +55,9 @@ object GemminiConfigs {
     inputType = SInt(8.W),
     outputType = SInt(19.W),
     accType = SInt(32.W),
+    mvin_scale_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
+    mvin_scale_acc_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
+    mvin_scale_shared = false,
     pe_latency = 0
   )
 }

@@ -12,7 +12,7 @@ abstract class Arithmetic[T <: Data] {
 }
 
 abstract class ArithmeticOps[T <: Data](self: T) {
-  // def *(t: T): T
+  def *(t: T): T
   def mac(m1: T, m2: T): T // Returns (m1 * m2 + self)
   def +(t: T): T
   def >>(u: UInt): T // This is a rounding shift! Rounds away from 0
@@ -26,7 +26,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
 object Arithmetic {
   implicit object UIntArithmetic extends Arithmetic[UInt] {
     override implicit def cast(self: UInt) = new ArithmeticOps(self) {
-      // override def *(t: UInt) = self * t
+      override def *(t: UInt) = self * t
       override def mac(m1: UInt, m2: UInt) = m1 * m2 + self
       override def +(t: UInt) = self + t
 
@@ -64,7 +64,7 @@ object Arithmetic {
 
   implicit object SIntArithmetic extends Arithmetic[SInt] {
     override implicit def cast(self: SInt) = new ArithmeticOps(self) {
-      // override def *(t: SInt) = self * t
+      override def *(t: SInt) = self * t
       override def mac(m1: SInt, m2: SInt) = m1 * m2 + self
       override def +(t: SInt) = self + t
 
@@ -103,6 +103,25 @@ object Arithmetic {
 
   implicit object FloatArithmetic extends Arithmetic[Float] {
     override implicit def cast(self: Float): ArithmeticOps[Float] = new ArithmeticOps(self) {
+      override def *(t: Float): Float = {
+        val t_rec = recFNFromFN(self.expWidth, self.sigWidth, t.bits)
+        val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
+
+        val muladder = Module(new MulAddRecFN(self.expWidth, self.sigWidth))
+
+        muladder.io.op := 0.U
+        muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+        muladder.io.detectTininess := consts.tininess_afterRounding
+
+        muladder.io.a := self_rec
+        muladder.io.b := t_rec
+        muladder.io.c := self_rec
+
+        val out = Wire(Float(self.expWidth, self.sigWidth))
+        out.bits := fNFromRecFN(self.expWidth, self.sigWidth, muladder.io.out)
+        out
+      }
+
       override def mac(m1: Float, m2: Float): Float = {
         val m1_rec = recFNFromFN(self.expWidth, self.sigWidth, m1.bits)
         val m2_rec = recFNFromFN(self.expWidth, self.sigWidth, m2.bits)
