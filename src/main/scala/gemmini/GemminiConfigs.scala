@@ -141,7 +141,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
     header ++= s"typedef ${full_c_type(inputType)} full_t;\n\n"
 
     if (inputType.isInstanceOf[Float]) {
-      header ++= "#define ELEM_T_IS_FLOAT\n\n"
+      header ++= "#define ELEM_T_IS_FLOAT\n"
+      header ++= s"#define ELEM_T_EXP_BITS ${inputType.asInstanceOf[Float].expWidth}\n"
+      header ++= s"#define ELEM_T_SIG_BITS ${inputType.asInstanceOf[Float].sigWidth}\n"
+      header ++= s"#define ACC_T_EXP_BITS ${accType.asInstanceOf[Float].expWidth}\n"
+      header ++= s"#define ACC_T_SIG_BITS ${accType.asInstanceOf[Float].sigWidth}\n"
+      header ++= s"typedef ${c_type(UInt(inputType.getWidth.W))} elem_t_bits;\n"
+      header ++= s"typedef ${c_type(UInt(accType.getWidth.W))} acc_t_bits;\n\n"
     }
 
     header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"

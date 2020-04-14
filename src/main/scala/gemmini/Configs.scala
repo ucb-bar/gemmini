@@ -36,6 +36,8 @@ object GemminiConfigs {
   val defaultConfig = GemminiArrayConfig(
     tileRows = 1,
     tileColumns = 1,
+//    meshRows = 4,
+//    meshColumns = 4,
     meshRows = 16,
     meshColumns = 16,
     ld_queue_length = 8,
@@ -52,6 +54,9 @@ object GemminiConfigs {
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
+//    inputType = Float(8, 24),
+//    outputType = Float(8, 24),
+//    accType = Float(11, 53),
     inputType = SInt(8.W),
     outputType = SInt(19.W),
     accType = SInt(32.W),
