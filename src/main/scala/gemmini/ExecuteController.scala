@@ -86,10 +86,10 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   }
 
   val input_width = RegInit(0.U(10.W))
-  val weight_width = RegInit(0.U(5.W))
+  val weight_width = RegInit(0.U(4.W))
   val weight_stride = RegInit(0.U(3.W))
   val output_width = input_width - weight_width + 1.U
-  val channel = RegInit(0.U(5.W))
+  val channel = RegInit(0.U(10.W))
   val im2col_turn = WireInit(0.U(9.W))
   val channel_turn = WireInit(0.U(3.W))
 
@@ -112,7 +112,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   }.otherwise{channel_turn := 0.U} //from 5x5
 
   val im2col_width = weight_width * weight_width * channel
-  im2col_turn := (im2col_width >> (log2Up(block_size)).U) + 1.U
+  im2col_turn := (im2col_width >> (log2Up(block_size)).U).asUInt + 1.U
   when(im2col_width(3,0) === 0.U){
     im2col_turn := im2col_width >> (log2Up(block_size)).U
   }
@@ -456,8 +456,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
           im2col_en := cmd.bits(0).cmd.rs1(31)
           //im2col_turn := cmd.bits(0).cmd.rs1(30, 22) //how many 16x16 im2colled block?
           input_width := cmd.bits(0).cmd.rs1(21, 12)
-          weight_width := cmd.bits(0).cmd.rs2(16, 12) //why (0)??
-          channel := cmd.bits(0).cmd.rs2(21, 17)
+          weight_width := cmd.bits(0).cmd.rs2(28, 25) //why (0)??
+          channel := cmd.bits(0).cmd.rs2(21, 12)
           weight_stride := cmd.bits(0).cmd.rs2(24, 22)
 
 
@@ -799,13 +799,13 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   when(turn_set){
     turn_counter := im2col_turn - 1.U
   }
-   /*
-  .elsewhen(is_garbage_addr){
-    turn_counter := im2col_turn - 1.U
-  }
-  */
+  /*
+ .elsewhen(is_garbage_addr){
+   turn_counter := im2col_turn - 1.U
+ }
+ */
   //added for accumulator enable signal
-  val acc_write_en_counter = RegInit(0.U(log2Up(block_size*block_size).W))
+  val acc_write_en_counter = RegInit(0.U(log2Up(block_size*block_size*block_size).W))
 
   // Write to accumulator
   for (i <- 0 until acc_banks) {
@@ -925,41 +925,37 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   }
 
 
-/*
-        when(turn_counter =/= 0.U) {
-          turn_counter := turn_counter - 1.U
-        }.otherwise { //when everything is finished
+  /*
+          when(turn_counter =/= 0.U) {
+            turn_counter := turn_counter - 1.U
+          }.otherwise { //when everything is finished
+            mesh_completed_rob_id_fire := true.B
+            io.completed.valid := true.B
+            io.completed.bits := mesh.io.tag_out.rob_id.bits
+          }
+        }
+      }.otherwise{ // OS - not yet
+        when(output_counter.inc()){
           mesh_completed_rob_id_fire := true.B
           io.completed.valid := true.B
           io.completed.bits := mesh.io.tag_out.rob_id.bits
         }
-
-
       }
-    }.otherwise{ // OS - not yet
-      when(output_counter.inc()){
-        mesh_completed_rob_id_fire := true.B
-        io.completed.valid := true.B
-        io.completed.bits := mesh.io.tag_out.rob_id.bits
+      start_array_outputting :=  !is_garbage_addr
+    }
+    when (!mesh_completed_rob_id_fire) {
+      // when(io.im2col.resp.bits.im2col_turn === 0.U) { //Seah: added for same reason
+      when(turn_counter === 0.U){
+        when(pending_completed_rob_ids(0).valid) {
+          io.completed.valid := true.B
+          io.completed.bits := pending_completed_rob_ids(0).pop()
+        }.elsewhen(pending_completed_rob_ids(1).valid) {
+          io.completed.valid := true.B
+          io.completed.bits := pending_completed_rob_ids(1).pop()
+        }
       }
     }
-    start_array_outputting :=  !is_garbage_addr
-  }
-
-
-  when (!mesh_completed_rob_id_fire) {
-    // when(io.im2col.resp.bits.im2col_turn === 0.U) { //Seah: added for same reason
-    when(turn_counter === 0.U){
-      when(pending_completed_rob_ids(0).valid) {
-        io.completed.valid := true.B
-        io.completed.bits := pending_completed_rob_ids(0).pop()
-      }.elsewhen(pending_completed_rob_ids(1).valid) {
-        io.completed.valid := true.B
-        io.completed.bits := pending_completed_rob_ids(1).pop()
-      }
-    }
-  }
- */
+   */
 
   when (reset.toBool()) {
     // pending_completed_rob_id.valid := false.B
