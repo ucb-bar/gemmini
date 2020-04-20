@@ -125,7 +125,7 @@ object Arithmetic {
 
         muladder.io.a := self_rec
         muladder.io.b := t_rec
-        muladder.io.c := self_rec
+        muladder.io.c := 0.U
 
         val out = Wire(Float(self.expWidth, self.sigWidth))
         out.bits := fNFromRecFN(self.expWidth, self.sigWidth, muladder.io.out)
