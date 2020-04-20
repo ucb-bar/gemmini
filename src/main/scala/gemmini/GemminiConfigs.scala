@@ -174,7 +174,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
     if (mvin_scale_acc_args.isDefined) {
       header ++= "#define HAS_MVIN_ACC_SCALE\n"
       header ++= s"typedef ${c_type(mvin_scale_acc_args.get.multiplicand_t)} scale_acc_t;\n"
-      header ++= s"typedef ${c_type(UInt(mvin_scale_acc_args.get.multiplicand_t.getWidth.W))} scale_acc_t;\n\n"
+      header ++= s"typedef ${c_type(UInt(mvin_scale_acc_args.get.multiplicand_t.getWidth.W))} scale_acc_t_bits;\n\n"
     }
 
     header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"
