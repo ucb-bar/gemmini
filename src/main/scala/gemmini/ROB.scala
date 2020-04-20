@@ -121,7 +121,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
     val raws = entries.map { e =>
       // We search for all entries which write to an address which we read from
-      e.valid && e.bits.dst.valid && (
+      e.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
         (new_entry.op1.valid && e.bits.dst.bits.start <= new_entry.op1.bits && e.bits.dst.bits.end() > new_entry.op1.bits) ||
           (new_entry.op2.valid && e.bits.dst.bits.start <= new_entry.op2.bits && e.bits.dst.bits.end() > new_entry.op2.bits)) /* ||
           (new_entry.op3.valid && e.bits.dst.bits.start <= new_entry.op3.bits && e.bits.dst.bits.end() > new_entry.op3.bits)) */
@@ -129,7 +129,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
     val wars = entries.map { e =>
       // We search for all entries which read from an address that we write to
-      e.valid && new_entry.dst.valid && (
+      e.valid && new_entry.dst.valid && e.bits.q =/= new_entry.q && (
         (e.bits.op1.valid && new_entry.dst.bits.start <= e.bits.op1.bits && new_entry.dst.bits.end() > e.bits.op1.bits) ||
           (e.bits.op2.valid && new_entry.dst.bits.start <= e.bits.op2.bits && new_entry.dst.bits.end() > e.bits.op2.bits)) /* ||
           (e.bits.op3.valid && new_entry.dst.bits.start <= e.bits.op3.bits && new_entry.dst.bits.end() > e.bits.op3.bits)) */
@@ -137,7 +137,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
     val waws = entries.map { e =>
       // We search for all entries which write to an address that we write to
-      e.valid && new_entry.dst.valid && e.bits.dst.valid && (
+      e.valid && new_entry.dst.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
         (new_entry.dst.bits.start <= e.bits.dst.bits.start && new_entry.dst.bits.end() > e.bits.dst.bits.start) ||
           (e.bits.dst.bits.start <= new_entry.dst.bits.start && e.bits.dst.bits.end() > new_entry.dst.bits.start))
     }

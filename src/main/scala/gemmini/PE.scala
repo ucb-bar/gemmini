@@ -7,7 +7,7 @@ import chisel3.util._
 class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
   val dataflow = UInt(1.W) // TODO make this an Enum
   val propagate = UInt(1.W) // Which register should be propagated (and which should be accumulated)?
-  val shift = UInt(log2Up(accType.getWidth).W)
+  val shift = UInt(log2Up(accType.getWidth).W) // TODO this isn't correct for Floats
 
   override def cloneType: PEControl.this.type = new PEControl(accType).asInstanceOf[this.type]
 }
@@ -70,22 +70,22 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
     when(prop === PROPAGATE) {
       io.out_c := (c1 >> shift_offset).clippedToWidthOf(outputType)
       io.out_b := b
-      c2 := c2.mac(a, b.withWidthOf(inputType))
-      c1 := d
+      c2 := c2.mac(a, b.asTypeOf(inputType))
+      c1 := d.withWidthOf(cType)
     }.otherwise {
       io.out_c := (c2 >> shift_offset).clippedToWidthOf(outputType)
       io.out_b := b
-      c1 := c1.mac(a, b.withWidthOf(inputType))
-      c2 := d
+      c1 := c1.mac(a, b.asTypeOf(inputType))
+      c2 := d.withWidthOf(cType)
     }
   }.elsewhen ((df == Dataflow.WS).B || ((df == Dataflow.BOTH).B && dataflow === WEIGHT_STATIONARY)) {
     when(prop === PROPAGATE) {
       io.out_c := c1
-      io.out_b := b.mac(a, c2.withWidthOf(inputType))
+      io.out_b := b.mac(a, c2.asTypeOf(inputType))
       c1 := d
     }.otherwise {
       io.out_c := c2
-      io.out_b := b.mac(a, c1.withWidthOf(inputType))
+      io.out_b := b.mac(a, c1.asTypeOf(inputType))
       c2 := d
     }
   }.otherwise {
