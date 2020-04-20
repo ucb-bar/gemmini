@@ -91,7 +91,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val output_width = input_width - weight_width + 1.U
   val channel = RegInit(0.U(10.W))
   val im2col_turn = WireInit(0.U(9.W))
-  val channel_turn = WireInit(0.U(3.W))
+  val channel_turn = WireInit(0.U(5.W))
 
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val acc_shift = Reg(UInt(log2Up(accType.getWidth).W))
@@ -100,16 +100,33 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
   //fix by input
   val im2col_en = RegInit(false.B)
+  val output_dim = output_width*output_width
 
   //Seah: added for more than 16 rows of output
-  val row_turn = ((output_width*output_width) >> 4.U).asUInt()
+  val row_turn = Mux(output_dim(3,0) === 0.U, (output_dim >> 4.U).asUInt() - 1.U, (output_dim >> 4.U).asUInt())
+
   val row_turn_counter = RegInit(row_turn)
 
+  /*
   when(weight_width === 2.U){
     channel_turn := 4.U
   }.elsewhen(weight_width === 3.U || weight_width === 4.U){
     channel_turn := 1.U
   }.otherwise{channel_turn := 0.U} //from 5x5
+*/
+  when(channel === 1.U){
+    channel_turn := 16.U
+  }.elsewhen(channel === 2.U){
+    channel_turn := 8.U
+  }.elsewhen(channel === 3.U){
+    channel_turn := 5.U
+  }.elsewhen(channel === 4.U){
+    channel_turn := 4.U
+  }.elsewhen(channel === 5.U){
+    channel_turn := 3.U
+  }.elsewhen(channel >= 6.U && channel <= 8.U){
+    channel_turn := 2.U
+  }.otherwise{channel_turn := 1.U}
 
   val im2col_width = weight_width * weight_width * channel
   im2col_turn := (im2col_width >> (log2Up(block_size)).U).asUInt + 1.U
@@ -322,7 +339,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     ((b_fire_counter === (block_size-1).U && b_valid) || b_fire_counter === 0.U) &&
     ((d_fire_counter === (block_size-1).U && d_valid) || d_fire_counter === 0.U) &&
     (a_fire_counter =/= 0.U || b_fire_counter =/= 0.U || d_fire_counter =/= 0.U) &&
-    cntl_ready && !io.im2col.resp.bits.continue_fire
+    cntl_ready //&& !io.im2col.resp.bits.continue_fire
 
   if (block_size == 2) {
     when (about_to_fire_all_rows) {
@@ -735,8 +752,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     mesh.io.tag_in.bits.addr.make_this_garbage()
   }
 
-  //Seah: added
+  //Seah: added - maybe for depthwise?
   //val overlap_ws = RegInit(rs2s(preload_cmd_place).asTypeOf(local_addr_t))
+  /*
   val overlap_ws = RegInit(mesh.io.tag_in.bits)
   when(perform_single_preload) {
     overlap_ws.addr := cntl.c_addr
@@ -744,15 +762,20 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     overlap_ws.cols := cntl.c_cols
     overlap_ws.rows := cntl.c_rows
   }
+   */
 
   when (cntl_valid && cntl.perform_single_mul) {
     mesh.io.a.bits := Mux(cntl.dataflow === Dataflow.OS.id.U, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    when(io.im2col.resp.bits.continue_fire && dataA_valid){
+    //when(io.im2col.resp.bits.continue_fire && dataA_valid){
+    mesh.io.tag_in.bits.addr.make_this_garbage()
+    /*
+    when(dataA_valid){
       mesh.io.tag_in.bits.addr := overlap_ws.addr//cntl.c_addr
       mesh.io.tag_in.bits.rob_id := overlap_ws.rob_id
       mesh.io.tag_in.bits.cols := overlap_ws.cols
       mesh.io.tag_in.bits.rows := overlap_ws.rows
     }.otherwise{mesh.io.tag_in.bits.addr.make_this_garbage()} //Seah: when statement added (original: only make this garbage)
+    */
   }
 
   // Scratchpad writes
@@ -815,6 +838,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     io.acc.write(i).en := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
     io.acc.write(i).addr := current_w_bank_address
     io.acc.write(i).data := mesh.io.out.bits
+    io.acc.write(i).acc := w_address.accumulate
+
     when(im2col_turn > 1.U) { //Seah: added for WS accumulator
       //when(turn_counter + 1.U < im2col_turn){
       when(acc_write_en_counter > block_size.U - 1.U){
@@ -822,22 +847,24 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
       }.otherwise{
         io.acc.write(i).acc := w_address.accumulate
       }
-    }.otherwise{
-      io.acc.write(i).acc := w_address.accumulate //when only one im2col matrix
     }
+
     // io.acc.write(i).mask := VecInit(Seq.fill(io.acc.write(0).mask.length)(true.B))
     io.acc.write(i).mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
   }
 
   // Handle dependencies and turn off outputs for garbage addresses
   val mesh_completed_rob_id_fire = WireInit(false.B)
-  val complete_lock = RegInit(false.B)
+  //val complete_lock = RegInit(false.B)
 
   //Seah: added for WS accumulator
   when(mesh.io.out.fire() && mesh.io.tag_out.rob_id.valid) {
-    when(current_dataflow === Dataflow.WS.id.U) {
+    //when(current_dataflow === Dataflow.WS.id.U) {
       when(output_counter.inc()) {
-
+        mesh_completed_rob_id_fire := true.B
+        io.completed.valid := true.B
+        io.completed.bits := mesh.io.tag_out.rob_id.bits
+        //complete_lock := true.B
         /*
         when(im2col_turn === 1.U){
           mesh_completed_rob_id_fire := true.B
@@ -866,7 +893,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
           }
         }
 */
-
+        /*
         when(turn_counter === 0.U || turn_counter === 1.U){
           when(!complete_lock){
             mesh_completed_rob_id_fire := true.B
@@ -875,6 +902,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
             complete_lock := true.B
           }
         }
+
+ */
         /*
         when(!complete_lock) {
           when(turn_counter === im2col_turn - 1.U) {
@@ -893,7 +922,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
           }.elsewhen(turn_counter === im2col_turn - 1.U){complete_lock := true.B}
         }
          */
-
+        /*
       }
     }.otherwise{ // OS - not yet
       when(output_counter.inc()){
@@ -902,6 +931,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
         io.completed.bits := mesh.io.tag_out.rob_id.bits
       }
     }
+
+ */
+      }
     start_array_outputting :=  !is_garbage_addr
   }
 
@@ -910,7 +942,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     turn_counter := turn_counter - 1.U
   }.elsewhen(performing_single_preload && turn_counter === 0.U ){//&& io.im2col.resp.bits.row_turn =/= row_turn){ //end of block: turn_counter stay at 0
     turn_counter := im2col_turn - 1.U
-    complete_lock := false.B
+    //complete_lock := false.B
   }
 
 
