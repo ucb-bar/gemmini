@@ -77,6 +77,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
   require(isPow2(meshColumns * tileColumns), "the systolic array's dimensions must be powers of 2") // TODO remove this requirement
   require(acc_bank_entries % (meshRows * tileRows) == 0, "the number of rows in an accumulator bank must be a multiple of the dimensions of the systolic array")
   require(!mvin_scale_shared || (mvin_scale_shared && mvin_scale_args.isDefined && mvin_scale_acc_args.isEmpty && inputType.getWidth == accType.getWidth)) // TODO is there a better way to check whether inputType and accType are the same?
+  require((mvin_scale_args.isEmpty || mvin_scale_acc_args.isEmpty) || (mvin_scale_t.getWidth == mvin_scale_acc_t.getWidth), "currently, the mvin scale types for both the srams and the accumulator must have the same width") // TODO remove this requirement
 
   def generateHeader(guard: String = "GEMMINI_PARAMS_H"): String = {
     // Returns the (min,max) values for a dataType
@@ -166,12 +167,14 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
 
     if (mvin_scale_args.isDefined) {
       header ++= "#define HAS_MVIN_SCALE\n"
-      header ++= s"typedef ${c_type(mvin_scale_args.get.multiplicand_t)} scale_t;\n\n"
+      header ++= s"typedef ${c_type(mvin_scale_args.get.multiplicand_t)} scale_t;\n"
+      header ++= s"typedef ${c_type(UInt(mvin_scale_args.get.multiplicand_t.getWidth.W))} scale_t_bits;\n\n"
     }
 
     if (mvin_scale_acc_args.isDefined) {
       header ++= "#define HAS_MVIN_ACC_SCALE\n"
-      header ++= s"typedef ${c_type(mvin_scale_acc_args.get.multiplicand_t)} scale_acc_t;\n\n"
+      header ++= s"typedef ${c_type(mvin_scale_acc_args.get.multiplicand_t)} scale_acc_t;\n"
+      header ++= s"typedef ${c_type(UInt(mvin_scale_acc_args.get.multiplicand_t.getWidth.W))} scale_acc_t;\n\n"
     }
 
     header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"

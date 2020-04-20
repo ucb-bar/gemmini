@@ -40,9 +40,6 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
   val mstatus = cmd.bits.cmd.status
 
-  dontTouch(scale)
-  dontTouch(config_scale)
-
   val localaddr_plus_row_counter = localaddr + row_counter
 
   io.busy := cmd.valid
