@@ -180,6 +180,16 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
     header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"
     header ++= s"#define row_align_acc(blocks) __attribute__((aligned(blocks*DIM*sizeof(acc_t))))\n\n"
 
+    val mvin_scale_one = mvin_scale_args match {
+      case Some(MvinScaleArguments(_, _, multiplicand_t)) =>
+        multiplicand_t match {
+          case _: SInt | _: UInt => "1"
+          case _: Float => "1.0"
+        }
+      case None => "1"
+    }
+    header ++= s"#define MVIN_SCALE_ONE $mvin_scale_one\n\n"
+
     header ++= s"#endif // $guard"
     header.toString()
   }
