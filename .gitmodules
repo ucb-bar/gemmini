@@ -1,3 +1,6 @@
 [submodule "software/gemmini-rocc-tests"]
 	path = software/gemmini-rocc-tests
 	url = https://github.com/ucb-bar/gemmini-rocc-tests.git
+[submodule "software/riscv-blas"]
+	path = software/riscv-blas
+	url = https://github.com/ucb-bar/riscv-blas.git
