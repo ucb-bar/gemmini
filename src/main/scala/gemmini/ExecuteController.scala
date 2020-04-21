@@ -85,10 +85,11 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     in_prop_flush := 0.U
   }
 
-  val input_width = RegInit(0.U(10.W))
+  val output_width = RegInit(0.U(10.W))
   val weight_width = RegInit(0.U(4.W))
   val weight_stride = RegInit(0.U(3.W))
-  val output_width = input_width - weight_width + 1.U
+  val input_width = (output_width - 1.U) * weight_stride + weight_width //to save bitspace, input of output_dim instead
+  //val output_width = input_width - weight_width + 1.U
   val channel = RegInit(0.U(10.W))
   val im2col_turn = WireInit(0.U(9.W))
   val channel_turn = WireInit(0.U(5.W))
@@ -440,6 +441,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     io.im2col.req.bits.addr := a_address_rs1
     io.im2col.req.bits.fire_counter := a_fire_counter
     io.im2col.req.bits.input_width := input_width
+    io.im2col.req.bits.output_width := output_width
+    io.im2col.req.bits.weight_stride := weight_stride
     io.im2col.req.bits.weight_width := weight_width
     io.im2col.req.bits.channel := channel
     io.im2col.req.bits.im2col_cmd := im2col_en
@@ -472,7 +475,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
           im2col_en := cmd.bits(0).cmd.rs1(31)
           //im2col_turn := cmd.bits(0).cmd.rs1(30, 22) //how many 16x16 im2colled block?
-          input_width := cmd.bits(0).cmd.rs1(21, 12)
+          output_width := cmd.bits(0).cmd.rs1(21, 12) //output_width instead
           weight_width := cmd.bits(0).cmd.rs2(28, 25) //why (0)??
           channel := cmd.bits(0).cmd.rs2(21, 12)
           weight_stride := cmd.bits(0).cmd.rs2(24, 22)
