@@ -117,6 +117,12 @@ object Arithmetic {
         val t_rec = recFNFromFN(self.expWidth, self.sigWidth, t.bits)
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
 
+        val t_resizer =  Module(new RecFNToRecFN(t.expWidth, t.sigWidth, self.expWidth, self.sigWidth))
+        t_resizer.io.in := t_rec
+        t_resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+        t_resizer.io.detectTininess := consts.tininess_afterRounding
+        val t_rec_resized = t_resizer.io.out
+
         val muladder = Module(new MulAddRecFN(self.expWidth, self.sigWidth))
 
         muladder.io.op := 0.U
@@ -124,7 +130,7 @@ object Arithmetic {
         muladder.io.detectTininess := consts.tininess_afterRounding
 
         muladder.io.a := self_rec
-        muladder.io.b := t_rec
+        muladder.io.b := t_rec_resized
         muladder.io.c := 0.U
 
         val out = Wire(Float(self.expWidth, self.sigWidth))
