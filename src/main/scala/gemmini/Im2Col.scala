@@ -113,6 +113,7 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
 
   val im2col_turn = RegInit(req.turn)
   val turn_done = req.turn - im2col_turn
+  val modulo_im2col_turn = RegInit(turn_done)
   val im2col_reg_d = RegNext(im2col_reg)
   val im2col_fin_reset = RegInit(false.B)
 
@@ -124,6 +125,9 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
   }
 
   val block_done = io.req.bits.row_turn - im2col_row_turn_counter
+  val modulo_block_done = RegInit(block_done*block_size.U)
+  val modulo_block_save = RegInit(block_done*block_size.U)
+  val modulo_row_counter = RegInit(row_counter)
 
   //for state transition & im2col_turn counter
   val im2col_fin_d = RegNext(im2col_fin)
@@ -170,6 +174,7 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
       when(im2col_en){
         im2col_state := waiting_for_im2col
         im2col_turn := io.req.bits.turn
+        modulo_im2col_turn := 0.U
         window_start_counter := 0.U
         //window_row_counter := 0.U
         column_counter := 0.U
@@ -181,11 +186,16 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
       starting_channel := 0.U
       turn_count_save := io.req.bits.turn
       im2col_start := true.B
-      when(im2col_turn === 0.U){im2col_turn := io.req.bits.turn}
+      when(im2col_turn === 0.U){
+        im2col_turn := io.req.bits.turn
+        modulo_im2col_turn := 0.U
+      }
       im2col_fin_reset := true.B//added for im2col_fin reset pulse
       //added for row overflowing
       when(!row_turn_counter_noreset){
         im2col_row_turn_counter := io.req.bits.row_turn
+        modulo_block_done := 0.U
+        modulo_block_save := 0.U
       }
       sram_read_req := false.B
       copy_addr := io.req.bits.addr
@@ -226,6 +236,7 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
           im2col_state := im2col_done
           tile_im2col_en := false.B
           im2col_turn := 0.U
+          modulo_block_save := modulo_block_done //save to come back
           when(im2col_row_turn_counter === 0.U){
             //im2col_state := im2col_done
             tile_im2col_en := false.B
@@ -234,12 +245,14 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
             //tile_im2col_en := true.B
           }
         }.elsewhen(im2col_turn === 2.U){
+          modulo_block_done := modulo_block_save //have to move backward
           tile_im2col_en := false.B
           im2col_turn := 1.U
           sram_read_req := true.B
           im2col_state := preparing_im2col
           //im2col_fin := false.B
         }.otherwise{
+          modulo_block_done := modulo_block_save
           tile_im2col_en := true.B
           sram_read_req := true.B
           im2col_state := preparing_im2col
@@ -297,6 +310,7 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
   //when(column_counter === block_size.U - 1.U && row_counter === req.ch_per_turn + channel_wrap){
   when(im2col_fin_reg && im2col_state =/= im2col_done) {
     row_counter_saver := row_counter_saver + req.ch_per_turn
+    modulo_row_counter := modulo_row_counter + weight //added for row_counter related modulo
     //channel_wrap := 0.U
     when((req.turn - im2col_turn + 1.U) * (block_size.U - req.channel * req.ch_per_turn) - req.channel * channel_wrap >= req.channel) { // have to test
       channel_wrap := channel_wrap + 1.U
@@ -350,7 +364,7 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
     column_counter := 0.U
     im2col_fin := false.B
     row_counter := 0.U
-  }.elsewhen(!sram_resp_valid && sram_read_req){
+  }.elsewhen((!sram_resp_valid || !req_valid) && sram_read_req){ //added req_valiad for modulo
     //loading previous values after one moving out
     window_start_counter := window_start_counter_prev //vertical
   }.elsewhen(sram_resp_valid && sram_read_req && (req_valid||io.req.valid)){ //starting counting & valid requesting
@@ -360,15 +374,19 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
         column_counter := wrappingAdd(column_counter, 1.U, block_size)
         when((column_counter + block_done * block_size.U === output_width * output_width - 1.U) || column_counter === block_size.U - 1.U){
           im2col_fin := true.B
-        }.elsewhen((column_counter + 1.U + block_done * block_size.U) % output_width === 0.U){
+        //}.elsewhen((column_counter + 1.U + block_done * block_size.U) % output_width === 0.U){
+        }.elsewhen((column_counter + 1.U + block_done * block_size.U) - modulo_block_done === output_width){
           window_start_counter := window_start_counter + weight + (stride - 1.U) * input//input - output_width + 1.U
+          modulo_block_done := modulo_block_done + output_width
         }.otherwise{window_start_counter := window_start_counter + stride}
       }.otherwise { //when im2col_fin
         window_start_counter := 0.U
         when(im2col_turn === 1.U) {
           window_start_counter_prev := window_start_counter + stride //changed to stride
-          when((block_size.U + block_done * block_size.U) % output_width === 0.U){
+          //when(((1.U + block_done) * block_size.U) % output_width === 0.U){
+          when(((1.U + block_done) * block_size.U) - modulo_block_done === output_width){
             window_start_counter_prev := window_start_counter + weight + (stride - 1.U) * input//input - output_width + 1.U
+            modulo_block_done := modulo_block_done + output_width
           }
         }
         when(column_counter === block_size.U - 1.U){
@@ -387,11 +405,14 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
             im2col_fin := true.B
             row_counter := channel_turn - 1.U
             window_row_counter_saver := window_row_counter //save current window_row_counter to resume next turn
-          }.elsewhen((column_counter + 1.U + block_done * block_size.U) % output_width === 0.U){
+          //}.elsewhen((column_counter + 1.U + block_done * block_size.U) % output_width === 0.U){
+          }.elsewhen((column_counter + 1.U + block_done * block_size.U) - modulo_block_done === output_width){
             window_start_counter := window_start_counter + weight + (stride - 1.U) * input//input - output_width + 1.U
+            modulo_block_done := modulo_block_done + output_width
           }.otherwise{window_start_counter := window_start_counter + stride}
         }.otherwise{
-          when((row_counter + 1.U + row_counter_saver) % weight === 0.U) { //when finishing 1 weight row
+          //when((row_counter + 1.U + row_counter_saver) % weight === 0.U) { //when finishing 1 weight row
+          when((row_counter + 1.U + row_counter_saver) - modulo_row_counter === weight) { //when finishing 1 weight row
             window_row_counter := window_row_counter + input - weight + 1.U
           }.otherwise{window_row_counter := window_row_counter + 1.U}
         }
@@ -399,7 +420,9 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
         window_start_counter := 0.U
         when(im2col_turn === 1.U) {
           window_start_counter_prev := window_start_counter + stride //store (plus 1??)
-          when((block_size.U + block_done * block_size.U) % output_width === 0.U){
+          //when((block_size.U + block_done * block_size.U) % output_width === 0.U){
+          when((block_size.U + block_done * block_size.U) - modulo_block_done === output_width){
+            modulo_block_done := modulo_block_done + output_width
             window_start_counter_prev := window_start_counter + weight + (stride - 1.U) * input//input - output_width + 1.U
           }
         }
@@ -430,8 +453,10 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
       when(req.channel >= 16.U) {
         when(turn_count_save - im2col_turn + 1.U === weight * weight) { // when 16 channels finished
           window_row_counter := 0.U
-        }.elsewhen((req.turn - im2col_turn + 1.U) % weight === 0.U) { //when finishing 1 weight row
+        //}.elsewhen((req.turn - im2col_turn + 1.U) % weight === 0.U) { //when finishing 1 weight row
+        }.elsewhen((req.turn - im2col_turn + 1.U) - modulo_im2col_turn === weight) { //when finishing 1 weight row
           window_row_counter := window_row_counter + input - weight + 1.U //copy window_row_counter below
+          modulo_im2col_turn := modulo_im2col_turn + weight
         }.otherwise {
           window_row_counter := window_row_counter + 1.U
         }
