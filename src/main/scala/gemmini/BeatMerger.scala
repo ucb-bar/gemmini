@@ -51,13 +51,13 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
   val bytesDiscarded = bytesRead - bytesReadAfterShift
   val usefulBytesRead = minOf(bytesReadAfterShift, req.bits.bytes_to_read)
 
-  val last_sending = rowBytes >= req.bits.bytes_to_read - bytesSent
-  val last_reading = beatBytes.U >= (1.U << req.bits.lg_len_req).asUInt() - bytesRead
-
-
-  for (i <- 0 until 16) {
+  val bytesSent_next = {
+    val spad_row_offset = Mux(bytesSent === 0.U, req.bits.spad_row_offset, 0.U)
+    satAdd(bytesSent, rowBytes - spad_row_offset, req.bits.bytes_to_read)
   }
 
+  val last_sending = bytesSent_next === req.bits.bytes_to_read
+  val last_reading = beatBytes.U >= (1.U << req.bits.lg_len_req).asUInt() - bytesRead
 
   io.req.ready := !req.valid
 
@@ -88,8 +88,7 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
   }
 
   when (io.out.fire()) {
-    val spad_row_offset = Mux(bytesSent === 0.U, req.bits.spad_row_offset, 0.U)
-    bytesSent := satAdd(bytesSent, rowBytes - spad_row_offset, req.bits.bytes_to_read)
+    bytesSent := bytesSent_next
 
     when (last_sending && bytesRead === (1.U << req.bits.lg_len_req).asUInt()) {
       req.pop()
