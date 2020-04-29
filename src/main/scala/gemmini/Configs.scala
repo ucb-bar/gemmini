@@ -33,9 +33,14 @@ class WithMultiRoCC extends Config((site, here, up) => {
 // -----------------------
 
 object GemminiConfigs {
-  val defaultConfig = GemminiArrayConfig(
+  // import Arithmetic.FloatArithmetic._
+
+  val defaultConfig = GemminiArrayConfig[SInt, SInt](
+  // val defaultConfig = GemminiArrayConfig[Float, Float](
     tileRows = 1,
     tileColumns = 1,
+    // meshRows = 4,
+    // meshColumns = 4,
     meshRows = 16,
     meshColumns = 16,
     ld_queue_length = 8,
@@ -55,6 +60,14 @@ object GemminiConfigs {
     inputType = SInt(8.W),
     outputType = SInt(19.W),
     accType = SInt(32.W),
+    // inputType = Float(8, 24),
+    // outputType = Float(8, 24),
+    // accType = Float(8, 24),
+    mvin_scale_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
+    mvin_scale_acc_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
+    // mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
+    // mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
+    mvin_scale_shared = false,
     pe_latency = 0
   )
 }

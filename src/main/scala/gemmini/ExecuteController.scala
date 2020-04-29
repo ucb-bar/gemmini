@@ -6,11 +6,8 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
-// TODO handle reads from the same bank
-// TODO don't flush all 4 time steps when shorter flushes will work
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
-// TODO allow the matmul result to not be DIM-by-DIM, similar to how the matmul inputs can be padded if they aren't DIM-by-DIM
-class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T])
+class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U])
                                   (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
   import config._
   import ev._
@@ -661,9 +658,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   for (i <- 0 until acc_banks) {
     io.acc.write(i).en := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
     io.acc.write(i).addr := current_w_bank_address
-    io.acc.write(i).data := mesh.io.out.bits
+    io.acc.write(i).data := VecInit(mesh.io.out.bits.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))
     io.acc.write(i).acc := w_address.accumulate
-    // io.acc.write(i).mask := VecInit(Seq.fill(io.acc.write(0).mask.length)(true.B))
     io.acc.write(i).mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
   }
 
