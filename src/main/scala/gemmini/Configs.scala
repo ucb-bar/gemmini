@@ -65,7 +65,7 @@ object GemminiConfigs {
    allow for the default 16x16 8-bit systolic array to be attached.
  */
 class DefaultGemminiConfig extends Config((site, here, up) => {
-  case BuildRoCC => Seq(
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
