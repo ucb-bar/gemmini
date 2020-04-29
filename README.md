@@ -88,8 +88,8 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 ### `mvin` Move Data From L2/DRAM to Scratchpad
 **Format:** `mvin rs1, rs2`
 - `rs1` = virtual DRAM address (byte addressed) to load into scratchpad
-- `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x inputType.getWidth` bytes of data are captured in 1 address)
-    - if the 32nd bit is 1, `rs2[31:0]` refers the accumulator memory space. In this case, the bitwidth of the elements is the accumulated result bitwidth
+- `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
+    - if the 32nd (Most Significant) bit is set to logical 1, `rs2[31:0]` refers to an address in the accumulator memory space. In this case, the bitwidth of the elements is `tileColumns x meshColumns x accumulated result bitwidth`.
 - `rs2[47:32]` = number of columns to load in
 - `rs2[63:48]` = number of rows to load in
 - `funct` = 2
@@ -102,7 +102,7 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 **Format:** `mvout rs1, rs2`
 - `rs1` = virtual DRAM address (byte addressed) to write to from scratchpad
 - `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
-    - if the 32nd bit is 1, `rs2[31:0]` refers the accumulator memory space. In this case, the bitwidth of the elements is the accumulated result bitwidth
+    - if the 32nd (Most Significant) bit is set to logical 1, `rs2[31:0]` refers to an address in the the accumulator memory space. In this case, the bitwidth of the elements is `tileColumns x meshColumns x accumulated result bitwidth`.
 - `rs2[47:32]` = number of columns to store
 - `rs2[63:48]` = number of rows to store
 - `funct` = 3
