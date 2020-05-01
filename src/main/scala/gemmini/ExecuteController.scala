@@ -195,6 +195,10 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val b_row_is_not_all_zeros = b_fire_counter < b_rows
   val d_row_is_not_all_zeros = block_size.U - 1.U - d_fire_counter < d_rows
 
+  // "A" stride variables
+  val a_addr_offset = Reg(UInt((16 + log2Up(block_size)).W))
+  val a_addr_stride = Reg(UInt(16.W))
+
   def same_bank(addr1: LocalAddr, addr2: LocalAddr, start_inputting1: Bool, start_inputting2: Bool): Bool = {
     val addr1_read_from_acc = addr1.is_acc_addr
     val addr2_read_from_acc = addr2.is_acc_addr
@@ -251,8 +255,10 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
 
   when (!firing) {
     a_fire_counter := 0.U
+    a_addr_offset := 0.U
   }.elsewhen (firing && a_fire && cntl_ready) {
     a_fire_counter := wrappingAdd(a_fire_counter, 1.U, block_size)
+    a_addr_offset := Mux(a_fire_counter === (block_size-1).U, 0.U, a_addr_offset + a_addr_stride)
     a_fire_started := true.B
   }
 
@@ -300,7 +306,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
 
     io.srams.read(i).req.valid := read_a || read_b || read_d
     io.srams.read(i).req.bits.fromDMA := false.B
-    io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
+    io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() +  a_addr_offset, // a_fire_counter,
       Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
         read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter)))
 
@@ -325,7 +331,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     io.acc.read(i).req.bits.act := activation
     io.acc.read(i).req.bits.fromDMA := false.B
 
-    io.acc.read(i).req.bits.addr := MuxCase(a_address_rs1.acc_row() + a_fire_counter,
+    io.acc.read(i).req.bits.addr := MuxCase(a_address_rs1.acc_row() + a_addr_offset, // a_fire_counter,
       Seq(read_b_from_acc -> (b_address_rs2.acc_row() + b_fire_counter),
         read_d_from_acc -> (d_address_rs1.acc_row() + block_size.U - 1.U - d_fire_counter)))
 
@@ -344,10 +350,11 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
       {
         // when(DoConfig && !matmul_in_progress && !pending_completed_rob_id.valid) {
         when(DoConfig && !matmul_in_progress && !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) {
-          activation := rs1s(0)(4, 3)
+          activation := rs1s(0)(4, 3) // TODO magic number
           in_shift := rs2s(0)(31, 0) // TODO magic number
-          acc_shift := cmd.bits(0).cmd.rs1(xLen-1, 32) // TODO magic number
-          relu6_shift := cmd.bits(0).cmd.rs2(xLen-1, 32) // TODO magic number
+          acc_shift := rs1s(0)(xLen-1, 32) // TODO magic number
+          relu6_shift := rs2s(0)(xLen-1, 32) // TODO magic number
+          a_addr_stride := rs1s(0)(31, 16) // TODO magic number
 
           if (dataflow == Dataflow.BOTH)
             current_dataflow := rs1s(0)(2)
