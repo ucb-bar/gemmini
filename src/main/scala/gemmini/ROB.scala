@@ -69,7 +69,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   val empty = !entries.map(_.valid).reduce(_ || _)
   val full = entries.map(_.valid).reduce(_ && _)
 
-  io.busy := !empty
+  io.busy := entries.map(e => e.valid && e.bits.q =/= exq).reduce(_ || _)
 
   // Read in commands to the buffer
   io.alloc.ready := !full
