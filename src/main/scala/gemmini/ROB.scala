@@ -81,7 +81,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   val new_entry_id = MuxCase((nEntries-1).U, entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
   val alloc_fire = io.alloc.fire()
 
-  when (io.alloc.fire()) {
+  when (io.alloc.fire()) { // ROB
     val spAddrBits = 32
     val cmd = io.alloc.bits
     val funct = cmd.inst.funct
@@ -91,7 +91,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     new_entry.issued := false.B
     new_entry.cmd := cmd
 
-    new_entry.is_config := funct === CONFIG_CMD
+    new_entry.is_config := funct === CONFIG_CMD // is it config?
 
     new_entry.op1.valid := funct === PRELOAD_CMD || funct_is_compute
     new_entry.op1.bits := cmd.rs1.asTypeOf(local_addr_t)
@@ -111,7 +111,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_store = (funct === STORE_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
-    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
+    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX) //add here
 
     new_entry.q := Mux1H(Seq(
       is_load -> ldq,
