@@ -14,9 +14,8 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new GemminiCmdWithDeps(rob_entries)))
+    val cmd = Flipped(Decoupled(new GemminiCmd(rob_entries)))
 
-    // val dma = new ScratchpadWriteMemIO(sp_banks, sp_bank_entries, acc_rows)
     val dma = new ScratchpadWriteMemIO(local_addr_t)
 
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
@@ -34,12 +33,12 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
   val cmd = Queue(io.cmd, st_queue_length)
   val vaddr = cmd.bits.cmd.rs1
   val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
+  val cols = cmd.bits.cmd.rs2(32 + mvout_len_bits - 1, 32) // TODO magic numbers
+  val rows = cmd.bits.cmd.rs2(48 + mvout_rows_bits - 1, 48) // TODO magic numbers
   val config_stride = cmd.bits.cmd.rs2
   val mstatus = cmd.bits.cmd.status
 
   val localaddr_plus_row_counter = localaddr + row_counter
-
-  io.busy := cmd.valid
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoStore = !DoConfig // TODO change this if more commands are added
@@ -61,11 +60,12 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
     (control_state === sending_rows && row_counter =/= 0.U)
   io.dma.req.bits.vaddr := vaddr + row_counter * stride
   io.dma.req.bits.laddr := localaddr_plus_row_counter
+  io.dma.req.bits.len := cols
   io.dma.req.bits.status := mstatus
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore
-  cmd_tracker.io.alloc.bits.bytes_to_read := block_rows.U
+  cmd_tracker.io.alloc.bits.bytes_to_read := rows
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
@@ -78,15 +78,11 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
   io.completed.valid := cmd_tracker.io.cmd_completed.valid
   io.completed.bits := cmd_tracker.io.cmd_completed.bits.tag.rob_id
 
-  /*
-  io.completed.valid := false.B
-  io.completed.bits := cmd.bits.rob_id
-  */
-
+  io.busy := cmd.valid || cmd_tracker.io.busy
 
   // Row counter
   when (io.dma.req.fire()) {
-    row_counter := wrappingAdd(row_counter, 1.U, block_rows)
+    row_counter := wrappingAdd(row_counter, 1.U, rows)
   }
 
   // Control logic
@@ -111,11 +107,8 @@ class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], cor
     }
 
     is (sending_rows) {
-      val last_row = row_counter === 0.U || (row_counter === (block_rows-1).U && io.dma.req.fire())
+      val last_row = row_counter === 0.U || (row_counter === rows - 1.U && io.dma.req.fire())
 
-      // io.completed.valid := last_row
-
-      // when (io.completed.fire()) {
       when (last_row) {
         control_state := waiting_for_command
         cmd.ready := true.B

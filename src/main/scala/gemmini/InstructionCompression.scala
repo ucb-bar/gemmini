@@ -13,6 +13,7 @@ class InstCompressor(implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new RoCCCommand))
     val out = Decoupled(new RoCCCommand)
+    val busy = Output(Bool())
   })
 
   val buf = Reg(Vec(2, UDValid(new RoCCCommand)))
@@ -27,6 +28,8 @@ class InstCompressor(implicit p: Parameters) extends Module {
   io.in.ready := !buf(0).valid || (buf(0).valid && is_preload && !buf(1).valid) || io.out.fire()
   io.out.valid := (buf(0).valid && !is_preload) || (buf(0).valid && is_preload && buf(1).valid)
   io.out.bits := Mux(is_preload, fused_cmd, buf(0).bits)
+
+  io.busy := buf(0).valid
 
   when (io.out.fire()) {
     buf.foreach(_.pop())
@@ -44,11 +47,11 @@ class InstCompressor(implicit p: Parameters) extends Module {
 
 class InstDecompressor(rob_entries: Int)(implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
-    val in = Flipped(Decoupled(new GemminiCmdWithDeps(rob_entries)))
-    val out = Decoupled(new GemminiCmdWithDeps(rob_entries))
+    val in = Flipped(Decoupled(new GemminiCmd(rob_entries)))
+    val out = Decoupled(new GemminiCmd(rob_entries))
   })
 
-  val buf = Reg(UDValid(new GemminiCmdWithDeps(rob_entries)))
+  val buf = Reg(UDValid(new GemminiCmd(rob_entries)))
   val cmd = buf.bits.cmd
 
   val is_compute = cmd.inst.funct === COMPUTE_AND_FLIP_CMD || cmd.inst.funct === COMPUTE_AND_STAY_CMD
@@ -85,12 +88,12 @@ object InstCompressor {
   def apply(enq: ReadyValidIO[RoCCCommand])(implicit p: Parameters) = {
     val ic = Module(new InstCompressor)
     ic.io.in <> enq
-    ic.io.out
+    (ic.io.out, ic.io.busy)
   }
 }
 
 object InstDecompressor {
-  def apply(enq: ReadyValidIO[GemminiCmdWithDeps], rob_entries: Int)(implicit p: Parameters) = {
+  def apply(enq: ReadyValidIO[GemminiCmd], rob_entries: Int)(implicit p: Parameters) = {
     val id = Module(new InstDecompressor(rob_entries))
     id.io.in <> enq
     id.io.out

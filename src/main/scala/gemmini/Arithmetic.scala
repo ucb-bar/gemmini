@@ -1,4 +1,4 @@
-// A simple type class for Chisel datatypes that can add and multiply. To add your own type, simply creat your own:
+// A simple type class for Chisel datatypes that can add and multiply. To add your own type, simply create your own:
 //     implicit MyTypeArithmetic extends Arithmetic[MyType] { ... }
 
 package gemmini
@@ -20,6 +20,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def clippedToWidthOf(t: T): T // Like "withWidthOf", except that it saturates
   def relu: T
   def relu6(shift: UInt): T
+  def zero: T
 }
 
 object Arithmetic {
@@ -30,7 +31,16 @@ object Arithmetic {
       override def +(t: UInt) = self + t
 
       override def >>(u: UInt) = {
-        Mux(u === 0.U, self, (self + (1.U << (u-1.U)).asUInt()) >> u).asUInt() // TODO is the mux necessary here? What is (1 << (0.U-1.U))?
+        // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
+
+        // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
+        val point_five = Mux(u === 0.U, 0.U, self(u - 1.U))
+        val zeros = Mux(u <= 1.U, 0.U, self.asUInt() & ((1.U << (u - 1.U)).asUInt() - 1.U)) =/= 0.U
+        val ones_digit = self(u)
+
+        val r = point_five & (zeros | ones_digit)
+
+        (self >> u).asUInt() + r
       }
 
       override def withWidthOf(t: UInt) = self(t.getWidth-1, 0)
@@ -47,6 +57,8 @@ object Arithmetic {
         val max = Mux(max6 > maxwidth, maxwidth, max6)(self.getWidth-1, 0).asUInt()
         Mux(self < max, self, max)
       }
+
+      override def zero: UInt = 0.U
     }
   }
 
@@ -57,12 +69,16 @@ object Arithmetic {
       override def +(t: SInt) = self + t
 
       override def >>(u: UInt) = {
-        val pos_offset = (1.U << (u-1.U)).asUInt()
-        val neg_offset = ~((-1).S << (u-1.U))
-        val pos_sum = self + pos_offset.asSInt()
-        val neg_sum = self + neg_offset.asSInt()
-        Mux(u === 0.U, self,
-            (Mux(self >= 0.S, pos_sum, neg_sum) >> u).asSInt)
+        // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
+
+        // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
+        val point_five = Mux(u === 0.U, 0.U, self(u - 1.U))
+        val zeros = Mux(u <= 1.U, 0.U, self.asUInt() & ((1.U << (u - 1.U)).asUInt() - 1.U)) =/= 0.U
+        val ones_digit = self(u)
+
+        val r = (point_five & (zeros | ones_digit)).asBool()
+
+        (self >> u).asSInt() + Mux(r, 1.S, 0.S)
       }
 
       override def withWidthOf(t: SInt) = self(t.getWidth-1, 0).asSInt()
@@ -80,6 +96,8 @@ object Arithmetic {
         val max = Mux(max6 > maxwidth, maxwidth, max6)(self.getWidth-1, 0).asSInt()
         MuxCase(self, Seq((self < 0.S) -> 0.S, (self > max) -> max))
       }
+
+      override def zero: SInt = 0.S
     }
   }
 
@@ -283,6 +301,8 @@ object Arithmetic {
         result.bits := fNFromRecFN(self.expWidth, self.sigWidth, self_rec)
         result
       }
+
+      override def zero: Float = 0.U.asTypeOf(self)
     }
   }
 }

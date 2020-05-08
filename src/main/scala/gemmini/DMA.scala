@@ -2,7 +2,6 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import chisel3.core.withReset
 
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
@@ -34,10 +33,10 @@ class StreamReadResponse(val spadWidth: Int, val accWidth: Int, val spad_rows: I
   val cmd_id = UInt(8.W) // TODO magic number
 }
 
-class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
+class StreamReader[T <: Data](config: GemminiArrayConfig[T], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
                    spad_rows: Int, acc_rows: Int, meshRows: Int)
                   (implicit p: Parameters) extends LazyModule {
-  val core = LazyModule(new StreamReaderCore(nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows))
+  val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows))
   val node = core.node
 
   lazy val module = new LazyModuleImp(this) {
@@ -48,7 +47,6 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
       val busy = Output(Bool())
       val flush = Input(Bool())
     })
-
 
     val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes))
 
@@ -63,7 +61,6 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, beatPacker.io.req.fire())
     xactTracker.io.peek.pop := beatPacker.io.in.fire() && core.module.io.beatData.bits.last
 
-
     core.module.io.beatData.ready := beatPacker.io.in.ready
     beatPacker.io.req.valid := core.module.io.beatData.valid
     beatPacker.io.req.bits := xactTracker.io.peek.entry
@@ -77,8 +74,6 @@ class StreamReader(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, ac
     io.resp.bits.addr := beatPacker.io.out.bits.addr
     io.resp.bits.mask := beatPacker.io.out.bits.mask
     io.resp.bits.is_acc := beatPacker.io.out.bits.is_acc
-    // io.resp.bits.cmd_id := xactTracker.io.peek.entry.cmd_id
-    // io.resp.bits.bytes_read := xactTracker.io.peek.entry.bytes_to_read
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
@@ -93,9 +88,10 @@ class StreamReadBeat (val nXacts: Int, val beatBits: Int, val maxReqBytes: Int) 
 }
 
 // TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
-class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int,
-                       aligned_to: Int, spad_rows: Int, acc_rows: Int, meshRows: Int)
-                      (implicit p: Parameters) extends LazyModule {
+class StreamReaderCore[T <: Data](config: GemminiArrayConfig[T], nXacts: Int, beatBits: Int, maxBytes: Int,
+                                  spadWidth: Int, accWidth: Int, aligned_to: Int,
+                                  spad_rows: Int, acc_rows: Int, meshRows: Int)
+                                 (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-reader", sourceId = IdRange(0, nXacts))
 
@@ -126,7 +122,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     val vpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
 
     val bytesRequested = Reg(UInt(log2Ceil(spadWidthBytes max accWidthBytes max maxBytes).W)) // TODO this only needs to count up to (dataBytes/aligned_to), right?
-    val bytesLeft = Mux(req.is_acc, req.len * accWidthBytes.U, req.len * spadWidthBytes.U) - bytesRequested
+    val bytesLeft = Mux(req.is_acc, req.len * (config.accType.getWidth / 8).U, req.len * (config.inputType.getWidth / 8).U) - bytesRequested
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
     io.req.ready := state_machine_ready_for_req
@@ -162,6 +158,8 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
       val paddr = UInt(paddrBits.W)
     }
 
+    // TODO Can we filter out the larger read_sizes here if the systolic array is small, in the same way that we do so
+    // for the write_sizes down below?
     val read_sizes = ((aligned_to max beatBytes) to maxBytes by aligned_to).
       filter(s => isPow2(s)).
       filter(s => s % beatBytes == 0)
@@ -187,16 +185,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     val read_bytes_read = read_packet.bytes_read
     val read_shift = read_packet.shift
 
-
     // Firing off TileLink read requests and allocating space inside the reservation buffer for them
-    /*
-    val get = edge.Get(
-      fromSource = io.reserve.xactid,
-      toAddress = paddr,
-      lgSize = lg_send_size
-    )._2
-    */
-
     val get = edge.Get(
       fromSource = io.reserve.xactid,
       toAddress = read_paddr,
@@ -205,15 +194,6 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
 
     tl.a.valid := state === s_req_new_block && io.reserve.ready
     tl.a.bits := get
-
-    /*
-    io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
-    io.reserve.entry.shift := 0.U // TODO
-    io.reserve.entry.is_acc := req.is_acc
-    io.reserve.entry.lg_len_req := lg_send_size
-    io.reserve.entry.bytes_to_read := send_size
-    io.reserve.entry.cmd_id := req.cmd_id
-    */
 
     io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
@@ -257,7 +237,6 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
     io.beatData.bits.last := edge.last(tl.d)
     // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
 
-
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
       req := io.req.bits
@@ -273,6 +252,7 @@ class StreamReaderCore(nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int
 class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val data = UInt(dataWidth.W)
+  val len = UInt(16.W) // The number of bytes to write // TODO magic number
   val status = new MStatus
 }
 
@@ -308,7 +288,8 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
     val vpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
 
     val bytesSent = Reg(UInt(log2Ceil(dataBytes).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
-    val bytesLeft = dataBytes.U - bytesSent
+    // val bytesLeft = dataBytes.U - bytesSent
+    val bytesLeft = req.len - bytesSent
 
     val xactBusy = RegInit(0.U(nXacts.W))
     val xactOnehot = PriorityEncoderOH(~xactBusy)
@@ -320,7 +301,7 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
     io.req.ready := state_machine_ready_for_req
-    io.busy := xactBusy.orR
+    io.busy := xactBusy.orR || (state =/= s_idle)
 
     // Address translation
     io.tlb.req.valid := state === s_translate_req
@@ -353,13 +334,14 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
       val is_full = Bool()
 
       def bytes_written(dummy: Int = 0) = PopCount(mask.flatten)
-      def total_beats(dummy: Int = 0) = size / beatBytes.U
+      def total_beats(dummy: Int = 0) = Mux(size < beatBytes.U, 1.U, size / beatBytes.U)
     }
 
-    val write_sizes = ((aligned_to max beatBytes) to maxBytes by aligned_to).
+    val smallest_write_size = aligned_to max beatBytes
+    val write_sizes = (smallest_write_size to maxBytes by aligned_to).
       filter(s => isPow2(s)).
       filter(s => s % beatBytes == 0).
-      filter(s => s <= dataBytes*2)
+      filter(s => s <= dataBytes*2 || s == smallest_write_size)
     val write_packets = write_sizes.map { s =>
       val lg_s = log2Ceil(s)
       val paddr_aligned_to_size = if (s == 1) paddr else Cat(paddr(paddrBits-1, lg_s), 0.U(lg_s.W))
@@ -367,8 +349,9 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
       val mask = (0 until maxBytes).map { i =>
         if (s > 1) {
           val paddr_offset = paddr(lg_s-1, 0)
+
           i.U >= paddr_offset &&
-            i.U < paddr_offset + bytesLeft
+            i.U < paddr_offset +& bytesLeft
         } else {
           true.B
         } && (i < s).B
@@ -462,7 +445,6 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
         }
       }
     }
-
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
