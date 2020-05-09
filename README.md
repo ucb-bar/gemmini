@@ -88,8 +88,10 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 ### `mvin` Move Data From L2/DRAM to Scratchpad
 **Format:** `mvin rs1, rs2`
 - `rs1` = virtual DRAM address (byte addressed) to load into scratchpad
-- `rs2` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
-    - If the 32nd (Most Significant) bit is set to logical 1, then `rs2` refers to an address in the accumulator memory space. In this case, the bitwidth is `tileColumns x meshColumns x accumulated result bitwidth`.
+- `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
+    - if the 32nd (Most Significant) bit is set to logical 1, `rs2[31:0]` refers to an address in the accumulator memory space. In this case, the bitwidth of the elements is `tileColumns x meshColumns x accumulated result bitwidth`.
+- `rs2[47:32]` = number of columns to load in
+- `rs2[63:48]` = number of rows to load in
 - `funct` = 2
 
 **Action:** Scratchpad[rs2] <= DRAM[Translate[rs1]]
@@ -99,8 +101,10 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 ### `mvout` Move Data from Scratchpad to L2/DRAM
 **Format:** `mvout rs1, rs2`
 - `rs1` = virtual DRAM address (byte addressed) to write to from scratchpad
-- `rs2` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
-    - If the 32nd (Most Significant) bit is set to logical 1, then `rs2` refers to an address in the accumulator memory space. In this case, the bitwidth is `tileColumns x meshColumns x accumulated result bitwidth`.
+- `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
+    - if the 32nd (Most Significant) bit is set to logical 1, `rs2[31:0]` refers to an address in the the accumulator memory space. In this case, the bitwidth of the elements is `tileColumns x meshColumns x accumulated result bitwidth`.
+- `rs2[47:32]` = number of columns to store
+- `rs2[63:48]` = number of rows to store
 - `funct` = 3
 
 **Action:** DRAM[Translate[rs2]] <= Scratchpad[rs1]
@@ -120,7 +124,8 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 
 ### `config_mvin` configures the Load pipeline
 **Format:** `config_mvin rs1 rs2`
-- `rs1` = `rs1[0:1]` must be `01`
+- `rs1[0:1]` must be `01`
+- `rs1[63:32]` is the "scale" by which to multiply data as it's being moved in to the scratchpad. This is ignored if Gemmini isn't built with the capability to scale values during `mvin`s.
 - `rs2` = the stride in bytes
 - `funct` = 0
 
@@ -164,8 +169,12 @@ Example:
 
 ### Preloading
 **Format:** `matmul.preload rs1, rs2`
-- `rs1` = local scratchpad address (systolic array single-axis addressed) of D matrix (when output-stationary), or B matrix (when weight-stationary)
-- `rs2` = local scratchpad address (systolic array single-axis addressed) of C matrix. If this is set to all high bits, then C will not be written to the scratchpad. If the 32nd _and_ 31st bits are high, the result will be accumulated on top of the previous result pointed to by this address in the accumulator
+- `rs1[31:0]` = local scratchpad address (systolic array single-axis addressed) of D matrix (when output-stationary), or B matrix (when weight-stationary)
+- `rs1[47:32]` = number of columns of D/B matrix
+- `rs1[63:48]` = number of rows of D/B matrix
+- `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed) of C matrix. If this is set to all high bits, then C will not be written to the scratchpad. If the 32nd _and_ 31st bits are high, the result will be accumulated on top of the previous result pointed to by this address in the accumulator
+- `rs2[47:32]` = number of columns of C matrix
+- `rs2[63:48]` = number of rows of C matrix
 - `funct` = 6
 
 **Commit Behavior:** This instruction commits on the cycle after the systolic array receives it. The systolic array remains idle until the subsequent OS/WS specific instructions are seen.
@@ -173,8 +182,12 @@ Example:
 ### Computing
 #### Explicitly Preloaded
 **Format:** `matmul.compute.preloaded rs1, rs2`
-- `rs1` = local scratchpad address (systolic array single-axis addressed) of A matrix
-- `rs2` = local scratchpad address (systolic array single-axis addressed) of B matrix (when output-stationary), or D matrix (when weight-stationary)
+- `rs1[31:0]` = local scratchpad address (systolic array single-axis addressed) of A matrix
+- `rs1[47:32]` = number of columns of A matrix
+- `rs1[63:48]` = number of rows of A matrix
+- `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed) of B matrix (when output-stationary), or D matrix (when weight-stationary)
+- `rs2[47:32]` = number of columns of B/D matrix
+- `rs2[63:48]` = number of rows of B/D matrix
 - `funct` = 4
 - This instruction will compute on the value preloaded (D if output-stationary, or B if weight-stationary)
 

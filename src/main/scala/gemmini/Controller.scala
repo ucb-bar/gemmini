@@ -77,7 +77,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
   override def cloneType: LocalAddr.this.type = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries).asInstanceOf[this.type]
 }
 
-class Gemmini[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: GemminiArrayConfig[T])
+class Gemmini[T <: Data : Arithmetic, U <: Data](opcodes: OpcodeSet, val config: GemminiArrayConfig[T, U])
                                      (implicit p: Parameters)
   extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
@@ -92,8 +92,8 @@ class Gemmini[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: GemminiArr
   override val tlNode = spad.id_node
 }
 
-class GemminiModule[T <: Data: Arithmetic]
-    (outer: Gemmini[T])
+class GemminiModule[T <: Data: Arithmetic, U <: Data]
+    (outer: Gemmini[T, U])
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
 

@@ -9,7 +9,7 @@ import freechips.rocketchip.config.Parameters
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
-class StoreController[T <: Data : Arithmetic](config: GemminiArrayConfig[T], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
+class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayConfig[T, U], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
                      (implicit p: Parameters) extends Module {
   import config._
 
