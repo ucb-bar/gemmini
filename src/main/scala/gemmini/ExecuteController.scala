@@ -90,7 +90,7 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
   val krow = RegInit(0.U(3.W))
   val kcol = RegInit(0.U(3.W))
   val weight_stride = RegInit(0.U(3.W))
-  val channel = RegInit(0.U(6.W))
+  val channel = RegInit(0.U(7.W))
 
   val icol = WireInit(0.U(9.W))
   val irow = WireInit(0.U(9.W))
@@ -108,39 +108,9 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
 
   //fix by input
   val im2col_en = WireInit(false.B)
-  val output_dim = ocol*orow
-
-  //Seah: added for more than 16 rows of output
-  val row_turn = Mux(output_dim(3,0) === 0.U, (output_dim >> (log2Up(block_size)).U).asUInt - 1.U, (output_dim >> 4.U).asUInt()) //im2col height
-  val im2col_width = kcol * krow * channel
-  im2col_turn := (im2col_width >> (log2Up(block_size)).U).asUInt + 1.U
-  when(im2col_width(3,0) === 0.U){
-    im2col_turn := im2col_width >> (log2Up(block_size)).U
-  }
 
   //val row_turn_counter = RegInit(row_turn)
   im2col_en := Mux(weight_stride === 0.U, false.B, true.B)
-
-  /*
-  when(weight_width === 2.U){
-    channel_turn := 4.U
-  }.elsewhen(weight_width === 3.U || weight_width === 4.U){
-    channel_turn := 1.U
-  }.otherwise{channel_turn := 0.U} //from 5x5
-*/
-  when(channel === 1.U){
-    channel_turn := 16.U
-  }.elsewhen(channel === 2.U){
-    channel_turn := 8.U
-  }.elsewhen(channel === 3.U){
-    channel_turn := 5.U
-  }.elsewhen(channel === 4.U){
-    channel_turn := 4.U
-  }.elsewhen(channel === 5.U){
-    channel_turn := 3.U
-  }.elsewhen(channel >= 6.U && channel <= 8.U){
-    channel_turn := 2.U
-  }.otherwise{channel_turn := 1.U}
 
 
   // SRAM addresses of matmul operands
@@ -458,9 +428,6 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
     io.im2col.req.bits.channel := channel
     io.im2col.req.bits.im2col_cmd := im2col_en
     io.im2col.req.bits.start_inputting := start_inputting_a
-    io.im2col.req.bits.turn := im2col_turn
-    io.im2col.req.bits.ch_per_turn := channel_turn
-    io.im2col.req.bits.row_turn := row_turn
 
     io.im2col.resp.ready := mesh.io.a.ready
   }
@@ -491,8 +458,8 @@ class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArra
           orow := cmd.bits(0).cmd.rs2(55, 48)
           krow := cmd.bits(0).cmd.rs2(47, 45)
           kcol := cmd.bits(0).cmd.rs2(44, 42)
-          channel := cmd.bits(0).cmd.rs2(31, 27)
-          weight_stride := cmd.bits(0).cmd.rs2(26, 24)
+          channel := cmd.bits(0).cmd.rs2(31, 25)
+          weight_stride := cmd.bits(0).cmd.rs2(24, 22)
 
 
           if (dataflow == Dataflow.BOTH)
