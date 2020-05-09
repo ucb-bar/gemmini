@@ -262,9 +262,14 @@ class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends Cor
   val data = UInt(dataWidth.W)
   val len = UInt(16.W) // The number of bytes to write // TODO magic number
   val status = new MStatus
+
+  // Pooling variables
+  val pool_en = Bool()
+  val store_en = Bool()
 }
 
-class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int)
+class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int,
+                                          aligned_to: Int, inputType: T)
                   (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-writer", sourceId = IdRange(0, nXacts))
@@ -456,12 +461,22 @@ class StreamWriter(nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, al
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
+      val pooled = {
+        val block_size = dataWidth / inputType.getWidth
+        val v1 = io.req.bits.data.asTypeOf(Vec(block_size, inputType))
+        val v2 = req.data.asTypeOf(Vec(block_size, inputType))
+        val m = v1.zip(v2)
+        VecInit(m.map{case (x, y) => maxOf(x, y)}).asUInt()
+      }
+
       req := io.req.bits
+      req.data := Mux(io.req.bits.pool_en, pooled, io.req.bits.data)
+
       bytesSent := 0.U
 
       val vpn_already_translated = last_vpn_translated_valid &&
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
-      state := Mux(vpn_already_translated, s_writing_new_block, s_translate_req)
+      state := Mux(io.req.bits.store_en, Mux(vpn_already_translated, s_writing_new_block, s_translate_req), s_idle)
     }
   }
 }

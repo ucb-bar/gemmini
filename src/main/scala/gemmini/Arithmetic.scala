@@ -16,6 +16,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def mac(m1: T, m2: T): T // Returns (m1 * m2 + self)
   def +(t: T): T
   def >>(u: UInt): T // This is a rounding shift! Rounds away from 0
+  def >(t: T): Bool
   def withWidthOf(t: T): T
   def clippedToWidthOf(t: T): T // Like "withWidthOf", except that it saturates
   def relu: T
@@ -42,6 +43,8 @@ object Arithmetic {
 
         (self >> u).asUInt() + r
       }
+
+      override def >(t: UInt): Bool = self > t
 
       override def withWidthOf(t: UInt) = self.asTypeOf(t)
 
@@ -80,6 +83,8 @@ object Arithmetic {
 
         (self >> u).asSInt() + Mux(r, 1.S, 0.S)
       }
+
+      override def >(t: SInt): Bool = self > t
 
       override def withWidthOf(t: SInt) = {
         if (self.getWidth >= t.getWidth)
@@ -265,6 +270,8 @@ object Arithmetic {
         result
         */
       }
+
+      override def >(t: Float): Bool = ??? // TODO
 
       override def withWidthOf(t: Float): Float = {
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)

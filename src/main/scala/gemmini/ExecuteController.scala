@@ -168,7 +168,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val a_addr_offset = Reg(UInt((16 + log2Up(block_size)).W))
   val a_addr_stride = Reg(UInt(16.W))
 
-  val a_address = a_address_rs1 + a_fire_counter
+  val a_address = a_address_rs1 + a_addr_offset
   val b_address = b_address_rs2 + b_fire_counter
   val d_address = d_address_rs1 + (block_size.U - 1.U - d_fire_counter)
 
