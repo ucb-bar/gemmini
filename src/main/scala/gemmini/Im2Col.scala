@@ -175,6 +175,9 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
   val channel_done = req.ch_per_turn * turn_done + channel_wrap // how many channels were done
   val assign_data_sub = RegInit(channel_done) // to subtract for im2col_reg data assignment
 
+  val window_start_counter_prev = RegInit(0.U((window_start_counter.getWidth).W)) //to store in which window_start_counter on this phase, and loaded it when the next vertical block starts
+  //val window_row_left = RegInit(0.U((window_start_counter.getWidth).W)) // to figure out starting point
+
   //im2col state machine
   switch(im2col_state){
     is(nothing_to_do){
@@ -183,12 +186,14 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
       sram_read_req := false.B
       when(im2col_en){
         im2col_state := waiting_for_im2col
-        im2col_turn := io.req.bits.turn
+        im2col_turn := 0.U//io.req.bits.turn
         modulo_im2col_turn := 0.U
         window_start_counter := 0.U
         window_row_counter := 0.U
         column_counter := 0.U
         row_counter := 0.U
+        window_start_counter_prev := 0.U
+        req := io.req.bits
       }
     }
     is(waiting_for_im2col){ //default state
@@ -197,6 +202,7 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
       turn_count_save := io.req.bits.turn
       im2col_start := true.B
       when(im2col_turn === 0.U){
+        req := io.req.bits
         im2col_turn := io.req.bits.turn
         modulo_im2col_turn := 0.U
       }
@@ -356,8 +362,6 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
   val row_counter_deq_d = RegNext(sram_read_signals_q.io.deq.bits.row_counter) //Seah: changed - 1 clock delayed version
   val column_counter_deq_d = RegNext(sram_read_signals_q.io.deq.bits.column_counter)
   val sram_req_output = io.sram_reads(copy_addr.sp_bank()).resp.bits.data.asTypeOf(Vec(block_size, inputType))
-  val window_start_counter_prev = RegInit(0.U((window_start_counter.getWidth).W)) //to store in which window_start_counter on this phase, and loaded it when the next vertical block starts
-  val window_row_left = RegInit(0.U((window_start_counter.getWidth).W)) // to figure out starting point
 
   val req_valid = RegInit(false.B)
 
@@ -559,8 +563,8 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
     val sram_resp_valid = Bool()
 
   }
-
-  sram_read_signals_q.io.enq.valid := sram_read_req && io.req.valid//(sram_resp_valid && sram_read_valid)
+  sram_read_signals_q.io.enq.valid :=sram_read_valid && io.req.valid
+  //sram_read_signals_q.io.enq.valid := sram_read_req && io.req.valid//(sram_resp_valid && sram_read_valid)
   sram_read_signals_q.io.enq.bits.row_counter := row_counter//row_address
   sram_read_signals_q.io.enq.bits.column_counter := column_counter
   sram_read_signals_q.io.enq.bits.im2col_fin := im2col_fin
@@ -573,9 +577,10 @@ class Im2Col[T <: Data: Arithmetic](config: GemminiArrayConfig[T]) extends Modul
   sram_read_signals_q.io.enq.bits.assign_sub := assign_data_sub
   sram_read_signals_q.io.enq.bits.sram_resp_valid := sram_resp_valid
   when(req.channel < 16.U){sram_read_signals_q.io.enq.valid := sram_read_req}
-  //when(weird_case){sram_read_signals_q.io.enq.valid := sram_read_req && io.req.valid}
 
   sram_read_signals_q.io.deq.ready := true.B//sram_resp_valid
+
+  sram_resp_valid && sram_read_req && (req_valid||io.req.valid)
 
   /* Example of how to interface with scratchpad
   io.spad_reads(req.addr.sp_bank()).req.valid := true.B
