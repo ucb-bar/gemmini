@@ -7,30 +7,35 @@ sealed abstract trait GemminiMemCapacity
 case class CapacityInKilobytes(kilobytes: Int) extends GemminiMemCapacity
 case class CapacityInMatrices(matrices: Int) extends GemminiMemCapacity
 
-case class GemminiArrayConfig[T <: Data : Arithmetic](
-                                                         tileRows: Int,
-                                                         tileColumns: Int,
-                                                         meshRows: Int,
-                                                         meshColumns: Int,
-                                                         ld_queue_length: Int,
-                                                         st_queue_length: Int,
-                                                         ex_queue_length: Int,
-                                                         rob_entries: Int,
-                                                         sp_banks: Int, // TODO support one-bank designs
-                                                         sp_capacity: GemminiMemCapacity,
-                                                         acc_banks: Int,
-                                                         acc_capacity: GemminiMemCapacity,
-                                                         shifter_banks: Int,
-                                                         dataflow: Dataflow.Value,
-                                                         mem_pipeline: Int,
-                                                         dma_maxbytes: Int,
-                                                         dma_buswidth: Int,
-                                                         aligned_to: Int, // TODO we should align to inputType and outputType instead
-                                                         inputType: T,
-                                                         outputType: T,
-                                                         accType: T,
-                                                         pe_latency: Int,
-                                                         headerFileName: String = "gemmini_params.h"
+case class MvinScaleArguments[T <: Data, U <: Data](mvin_scale_func: (T, U) => T, mvin_scale_latency: Int, multiplicand_t: U)
+
+case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
+                                                                  tileRows: Int,
+                                                                  tileColumns: Int,
+                                                                  meshRows: Int,
+                                                                  meshColumns: Int,
+                                                                  ld_queue_length: Int,
+                                                                  st_queue_length: Int,
+                                                                  ex_queue_length: Int,
+                                                                  rob_entries: Int,
+                                                                  sp_banks: Int, // TODO support one-bank designs
+                                                                  sp_capacity: GemminiMemCapacity,
+                                                                  acc_banks: Int,
+                                                                  acc_capacity: GemminiMemCapacity,
+                                                                  shifter_banks: Int,
+                                                                  dataflow: Dataflow.Value,
+                                                                  mem_pipeline: Int,
+                                                                  dma_maxbytes: Int,
+                                                                  dma_buswidth: Int,
+                                                                  aligned_to: Int, // TODO we should align to inputType and accType instead
+                                                                  inputType: T,
+                                                                  outputType: T,
+                                                                  accType: T,
+                                                                  mvin_scale_args: Option[MvinScaleArguments[T, U]],
+                                                                  mvin_scale_acc_args: Option[MvinScaleArguments[T, U]],
+                                                                  mvin_scale_shared: Boolean,
+                                                                  pe_latency: Int,
+                                                                  headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth
   val sp_bank_entries = sp_capacity match {
@@ -43,6 +48,20 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
   }
 
   val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries)
+
+  val mvin_scale_t = mvin_scale_args match {
+    case Some(MvinScaleArguments(_, _, t)) => t
+    case None => Bool() // TODO replace this with UInt(0.W)
+  }
+
+  val mvin_scale_acc_t = mvin_scale_acc_args match {
+    case Some(MvinScaleArguments(_, _, t)) => t
+    case None => Bool() // TODO replace this with UInt(0.W)
+  }
+
+  val mvin_scale_t_bits = mvin_scale_t.getWidth max mvin_scale_acc_t.getWidth
+
+  val mvin_scale_same = (mvin_scale_args.isEmpty && mvin_scale_acc_args.isEmpty) || mvin_scale_shared
 
   val max_in_flight_reqs = 16 // TODO calculate this somehow
 
@@ -57,6 +76,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
   require(meshColumns * tileColumns >= 2, "the systolic array must have a dimension of at least 2") // TODO remove this requirement
   require(isPow2(meshColumns * tileColumns), "the systolic array's dimensions must be powers of 2") // TODO remove this requirement
   require(acc_bank_entries % (meshRows * tileRows) == 0, "the number of rows in an accumulator bank must be a multiple of the dimensions of the systolic array")
+  require(!mvin_scale_shared || (mvin_scale_shared && mvin_scale_args.isDefined && mvin_scale_acc_args.isEmpty && inputType.getWidth == accType.getWidth)) // TODO is there a better way to check whether inputType and accType are the same?
+  require((mvin_scale_args.isEmpty || mvin_scale_acc_args.isEmpty) || (mvin_scale_t.getWidth == mvin_scale_acc_t.getWidth), "currently, the mvin scale types for both the srams and the accumulator must have the same width") // TODO remove this requirement
 
   def generateHeader(guard: String = "GEMMINI_PARAMS_H"): String = {
     // Returns the (min,max) values for a dataType
@@ -141,11 +162,39 @@ case class GemminiArrayConfig[T <: Data : Arithmetic](
     header ++= s"typedef ${full_c_type(inputType)} full_t;\n\n"
 
     if (inputType.isInstanceOf[Float]) {
-      header ++= "#define ELEM_T_IS_FLOAT\n\n"
+      header ++= "#define ELEM_T_IS_FLOAT\n"
+      header ++= s"#define ELEM_T_EXP_BITS ${inputType.asInstanceOf[Float].expWidth}\n"
+      header ++= s"#define ELEM_T_SIG_BITS ${inputType.asInstanceOf[Float].sigWidth}\n"
+      header ++= s"#define ACC_T_EXP_BITS ${accType.asInstanceOf[Float].expWidth}\n"
+      header ++= s"#define ACC_T_SIG_BITS ${accType.asInstanceOf[Float].sigWidth}\n"
+      header ++= s"typedef ${c_type(UInt(inputType.getWidth.W))} elem_t_bits;\n"
+      header ++= s"typedef ${c_type(UInt(accType.getWidth.W))} acc_t_bits;\n\n"
+    }
+
+    if (mvin_scale_args.isDefined) {
+      header ++= "#define HAS_MVIN_SCALE\n"
+      header ++= s"typedef ${c_type(mvin_scale_args.get.multiplicand_t)} scale_t;\n"
+      header ++= s"typedef ${c_type(UInt(mvin_scale_args.get.multiplicand_t.getWidth.W))} scale_t_bits;\n\n"
+    }
+
+    if (mvin_scale_acc_args.isDefined) {
+      header ++= "#define HAS_MVIN_ACC_SCALE\n"
+      header ++= s"typedef ${c_type(mvin_scale_acc_args.get.multiplicand_t)} scale_acc_t;\n"
+      header ++= s"typedef ${c_type(UInt(mvin_scale_acc_args.get.multiplicand_t.getWidth.W))} scale_acc_t_bits;\n\n"
     }
 
     header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"
     header ++= s"#define row_align_acc(blocks) __attribute__((aligned(blocks*DIM*sizeof(acc_t))))\n\n"
+
+    val mvin_scale_one = mvin_scale_args match {
+      case Some(MvinScaleArguments(_, _, multiplicand_t)) =>
+        multiplicand_t match {
+          case _: SInt | _: UInt => "1"
+          case _: Float => "1.0"
+        }
+      case None => "1"
+    }
+    header ++= s"#define MVIN_SCALE_ONE $mvin_scale_one\n\n"
 
     header ++= s"#endif // $guard"
     header.toString()

@@ -11,7 +11,7 @@ import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet}
 // -----------------------------
 
 object DSEBaseConfig {
-  val baseConfig = GemminiArrayConfig(
+  val baseConfig = GemminiArrayConfig[SInt, Bool](
     tileRows = 1,
     tileColumns = 1,
     meshRows = 16,
@@ -33,6 +33,9 @@ object DSEBaseConfig {
     inputType = SInt(8.W),
     outputType = SInt(19.W),
     accType = SInt(32.W),
+    mvin_scale_args = None,
+    mvin_scale_acc_args = None,
+    mvin_scale_shared = false,
     pe_latency = 0
   )
 }
