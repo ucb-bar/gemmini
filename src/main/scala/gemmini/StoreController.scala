@@ -35,7 +35,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
 
   val stride = RegInit((sp_width / 8).U(coreMaxAddrBits.W))
   val block_rows = meshRows * tileRows
-  val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
+  //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
+  val row_counter = RegInit(0.U(12.W))
 
   // Pooling variables
   val pool_stride = RegInit(0.U(2.W)) // When this is 0, pooling is disabled // TODO magic number
@@ -54,6 +55,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   val wcol_counter = RegInit(0.U(pool_size.getWidth.W))
 
   val pooling_is_enabled = pool_stride =/= 0.U
+  val mvout_1d_enabled = pool_size =/= 0.U && !pooling_is_enabled //1-D move out enabled (no pooling)
 
   val orow = porow_counter * pool_stride +& wrow_counter - pool_upad // TODO get rid of this multiplication
   val orow_is_negative = porow_counter * pool_stride +& wrow_counter < pool_upad // TODO get rid of this multiplication
@@ -96,6 +98,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
 
   cmd.ready := false.B
 
+  val mvout_1d_rows = pool_orows * pool_ocols //for 1D mvout
   // Command tracker instantiation
   val nCmds = 2 // TODO make this a config parameter
 
@@ -103,6 +106,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
     val rob_id = UInt(log2Up(rob_entries).W)
   }
 
+  //how does this work?
   val cmd_tracker_max_rows = (block_rows max
     (((1 << pool_orows.getWidth)-1) * ((1 << pool_ocols.getWidth)-1) + 2*((1 << pool_lpad.getWidth)-1) + 2*((1 << pool_upad.getWidth)-1))) min
     ((config.sp_banks * config.sp_bank_entries) max
@@ -124,7 +128,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore
-  cmd_tracker.io.alloc.bits.bytes_to_read := Mux(!pooling_is_enabled, rows, pool_total_rows) // TODO do we have to add upad and lpad to this?
+  cmd_tracker.io.alloc.bits.bytes_to_read := Mux(!pooling_is_enabled, Mux(mvout_1d_enabled, mvout_1d_rows, rows), pool_total_rows) // TODO do we have to add upad and lpad to this?
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
@@ -142,7 +146,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   // Row counter
   when (io.dma.req.fire()) {
     when (!pooling_is_enabled) {
-      row_counter := wrappingAdd(row_counter, 1.U, rows)
+      //where does rows come from?
+      //row_counter := wrappingAdd(row_counter, 1.U, rows)
+      row_counter := Mux(mvout_1d_enabled, wrappingAdd(row_counter, 1.U, mvout_1d_rows), wrappingAdd(row_counter, 1.U, rows))
     }.otherwise {
       wcol_counter := wrappingAdd(wcol_counter, 1.U, pool_size)
       wrow_counter := wrappingAdd(wrow_counter, 1.U, pool_size, wcol_counter === pool_size - 1.U)
@@ -157,10 +163,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
       when (cmd.valid) {
         when(DoConfig) {
           stride := config_stride
-
+          pool_size := config_pool_size
           pool_stride := config_pool_stride
           when (config_pool_stride =/= 0.U) {
-            pool_size := config_pool_size
+            //pool_size := config_pool_size
             pool_out_dim := config_pool_out_dim
             pool_porows := config_porows
             pool_pocols := config_pocols
@@ -168,6 +174,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
             pool_ocols := config_ocols
             pool_upad := config_upad
             pool_lpad := config_lpad
+          }.elsewhen(config_pool_size =/= 0.U){
+            pool_orows := config_orows
+            pool_ocols := config_ocols
           }
 
           cmd.ready := true.B
@@ -188,7 +197,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
 
     is (sending_rows) {
       // TODO Is it really possible for row_counter to be 0 here?
-      val last_row = row_counter === 0.U || (row_counter === rows - 1.U && io.dma.req.fire())
+      val last_row = row_counter === 0.U || (Mux(mvout_1d_enabled, row_counter === mvout_1d_rows - 1.U, row_counter === rows - 1.U) && io.dma.req.fire())
+      //normal mvout: row, 1D mvout: orows*ocols
 
       when (last_row) {
         control_state := waiting_for_command
