@@ -20,6 +20,7 @@ class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {
   override def cloneType: this.type = new ROBIssue(cmd_t, nEntries).asInstanceOf[this.type]
 }
 
+// TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
 class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows: Int, block_cols: Int) extends Module {
   val io = IO(new Bundle {
     val alloc = Flipped(Decoupled(cmd_t.cloneType))
@@ -81,7 +82,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   val new_entry_id = MuxCase((nEntries-1).U, entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
   val alloc_fire = io.alloc.fire()
 
-  when (io.alloc.fire()) { // ROB
+  when (io.alloc.fire()) {
     val spAddrBits = 32
     val cmd = io.alloc.bits
     val funct = cmd.inst.funct
@@ -91,7 +92,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     new_entry.issued := false.B
     new_entry.cmd := cmd
 
-    new_entry.is_config := funct === CONFIG_CMD // is it config?
+    new_entry.is_config := funct === CONFIG_CMD
 
     new_entry.op1.valid := funct === PRELOAD_CMD || funct_is_compute
     new_entry.op1.bits := cmd.rs1.asTypeOf(local_addr_t)
@@ -111,7 +112,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_store = (funct === STORE_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
-    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX) //add here
+    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
 
     new_entry.q := Mux1H(Seq(
       is_load -> ldq,
@@ -121,7 +122,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
     val raws = entries.map { e =>
       // We search for all entries which write to an address which we read from
-      e.valid && e.bits.dst.valid && (
+      e.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
         (new_entry.op1.valid && e.bits.dst.bits.start <= new_entry.op1.bits && e.bits.dst.bits.end() > new_entry.op1.bits) ||
           (new_entry.op2.valid && e.bits.dst.bits.start <= new_entry.op2.bits && e.bits.dst.bits.end() > new_entry.op2.bits)) /* ||
           (new_entry.op3.valid && e.bits.dst.bits.start <= new_entry.op3.bits && e.bits.dst.bits.end() > new_entry.op3.bits)) */
@@ -129,7 +130,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
     val wars = entries.map { e =>
       // We search for all entries which read from an address that we write to
-      e.valid && new_entry.dst.valid && (
+      e.valid && new_entry.dst.valid && e.bits.q =/= new_entry.q && (
         (e.bits.op1.valid && new_entry.dst.bits.start <= e.bits.op1.bits && new_entry.dst.bits.end() > e.bits.op1.bits) ||
           (e.bits.op2.valid && new_entry.dst.bits.start <= e.bits.op2.bits && new_entry.dst.bits.end() > e.bits.op2.bits)) /* ||
           (e.bits.op3.valid && new_entry.dst.bits.start <= e.bits.op3.bits && new_entry.dst.bits.end() > e.bits.op3.bits)) */
@@ -137,7 +138,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
 
     val waws = entries.map { e =>
       // We search for all entries which write to an address that we write to
-      e.valid && new_entry.dst.valid && e.bits.dst.valid && (
+      e.valid && new_entry.dst.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
         (new_entry.dst.bits.start <= e.bits.dst.bits.start && new_entry.dst.bits.end() > e.bits.dst.bits.start) ||
           (e.bits.dst.bits.start <= new_entry.dst.bits.start && e.bits.dst.bits.end() > new_entry.dst.bits.start))
     }

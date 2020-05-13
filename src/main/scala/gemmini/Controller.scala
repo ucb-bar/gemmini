@@ -77,7 +77,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
   override def cloneType: LocalAddr.this.type = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries).asInstanceOf[this.type]
 }
 
-class Gemmini[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: GemminiArrayConfig[T])
+class Gemmini[T <: Data : Arithmetic, U <: Data](opcodes: OpcodeSet, val config: GemminiArrayConfig[T, U])
                                      (implicit p: Parameters)
   extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
@@ -92,8 +92,8 @@ class Gemmini[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: GemminiArr
   override val tlNode = spad.id_node
 }
 
-class GemminiModule[T <: Data: Arithmetic]
-    (outer: Gemmini[T])
+class GemminiModule[T <: Data: Arithmetic, U <: Data]
+    (outer: Gemmini[T, U])
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
 
@@ -136,9 +136,6 @@ class GemminiModule[T <: Data: Arithmetic]
 
   // val decompressed_cmd = cmd_decompressor.io.out
 
-  // Im2Col unit
-  val im2col = Module(new Im2Col(outer.config))
-
   // Controllers
   val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
   val store_controller = Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t))
@@ -166,35 +163,10 @@ class GemminiModule[T <: Data: Arithmetic]
   // Wire up scratchpad to controllers
   spad.module.io.dma.read <> load_controller.io.dma
   spad.module.io.dma.write <> store_controller.io.dma
-  // ex_controller.io.srams.read <> spad.module.io.srams.read
+  ex_controller.io.srams.read <> spad.module.io.srams.read
   ex_controller.io.srams.write <> spad.module.io.srams.write
   ex_controller.io.acc.read <> spad.module.io.acc.read
   ex_controller.io.acc.write <> spad.module.io.acc.write
-
-  // Wire up Im2col
-  // im2col.io.sram_reads <> spad.module.io.srams.read
-  im2col.io.req <> ex_controller.io.im2col.req
-  ex_controller.io.im2col.resp <> im2col.io.resp
-
-  // Wire arbiter for ExecuteController and Im2Col scratchpad reads
-  (ex_controller.io.srams.read, im2col.io.sram_reads, spad.module.io.srams.read).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
-    val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
-
-    req_arb.io.in(0) <> ex_read.req
-    req_arb.io.in(1) <> im2col_read.req
-
-    spad_read.req <> req_arb.io.out
-
-    // TODO if necessary, change how the responses are handled when fromIm2Col is added to spad read interface
-
-    ex_read.resp.valid := spad_read.resp.valid
-    im2col_read.resp.valid := spad_read.resp.valid
-
-    ex_read.resp.bits := spad_read.resp.bits
-    im2col_read.resp.bits := spad_read.resp.bits
-
-    spad_read.resp.ready := ex_read.resp.ready || im2col_read.resp.ready
-  }
 
   // Wire up controllers to ROB
   rob.io.alloc.valid := false.B
