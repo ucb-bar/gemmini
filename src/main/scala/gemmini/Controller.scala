@@ -168,6 +168,34 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data]
   ex_controller.io.acc.read <> spad.module.io.acc.read
   ex_controller.io.acc.write <> spad.module.io.acc.write
 
+  // Im2Col unit
+  val im2col = Module(new Im2Col(outer.config))
+
+  // Wire up Im2col
+  // im2col.io.sram_reads <> spad.module.io.srams.read
+  im2col.io.req <> ex_controller.io.im2col.req
+  ex_controller.io.im2col.resp <> im2col.io.resp
+
+  // Wire arbiter for ExecuteController and Im2Col scratchpad reads
+  (ex_controller.io.srams.read, im2col.io.sram_reads, spad.module.io.srams.read).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
+    val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
+
+    req_arb.io.in(0) <> ex_read.req
+    req_arb.io.in(1) <> im2col_read.req
+
+    spad_read.req <> req_arb.io.out
+
+    // TODO if necessary, change how the responses are handled when fromIm2Col is added to spad read interface
+
+    ex_read.resp.valid := spad_read.resp.valid
+    im2col_read.resp.valid := spad_read.resp.valid
+
+    ex_read.resp.bits := spad_read.resp.bits
+    im2col_read.resp.bits := spad_read.resp.bits
+
+    spad_read.resp.ready := ex_read.resp.ready || im2col_read.resp.ready
+  }
+
   // Wire up controllers to ROB
   rob.io.alloc.valid := false.B
   // rob.io.alloc.bits := compressed_cmd.bits
