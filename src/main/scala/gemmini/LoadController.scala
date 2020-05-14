@@ -8,14 +8,14 @@ import freechips.rocketchip.config.Parameters
 
 
 // TODO deal with errors when reading scratchpad responses
-class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
+class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
                                (implicit p: Parameters) extends Module {
   import config._
 
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(rob_entries)))
 
-    val dma = new ScratchpadReadMemIO(local_addr_t)
+    val dma = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
 
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
@@ -26,6 +26,7 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
   val control_state = RegInit(waiting_for_command)
 
   val stride = RegInit((sp_width / 8).U(coreMaxAddrBits.W))
+  val scale = Reg(UInt(mvin_scale_t_bits.W))
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
@@ -36,6 +37,7 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
   val cols = cmd.bits.cmd.rs2(32 + mvin_len_bits - 1, 32) // TODO magic numbers
   val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits, 48) // TODO magic numbers
   val config_stride = cmd.bits.cmd.rs2
+  val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
   val mstatus = cmd.bits.cmd.status
 
   val localaddr_plus_row_counter = localaddr + row_counter
@@ -67,6 +69,7 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
   io.dma.req.bits.vaddr := vaddr + row_counter * stride
   io.dma.req.bits.laddr := localaddr_plus_row_counter
   io.dma.req.bits.len := cols
+  io.dma.req.bits.scale := scale
   io.dma.req.bits.status := mstatus
 
   // Command tracker IO
@@ -97,6 +100,7 @@ class LoadController[T <: Data](config: GemminiArrayConfig[T], coreMaxAddrBits: 
         // when(DoConfig && !cmd_tracker.io.cmd_completed.valid) {
         when(DoConfig) {
           stride := config_stride
+          scale := config_scale
           cmd.ready := true.B
         }
 

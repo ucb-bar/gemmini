@@ -13,7 +13,7 @@ object GemminiISA {
   val FLUSH_CMD = 7.U
   val LOOP_WS = 8.U
 
-  // rs1[1:0] values
+  // rs1[2:0] values
   val CONFIG_LOAD = 1.U
   val CONFIG_STORE = 2.U
   val CONFIG_EX = 0.U

@@ -10,27 +10,26 @@ import freechips.rocketchip.config.Parameters
 // TODO don't flush all 4 time steps when shorter flushes will work
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 // TODO allow the matmul result to not be DIM-by-DIM, similar to how the matmul inputs can be padded if they aren't DIM-by-DIM
-class ExecuteController[T <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T])
-                                  (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
+class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U])
+                                             (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
   import config._
   import ev._
 
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(rob_entries)))
 
+    val im2col = new Bundle {
+      val req = Decoupled(new Im2ColReadReq(config))
+      val resp = Flipped(Decoupled(new Im2ColReadResp(config)))
+    }
+
     val srams = new Bundle {
       val read = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
       val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1))
     }
-
     val acc = new Bundle {
       val read = Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType))))
       val write = Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))))
-    }
-
-    val im2col = new Bundle {
-      val req = Decoupled(new Im2ColReadReq(config))
-      val resp = Flipped(Decoupled(new Im2ColReadResp(config)))
     }
 
     val completed = Valid(UInt(log2Up(rob_entries).W))

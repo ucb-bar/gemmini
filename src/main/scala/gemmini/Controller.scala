@@ -77,7 +77,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
   override def cloneType: LocalAddr.this.type = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries).asInstanceOf[this.type]
 }
 
-class Gemmini[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: GemminiArrayConfig[T])
+class Gemmini[T <: Data : Arithmetic, U <: Data](opcodes: OpcodeSet, val config: GemminiArrayConfig[T, U])
                                      (implicit p: Parameters)
   extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
@@ -92,8 +92,8 @@ class Gemmini[T <: Data : Arithmetic](opcodes: OpcodeSet, val config: GemminiArr
   override val tlNode = spad.id_node
 }
 
-class GemminiModule[T <: Data: Arithmetic]
-    (outer: Gemmini[T])
+class GemminiModule[T <: Data: Arithmetic, U <: Data]
+    (outer: Gemmini[T, U])
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
 
@@ -136,9 +136,6 @@ class GemminiModule[T <: Data: Arithmetic]
 
   // val decompressed_cmd = cmd_decompressor.io.out
 
-  // Im2Col unit
-  val im2col = Module(new Im2Col(outer.config))
-
   // Controllers
   val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
   val store_controller = Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t))
@@ -166,10 +163,13 @@ class GemminiModule[T <: Data: Arithmetic]
   // Wire up scratchpad to controllers
   spad.module.io.dma.read <> load_controller.io.dma
   spad.module.io.dma.write <> store_controller.io.dma
-  // ex_controller.io.srams.read <> spad.module.io.srams.read
+  ex_controller.io.srams.read <> spad.module.io.srams.read
   ex_controller.io.srams.write <> spad.module.io.srams.write
   ex_controller.io.acc.read <> spad.module.io.acc.read
   ex_controller.io.acc.write <> spad.module.io.acc.write
+
+  // Im2Col unit
+  val im2col = Module(new Im2Col(outer.config))
 
   // Wire up Im2col
   // im2col.io.sram_reads <> spad.module.io.srams.read
