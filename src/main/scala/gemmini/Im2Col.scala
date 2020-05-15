@@ -409,8 +409,8 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   when(im2col_turn === 1.U){ //on the last turn
     channel_turn := filter_dim2 - channel_done //count only remainder
   }.otherwise{
-    channel_turn := Mux(channel(0) === 0.U && channel < 10.U, ch_per_turn, ch_per_turn + 1.U)
-    when((channel - assign_data_sub) + (Mux(channel(0) === 0.U && channel < 10.U, ch_per_turn, ch_per_turn + 1.U) - 1.U) * channel < block_size.U) {channel_turn := Mux(channel(0) === 0.U && channel < 10.U, ch_per_turn, ch_per_turn + 1.U) + 1.U}
+    channel_turn := Mux(channel === 8.U || channel === 4.U || channel === 2.U, ch_per_turn, ch_per_turn + 1.U)
+    when((channel - assign_data_sub) + (Mux(channel === 8.U || channel === 4.U || channel === 2.U, ch_per_turn, ch_per_turn + 1.U) - 1.U) * channel < block_size.U) {channel_turn := Mux(channel === 8.U || channel === 4.U || channel === 2.U, ch_per_turn, ch_per_turn + 1.U) + 1.U}
   }
 
   //when(column_counter === block_size.U - 1.U && row_counter === filter_dim2 - 1.U){
