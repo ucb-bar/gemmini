@@ -1,0 +1,9 @@
+{
+  "name" : "blis-tests",
+  "workdir" : ".",
+  "base" : "br-base.json",
+  "overlay" : "overlay",
+  "host-init" : "blis-host-init.sh",
+  "spike-args" : "--extension=gemmini",
+  "command": "cd /root/blis && ./make-check.sh"
+}
