@@ -7,3 +7,6 @@
 [submodule "software/riscv-blas"]
 	path = software/riscv-blas
 	url = https://github.com/ucb-bar/riscv-blas.git
+[submodule "software/blis"]
+	path = software/blis
+	url = https://github.com/alonamid/blis.git
