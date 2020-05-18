@@ -9,12 +9,14 @@ class Im2ColReadReq[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) exte
   val addr = new LocalAddr(config.sp_banks, config.sp_bank_entries, config.acc_banks, config.acc_bank_entries)
   //dimension
   val ocol = UInt(8.W)
-  val orow = UInt(8.W)
   val krow = UInt(3.W)
   val icol = UInt(9.W)
   val irow = UInt(9.W)
   val stride = UInt(3.W)
   val channel = UInt(7.W)
+  val row_turn = UInt(11.W)
+  val kdim2 = UInt(6.W)
+  val row_left = UInt(4.W)
 
   val im2col_cmd = Bool()
   val start_inputting = Bool() //start_inputting_a
@@ -78,7 +80,6 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   val start_inputting_A = req.start_inputting
 
   val ocol = io.req.bits.ocol
-  val orow = io.req.bits.orow
   val kdim = io.req.bits.krow
   val stride = io.req.bits.stride
   val icol = io.req.bits.icol
@@ -87,9 +88,13 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   val channel_counter = RegInit(0.U(7.W))
   val channel = Mux(channel_counter > block_size.U, block_size.U, channel_counter) //channel > 16, then do DIM of channel first until channel < DIM
 
-  val filter_dim2 = kdim*kdim
+  val filter_dim2 = io.req.bits.kdim2
   val im2col_width = channel * filter_dim2
-  val output_dim = ocol*orow
+  //val output_dim = ocol*orow
+  //Todo: ocol*orow - block_done*block_size
+  //Todo: row_turn
+  //Todo: turn
+
 
 
   // first do simple case: channel 4, output width: 3x3
@@ -110,12 +115,15 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
 
   //how much horizonal turn we have to compute (input_channel*kernel_dim/16)
   val turn = Mux(im2col_width(3,0) === 0.U, (im2col_width >> (log2Up(block_size)).U).asUInt(), (im2col_width >> (log2Up(block_size)).U).asUInt + 1.U)
+
   val ch_per_turn = WireInit(0.U(5.W))
 
 
   //Seah: added for more than 16 rows of output
   //how much vertical turn we have to compute (output_dim/16)
-  val row_turn = Mux(output_dim(3,0) === 0.U, (output_dim >> (log2Up(block_size)).U).asUInt - 1.U, (output_dim >> (log2Up(block_size)).U).asUInt()) //im2col height
+  //val row_turn = Mux(output_dim(3,0) === 0.U, (output_dim >> (log2Up(block_size)).U).asUInt - 1.U, (output_dim >> (log2Up(block_size)).U).asUInt()) //im2col height
+  val row_turn = io.req.bits.row_turn
+  val row_left = io.req.bits.row_left
 
   when(channel === 1.U){
     ch_per_turn := 16.U
@@ -363,6 +371,10 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   val row_counter_deq_d = RegNext(sram_read_signals_q.io.deq.bits.row_counter) //Seah: changed - 1 clock delayed version
   val column_counter_deq_d = RegNext(sram_read_signals_q.io.deq.bits.column_counter)
   val sram_req_output = io.sram_reads(copy_addr.sp_bank()).resp.bits.data.asTypeOf(Vec(block_size, inputType))
+  val column_counter_last_row_block = im2col_row_turn_counter === 0.U && (column_counter === row_left - 1.U)
+    //(column_counter + block_done * block_size.U === ocol * orow - 1.U)
+  val column_counter_last_row_block_deq = (sram_read_signals_q.io.deq.bits.block_done === row_turn) && (column_counter_deq_d >= row_left)
+  //column_counter_deq_d >= (ocol*orow - sram_read_signals_q.io.deq.bits.block_done * block_size.U)
 
   val req_valid = RegInit(false.B)
 
@@ -394,7 +406,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
       row_counter := 0.U
       column_counter := wrappingAdd(column_counter, 1.U, block_size)
       when(!im2col_fin){
-        when((column_counter + block_done * block_size.U === ocol * orow - 1.U) || column_counter === block_size.U - 1.U){
+        when(column_counter_last_row_block || column_counter === block_size.U - 1.U){
           im2col_fin := true.B
         //}.elsewhen((column_counter + 1.U + block_done * block_size.U) % ocol === 0.U){
         }.elsewhen((column_counter + 1.U + block_done * block_size.U) - modulo_block_done === ocol){
@@ -410,7 +422,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
         row_counter := wrappingAdd(row_counter, 1.U, channel_turn) //here?
         when(row_counter === channel_turn - 1.U){
           window_row_counter := window_row_counter_saver //load saved value
-          when((column_counter + block_done * block_size.U === ocol * orow - 1.U) || column_counter === block_size.U - 1.U) {
+          when(column_counter_last_row_block || column_counter === block_size.U - 1.U) {
             im2col_fin := true.B
             row_counter := channel_turn - 1.U
             window_row_counter_saver := window_row_counter //save current window_row_counter to resume next turn
@@ -435,7 +447,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
     }
   }.elsewhen(!io.req.valid){
     column_counter := 0.U // when req.valid goes off and ended
-    when((column_counter + block_done * block_size.U === ocol * orow - 1.U) || column_counter === block_size.U - 1.U){
+    when(column_counter_last_row_block || column_counter === block_size.U - 1.U){
       im2col_fin := true.B
     }
     window_start_counter := 0.U
@@ -473,7 +485,8 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   when(sram_req_deq_valid_d && sram_resp_valid_deq_d){
     when(im2col_fin_pulse){
       valid_reg := false.B
-    }.elsewhen(column_counter_deq_d >= (ocol*orow - sram_read_signals_q.io.deq.bits.block_done * block_size.U) && valid_reg){ //if finished earlier
+    }.elsewhen(column_counter_last_row_block_deq && valid_reg){ //if finished earlier
+      //Todo: how to deal with big multiplication
       valid_reg := true.B
     }.otherwise {
       valid_reg := true.B

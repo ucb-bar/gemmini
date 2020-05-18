@@ -87,14 +87,16 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val ocol = RegInit(0.U(8.W))
   val orow = RegInit(0.U(8.W))
   val krow = RegInit(0.U(3.W))
-  val kcol = RegInit(0.U(3.W))
   val weight_stride = RegInit(0.U(3.W))
   val channel = RegInit(0.U(7.W))
+  val row_turn = RegInit(0.U(11.W))
+  val row_left = RegInit(0.U(4.W))
+  val kdim2 = RegInit(0.U(6.W))
 
   val icol = WireInit(0.U(9.W))
   val irow = WireInit(0.U(9.W))
 
-  icol := ((ocol - 1.U) * weight_stride + kcol)//.asSInt
+  icol := ((ocol - 1.U) * weight_stride + krow)//.asSInt
   irow := ((orow - 1.U) * weight_stride + krow)//.asSInt
 
   val im2col_turn = WireInit(0.U(9.W))
@@ -416,14 +418,14 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
 
     io.im2col.req.valid := read_a
     io.im2col.req.bits.addr := a_address_rs1
-    io.im2col.req.bits.fire_counter := a_fire_counter
     io.im2col.req.bits.icol := icol
     io.im2col.req.bits.irow := irow
-    io.im2col.req.bits.orow := orow
     io.im2col.req.bits.ocol := ocol
     io.im2col.req.bits.stride := weight_stride
-    io.im2col.req.bits.kcol := kcol
     io.im2col.req.bits.krow := krow
+    io.im2col.req.bits.kdim2 := kdim2
+    io.im2col.req.bits.row_turn := row_turn
+    io.im2col.req.bits.row_left := row_left
     io.im2col.req.bits.channel := channel
     io.im2col.req.bits.im2col_cmd := im2col_en
     io.im2col.req.bits.start_inputting := start_inputting_a
@@ -450,15 +452,16 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
         when(DoConfig && !matmul_in_progress && !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) { // see config command from ROB
           activation := rs1s(0)(4, 3)
           in_shift := rs2s(0)(31, 0) // TODO magic number
-          acc_shift := cmd.bits(0).cmd.rs1(xLen-1, 32) // TODO magic number
-          relu6_shift := cmd.bits(0).cmd.rs2(xLen-1, 32) // TODO magic number
+          acc_shift := cmd.bits(0).cmd.rs1(41, 32) // TODO magic number
+          relu6_shift := cmd.bits(0).cmd.rs2(41, 32) // TODO magic number
 
           ocol := cmd.bits(0).cmd.rs2(63, 56)
-          orow := cmd.bits(0).cmd.rs2(55, 48)
-          krow := cmd.bits(0).cmd.rs2(47, 45)
-          kcol := cmd.bits(0).cmd.rs2(44, 42)
+          kdim2 := cmd.bits(0).cmd.rs2(55, 50)
+          krow := cmd.bits(0).cmd.rs2(49, 47)
           channel := cmd.bits(0).cmd.rs2(31, 25)
           weight_stride := cmd.bits(0).cmd.rs2(24, 22)
+          row_left := cmd.bits(0).cmd.rs1(57, 54)
+          row_turn := cmd.bits(0).cmd.rs1(53, 42)
 
 
           if (dataflow == Dataflow.BOTH)
