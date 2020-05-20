@@ -167,9 +167,6 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   mesh.io.pe_control.shift := cntl.shift
   mesh.io.flush.bits := 0.U
 
-  //Seah: added for WS accumulator prop disenable
-  val prop = WireInit(false.B)
-  val prop_lock = RegInit(false.B)
 
   // Hazards
   val raw_hazard_pre = mesh.io.tags_in_progress.map { t =>
@@ -329,22 +326,6 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     }
   }
 
-  //Seah: for WS propagate unenable
-  when(current_dataflow =/= Dataflow.WS.id.U){
-    prop := in_prop
-  }.otherwise{
-    when(!start_inputting_d) {
-      when(cntl.perform_single_mul && mesh.io.a.valid) {
-        prop_lock := true.B
-        prop := false.B
-      }.elsewhen(!prop_lock) {
-        prop := in_prop
-      }
-    }.otherwise{ // reset propagate signal
-      prop_lock:= false.B
-      prop := in_prop
-    }
-  }
 
   //Seah: for OS counter address sync
   val counter_save = WireInit(b_fire_counter)
@@ -854,13 +835,6 @@ when(mesh.io.out.fire() && mesh.io.tag_out.rob_id.valid) {
   start_array_outputting :=  !is_garbage_addr
 }
 
-/*
-when(io.im2col.resp.bits.im2col_end_reg && turn_counter =/= 0.U){
-  turn_counter := turn_counter - 1.U
-}.elsewhen(performing_single_preload && turn_counter === 0.U ){//&& io.im2col.resp.bits.row_turn =/= row_turn){ //end of block: turn_counter stay at 0
-  turn_counter := im2col_turn - 1.U
-}
-*/
 
 when (!mesh_completed_rob_id_fire) {
   when(pending_completed_rob_ids(0).valid) {
