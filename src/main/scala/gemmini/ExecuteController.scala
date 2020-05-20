@@ -67,7 +67,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val DoPreloads = functs.map(_ === PRELOAD_CMD)
 
   val preload_cmd_place = Mux(DoPreloads(0), 0.U, 1.U)
-  val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
+  // val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
 
   val in_prop = functs(0) === COMPUTE_AND_FLIP_CMD
   val in_prop_flush = Reg(Bool())
@@ -79,6 +79,10 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val acc_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val relu6_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val activation = Reg(UInt(2.W))
+  val a_transpose = Reg(Bool())
+
+  val a_should_be_fed_into_tranposer = Mux(current_dataflow === Dataflow.OS.id.U, !a_transpose, a_transpose)
+  val a_address_place = Mux(preload_cmd_place === 0.U, 1.U, Mux(a_should_be_fed_into_tranposer, 2.U, 0.U))
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = rs1s(a_address_place).asTypeOf(local_addr_t)
@@ -131,6 +135,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   mesh.io.pe_control.propagate := Mux(control_state === flush, in_prop_flush, cntl.prop)
   mesh.io.pe_control.dataflow := cntl.dataflow
   mesh.io.pe_control.shift := cntl.shift
+  mesh.io.a_transpose := a_transpose
   mesh.io.flush.bits := 0.U
 
   // Hazards
@@ -359,9 +364,11 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
           acc_shift := rs1s(0)(xLen-1, 32) // TODO magic number
           relu6_shift := rs2s(0)(xLen-1, 32) // TODO magic number
           a_addr_stride := rs1s(0)(31, 16) // TODO magic number
+          a_transpose := rs1s(0)(8)
 
-          if (dataflow == Dataflow.BOTH)
+          if (dataflow == Dataflow.BOTH) {
             current_dataflow := rs1s(0)(2)
+          }
 
           io.completed.valid := true.B
           io.completed.bits := cmd.bits(0).rob_id
@@ -374,7 +381,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
           perform_single_preload := true.B
           performing_single_preload := true.B
 
-          start_inputting_a := current_dataflow === Dataflow.OS.id.U
+          // start_inputting_a := current_dataflow === Dataflow.OS.id.U
+          start_inputting_a := a_should_be_fed_into_tranposer
           start_inputting_d := true.B
 
           control_state := compute
@@ -397,7 +405,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
           perform_single_mul := true.B
           performing_single_mul := true.B
 
-          start_inputting_a := current_dataflow === Dataflow.WS.id.U
+          // start_inputting_a := current_dataflow === Dataflow.WS.id.U
+          start_inputting_a := !a_should_be_fed_into_tranposer
           start_inputting_b := true.B
 
           control_state := compute
@@ -415,7 +424,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     is (compute) {
       // Only preloading
       when(perform_single_preload) {
-        start_inputting_a := current_dataflow === Dataflow.OS.id.U
+        // start_inputting_a := current_dataflow === Dataflow.OS.id.U
+        start_inputting_a := a_should_be_fed_into_tranposer
         start_inputting_d := true.B
 
         when (about_to_fire_all_rows) {
@@ -457,7 +467,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
 
       // Only compute
       .elsewhen(perform_single_mul) {
-        start_inputting_a := current_dataflow === Dataflow.WS.id.U
+        // start_inputting_a := current_dataflow === Dataflow.WS.id.U
+        start_inputting_a := !a_should_be_fed_into_tranposer
         start_inputting_b := true.B
 
         when (about_to_fire_all_rows) {
@@ -617,12 +628,14 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   }
 
   when (cntl_valid && cntl.perform_single_preload) {
-    mesh.io.a.bits := Mux(cntl.dataflow === Dataflow.WS.id.U, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+    // mesh.io.a.bits := Mux(cntl.dataflow === Dataflow.WS.id.U, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+    mesh.io.a.bits := Mux(a_should_be_fed_into_tranposer, dataA.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := 0.U.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
   }
 
   when (cntl_valid && cntl.perform_single_mul) {
-    mesh.io.a.bits := Mux(cntl.dataflow === Dataflow.OS.id.U, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+    // mesh.io.a.bits := Mux(cntl.dataflow === Dataflow.OS.id.U, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+    mesh.io.a.bits := Mux(a_should_be_fed_into_tranposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.tag_in.bits.addr.make_this_garbage()
   }
 
