@@ -28,6 +28,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     val completed = Valid(UInt(log2Up(rob_entries).W))
 
     val busy = Output(Bool())
+
+    val solitary_preload = Output(Bool()) // TODO very hacky. for ROB, to prevent infinite fence stalls. remove later
   })
 
   val block_size = meshRows*tileRows
@@ -50,6 +52,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   cmd.pop := 0.U
 
   io.busy := false.B // cmd.valid(0)
+
+  io.solitary_preload := cmd.valid(0) && cmd.bits(0).cmd.inst.funct === PRELOAD_CMD && !cmd.valid(1)
 
   // STATE defines
   val waiting_for_cmd :: compute :: flush :: flushing :: Nil = Enum(4)

@@ -34,6 +34,8 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     }
 
     val busy = Output(Bool())
+
+    val solitary_preload = Input(Bool()) // TODO very hacky. from ExecuteController, to prevent infinite fence stalls. remove later
   })
 
   val ldq :: stq :: exq :: Nil = Enum(3)
@@ -70,7 +72,10 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   val empty = !entries.map(_.valid).reduce(_ || _)
   val full = entries.map(_.valid).reduce(_ && _)
 
-  io.busy := !empty
+  // io.busy := !empty
+  val utilization = PopCount(entries.map(_.valid))
+  val solitary_preload = utilization === 1.U && entries.map(e => e.valid && e.bits.cmd.inst.funct === PRELOAD_CMD).reduce(_ || _)
+  io.busy := !empty && !(solitary_preload && io.solitary_preload)
 
   // Read in commands to the buffer
   io.alloc.ready := !full
@@ -202,7 +207,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     assert(entries(io.completed.bits).valid)
   }
 
-  val utilization = PopCount(entries.map(e => e.valid))
+  // val utilization = PopCount(entries.map(e => e.valid))
   val utilization_ld_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === ldq))
   val utilization_st_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === stq))
   val utilization_ex_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === exq))
