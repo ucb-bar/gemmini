@@ -7,6 +7,7 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
+import midas.targetutils.FpgaDebug
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
@@ -209,7 +210,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
     }
   }
 
-  val pool_cycles_counter = RegInit(0.U(32.W))
+  val pool_cycles_counter = RegInit(0.U(16.W))
   when (pooling_is_enabled) {
     pool_cycles_counter := pool_cycles_counter + 1.U
   }.otherwise {
@@ -217,4 +218,13 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   }
   // assert(pool_cycles_counter <= 1000.U)
   dontTouch(pool_cycles_counter)
+
+  FpgaDebug(pool_cycles_counter)
+  FpgaDebug(control_state)
+  FpgaDebug(pooling_is_enabled)
+  FpgaDebug(io.dma.req.valid)
+  FpgaDebug(io.dma.req.ready)
+  FpgaDebug(io.dma.req.bits.laddr.data)
+  FpgaDebug(io.dma.req.bits.laddr.is_acc_addr)
+  FpgaDebug(io.dma.req.bits.laddr.accumulate)
 }

@@ -6,6 +6,8 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
+import midas.targetutils.FpgaDebug
+
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U])
                                   (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
@@ -712,4 +714,12 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     // pending_completed_rob_id.valid := false.B
     pending_completed_rob_ids.foreach(_.valid := false.B)
   }
+
+  FpgaDebug(control_state)
+  FpgaDebug(perform_mul_pre)
+  FpgaDebug(perform_single_mul)
+  FpgaDebug(perform_single_preload)
+  FpgaDebug(a_fire_counter)
+  FpgaDebug(b_fire_counter)
+  FpgaDebug(d_fire_counter)
 }
