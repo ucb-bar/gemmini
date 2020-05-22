@@ -226,7 +226,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   dontTouch(pop_count_packed_deps)
   dontTouch(min_pop_count)
 
-  val cycles_since_issue = RegInit(0.U(32.W))
+  val cycles_since_issue = RegInit(0.U(16.W))
 
   when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire() || !io.busy) {
     cycles_since_issue := 0.U
