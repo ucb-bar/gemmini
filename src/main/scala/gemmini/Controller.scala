@@ -218,6 +218,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data]
   io.busy := raw_cmd.valid || unrolled_cmd.valid || rob.io.busy || spad.module.io.busy
   io.interrupt := tlb.io.exp.interrupt
 
+  rob.io.solitary_preload := ex_controller.io.solitary_preload
+
 
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here

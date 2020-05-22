@@ -7,6 +7,8 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
+import midas.targetutils.FpgaDebug
+
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
@@ -61,7 +63,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   val orow_is_negative = porow_counter * pool_stride +& wrow_counter < pool_upad // TODO get rid of this multiplication
 
   val ocol = pocol_counter * pool_stride +& wcol_counter - pool_lpad // TODO get rid of this multiplication
-  val ocol_is_negative = pocol_counter * pool_stride +& wcol_counter < pool_upad // TODO get rid of this multiplication
+  val ocol_is_negative = pocol_counter * pool_stride +& wcol_counter < pool_lpad
 
   val pool_total_rows = pool_porows * pool_pocols * pool_size * pool_size // TODO get this value from software
 
@@ -219,12 +221,19 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
     }
   }
 
-  val pool_cycles_counter = RegInit(0.U(32.W))
+  val pool_cycles_counter = RegInit(0.U(16.W))
   when (pooling_is_enabled) {
     pool_cycles_counter := pool_cycles_counter + 1.U
   }.otherwise {
     pool_cycles_counter := 0.U
   }
-  // assert(pool_cycles_counter <= 1000.U)
-  dontTouch(pool_cycles_counter)
+
+  FpgaDebug(pool_cycles_counter)
+  FpgaDebug(control_state)
+  FpgaDebug(pooling_is_enabled)
+  FpgaDebug(io.dma.req.valid)
+  FpgaDebug(io.dma.req.ready)
+  FpgaDebug(io.dma.req.bits.laddr.data)
+  FpgaDebug(io.dma.req.bits.laddr.is_acc_addr)
+  FpgaDebug(io.dma.req.bits.laddr.accumulate)
 }
