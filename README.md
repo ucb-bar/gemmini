@@ -52,6 +52,8 @@ The ``software`` directory of the generator includes the aforementioned library 
 
 The Gemmini generator generates a C header file based on the generator parameters. This header files gets compiled together with the matrix multiplication library to tune library performance. The generated header file can be found under ``software/gemmini-rocc-tests/include/gemmini_params.h``
 
+Gemmini can also be used to run ONNX-specified neural-networks through a port of Microsoft's ONNX-Runtime framework. The port is included as the [onnxruntime-riscv](https://github.com/pranav-prakash/onnxruntime-riscv) repository submoduled in the `software` directory. Documentation is available [here](https://github.com/pranav-prakash/onnxruntime-riscv/blob/systolic/systolic_runner/docs).
+
 ## Build and Run Gemmini Tests
 
 To build the Gemmini tests:
