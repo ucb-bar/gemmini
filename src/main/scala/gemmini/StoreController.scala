@@ -120,7 +120,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
     control_state === waiting_for_dma_req_ready ||
     (control_state === sending_rows && row_counter =/= 0.U) || // TODO Do we really have to check whether the counters should be 0 here?
     (control_state === pooling && (wcol_counter =/= 0.U || wrow_counter =/= 0.U || pocol_counter =/= 0.U || porow_counter =/= 0.U))
-  io.dma.req.bits.vaddr := Mux(pooling_is_enabled, pool_vaddr, vaddr + row_counter * stride)
+  io.dma.req.bits.vaddr := Mux(pooling_is_enabled || mvout_1d_enabled, pool_vaddr, vaddr + row_counter * stride)
   io.dma.req.bits.laddr := Mux(pooling_is_enabled, pool_row_addr, localaddr_plus_row_counter)
   io.dma.req.bits.len := cols
   io.dma.req.bits.status := mstatus
@@ -150,6 +150,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
     when (!pooling_is_enabled) {
       //where does rows come from?
       //row_counter := wrappingAdd(row_counter, 1.U, rows)
+      when(mvout_1d_enabled){ //for 1d mvout
+        pocol_counter := wrappingAdd(pocol_counter, 1.U, pool_ocols)
+        porow_counter := wrappingAdd(porow_counter, 1.U, pool_orows, pocol_counter === pool_pocols - 1.U)
+      }
       row_counter := Mux(mvout_1d_enabled, wrappingAdd(row_counter, 1.U, mvout_1d_rows), wrappingAdd(row_counter, 1.U, rows))
     }.otherwise {
       wcol_counter := wrappingAdd(wcol_counter, 1.U, pool_size)
@@ -179,6 +183,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
           }.elsewhen(config_pool_size =/= 0.U){
             pool_orows := config_orows
             pool_ocols := config_ocols
+            pool_out_dim := config_pool_out_dim
           }
 
           cmd.ready := true.B
