@@ -7,13 +7,11 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
-import midas.targetutils.FpgaDebug
-
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
 class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayConfig[T, U], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
-                     (implicit p: Parameters) extends Module {
+                                                        (implicit p: Parameters) extends Module {
   import config._
 
   val io = IO(new Bundle {
@@ -63,7 +61,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   val orow_is_negative = porow_counter * pool_stride +& wrow_counter < pool_upad // TODO get rid of this multiplication
 
   val ocol = pocol_counter * pool_stride +& wcol_counter - pool_lpad // TODO get rid of this multiplication
-  val ocol_is_negative = pocol_counter * pool_stride +& wcol_counter < pool_lpad
+  val ocol_is_negative = pocol_counter * pool_stride +& wcol_counter < pool_upad // TODO get rid of this multiplication
 
   val pool_total_rows = pool_porows * pool_pocols * pool_size * pool_size // TODO get this value from software
 
@@ -94,6 +92,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   }
 
   val pool_vaddr = vaddr + (porow_counter * pool_out_dim + pocol_counter) * stride // TODO get rid of these multiplications
+  //also use for 1D mvout
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoStore = !DoConfig // TODO change this if more commands are added
@@ -112,7 +111,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   val cmd_tracker_max_rows = (block_rows max
     (((1 << pool_orows.getWidth)-1) * ((1 << pool_ocols.getWidth)-1) + 2*((1 << pool_lpad.getWidth)-1) + 2*((1 << pool_upad.getWidth)-1))) min
     ((config.sp_banks * config.sp_bank_entries) max
-    (config.acc_banks * config.acc_bank_entries))
+      (config.acc_banks * config.acc_bank_entries))
   val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, cmd_tracker_max_rows, deps_t))
 
   // DMA IO wiring
@@ -121,7 +120,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
     (control_state === sending_rows && row_counter =/= 0.U) || // TODO Do we really have to check whether the counters should be 0 here?
     (control_state === pooling && (wcol_counter =/= 0.U || wrow_counter =/= 0.U || pocol_counter =/= 0.U || porow_counter =/= 0.U))
   io.dma.req.bits.vaddr := Mux(pooling_is_enabled || mvout_1d_enabled, pool_vaddr, vaddr + row_counter * stride)
-  io.dma.req.bits.laddr := Mux(pooling_is_enabled, pool_row_addr, localaddr_plus_row_counter)
+  io.dma.req.bits.laddr := Mux(pooling_is_enabled, pool_row_addr, localaddr_plus_row_counter) //Todo: laddr for 1D?
   io.dma.req.bits.len := cols
   io.dma.req.bits.status := mstatus
   io.dma.req.bits.pool_en := pooling_is_enabled && (wrow_counter =/= 0.U || wcol_counter =/= 0.U)
@@ -150,9 +149,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
     when (!pooling_is_enabled) {
       //where does rows come from?
       //row_counter := wrappingAdd(row_counter, 1.U, rows)
-      when(mvout_1d_enabled){ //for 1d mvout
+      when(mvout_1d_enabled){
         pocol_counter := wrappingAdd(pocol_counter, 1.U, pool_ocols)
-        porow_counter := wrappingAdd(porow_counter, 1.U, pool_orows, pocol_counter === pool_pocols - 1.U)
+        porow_counter := wrappingAdd(porow_counter, 1.U, pool_orows, pocol_counter === pool_ocols - 1.U)
       }
       row_counter := Mux(mvout_1d_enabled, wrappingAdd(row_counter, 1.U, mvout_1d_rows), wrappingAdd(row_counter, 1.U, rows))
     }.otherwise {
@@ -189,10 +188,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
           cmd.ready := true.B
         }
 
-        .elsewhen(DoStore && cmd_tracker.io.alloc.fire()) {
-          val next_state = Mux(pooling_is_enabled, pooling, sending_rows)
-          control_state := Mux(io.dma.req.fire(), next_state, waiting_for_dma_req_ready)
-        }
+          .elsewhen(DoStore && cmd_tracker.io.alloc.fire()) {
+            val next_state = Mux(pooling_is_enabled, pooling, sending_rows)
+            control_state := Mux(io.dma.req.fire(), next_state, waiting_for_dma_req_ready)
+          }
       }
     }
 
@@ -226,19 +225,12 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
     }
   }
 
-  val pool_cycles_counter = RegInit(0.U(16.W))
+  val pool_cycles_counter = RegInit(0.U(32.W))
   when (pooling_is_enabled) {
     pool_cycles_counter := pool_cycles_counter + 1.U
   }.otherwise {
     pool_cycles_counter := 0.U
   }
-
-  FpgaDebug(pool_cycles_counter)
-  FpgaDebug(control_state)
-  FpgaDebug(pooling_is_enabled)
-  FpgaDebug(io.dma.req.valid)
-  FpgaDebug(io.dma.req.ready)
-  FpgaDebug(io.dma.req.bits.laddr.data)
-  FpgaDebug(io.dma.req.bits.laddr.is_acc_addr)
-  FpgaDebug(io.dma.req.bits.laddr.accumulate)
+  // assert(pool_cycles_counter <= 1000.U)
+  dontTouch(pool_cycles_counter)
 }
