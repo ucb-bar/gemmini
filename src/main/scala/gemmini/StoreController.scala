@@ -61,7 +61,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   val orow_is_negative = porow_counter * pool_stride +& wrow_counter < pool_upad // TODO get rid of this multiplication
 
   val ocol = pocol_counter * pool_stride +& wcol_counter - pool_lpad // TODO get rid of this multiplication
-  val ocol_is_negative = pocol_counter * pool_stride +& wcol_counter < pool_upad // TODO get rid of this multiplication
+  val ocol_is_negative = pocol_counter * pool_stride +& wcol_counter < pool_lpad // TODO get rid of this multiplication
 
   val pool_total_rows = pool_porows * pool_pocols * pool_size * pool_size // TODO get this value from software
 
