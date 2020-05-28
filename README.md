@@ -33,11 +33,25 @@ Major parameters of interest include:
 
 * Scratchpad and accumulator memory parameters (``sp_banks``, ``sp_capacity``, ``acc_capacity``): Determine the properties of the Gemmini scratchpad memory: overall capacity of the scratchpad or accumulators (in KiB), and the number of banks the scratchpad is divided into.
 
-* Type parameters (``inputType``, ``outputType``, ``accType``): Determine the data-types flowing through different parts of a Gemmini accelerator. For example, ``inputType`` may be an 8-bit fixed-point number, while ``accType``, which determines the type of partial accumulations in a matrix multiplication, may be a 32-bit integer. ``outputType`` only determines the type of the data passed between two processing elements (PEs); for example, an 8-bit multiplication may produce a 16-bit result which must be shared between PEs in a systolic array.
+* Type parameters (``inputType``, ``outputType``, ``accType``):
+Determine the data-types flowing through different parts of a Gemmini accelerator.
+For example, ``inputType`` may be an 8-bit fixed-point number, while ``accType``, which determines the type of partial accumulations in a matrix multiplication, may be a 32-bit integer.
+``outputType`` only determines the type of the data passed between two processing elements (PEs); for example, an 8-bit multiplication may produce a 16-bit result which must be shared between PEs in a systolic array.
+If your datatype is a floating-point number, then you might also want to change the ``pe_latency`` parameter, which specifies how many shift registers to add inside the PEs.
+This might be necessary if your datatype cannot complete a multiply-accumulate operation within a single cycle.
 
 * Access-execute queue parameters (``ld_queue_length``, ``st_queue_length``, ``ex_queue_length``, ``rob_entries``): To implement access-execute decoupling, a Gemmini accelerator has a load instruction queue, a store instruction queue, and an execute instruction queue. The relative sizes of these queue determine the level of access-execute decoupling. Gemmini also implements a reorder buffer (ROB) - the number of entries in the ROB determines possible dependency management limitations.
 
 * DMA parameters (``dma_maxbytes``, ``dma_buswidth``, ``mem_pipeline``): Gemmini implements a DMA to move data from main memory to the Gemmini scratchpad, and from the Gemmini accumulators to main memory. The size of these DMA transactions is determined by the DMA parameters. These DMA parameters are tightly coupled with Rocket Chip SoC system parameters: in particular ``dma_buswidth`` is associated with the ``SystemBusKey`` ``beatBytes`` parameter, and ``dma_maxbytes`` is associated with ``cacheblockbytes`` Rocket Chip parameters.
+
+There are also optional features, which can be either enabled or left out of Gemmini at elaboration-time.
+For example:
+
+* Scaling during "move-in" operations (``mvin_scale_args``, ``mvin_scale_acc_args``):
+When data is being moved in from DRAM or main memory into Gemmini's local scratchpad memory, it can optionally be multiplied by a scaling factor.
+These parameters specify what the datatype of the scaling factor is, and how the scaling is actually done.
+If these are set to ``None``, then this optional feature will be disabled at elaboration time.
+If both the scratchpad inputs are accumulator inputs are to be scaled in the same say, then the ``mvin_scale_shared`` parameter can be set to ``true`` so that the multipliers and functional units are shared.
 
 Software
 ==========
@@ -114,13 +128,19 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 ## Configuration
 ### `config_ex` configures the Execute pipeline
 **Format:** `config_ex rs1 rs2`
-- `rs1` = `rs1[0:1]` must be `00`. `rs1[2]` will determine if output (0) or weight (1) stationary. `rs1[4:3]` will determine the activation function: either relu (1), relu6 (2), or no activation function (0).
-- `rs[63:32]` is the number of bits by which the accumulated result of a matmul is right-shifted when leaving the accumulator
+- `rs1[0:1]` must be `00`
+- `rs1[2]` determines if output (0) or weight (1) stationary
+- `rs1[4:3]` = the activation function: either relu (1), relu6 (2), or no activation function (0).
+- `rs1[31:16]` = the stride (in scratchpad addresses) by which the rows of A are fed into the systolic array.
+"A" in this context refers to the left-hand matrix A in the matmul represented by A * B = C.
+If this stride is 1, then we feed consecutive rows in the scratchpad, starting from the starting address of A, into the systolic array as the A matrix.
+If the stride is 2, then we feed every other row into the systolic array instead.
+- `rs1[63:32]` is the number of bits by which the accumulated result of a matmul is right-shifted when leaving the accumulator
 - `rs2[31:0]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the systolic array
 - `rs2[63:32]` = the number of bits by which 6 should be left-shifted before applying relu6
 - `funct` = 0
 
-**Action:** mode <= rs1(2); shift <= rs2
+**Action:** mode <= rs1(2); shift <= rs2; A_stride <= rs1[31:16]
 
 ### `config_mvin` configures the Load pipeline
 **Format:** `config_mvin rs1 rs2`
@@ -129,15 +149,30 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 - `rs2` = the stride in bytes
 - `funct` = 0
 
-**Action:** stride <= rs2
+**Action:** stride <= rs2; scale <= rs1[63:32]
 
 ### `config_mvout` configures the Store pipeline
 **Format:** `config_mvout rs1 rs2`
-- `rs1` = `rs1[0:1]` must be `10`
+- `rs1[0:1]` must be `10`
 - `rs2` = the stride in bytes
 - `funct` = 0
 
-**Action:** stride <= rs2
+During `mvout` operations, Gemmini can also perform max-pooling.
+**This is an experimental feature, and is subject to change.**
+This feature assumes that data is stored in the scratchpad or accumulator in NHWC format.
+The parameters controlling this feature are:
+
+- `rs1[5:4]` = max-pooling stride. If this is 0, then max-pooling is deactivated.
+- `rs1[7:6]` = max-pooling window size
+- `rs1[9:8]` = upper zero-padding
+- `rs1[11:10]` = left zero-padding
+- `rs1[31:24]` = output dimension of image after pooling
+- `rs1[39:32]` = number of pooled rows to output
+- `rs1[47:40]` = number of pooled columns to output
+- `rs1[55:48]` = number of unpooled rows to pool
+- `rs1[63:56]` = number of unpooled columns to pool
+
+**Action:** stride <= rs2; max-pooling parameters <= rs1
 
 ### `flush` flushes the TLB
 **Format:** `flush rs1`
