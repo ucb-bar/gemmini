@@ -37,7 +37,11 @@ Major parameters of interest include:
 Determine the data-types flowing through different parts of a Gemmini accelerator.
 For example, ``inputType`` may be an 8-bit fixed-point number, while ``accType``, which determines the type of partial accumulations in a matrix multiplication, may be a 32-bit integer.
 ``outputType`` only determines the type of the data passed between two processing elements (PEs); for example, an 8-bit multiplication may produce a 16-bit result which must be shared between PEs in a systolic array.
-If your datatype is a floating-point number, then you might also want to change the ``pe_latency`` parameter, which specifies how many shift registers to add inside the PEs.
+    - Examples of possible datatypes are:
+        - `SInt(8.W)` for a signed 8-bit integer
+        - `UInt(32.W)` for an unsigned 32-bit integer
+        - `Float(8, 24)` for a single-precision IEEE floating point number`
+    - If your datatype is a floating-point number, then you might also want to change the ``pe_latency`` parameter, which specifies how many shift registers to add inside the PEs.
 This might be necessary if your datatype cannot complete a multiply-accumulate operation within a single cycle.
 
 * Access-execute queue parameters (``ld_queue_length``, ``st_queue_length``, ``ex_queue_length``, ``rob_entries``): To implement access-execute decoupling, a Gemmini accelerator has a load instruction queue, a store instruction queue, and an execute instruction queue. The relative sizes of these queue determine the level of access-execute decoupling. Gemmini also implements a reorder buffer (ROB) - the number of entries in the ROB determines possible dependency management limitations.
