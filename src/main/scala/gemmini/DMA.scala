@@ -12,8 +12,6 @@ import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
 import Util._
 
-import midas.targetutils.FpgaDebug
-
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W)
@@ -479,15 +477,5 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(io.req.bits.store_en, Mux(vpn_already_translated, s_writing_new_block, s_translate_req), s_idle)
     }
-
-    FpgaDebug(state)
-    FpgaDebug(io.req.bits.store_en)
-    FpgaDebug(io.req.bits.pool_en)
-    FpgaDebug(req)
-    FpgaDebug(tl.a.valid)
-    FpgaDebug(tl.a.ready)
-    FpgaDebug(tl.a.bits.size)
-    FpgaDebug(beatsSent)
-    FpgaDebug(beatsLeft)
   }
 }

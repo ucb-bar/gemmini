@@ -9,8 +9,6 @@ import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar}
 import Util._
 
-import midas.targetutils.FpgaDebug
-
 class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
                               (implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
@@ -274,11 +272,6 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
     reader.module.io.flush := io.flush
 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid
-
-    FpgaDebug(writer.module.io.req.valid)
-    FpgaDebug(writer.module.io.req.ready)
-    FpgaDebug(reader.module.io.req.valid)
-    FpgaDebug(reader.module.io.req.ready)
 
     {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to)) }
