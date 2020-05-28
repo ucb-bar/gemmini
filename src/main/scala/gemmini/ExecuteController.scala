@@ -6,6 +6,8 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
+import midas.targetutils.FpgaDebug
+
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U])
                                   (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
@@ -28,6 +30,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     val completed = Valid(UInt(log2Up(rob_entries).W))
 
     val busy = Output(Bool())
+
+    val solitary_preload = Output(Bool()) // TODO very hacky. for ROB, to prevent infinite fence stalls. remove later
   })
 
   val block_size = meshRows*tileRows
@@ -50,6 +54,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   cmd.pop := 0.U
 
   io.busy := false.B // cmd.valid(0)
+
+  io.solitary_preload := cmd.valid(0) && cmd.bits(0).cmd.inst.funct === PRELOAD_CMD && !cmd.valid(1)
 
   // STATE defines
   val waiting_for_cmd :: compute :: flush :: flushing :: Nil = Enum(4)
@@ -154,13 +160,31 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_id.valid).reduce(_ || _)
 
   // SRAM scratchpad
-  val dataAbank = a_address_rs1.sp_bank()
-  val dataBbank = b_address_rs2.sp_bank()
-  val dataDbank = d_address_rs1.sp_bank()
+  // Fire counters which resolve same-bank accesses
+  val a_fire_counter = Reg(UInt(log2Up(block_size).W))
+  val b_fire_counter = Reg(UInt(log2Up(block_size).W))
+  val d_fire_counter = Reg(UInt(log2Up(block_size).W))
 
-  val dataABankAcc = a_address_rs1.acc_bank()
-  val dataBBankAcc = b_address_rs2.acc_bank()
-  val dataDBankAcc = d_address_rs1.acc_bank()
+  // These "*_fire_started" variables are only needed for 2x2 systolic arrays
+  val a_fire_started = RegInit(false.B)
+  val d_fire_started = RegInit(false.B)
+  val b_fire_started = RegInit(false.B)
+
+  // "A" stride variables
+  val a_addr_offset = Reg(UInt((16 + log2Up(block_size)).W))
+  val a_addr_stride = Reg(UInt(16.W))
+
+  val a_address = a_address_rs1 + a_addr_offset
+  val b_address = b_address_rs2 + b_fire_counter
+  val d_address = d_address_rs1 + (block_size.U - 1.U - d_fire_counter)
+
+  val dataAbank = a_address.sp_bank()
+  val dataBbank = b_address.sp_bank()
+  val dataDbank = d_address.sp_bank()
+
+  val dataABankAcc = a_address.acc_bank()
+  val dataBBankAcc = b_address.acc_bank()
+  val dataDBankAcc = d_address.acc_bank()
 
   val a_read_from_acc = a_address_rs1.is_acc_addr
   val b_read_from_acc = b_address_rs2.is_acc_addr
@@ -179,16 +203,6 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val performing_single_preload = WireInit(perform_single_preload && control_state === compute)
   val performing_single_mul = WireInit(perform_single_mul && control_state === compute)
   val performing_mul_pre = WireInit(perform_mul_pre && control_state === compute)
-
-  // Fire counters which resolve same-bank accesses
-  val a_fire_counter = Reg(UInt(log2Up(block_size).W))
-  val b_fire_counter = Reg(UInt(log2Up(block_size).W))
-  val d_fire_counter = Reg(UInt(log2Up(block_size).W))
-
-  // These "*_fire_started" variables are only needed for 2x2 systolic arrays
-  val a_fire_started = RegInit(false.B)
-  val d_fire_started = RegInit(false.B)
-  val b_fire_started = RegInit(false.B)
 
   // These variables determine whether or not the row that is currently being read should be completely padded with 0
   val a_row_is_not_all_zeros = a_fire_counter < a_rows
@@ -213,9 +227,9 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   case class Operand(addr: LocalAddr, start_inputting: Bool, counter: UInt, started: Bool, priority: Int) {
     val done = counter === 0.U && started
   }
-  val a_operand = Operand(a_address_rs1, start_inputting_a, a_fire_counter, a_fire_started, 0)
-  val b_operand = Operand(b_address_rs2, start_inputting_b, b_fire_counter, b_fire_started, 1)
-  val d_operand = Operand(d_address_rs1, start_inputting_d, d_fire_counter, d_fire_started, 2)
+  val a_operand = Operand(a_address, start_inputting_a, a_fire_counter, a_fire_started, 0)
+  val b_operand = Operand(b_address, start_inputting_b, b_fire_counter, b_fire_started, 1)
+  val d_operand = Operand(d_address, start_inputting_d, d_fire_counter, d_fire_started, 2)
   val operands = Seq(a_operand, b_operand, d_operand)
 
   val Seq(a_valid, b_valid, d_valid) = operands.map { case Operand(addr, start_inputting, counter, started, priority) =>
@@ -251,8 +265,10 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
 
   when (!firing) {
     a_fire_counter := 0.U
+    a_addr_offset := 0.U
   }.elsewhen (firing && a_fire && cntl_ready) {
     a_fire_counter := wrappingAdd(a_fire_counter, 1.U, block_size)
+    a_addr_offset := Mux(a_fire_counter === (block_size-1).U, 0.U, a_addr_offset + a_addr_stride)
     a_fire_started := true.B
   }
 
@@ -300,9 +316,9 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
 
     io.srams.read(i).req.valid := read_a || read_b || read_d
     io.srams.read(i).req.bits.fromDMA := false.B
-    io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
-      Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
-        read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter)))
+    io.srams.read(i).req.bits.addr := MuxCase(a_address.sp_row(),
+      Seq(read_b -> b_address.sp_row(),
+        read_d -> d_address.sp_row()))
 
     io.srams.read(i).resp.ready := true.B
   }
@@ -325,9 +341,9 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     io.acc.read(i).req.bits.act := activation
     io.acc.read(i).req.bits.fromDMA := false.B
 
-    io.acc.read(i).req.bits.addr := MuxCase(a_address_rs1.acc_row() + a_fire_counter,
-      Seq(read_b_from_acc -> (b_address_rs2.acc_row() + b_fire_counter),
-        read_d_from_acc -> (d_address_rs1.acc_row() + block_size.U - 1.U - d_fire_counter)))
+    io.acc.read(i).req.bits.addr := MuxCase(a_address.acc_row(),
+      Seq(read_b_from_acc -> b_address.acc_row(),
+        read_d_from_acc -> d_address.acc_row()))
 
     io.acc.read(i).resp.ready := true.B
   }
@@ -344,10 +360,11 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
       {
         // when(DoConfig && !matmul_in_progress && !pending_completed_rob_id.valid) {
         when(DoConfig && !matmul_in_progress && !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) {
-          activation := rs1s(0)(4, 3)
+          activation := rs1s(0)(4, 3) // TODO magic number
           in_shift := rs2s(0)(31, 0) // TODO magic number
-          acc_shift := cmd.bits(0).cmd.rs1(xLen-1, 32) // TODO magic number
-          relu6_shift := cmd.bits(0).cmd.rs2(xLen-1, 32) // TODO magic number
+          acc_shift := rs1s(0)(xLen-1, 32) // TODO magic number
+          relu6_shift := rs2s(0)(xLen-1, 32) // TODO magic number
+          a_addr_stride := rs1s(0)(31, 16) // TODO magic number
 
           if (dataflow == Dataflow.BOTH)
             current_dataflow := rs1s(0)(2)
@@ -697,4 +714,12 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     // pending_completed_rob_id.valid := false.B
     pending_completed_rob_ids.foreach(_.valid := false.B)
   }
+
+  FpgaDebug(control_state)
+  FpgaDebug(perform_mul_pre)
+  FpgaDebug(perform_single_mul)
+  FpgaDebug(perform_single_preload)
+  FpgaDebug(a_fire_counter)
+  FpgaDebug(b_fire_counter)
+  FpgaDebug(d_fire_counter)
 }

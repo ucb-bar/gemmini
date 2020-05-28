@@ -8,6 +8,8 @@ import freechips.rocketchip.tile.RoCCCommand
 import GemminiISA._
 import Util._
 
+import midas.targetutils.FpgaDebug
+
 // TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {
   val valid = Output(Bool())
@@ -20,6 +22,7 @@ class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {
   override def cloneType: this.type = new ROBIssue(cmd_t, nEntries).asInstanceOf[this.type]
 }
 
+// TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
 class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows: Int, block_cols: Int) extends Module {
   val io = IO(new Bundle {
     val alloc = Flipped(Decoupled(cmd_t.cloneType))
@@ -33,6 +36,8 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     }
 
     val busy = Output(Bool())
+
+    val solitary_preload = Input(Bool()) // TODO very hacky. from ExecuteController, to prevent infinite fence stalls. remove later
   })
 
   val ldq :: stq :: exq :: Nil = Enum(3)
@@ -69,7 +74,10 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   val empty = !entries.map(_.valid).reduce(_ || _)
   val full = entries.map(_.valid).reduce(_ && _)
 
-  io.busy := entries.map(e => e.valid && e.bits.q =/= exq).reduce(_ || _)
+  // io.busy := !empty
+  val utilization = PopCount(entries.map(_.valid))
+  val solitary_preload = utilization === 1.U && entries.map(e => e.valid && e.bits.cmd.inst.funct === PRELOAD_CMD).reduce(_ || _)
+  io.busy := !empty && !(solitary_preload && io.solitary_preload)
 
   // Read in commands to the buffer
   io.alloc.ready := !full
@@ -201,7 +209,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     assert(entries(io.completed.bits).valid)
   }
 
-  val utilization = PopCount(entries.map(e => e.valid))
+  // val utilization = PopCount(entries.map(e => e.valid))
   val utilization_ld_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === ldq))
   val utilization_st_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === stq))
   val utilization_ex_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === exq))
@@ -218,7 +226,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   dontTouch(pop_count_packed_deps)
   dontTouch(min_pop_count)
 
-  val cycles_since_issue = RegInit(0.U(32.W))
+  val cycles_since_issue = RegInit(0.U(16.W))
 
   when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire() || !io.busy) {
     cycles_since_issue := 0.U
@@ -226,6 +234,19 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < 10000.U, "pipeline stall")
+
+  FpgaDebug(cycles_since_issue)
+  FpgaDebug(utilization)
+  FpgaDebug(empty)
+  FpgaDebug(io.solitary_preload)
+  FpgaDebug(solitary_preload)
+  for ((e,d) <- entries zip packed_deps) {
+    FpgaDebug(e.bits.cmd.inst.funct)
+    FpgaDebug(e.valid)
+    FpgaDebug(e.bits.q)
+    FpgaDebug(e.bits.issued)
+    FpgaDebug(d)
+  }
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {

@@ -9,6 +9,7 @@ import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar}
 import Util._
 
+import midas.targetutils.FpgaDebug
 
 class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
                               (implicit p: Parameters) extends CoreBundle {
@@ -36,6 +37,10 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr)
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
 
   val status = new MStatus
+
+  // Pooling variables
+  val pool_en = Bool()
+  val store_en = Bool()
 
   override def cloneType: this.type = new ScratchpadMemWriteRequest(local_addr_t).asInstanceOf[this.type]
 }
@@ -147,7 +152,7 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
 
   val reader = LazyModule(new StreamReader(config, max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows))
-  val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes, spad_w, aligned_to))
+  val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes, spad_w, aligned_to, inputType))
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node
@@ -200,13 +205,16 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
     val writeData = Wire(Valid(UInt((spad_w max acc_w).W)))
     writeData.valid := false.B
     writeData.bits := DontCare
+    val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()
 
-    writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid
-    write_issue_q.io.deq.ready := writer.module.io.req.ready && writeData.valid
+    writer.module.io.req.valid := write_issue_q.io.deq.valid && (writeData.valid || writeData_is_all_zeros)
+    write_issue_q.io.deq.ready := writer.module.io.req.ready && (writeData.valid || writeData_is_all_zeros)
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
     writer.module.io.req.bits.len := write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U
-    writer.module.io.req.bits.data := writeData.bits
+    writer.module.io.req.bits.data := Mux(writeData_is_all_zeros, 0.U, writeData.bits)
     writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
+    writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
+    writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
 
     io.dma.write.resp.valid := false.B
     io.dma.write.resp.bits.cmd_id := write_dispatch_q.bits.cmd_id
@@ -252,10 +260,6 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
     io.dma.read.resp.bits.cmd_id := Mux(mvin_scale_finished, mvin_scale_out.bits.tag.cmd_id, mvin_scale_acc_out.bits.tag.cmd_id)
     io.dma.read.resp.bits.bytesRead := Mux(mvin_scale_finished, mvin_scale_out.bits.tag.bytes_read, mvin_scale_acc_out.bits.tag.bytes_read)
 
-    dontTouch(reader.module.io.req.bits.scale)
-    dontTouch(mvin_scale_in.bits.scale)
-    dontTouch(reader.module.io.resp.bits.scale)
-
     /*
     reader.module.io.resp.ready := false.B
     io.dma.read.resp.valid := reader.module.io.resp.fire() && reader.module.io.resp.bits.last
@@ -270,6 +274,11 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
     reader.module.io.flush := io.flush
 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid
+
+    FpgaDebug(writer.module.io.req.valid)
+    FpgaDebug(writer.module.io.req.ready)
+    FpgaDebug(reader.module.io.req.valid)
+    FpgaDebug(reader.module.io.req.ready)
 
     {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to)) }
@@ -292,7 +301,7 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
         val dmawrite = write_dispatch_q.valid && write_issue_q.io.enq.ready &&
           !write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.sp_bank() === i.U
 
-        bio.read.req.valid := exread || dmawrite
+        bio.read.req.valid := exread || (dmawrite && !write_dispatch_q.bits.laddr.is_garbage())
         ex_read_req.ready := bio.read.req.ready
 
         // The ExecuteController gets priority when reading from SRAMs
@@ -303,7 +312,7 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.sp_row()
           bio.read.req.bits.fromDMA := true.B
 
-          when (bio.read.req.fire()) {
+          when (bio.read.req.fire() || write_dispatch_q.bits.laddr.is_garbage()) {
             write_dispatch_q.ready := true.B
             write_issue_q.io.enq.valid := true.B
 
@@ -315,7 +324,8 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
 
         val ex_read_resp = io.srams.read(i).resp
         val dma_resp_ready = writer.module.io.req.ready &&
-          !write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
+          !write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
+          !write_issue_q.io.deq.bits.laddr.is_garbage()
 
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_resp_ready, ex_read_resp.ready)
         ex_read_resp.valid := bio.read.resp.valid // TODO should we AND this with fromDMA?
@@ -372,7 +382,7 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
         val dmawrite = write_dispatch_q.valid && write_issue_q.io.enq.ready &&
           write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.acc_bank() === i.U
 
-        bio.read.req.valid := exread || dmawrite
+        bio.read.req.valid := exread || (dmawrite && !write_dispatch_q.bits.laddr.is_garbage())
         bio.read.req.bits.shift := ex_read_req.bits.shift
         bio.read.req.bits.relu6_shift := ex_read_req.bits.relu6_shift
         bio.read.req.bits.act := ex_read_req.bits.act
@@ -386,7 +396,7 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.acc_row()
           bio.read.req.bits.fromDMA := true.B
 
-          when (bio.read.req.fire()) {
+          when (bio.read.req.fire() || write_dispatch_q.bits.laddr.is_garbage()) {
             write_dispatch_q.ready := true.B
             write_issue_q.io.enq.valid := true.B
 
@@ -398,7 +408,8 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
 
         val ex_read_resp = io.acc.read(i).resp
         val dma_resp_ready = writer.module.io.req.ready &&
-          write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.acc_bank() === i.U // I believe we don't need to check that write_issue_q is valid here, because if the accumulator bank's resp is valid, then that means that the write_issue_q's deq should also be valid
+          write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.acc_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the accumulator bank's resp is valid, then that means that the write_issue_q's deq should also be valid
+          !write_issue_q.io.deq.bits.laddr.is_garbage()
 
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_resp_ready, ex_read_resp.ready)
         ex_read_resp.valid := bio.read.resp.valid // TODO should we AND this with fromDMA?

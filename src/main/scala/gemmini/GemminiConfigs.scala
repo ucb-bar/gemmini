@@ -175,12 +175,18 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
       header ++= "#define HAS_MVIN_SCALE\n"
       header ++= s"typedef ${c_type(mvin_scale_args.get.multiplicand_t)} scale_t;\n"
       header ++= s"typedef ${c_type(UInt(mvin_scale_args.get.multiplicand_t.getWidth.W))} scale_t_bits;\n\n"
+    } else {
+      header ++= s"typedef int32_t scale_t;\n"
+      header ++= s"typedef uint32_t scale_t_bits;\n\n"
     }
 
     if (mvin_scale_acc_args.isDefined) {
       header ++= "#define HAS_MVIN_ACC_SCALE\n"
       header ++= s"typedef ${c_type(mvin_scale_acc_args.get.multiplicand_t)} scale_acc_t;\n"
       header ++= s"typedef ${c_type(UInt(mvin_scale_acc_args.get.multiplicand_t.getWidth.W))} scale_acc_t_bits;\n\n"
+    } else {
+      header ++= s"typedef int32_t scale_acc_t;\n"
+      header ++= s"typedef uint32_t scale_acc_t_bits;\n\n"
     }
 
     header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"
