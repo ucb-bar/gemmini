@@ -95,6 +95,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val row_turn = RegInit(0.U(11.W))
   val row_left = RegInit(0.U(4.W))
   val kdim2 = RegInit(0.U(6.W))
+  val weight_double_bank = RegInit(false.B)
 
   val icol = WireInit(0.U(9.W))
   val irow = WireInit(0.U(9.W))
@@ -366,7 +367,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   }
    */
   val d_fire_counter_mulpre = WireInit(b_fire_counter)
-  when(performing_mul_pre && !io.im2col.resp.bits.im2col_delay){
+  when(performing_mul_pre && !io.im2col.resp.bits.im2col_delay&&im2col_en){
     d_fire_counter_mulpre := d_fire_counter - mul_pre_counter_sub
   }.otherwise{d_fire_counter_mulpre := d_fire_counter}
 
@@ -441,6 +442,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     io.im2col.req.bits.channel := channel
     io.im2col.req.bits.im2col_cmd := im2col_en
     io.im2col.req.bits.start_inputting := start_inputting_a
+    io.im2col.req.bits.weight_double_bank := weight_double_bank
 
     io.im2col.resp.ready := mesh.io.a.ready
   }
@@ -472,6 +474,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
           krow := cmd.bits(0).cmd.rs2(49, 47)
           channel := cmd.bits(0).cmd.rs2(31, 25)
           weight_stride := cmd.bits(0).cmd.rs2(24, 22)
+          weight_double_bank := cmd.bits(0).cmd.rs1(58) //added
           row_left := cmd.bits(0).cmd.rs1(57, 54)
           row_turn := cmd.bits(0).cmd.rs1(53, 42)
 
@@ -816,23 +819,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(inputType.getWidth / (aligned_to * 8))(b))
   }
 
-  //Seah: initializing turn counter for accumulator turn
-  /*
-  when(turn_set){
-    turn_counter := im2col_turn - 1.U
-  }
-  */
-
-  //added for accumulator enable signal
-  //val acc_write_en_counter = RegInit(0.U(log2Up(block_size*block_size*block_size).W))
-
   // Write to accumulator
   for (i <- 0 until acc_banks) {
-    /*
-    when(io.acc.write(i).en){
-      acc_write_en_counter := wrappingAdd(acc_write_en_counter, 1.U, block_size.U*im2col_turn)
-    }
-     */
     io.acc.write(i).en := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
     io.acc.write(i).addr := current_w_bank_address
     io.acc.write(i).data := mesh.io.out.bits
