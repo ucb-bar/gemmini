@@ -257,6 +257,10 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
         im2col_state := preparing_im2col // where state transition?
         channel_need_reset := false.B
       }
+      when(!im2col_en){ // conv -> matmul
+        sram_read_req := false.B
+        im2col_state := nothing_to_do
+      }
     }
     is(preparing_im2col){
       im2col_fin_reset := false.B//added for im2col_fin reset pulse
