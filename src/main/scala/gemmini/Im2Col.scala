@@ -20,6 +20,7 @@ class Im2ColReadReq[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) exte
   val row_left = UInt(4.W)
 
   val im2col_cmd = Bool()
+  val weight_double_bank = Bool()
   val start_inputting = Bool() //start_inputting_a
 
   override def cloneType: Im2ColReadReq.this.type = new Im2ColReadReq(config).asInstanceOf[this.type]
@@ -102,7 +103,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   // first do simple case: channel 4, output width: 3x3
   //val row_counter = RegInit(0.U(10.W)) // im2col_width
   val column_counter = RegInit(0.U(6.W))
-  val window_row_counter = RegInit(0.U(12.W))
+  val window_row_counter = RegInit(0.U(13.W))
   val window_start_counter = RegInit(0.U((window_row_counter.getWidth).W))
   val im2col_data = RegInit(0.S.asTypeOf(Vec(block_size, inputType)))
   val valid_reg = RegInit(false.B)
@@ -111,6 +112,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   val sram_resp_valid = WireInit(false.B)
   val im2col_en = WireInit(false.B)
   val sram_read_req = RegInit(true.B)
+  val weight_double_bank = RegInit(false.B)
 
   val copy_addr = RegInit(io.req.bits.addr) //spad bank address store for sync
 
@@ -165,7 +167,34 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   val sram_read_signals_q = Module(new Queue(new im2colRowSignals, mem_pipeline+1,
     pipe=true))
 
-  val sram_read_valid = io.sram_reads(req.addr.sp_bank()).req.valid && start_inputting_A
+  io.sram_reads.foreach { sr =>
+    sr.req.valid := false.B
+    sr.req.bits := DontCare
+    sr.resp.ready := true.B
+  }
+
+  val window_address = WireInit((0.U((window_row_counter.getWidth).W)))
+  window_address := window_start_counter + window_row_counter
+
+  val im2col_spad_bank = (copy_addr + window_address).sp_bank()
+  val im2col_spad_row = (copy_addr + window_address).sp_row()
+  dontTouch(im2col_spad_bank)
+  //io.sram_reads(copy_addr.sp_bank()).req.valid := sram_read_req && !im2col_fin_reg
+  //io.sram_reads(copy_addr.sp_bank()).req.bits.addr := copy_addr.sp_row() + window_address
+  io.sram_reads(im2col_spad_bank).req.bits.addr := im2col_spad_row
+  io.sram_reads(im2col_spad_bank).req.valid := sram_read_req && !im2col_fin_reg
+
+  when(im2col_spad_bank =/= 2.U){
+    io.sram_reads(im2col_spad_bank + 1.U).req.valid := sram_read_req && !im2col_fin_reg
+  }
+  when(im2col_spad_bank =/= 0.U){
+    io.sram_reads(im2col_spad_bank - 1.U).req.valid := sram_read_req && !im2col_fin_reg
+  }
+  when(weight_double_bank){ //weight is using Bank 2 (bank 0, 1 are for input)
+    io.sram_reads(2.U).req.valid := false.B
+  }
+
+  val sram_read_valid = io.sram_reads(im2col_spad_bank).req.valid && start_inputting_A
   val busy = ((im2col_state === doing_im2col) || (im2col_state === preparing_im2col) || (im2col_state === waiting_for_im2col) || (im2col_en && !im2col_en_d))  //&& sram_read_valid))// or including prepare?
 
   io.req.ready := busy
@@ -218,6 +247,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
       }
       sram_read_req := false.B
       copy_addr := io.req.bits.addr
+      weight_double_bank := io.req.bits.weight_double_bank //added for two weight banks
       //when(req.start_inputting) { //receive im2col command from instruction
       when(io.req.bits.start_inputting){
         sram_read_req := true.B
@@ -236,7 +266,8 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
       }
     }
     is(doing_im2col){
-      when(im2col_fin_reg|| !sram_resp_valid){ //when finished
+      //when(im2col_fin_reg|| !sram_resp_valid){ //when finished
+      when(im2col_fin_reg){ //Todo: control signal check
         sram_read_req := false.B
       }
 
@@ -282,16 +313,6 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
 
   }
 
-  io.sram_reads.foreach { sr =>
-    sr.req.valid := false.B
-    sr.req.bits := DontCare
-    sr.resp.ready := true.B
-  }
-
-
-
-  val window_address = WireInit((0.U((window_row_counter.getWidth).W)))
-  window_address := window_start_counter + window_row_counter
 
   when(im2col_turn === 1.U && im2col_fin_reg) {
     window_start_counter_prev := window_start_counter + stride //changed to stride
@@ -303,10 +324,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   }
 
 
-  io.sram_reads(copy_addr.sp_bank()).req.valid := sram_read_req && !im2col_fin_reg
-  io.sram_reads(copy_addr.sp_bank()).req.bits.addr := copy_addr.sp_row() + window_address
-
-  sram_resp_valid := ((im2col_state === doing_im2col) || (im2col_state === preparing_im2col)) && io.sram_reads(copy_addr.sp_bank()).resp.valid && !im2col_fin_reset
+  sram_resp_valid := ((im2col_state === doing_im2col) || (im2col_state === preparing_im2col)) && io.sram_reads(im2col_spad_bank).resp.valid && !im2col_fin_reset
 
   when(column_counter === block_size.U - 1.U){
     im2col_fin_reg := true.B
@@ -318,7 +336,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
 
   //val row_counter_deq_d = RegNext(sram_read_signals_q.io.deq.bits.row_counter) //Seah: changed - 1 clock delayed version
   val column_counter_deq_d = RegNext(sram_read_signals_q.io.deq.bits.column_counter)
-  val sram_req_output = io.sram_reads(copy_addr.sp_bank()).resp.bits.data.asTypeOf(Vec(block_size, inputType))
+
   val column_counter_last_row_block = im2col_row_turn_counter === 0.U && (column_counter === row_left - 1.U)
   //(column_counter + block_done * block_size.U === ocol * orow - 1.U)
   val column_counter_last_row_block_deq = (sram_read_signals_q.io.deq.bits.block_done === row_turn) && (column_counter_deq_d >= row_left)
@@ -406,12 +424,14 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   //added for mul_pre sync
   val sram_deq_valid = sram_read_signals_q.io.deq.valid// && sram_read_signals_q.io.deq.bits.sram_resp_valid
   val im2col_delay = WireInit(false.B)
-  when(io.req.valid && !sram_deq_valid){
+  when(io.req.valid && !sram_deq_valid && !((im2col_state === doing_im2col) && sram_read_req)){
     im2col_delay := true.B
   }
   io.resp.bits.im2col_delay := im2col_delay
 
   val sram_read_im2col_fin_d = RegNext(sram_read_signals_q.io.deq.bits.im2col_fin)
+  val sram_bank_deq = RegNext(sram_read_signals_q.io.deq.bits.sram_bank)
+  val sram_req_output = io.sram_reads(sram_bank_deq).resp.bits.data.asTypeOf(Vec(block_size, inputType))
 
   when(!sram_read_im2col_fin_d && sram_req_deq_valid_d ){//&& sram_resp_valid_deq_d){
     when(channel === block_size.U){
@@ -436,6 +456,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
     val im2col_turn = UInt(9.W)
     val block_done = UInt(9.W)
     val start_inputting = Bool()
+    val sram_bank = UInt(2.W)
     //val sram_resp_valid = Bool()
   }
   sram_read_signals_q.io.enq.valid :=sram_read_valid && io.req.valid && sram_resp_valid
@@ -445,6 +466,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   sram_read_signals_q.io.enq.bits.im2col_turn := im2col_turn
   sram_read_signals_q.io.enq.bits.block_done := block_done
   sram_read_signals_q.io.enq.bits.start_inputting := start_inputting_A
+  sram_read_signals_q.io.enq.bits.sram_bank := im2col_spad_bank
   //sram_read_signals_q.io.enq.bits.sram_resp_valid := sram_resp_valid
 
   sram_read_signals_q.io.deq.ready := true.B//sram_resp_valid
@@ -470,6 +492,8 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   FpgaDebug(im2col_delay)
   FpgaDebug(valid_reg)
   FpgaDebug(sram_req_deq_valid_d)
+  FpgaDebug(im2col_spad_bank)
+  FpgaDebug(im2col_spad_row)
 
 
 
