@@ -96,6 +96,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val row_left = RegInit(0.U(4.W))
   val kdim2 = RegInit(0.U(6.W))
   val weight_double_bank = RegInit(false.B)
+  val weight_triple_bank = RegInit(false.B)
 
   val icol = WireInit(0.U(9.W))
   val irow = WireInit(0.U(9.W))
@@ -442,6 +443,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     io.im2col.req.bits.im2col_cmd := im2col_en
     io.im2col.req.bits.start_inputting := start_inputting_a
     io.im2col.req.bits.weight_double_bank := weight_double_bank
+    io.im2col.req.bits.weight_triple_bank := weight_triple_bank
 
     io.im2col.resp.ready := mesh.io.a.ready
   }
@@ -474,6 +476,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
           channel := cmd.bits(0).cmd.rs2(31, 23)
           weight_stride := cmd.bits(0).cmd.rs2(22, 20)
           weight_double_bank := cmd.bits(0).cmd.rs1(58) //added
+          weight_triple_bank := cmd.bits(0).cmd.rs1(59)
           row_left := cmd.bits(0).cmd.rs1(57, 54)
           row_turn := cmd.bits(0).cmd.rs1(53, 42)
 
