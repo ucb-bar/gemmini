@@ -136,17 +136,34 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 **Format:** `config_ex rs1 rs2`
 - `rs1[0:1]` must be `00`
 - `rs1[2]` determines if output (0) or weight (1) stationary
-- `rs1[4:3]` = the activation function: either relu (1), relu6 (2), or no activation function (0).
+- `rs1[4:3]` = activation function: either relu (1), relu6 (2), or no activation function (0)
+- `rs1[8]` = should A be transposed?
+- `rs1[9]` = should B be transposed?
 - `rs1[31:16]` = the stride (in scratchpad addresses) by which the rows of A are fed into the systolic array.
 "A" in this context refers to the left-hand matrix A in the matmul represented by A * B = C.
 If this stride is 1, then we feed consecutive rows in the scratchpad, starting from the starting address of A, into the systolic array as the A matrix.
 If the stride is 2, then we feed every other row into the systolic array instead.
-- `rs1[63:32]` is the number of bits by which the accumulated result of a matmul is right-shifted when leaving the accumulator
+- `rs1[63:32]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the accumulator
 - `rs2[31:0]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the systolic array
 - `rs2[63:32]` = the number of bits by which 6 should be left-shifted before applying relu6
 - `funct` = 0
 
 **Action:** mode <= rs1(2); shift <= rs2; A_stride <= rs1[31:16]
+
+**Notes:**
+- As of now, certain combinations of transpose options cannot be performed unless the right dataflow is chosen.
+This limitation may be lifted in the future.
+
+| Dataflow | Transpose A | Transpose B | Permitted? |
+| :---: | :---: | :---: | :---: | 
+| OS | No | No | Yes |
+| OS | No | Yes | No |
+| OS | Yes | No | Yes |
+| OS | Yes | Yes | Yes |
+| WS | No | No | Yes |
+| WS | No | Yes | Yes |
+| WS | Yes | No | Yes |
+| WS | Yes | Yes | No |
 
 ### `config_mvin` configures the Load pipeline
 **Format:** `config_mvin rs1 rs2`

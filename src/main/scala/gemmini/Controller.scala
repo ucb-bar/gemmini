@@ -9,10 +9,11 @@ import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
 import GemminiISA._
+import Util._
 
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
-  val rob_id = UInt(log2Up(rob_entries).W)
+  val rob_id = UDValid(UInt(log2Up(rob_entries).W))
 
   override def cloneType: this.type = (new GemminiCmd(rob_entries)).asInstanceOf[this.type]
 }
@@ -144,19 +145,19 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data]
   rob.io.issue.ld.ready := load_controller.io.cmd.ready
   load_controller.io.cmd.bits.cmd := rob.io.issue.ld.cmd
   load_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
-  load_controller.io.cmd.bits.rob_id := rob.io.issue.ld.rob_id
+  load_controller.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
 
   store_controller.io.cmd.valid := rob.io.issue.st.valid
   rob.io.issue.st.ready := store_controller.io.cmd.ready
   store_controller.io.cmd.bits.cmd := rob.io.issue.st.cmd
   store_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.st.cmd.inst.funct
-  store_controller.io.cmd.bits.rob_id := rob.io.issue.st.rob_id
+  store_controller.io.cmd.bits.rob_id.push(rob.io.issue.st.rob_id)
 
   ex_controller.io.cmd.valid := rob.io.issue.ex.valid
   rob.io.issue.ex.ready := ex_controller.io.cmd.ready
   ex_controller.io.cmd.bits.cmd := rob.io.issue.ex.cmd
   ex_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ex.cmd.inst.funct
-  ex_controller.io.cmd.bits.rob_id := rob.io.issue.ex.rob_id
+  ex_controller.io.cmd.bits.rob_id.push(rob.io.issue.ex.rob_id)
   // ex_controller.io.cmd <> decompressed_cmd
 
   // Wire up scratchpad to controllers

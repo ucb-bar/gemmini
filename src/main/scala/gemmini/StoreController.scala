@@ -124,7 +124,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore
   cmd_tracker.io.alloc.bits.bytes_to_read := Mux(!pooling_is_enabled, rows, pool_total_rows) // TODO do we have to add upad and lpad to this?
-  cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id
+  cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.bytes_read := 1.U
