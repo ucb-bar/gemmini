@@ -49,8 +49,8 @@ class MultiHeadedQueue[T <: Data](gen: T, entries: Int, heads: Int, maxpop: Int 
 }
 
 object MultiHeadedQueue {
-  def apply[T <: Data](src: ReadyValidIO[T], entries: Int, heads: Int) = {
-    val q = Module(new MultiHeadedQueue(src.bits.cloneType, entries, heads: Int))
+  def apply[T <: Data](src: ReadyValidIO[T], entries: Int, heads: Int, maxpop: Int=2) = {
+    val q = Module(new MultiHeadedQueue(src.bits.cloneType, entries, heads, maxpop=maxpop))
     q.io.enq <> src
     (q.io.deq, q.io.len)
   }

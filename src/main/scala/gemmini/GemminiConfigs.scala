@@ -35,6 +35,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
                                                                   mvin_scale_acc_args: Option[MvinScaleArguments[T, U]],
                                                                   mvin_scale_shared: Boolean,
                                                                   pe_latency: Int,
+                                                                  // enable_a_transpose: Boolean,
+                                                                  // enable_b_transpose: Boolean,
                                                                   headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth
@@ -202,7 +204,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
 
   def headerFilePath: String = {
     val chipyard_directory = "./generators/gemmini/software/gemmini-rocc-tests/include"
-    val project_template_directory = "./gemmini-rocc-tests/include" // Old root directory; rendered obsolete by Chipyard
+    val firesim_directory = "../target-design/chipyard/generators/gemmini/software/gemmini-rocc-tests/include"
     val default_directory = "."
 
     val in_chipyard = {
@@ -210,15 +212,15 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
       dir.exists() && dir.isDirectory
     }
 
-    val in_project_template = {
-      val dir = new java.io.File(project_template_directory)
+    val in_firesim = {
+      val dir = new java.io.File(firesim_directory)
       dir.exists() && dir.isDirectory
     }
 
     if (in_chipyard) {
       s"$chipyard_directory/$headerFileName"
-    } else if (in_project_template) {
-      s"$project_template_directory/$headerFileName"
+    } else if (in_firesim) {
+      s"$firesim_directory/$headerFileName"
     } else {
       s"$default_directory/$headerFileName"
     }
