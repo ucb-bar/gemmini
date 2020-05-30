@@ -1,0 +1,8 @@
+{
+  "name" : "blis-tests-interactive",
+  "workdir" : ".",
+  "base" : "br-base.json",
+  "overlay" : "overlay",
+  "host-init" : "blis-host-init.sh",
+  "spike-args" : "--extension=gemmini"
+}
