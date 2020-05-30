@@ -14,7 +14,7 @@ class Im2ColReadReq[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) exte
   val icol = UInt(9.W)
   val irow = UInt(9.W)
   val stride = UInt(3.W)
-  val channel = UInt(7.W)
+  val channel = UInt(9.W)
   val row_turn = UInt(11.W)
   val kdim2 = UInt(6.W)
   val row_left = UInt(4.W)
@@ -88,7 +88,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   val icol = io.req.bits.icol
   val irow = io.req.bits.irow
   val channel_total = io.req.bits.channel
-  val channel_counter = RegInit(0.U(7.W))
+  val channel_counter = RegInit(0.U(9.W))
   val channel = Mux(channel_counter > block_size.U, block_size.U, channel_counter) //channel > 16, then do DIM of channel first until channel < DIM
 
   val filter_dim2 = io.req.bits.kdim2
