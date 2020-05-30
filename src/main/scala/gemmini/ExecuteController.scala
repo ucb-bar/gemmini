@@ -91,7 +91,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val orow = RegInit(0.U(8.W))
   val krow = RegInit(0.U(3.W))
   val weight_stride = RegInit(0.U(3.W))
-  val channel = RegInit(0.U(7.W))
+  val channel = RegInit(0.U(9.W))
   val row_turn = RegInit(0.U(11.W))
   val row_left = RegInit(0.U(4.W))
   val kdim2 = RegInit(0.U(6.W))
@@ -104,7 +104,6 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   irow := ((orow - 1.U) * weight_stride + krow)//.asSInt
 
   val im2col_turn = WireInit(0.U(9.W))
-  val channel_turn = WireInit(0.U(5.W))
 
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val acc_shift = Reg(UInt(log2Up(accType.getWidth).W))
@@ -465,15 +464,15 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
         // when(DoConfig && !matmul_in_progress && !pending_completed_rob_id.valid) {
         when(DoConfig && !matmul_in_progress && !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) { // see config command from ROB
           activation := rs1s(0)(4, 3)
-          in_shift := rs2s(0)(31, 0) // TODO magic number
+          in_shift := rs2s(0)(19, 0)//rs2s(0)(31, 0) // TODO magic number
           acc_shift := cmd.bits(0).cmd.rs1(41, 32) // TODO magic number
           relu6_shift := cmd.bits(0).cmd.rs2(41, 32) // TODO magic number
 
           ocol := cmd.bits(0).cmd.rs2(63, 56)
           kdim2 := cmd.bits(0).cmd.rs2(55, 50)
           krow := cmd.bits(0).cmd.rs2(49, 47)
-          channel := cmd.bits(0).cmd.rs2(31, 25)
-          weight_stride := cmd.bits(0).cmd.rs2(24, 22)
+          channel := cmd.bits(0).cmd.rs2(31, 23)
+          weight_stride := cmd.bits(0).cmd.rs2(22, 20)
           weight_double_bank := cmd.bits(0).cmd.rs1(58) //added
           row_left := cmd.bits(0).cmd.rs1(57, 54)
           row_turn := cmd.bits(0).cmd.rs1(53, 42)
