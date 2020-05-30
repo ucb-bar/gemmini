@@ -21,6 +21,7 @@ class Im2ColReadReq[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) exte
 
   val im2col_cmd = Bool()
   val weight_double_bank = Bool()
+  val weight_triple_bank = Bool()
   val start_inputting = Bool() //start_inputting_a
 
   override def cloneType: Im2ColReadReq.this.type = new Im2ColReadReq(config).asInstanceOf[this.type]
@@ -113,6 +114,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   val im2col_en = WireInit(false.B)
   val sram_read_req = RegInit(true.B)
   val weight_double_bank = RegInit(false.B)
+  val weight_triple_bank = RegInit(false.B)
 
   val copy_addr = RegInit(io.req.bits.addr) //spad bank address store for sync
 
@@ -190,8 +192,11 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   when(im2col_spad_bank =/= 0.U){
     io.sram_reads(im2col_spad_bank - 1.U).req.valid := sram_read_req && !im2col_fin_reg
   }
-  when(weight_double_bank){ //weight is using Bank 2 (bank 0, 1 are for input)
+  when(weight_double_bank || weight_triple_bank){ //weight is using Bank 2 (bank 0, 1 are for input)
     io.sram_reads(2.U).req.valid := false.B
+  }
+  when(weight_triple_bank){
+    io.sram_reads(1.U).req.valid := false.B
   }
 
   val sram_read_valid = io.sram_reads(im2col_spad_bank).req.valid && start_inputting_A
@@ -248,6 +253,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
       sram_read_req := false.B
       copy_addr := io.req.bits.addr
       weight_double_bank := io.req.bits.weight_double_bank //added for two weight banks
+      weight_triple_bank := io.req.bits.weight_triple_bank
       //when(req.start_inputting) { //receive im2col command from instruction
       when(io.req.bits.start_inputting){
         sram_read_req := true.B
