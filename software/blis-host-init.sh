@@ -7,7 +7,8 @@
 echo "Building Blis"
 cd blis
 # configure to statically build for riscv64
-./configure CC=riscv64-unknown-linux-gnu-gcc CFLAGS=-static LDFLAGS=-static --disable-threading --disable-pba-pools --disable-sba-pools --disable-shared riscv64
+#./configure CC=riscv64-unknown-linux-gnu-gcc CFLAGS=-static LDFLAGS=-static --disable-threading --disable-pba-pools --disable-sba-pools --disable-shared riscv64
+./configure CC=riscv64-unknown-linux-gnu-gcc CFLAGS=-static LDFLAGS=-static --disable-threading --disable-pba-pools --disable-sba-pools --disable-shared gemmini
 # build library
 make clean
 make -j8
