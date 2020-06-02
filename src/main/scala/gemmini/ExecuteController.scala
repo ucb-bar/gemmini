@@ -322,14 +322,14 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   }
 
 
-    when(performing_mul_pre && !cntl_ready && !mul_pre_counter_lock){
-      mul_pre_counter_count := d_fire_counter //store 2
-    }.elsewhen(!performing_mul_pre){
-      mul_pre_counter_count := 0.U
-      mul_pre_counter_lock := false.B
-    }.elsewhen(!cntl_ready){
-      mul_pre_counter_lock := true.B
-    }
+  when(performing_mul_pre && !cntl_ready && !mul_pre_counter_lock){
+    mul_pre_counter_count := d_fire_counter //store 2
+  }.elsewhen(!performing_mul_pre){
+    mul_pre_counter_count := 0.U
+    mul_pre_counter_lock := false.B
+  }.elsewhen(!cntl_ready){
+    mul_pre_counter_lock := true.B
+  }
 
   when(!io.im2col.resp.bits.im2col_delay && performing_mul_pre){
     mul_pre_counter_sub := Mux(mul_pre_counter_sub > 0.U,  mul_pre_counter_sub - 1.U, 0.U)
@@ -647,6 +647,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     val shift = UInt(log2Up(accType.getWidth).W)
 
     val im2colling = Bool()
+    val negative_shift = Bool()
   }
 
   mesh_cntl_signals_q.io.enq.valid := computing
@@ -672,7 +673,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   mesh_cntl_signals_q.io.enq.bits.d_read_from_acc := d_read_from_acc
 
   mesh_cntl_signals_q.io.enq.bits.accumulate_zeros := accumulate_zeros
-  mesh_cntl_signals_q.io.enq.bits.preload_zeros := preload_zeros
+  mesh_cntl_signals_q.io.enq.bits.preload_zeros := (preload_zeros )//&& (in_shift(19) =/= 1.U)) //fixed for negative shift?
 
   mesh_cntl_signals_q.io.enq.bits.a_unpadded_cols := Mux(a_row_is_not_all_zeros, a_cols, 0.U)
   mesh_cntl_signals_q.io.enq.bits.b_unpadded_cols := Mux(b_row_is_not_all_zeros, b_cols, 0.U)
@@ -694,6 +695,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   mesh_cntl_signals_q.io.enq.bits.shift := in_shift
 
   mesh_cntl_signals_q.io.enq.bits.im2colling := im2col_wire && im2col_en //im2col_wire
+  mesh_cntl_signals_q.io.enq.bits.negative_shift := in_shift(log2Up(accType.getWidth)-1) //detect negative shift
 
   val readData = VecInit(io.srams.read.map(_.resp.bits.data))
   val accReadData = VecInit(io.acc.read.map(_.resp.bits.data.asUInt()))
@@ -702,7 +704,6 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val readValid = VecInit(io.srams.read.map(bank => bank.resp.valid && !bank.resp.bits.fromDMA))
   val accReadValid = VecInit(io.acc.read.map(bank => bank.resp.valid && !bank.resp.bits.fromDMA))
   val im2ColValid = io.im2col.resp.valid
-  dontTouch(im2ColValid)
 
   mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) &&
     (!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) &&
@@ -718,9 +719,23 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     cntl.d_read_from_acc -> accReadValid(cntl.d_bank_acc)
   ))
 
+  //added for negative bitshift
+  val negative_shift_dataD =  WireInit(0.S.asTypeOf(Vec(block_size, inputType)))
+  val preload_zero_counter = RegInit(0.U(5.W))
+  preload_zero_counter := wrappingAdd(preload_zero_counter, 1.U, block_size.U, dataA_valid && dataD_valid && cntl.preload_zeros && (cntl.perform_single_preload || cntl.perform_mul_pre))
+  when(cntl.negative_shift){
+    for(i <- 0 until block_size){
+      when(i.U === preload_zero_counter){
+        negative_shift_dataD(block_size - i - 1) := 2.S //<< by 1
+      }.otherwise{negative_shift_dataD(block_size - i - 1) := 0.S}
+    }
+  }.otherwise{negative_shift_dataD := 0.S.asTypeOf(Vec(block_size, inputType))}
+
+
   val dataA_unpadded = Mux(cntl.im2colling, im2ColData, Mux(cntl.a_read_from_acc, accReadData(cntl.a_bank_acc), readData(cntl.a_bank)))
   val dataB_unpadded = MuxCase(readData(cntl.b_bank), Seq(cntl.accumulate_zeros -> 0.U, cntl.b_read_from_acc -> accReadData(cntl.b_bank_acc)))
-  val dataD_unpadded = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
+  //val dataD_unpadded = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
+  val dataD_unpadded = MuxCase(readData(cntl.d_bank), Seq((cntl.preload_zeros && !cntl.negative_shift) -> 0.U, (cntl.preload_zeros && cntl.negative_shift) -> negative_shift_dataD.asUInt(), cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
 
   val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, inputType.zero)})
   val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)})
