@@ -722,7 +722,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   //added for negative bitshift
   val negative_shift_dataD =  WireInit(0.S.asTypeOf(Vec(block_size, inputType)))
   val preload_zero_counter = RegInit(0.U(5.W))
-  preload_zero_counter := wrappingAdd(preload_zero_counter, 1.U, block_size.U, dataA_valid && dataD_valid && cntl.preload_zeros && (cntl.perform_single_preload || cntl.perform_mul_pre))
+  //val neg_shift_sub = block_size.U - cntl.c_rows
+  preload_zero_counter := wrappingAdd(preload_zero_counter, 1.U, block_size.U, dataA_valid && dataD_valid && cntl.preload_zeros && (cntl.perform_single_preload || cntl.perform_mul_pre) && cntl.negative_shift)
   when(cntl.negative_shift){
     for(i <- 0 until block_size){
       when(i.U === preload_zero_counter){
