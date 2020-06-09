@@ -158,8 +158,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
     // Datatype of the systolic array
     val limits = limitsOfDataType(inputType)
     header ++= s"typedef ${c_type(inputType)} elem_t;\n"
-    header ++= s"elem_t elem_t_max = ${limits._2};\n"
-    header ++= s"elem_t elem_t_min = ${limits._1};\n"
+    header ++= s"static const elem_t elem_t_max = ${limits._2};\n"
+    header ++= s"static const elem_t elem_t_min = ${limits._1};\n"
     header ++= s"typedef ${c_type(accType)} acc_t;\n"
     header ++= s"typedef ${full_c_type(inputType)} full_t;\n\n"
 
