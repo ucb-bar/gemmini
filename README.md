@@ -239,3 +239,14 @@ Example:
 - `rs1` and `rs2` have the same encoding as the `matmul.compute.preloaded` encoding
 - If output-stationary, this instruction will compute on the previously computed result (C) in the systolic array
 - If weight-stationary, this instruction will compute on the previously preloaded weights (B) in the systolic array
+
+# Citing Gemmini
+If Gemmini helps you in your academic research, you are encouraged to cite our paper. Here is an example bibtex:
+```
+@article{genc2019gemmini,
+  title={Gemmini: An Agile Systolic Array Generator Enabling Systematic Evaluations of Deep-Learning Architectures},
+  author={Genc, Hasan and Haj-Ali, Ameer and Iyer, Vighnesh and Amid, Alon and Mao, Howard and Wright, John and Schmidt, Colin and Zhao, Jerry and Ou, Albert and Banister, Max and Shao, Yakun Sophia and Nikolic, Borivoje and Stoica, Ion and Asanovic, Krste},
+  journal={arXiv preprint arXiv:1911.09925},
+  year={2019}
+}
+```
