@@ -31,6 +31,7 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
+  val distance = RegInit(block_rows.U(20.W))
 
   val cmd = Queue(io.cmd, ld_queue_length)
   val vaddr = cmd.bits.cmd.rs1
@@ -39,6 +40,7 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits, 48) // TODO magic numbers
   val config_stride = cmd.bits.cmd.rs2
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
+  val config_distance = cmd.bits.cmd.rs1(29, 10)//block mvin distance
   val mstatus = cmd.bits.cmd.status
 
   val localaddr_plus_row_counter = localaddr + row_counter
@@ -72,6 +74,7 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   io.dma.req.bits.len := cols
   io.dma.req.bits.scale := scale
   io.dma.req.bits.status := mstatus
+  io.dma.req.bits.distance := distance
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
@@ -102,6 +105,7 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
         when(DoConfig) {
           stride := config_stride
           scale := config_scale
+          distance := config_distance //Seah: distance
           cmd.ready := true.B
         }
 
