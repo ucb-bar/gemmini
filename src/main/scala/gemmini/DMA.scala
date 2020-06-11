@@ -23,6 +23,7 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val status = new MStatus
   val len = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
+  val distance = UInt(20.W)//Seah: for distance
 
   override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
 }
@@ -74,6 +75,7 @@ class StreamReader[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], nXact
     beatPacker.io.req.valid := core.module.io.beatData.valid
     beatPacker.io.req.bits := xactTracker.io.peek.entry
     beatPacker.io.req.bits.lg_len_req := core.module.io.beatData.bits.lg_len_req
+    beatPacker.io.req.bits.distance := core.module.io.req.bits.distance //Seah: mvin distance
     beatPacker.io.in.valid := core.module.io.beatData.valid
     beatPacker.io.in.bits := core.module.io.beatData.bits.data
 
