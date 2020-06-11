@@ -13,6 +13,7 @@ class XactTrackerEntry[U <: Data](maxShift: Int, spadWidth: Int, accWidth: Int,
   val scale = UInt(mvin_scale_t_bits.W)
   val spad_row_offset = UInt(log2Up(spadWidth max accWidth).W)
   val lg_len_req = UInt(log2Up(log2Up(maxReqBytes+1)+1).W)
+  val distance = UInt(20.W) //Seah: for mvin distance
   val bytes_to_read = UInt(log2Up(maxReqBytes+1).W)
   val cmd_id = UInt(log2Up(nCmds).W)
 
