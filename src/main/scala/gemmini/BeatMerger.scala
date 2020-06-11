@@ -71,7 +71,7 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
     i.U >= spad_row_offset &&
       i.U < spad_row_offset +& (req.bits.bytes_to_read - bytesSent)
   })
-  io.out.bits.addr := req.bits.addr + meshRows.U * {
+  io.out.bits.addr := req.bits.addr + req.bits.distance * {
     val total_bytes_sent = req.bits.spad_row_offset + bytesSent //Todo: change this (change meshRows)
     Mux(req.bits.is_acc,
       // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
