@@ -215,7 +215,7 @@ class StreamReaderCore[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], n
     io.reserve.entry.bytes_to_read := read_bytes_read
     io.reserve.entry.cmd_id := req.cmd_id
 
-    io.reserve.entry.addr := req.spaddr + meshRows.U *
+    io.reserve.entry.addr := req.spaddr + req.distance * //Todo: should change this
       Mux(req.is_acc,
         // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
         // "if" condition and the "else" clause
