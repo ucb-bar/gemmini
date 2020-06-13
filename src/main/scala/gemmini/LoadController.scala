@@ -75,7 +75,7 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
   cmd_tracker.io.alloc.bits.bytes_to_read :=
     Mux(localaddr.is_acc_addr, cols * rows * config.accType.getWidth.U, cols * rows * config.inputType.getWidth.U) / 8.U
-  cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
+  cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.bytes_read := io.dma.resp.bits.bytesRead
