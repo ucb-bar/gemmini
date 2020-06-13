@@ -6,8 +6,6 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
-import midas.targetutils.FpgaDebug
-
 // TODO deal with errors when reading scratchpad responses
 class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
                                (implicit p: Parameters) extends Module {
@@ -31,7 +29,6 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
-  val distance = RegInit(block_rows.U(20.W))
 
   val cmd = Queue(io.cmd, ld_queue_length)
   val vaddr = cmd.bits.cmd.rs1
@@ -40,12 +37,11 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits, 48) // TODO magic numbers
   val config_stride = cmd.bits.cmd.rs2
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
-  val config_distance = cmd.bits.cmd.rs1(29, 10)//block mvin distance
   val mstatus = cmd.bits.cmd.status
 
   val localaddr_plus_row_counter = localaddr + row_counter
 
-  io.busy := cmd.valid
+  io.busy := cmd.valid || cmd_tracker.io.busy
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoLoad = !DoConfig // TODO change this if more commands are added
@@ -74,13 +70,12 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   io.dma.req.bits.len := cols
   io.dma.req.bits.scale := scale
   io.dma.req.bits.status := mstatus
-  io.dma.req.bits.distance := distance
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
   cmd_tracker.io.alloc.bits.bytes_to_read :=
     Mux(localaddr.is_acc_addr, cols * rows * config.accType.getWidth.U, cols * rows * config.inputType.getWidth.U) / 8.U
-  cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id
+  cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.bytes_read := io.dma.resp.bits.bytesRead
@@ -105,7 +100,6 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
         when(DoConfig) {
           stride := config_stride
           scale := config_scale
-          distance := config_distance //Seah: distance
           cmd.ready := true.B
         }
 
@@ -130,10 +124,4 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
       }
     }
   }
-
-  FpgaDebug(control_state)
-  FpgaDebug(io.dma.req.valid)
-  FpgaDebug(io.dma.req.ready)
-  FpgaDebug(io.dma.req.bits.laddr.data)
-  FpgaDebug(io.dma.req.bits.laddr.is_acc_addr)
 }
