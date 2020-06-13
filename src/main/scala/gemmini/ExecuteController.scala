@@ -58,7 +58,6 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   val (cmd, _) = MultiHeadedQueue(io.cmd, ex_queue_length, cmd_q_heads)
   cmd.pop := 0.U
 
-  io.busy := false.B // cmd.valid(0)
   io.solitary_preload := cmd.valid(0) && cmd.bits(0).cmd.inst.funct === PRELOAD_CMD && !cmd.valid(1)
 
   // STATE defines
@@ -190,6 +189,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   }.reduce(_ || _)
 
   val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_id.valid).reduce(_ || _)
+
+  io.busy := cmd.valid(0) || matmul_in_progress
 
   // SRAM scratchpad
   val dataAbank = a_address_rs1.sp_bank()
