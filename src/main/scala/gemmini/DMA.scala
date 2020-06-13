@@ -14,7 +14,6 @@ import Util._
 
 import midas.targetutils.FpgaDebug
 
-
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W)
@@ -23,7 +22,6 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val status = new MStatus
   val len = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
-  val distance = UInt(20.W)//Seah: for distance
 
   override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
 }
@@ -75,7 +73,6 @@ class StreamReader[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], nXact
     beatPacker.io.req.valid := core.module.io.beatData.valid
     beatPacker.io.req.bits := xactTracker.io.peek.entry
     beatPacker.io.req.bits.lg_len_req := core.module.io.beatData.bits.lg_len_req
-    beatPacker.io.req.bits.distance := core.module.io.req.bits.distance //Seah: mvin distance
     beatPacker.io.in.valid := core.module.io.beatData.valid
     beatPacker.io.in.bits := core.module.io.beatData.bits.data
 
@@ -215,7 +212,7 @@ class StreamReaderCore[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], n
     io.reserve.entry.bytes_to_read := read_bytes_read
     io.reserve.entry.cmd_id := req.cmd_id
 
-    io.reserve.entry.addr := req.spaddr + req.distance * //Todo: should change this
+    io.reserve.entry.addr := req.spaddr + meshRows.U *
       Mux(req.is_acc,
         // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
         // "if" condition and the "else" clause
@@ -482,6 +479,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(io.req.bits.store_en, Mux(vpn_already_translated, s_writing_new_block, s_translate_req), s_idle)
     }
+
     FpgaDebug(state)
     FpgaDebug(io.req.bits.store_en)
     FpgaDebug(io.req.bits.pool_en)
