@@ -22,8 +22,6 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
 
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
 
-  val distance = UInt(20.W) // Seah: distance
-
   val status = new MStatus
 
   override def cloneType: this.type = new ScratchpadMemReadRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
@@ -233,7 +231,6 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
     reader.module.io.req.bits.is_acc := read_issue_q.io.deq.bits.laddr.is_acc_addr
     reader.module.io.req.bits.status := read_issue_q.io.deq.bits.status
     reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
-    reader.module.io.req.bits.distance := read_issue_q.io.deq.bits.distance //Seah: for mvin distance
 
     val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(config, chiselTypeOf(reader.module.io.resp.bits), is_acc = false)
     val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out) else
