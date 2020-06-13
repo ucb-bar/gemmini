@@ -41,7 +41,6 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
 
   val localaddr_plus_row_counter = localaddr + row_counter
 
-  io.busy := cmd.valid || cmd_tracker.io.busy
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoLoad = !DoConfig // TODO change this if more commands are added
@@ -86,6 +85,8 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
 
   io.completed.valid := cmd_tracker.io.cmd_completed.valid
   io.completed.bits := cmd_tracker.io.cmd_completed.bits.tag.rob_id
+
+  io.busy := cmd.valid || cmd_tracker.io.busy
 
   // Row counter
   when (io.dma.req.fire()) {
