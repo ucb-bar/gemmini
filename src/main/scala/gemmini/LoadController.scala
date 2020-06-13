@@ -41,7 +41,7 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
 
   val localaddr_plus_row_counter = localaddr + row_counter
 
-  io.busy := cmd.valid
+  io.busy := cmd.valid || cmd_tracker.io.busy
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoLoad = !DoConfig // TODO change this if more commands are added

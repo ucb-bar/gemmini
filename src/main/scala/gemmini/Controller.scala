@@ -11,6 +11,9 @@ import freechips.rocketchip.tile._
 import GemminiISA._
 import Util._
 
+import midas.targetutils.FpgaDebug
+import midas.targetutils.PerfCounter
+
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
@@ -191,6 +194,59 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data]
   io.interrupt := tlb.io.exp.interrupt
 
   rob.io.solitary_preload := ex_controller.io.solitary_preload
+
+  // Cycle counters
+  val ld_cycles = RegInit(0.U(34.W))
+  val st_cycles = RegInit(0.U(34.W))
+  val ex_cycles = RegInit(0.U(34.W))
+
+  val ld_st_cycles = RegInit(0.U(34.W))
+  val ld_ex_cycles = RegInit(0.U(34.W))
+  val st_ex_cycles = RegInit(0.U(34.W))
+
+  val ld_st_ex_cycles = RegInit(0.U(34.W))
+
+  val incr_ld_cycles = load_controller.io.busy && !store_controller.io.busy && !ex_controller.io.busy
+  val incr_st_cycles = !load_controller.io.busy && store_controller.io.busy && !ex_controller.io.busy
+  val incr_ex_cycles = !load_controller.io.busy && !store_controller.io.busy && ex_controller.io.busy
+
+  val incr_ld_st_cycles = load_controller.io.busy && store_controller.io.busy && !ex_controller.io.busy
+  val incr_ld_ex_cycles = load_controller.io.busy && !store_controller.io.busy && ex_controller.io.busy
+  val incr_st_ex_cycles = !load_controller.io.busy && store_controller.io.busy && ex_controller.io.busy
+
+  val incr_ld_st_ex_cycles = load_controller.io.busy && store_controller.io.busy && ex_controller.io.busy
+
+  when (incr_ld_cycles) {
+    ld_cycles := ld_cycles + 1.U
+  }.elsewhen (incr_st_cycles) {
+    st_cycles := st_cycles + 1.U
+  }.elsewhen (incr_ex_cycles) {
+    ex_cycles := ex_cycles + 1.U
+  }.elsewhen (incr_ld_st_cycles) {
+    ld_st_cycles := ld_st_cycles + 1.U
+  }.elsewhen (incr_ld_ex_cycles) {
+    ld_ex_cycles := ld_ex_cycles + 1.U
+  }.elsewhen (incr_st_ex_cycles) {
+    st_ex_cycles := st_ex_cycles + 1.U
+  }.elsewhen (incr_ld_st_ex_cycles) {
+    ld_st_ex_cycles := ld_st_ex_cycles + 1.U
+  }
+
+  FpgaDebug(ld_cycles)
+  FpgaDebug(st_cycles)
+  FpgaDebug(ex_cycles)
+  FpgaDebug(ld_st_cycles)
+  FpgaDebug(ld_ex_cycles)
+  FpgaDebug(st_ex_cycles)
+  FpgaDebug(ld_st_ex_cycles)
+
+  PerfCounter(ld_cycles, "ld_cycles_cnt", "cycles where only load-controller is busy")
+  PerfCounter(st_cycles, "st_cycles_cnt", "cycles where only store-controller is busy")
+  PerfCounter(ex_cycles, "ex_cycles_cnt", "cycles where only execute-controller is busy")
+  PerfCounter(ld_st_cycles, "ld_st_cycles_cnt", "cycles where only load-store-controller is busy")
+  PerfCounter(ld_ex_cycles, "ld_ex_cycles_cnt", "cycles where only load-execute-controller is busy")
+  PerfCounter(st_ex_cycles, "st_ex_cycles_cnt", "cycles where only store-execute-controller is busy")
+  PerfCounter(ld_st_ex_cycles, "ld_st_ex_cycles_cnt", "cycles where only load-store-execute-controller is busy")
 
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here
