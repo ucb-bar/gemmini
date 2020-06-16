@@ -904,12 +904,11 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   FpgaDebug(d_fire_counter_mulpre)
   FpgaDebug(complete_bits_count)
 
-
-
   when (reset.toBool()) {
     // pending_completed_rob_id.valid := false.B
     pending_completed_rob_ids.foreach(_.valid := false.B)
   }
+                                               
   // Perf counters
   val pre_counter = RegInit(0.U(34.W))
   val mul_counter = RegInit(0.U(34.W))
@@ -926,6 +925,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     waiting_for_mesh_cycle_counter := waiting_for_mesh_cycle_counter + 1.U
   }
 
+  val incr_waiting_for_mesh_cycle_counter = !perform_single_preload && !perform_mul_pre && !perform_single_mul && matmul_in_progress
+
   FpgaDebug(pre_counter)
   FpgaDebug(mul_counter)
   FpgaDebug(mul_pre_counter)
@@ -933,6 +934,6 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
 
   PerfCounter(perform_single_preload, "pre_cnt", "how many cycles did we preload only?")
   PerfCounter(perform_single_mul, "mul_cnt", "how many cycles did we only multiply?")
-  PerfCounter(perform_mul_pre, "mul_pre_cnt", "how many cycles di we both preload and multiply?")
-  PerfCounter(!perform_single_preload && !perform_mul_pre && !matmul_in_progress && matmul_in_progress, "mul_pre_cnt", "how many cycles di we both preload and multiply?")
-}
+  PerfCounter(perform_mul_pre, "mul_pre_cnt", "how many cycles did we both preload and multiply?")
+  PerfCounter(incr_waiting_for_mesh_cycle_counter, "mesh_waiting_cnt", "how many cycles do we wait for the mesh?")
+ }
