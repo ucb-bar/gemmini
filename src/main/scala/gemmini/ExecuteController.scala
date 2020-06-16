@@ -5,7 +5,7 @@ import chisel3.util._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
-import midas.targetutils.FpgaDebug
+import midas.targetutils.{FpgaDebug, PerfCounter}
 
 // TODO handle reads from the same bank
 // TODO don't flush all 4 time steps when shorter flushes will work
@@ -910,4 +910,29 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     // pending_completed_rob_id.valid := false.B
     pending_completed_rob_ids.foreach(_.valid := false.B)
   }
+  // Perf counters
+  val pre_counter = RegInit(0.U(34.W))
+  val mul_counter = RegInit(0.U(34.W))
+  val mul_pre_counter = RegInit(0.U(34.W))
+  val waiting_for_mesh_cycle_counter = RegInit(0.U(34.W))
+
+  when (perform_single_preload) {
+    pre_counter := pre_counter + 1.U
+  }.elsewhen (perform_single_mul) {
+    mul_counter := mul_counter + 1.U
+  }.elsewhen (perform_mul_pre) {
+    mul_pre_counter := mul_pre_counter + 1.U
+  }.elsewhen (matmul_in_progress) {
+    waiting_for_mesh_cycle_counter := waiting_for_mesh_cycle_counter + 1.U
+  }
+
+  FpgaDebug(pre_counter)
+  FpgaDebug(mul_counter)
+  FpgaDebug(mul_pre_counter)
+  FpgaDebug(waiting_for_mesh_cycle_counter)
+
+  PerfCounter(perform_single_preload, "pre_cnt", "how many cycles did we preload only?")
+  PerfCounter(perform_single_mul, "mul_cnt", "how many cycles did we only multiply?")
+  PerfCounter(perform_mul_pre, "mul_pre_cnt", "how many cycles di we both preload and multiply?")
+  PerfCounter(!perform_single_preload && !perform_mul_pre && !matmul_in_progress && matmul_in_progress, "mul_pre_cnt", "how many cycles di we both preload and multiply?")
 }
