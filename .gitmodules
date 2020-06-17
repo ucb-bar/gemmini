@@ -10,3 +10,6 @@
 [submodule "software/blis"]
 	path = software/blis
 	url = https://github.com/alonamid/blis.git
+[submodule "software/berkeley-softfloat-3"]
+	path = software/berkeley-softfloat-3
+	url = https://github.com/alonamid/berkeley-softfloat-3.git
