@@ -10,6 +10,6 @@ MARSHALDIR=$(pwd)/../../../software/firemarshal
 rm -rf overlay/root/blis/
 cd $MARSHALDIR
 rm images/blis-tests*
-./marshal -v --no-disk --workdir $RDIR build blis-tests.json
-./marshal -v --no-disk --workdir $RDIR launch --spike blis-tests.json
+./marshal -v --workdir $RDIR build blis-tests-interactive.json
+./marshal -v --workdir $RDIR install blis-tests-interactive.json
 cd $RDIR
