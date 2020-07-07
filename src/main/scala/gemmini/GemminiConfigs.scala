@@ -197,7 +197,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
     val mvin_scale_one = mvin_scale_args match {
       case Some(MvinScaleArguments(_, _, multiplicand_t)) =>
         multiplicand_t match {
-          case _: SInt | _: UInt => "1"
+          case _: SInt | _: UInt => "0"
           case _: Float => "1.0"
         }
       case None => "1"

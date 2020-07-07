@@ -29,6 +29,7 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
+  val shrink = RegInit(false.B) // Shrink inputs to accumulator
 
   val cmd = Queue(io.cmd, ld_queue_length)
   val vaddr = cmd.bits.cmd.rs1
@@ -37,11 +38,10 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits, 48) // TODO magic numbers
   val config_stride = cmd.bits.cmd.rs2
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
+  val config_shrink = cmd.bits.cmd.rs1(2)
   val mstatus = cmd.bits.cmd.status
 
   val localaddr_plus_row_counter = localaddr + row_counter
-
-  io.busy := cmd.valid || cmd_tracker.io.busy
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoLoad = !DoConfig // TODO change this if more commands are added
@@ -61,6 +61,8 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
 
   val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, maxBytesInMatRequest, deps_t))
 
+  io.busy := cmd.valid || cmd_tracker.io.busy
+
   // DMA IO wiring
   io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
     control_state === waiting_for_dma_req_ready ||
@@ -69,12 +71,13 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   io.dma.req.bits.laddr := localaddr_plus_row_counter
   io.dma.req.bits.len := cols
   io.dma.req.bits.scale := scale
+  io.dma.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
   io.dma.req.bits.status := mstatus
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
   cmd_tracker.io.alloc.bits.bytes_to_read :=
-    Mux(localaddr.is_acc_addr, cols * rows * config.accType.getWidth.U, cols * rows * config.inputType.getWidth.U) / 8.U
+    Mux(io.dma.req.bits.has_acc_bitwidth, cols * rows * config.accType.getWidth.U, cols * rows * config.inputType.getWidth.U) / 8.U
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
@@ -100,6 +103,7 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
         when(DoConfig) {
           stride := config_stride
           scale := config_scale
+          shrink := config_shrink
           cmd.ready := true.B
         }
 

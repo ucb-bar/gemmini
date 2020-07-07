@@ -63,10 +63,25 @@ object GemminiConfigs {
     // inputType = Float(8, 24),
     // outputType = Float(8, 24),
     // accType = Float(8, 24),
-    mvin_scale_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
-    mvin_scale_acc_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
+    mvin_scale_args = Some(MvinScaleArguments(
+      (t: SInt, s: SInt) => {
+        // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
+
+        // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
+        val u = s.asUInt()
+        val point_five = Mux(u === 0.U, 0.U, t(u - 1.U))
+        val zeros = Mux(u <= 1.U, 0.U, t.asUInt() & ((1.U << (u - 1.U)).asUInt() - 1.U)) =/= 0.U
+        val ones_digit = t(u)
+
+        val r = (point_five & (zeros | ones_digit)).asBool()
+
+        Mux(s >= 0.S, ((t >> u).asSInt() + Mux(r, 1.S, 0.S)).asSInt(), (t << (0.S-s).asUInt()).asSInt())
+      },
+      0, SInt(8.W))),
+    // mvin_scale_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
+    // mvin_scale_acc_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
     // mvin_scale_args = None,
-    // mvin_scale_acc_args = None,
+    mvin_scale_acc_args = None,
     // mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
     // mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
     mvin_scale_shared = false,

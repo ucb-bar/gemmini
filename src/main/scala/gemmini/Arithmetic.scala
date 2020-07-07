@@ -271,7 +271,7 @@ object Arithmetic {
         */
       }
 
-      override def >(t: Float): Bool = ??? // TODO
+      override def >(t: Float): Bool = true.B // TODO
 
       override def withWidthOf(t: Float): Float = {
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
