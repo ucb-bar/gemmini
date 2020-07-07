@@ -19,6 +19,7 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val len = UInt(8.W) // TODO don't use a magic number for the width here
 
   val scale = UInt(scale_t_bits.W)
+  val has_acc_bitwidth = Bool()
 
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
 
@@ -134,10 +135,11 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int) extends
   io.read.resp <> rdata_p
 }
 
-class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T, U])
-    (implicit p: Parameters) extends LazyModule {
+class Scratchpad[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
+                                      (implicit p: Parameters, ev: Arithmetic[T]) extends LazyModule {
 
   import config._
+  import ev._
 
   val maxBytes = dma_maxbytes
   val dataBits = dma_buswidth
@@ -229,6 +231,8 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
     reader.module.io.req.bits.len := read_issue_q.io.deq.bits.len
     reader.module.io.req.bits.scale := read_issue_q.io.deq.bits.scale
     reader.module.io.req.bits.is_acc := read_issue_q.io.deq.bits.laddr.is_acc_addr
+    reader.module.io.req.bits.accumulate := read_issue_q.io.deq.bits.laddr.accumulate
+    reader.module.io.req.bits.has_acc_bitwidth := read_issue_q.io.deq.bits.has_acc_bitwidth
     reader.module.io.req.bits.status := read_issue_q.io.deq.bits.status
     reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
 
@@ -236,7 +240,8 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
     val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out) else
       VectorScalarMultiplier(config, chiselTypeOf(reader.module.io.resp.bits), is_acc = true)
 
-    mvin_scale_in.valid := reader.module.io.resp.valid && (mvin_scale_shared.B || !reader.module.io.resp.bits.is_acc)
+    mvin_scale_in.valid := reader.module.io.resp.valid && (mvin_scale_shared.B || !reader.module.io.resp.bits.is_acc ||
+      (reader.module.io.resp.bits.is_acc && !reader.module.io.resp.bits.has_acc_bitwidth))
     mvin_scale_in.bits.in := reader.module.io.resp.bits.data.asTypeOf(chiselTypeOf(mvin_scale_in.bits.in))
     mvin_scale_in.bits.scale := reader.module.io.resp.bits.scale.asTypeOf(mvin_scale_t)
     mvin_scale_in.bits.tag := reader.module.io.resp.bits
@@ -244,7 +249,8 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
     mvin_scale_out.ready := false.B
 
     if (!mvin_scale_shared) {
-      mvin_scale_acc_in.valid := reader.module.io.resp.valid && reader.module.io.resp.bits.is_acc
+      mvin_scale_acc_in.valid := reader.module.io.resp.valid &&
+        (reader.module.io.resp.bits.is_acc && reader.module.io.resp.bits.has_acc_bitwidth)
       mvin_scale_acc_in.bits.in := reader.module.io.resp.bits.data.asTypeOf(chiselTypeOf(mvin_scale_acc_in.bits.in))
       mvin_scale_acc_in.bits.scale := reader.module.io.resp.bits.scale.asTypeOf(mvin_scale_acc_t)
       mvin_scale_acc_in.bits.tag := reader.module.io.resp.bits
@@ -252,7 +258,8 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
       mvin_scale_acc_out.ready := false.B
     }
 
-    reader.module.io.resp.ready := Mux(reader.module.io.resp.bits.is_acc, mvin_scale_acc_in.ready, mvin_scale_in.ready)
+    reader.module.io.resp.ready := Mux(reader.module.io.resp.bits.is_acc && reader.module.io.resp.bits.has_acc_bitwidth,
+      mvin_scale_acc_in.ready, mvin_scale_in.ready)
 
     val mvin_scale_finished = mvin_scale_out.fire() && mvin_scale_out.bits.tag.last
     val mvin_scale_acc_finished = mvin_scale_acc_out.fire() && mvin_scale_acc_out.bits.tag.last
@@ -335,9 +342,8 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
       // Writing to the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
         val exwrite = io.srams.write(i).en
-        val dmaread = mvin_scale_out.valid &&
-          !mvin_scale_out.bits.tag.is_acc && mvin_scale_out.bits.tag.addr.asTypeOf(local_addr_t).sp_bank() === i.U
-
+        val dmaread = mvin_scale_out.valid && !mvin_scale_out.bits.tag.is_acc &&
+          mvin_scale_out.bits.tag.addr.asTypeOf(local_addr_t).sp_bank() === i.U
         bio.write.en := exwrite || dmaread
 
         when (exwrite) {
@@ -419,9 +425,17 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
       // Writing to the accumulator banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
         val exwrite = io.acc.write(i).en
-        val dmaread = mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.tag.is_acc &&
-          mvin_scale_acc_out.bits.tag.addr.asTypeOf(local_addr_t).acc_bank() === i.U &&
-          (mvin_scale_same.B || !mvin_scale_finished)
+
+        val from_mvin_scale = mvin_scale_out.valid && mvin_scale_out.bits.tag.is_acc
+        val from_mvin_scale_acc = mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.tag.is_acc
+
+        val dmaread_bank = Mux(from_mvin_scale_acc, mvin_scale_acc_out.bits.tag.addr.asTypeOf(local_addr_t).acc_bank(),
+          mvin_scale_out.bits.tag.addr.asTypeOf(local_addr_t).acc_bank())
+        val mvin_scale_out_last = mvin_scale_out.valid && mvin_scale_out.bits.tag.last
+
+        val dmaread = (from_mvin_scale || from_mvin_scale_acc) &&
+          dmaread_bank === i.U &&
+          (mvin_scale_same.B || from_mvin_scale || !mvin_scale_out_last)
 
         bio.write.en := exwrite || dmaread
 
@@ -429,14 +443,30 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
           bio.write.addr := io.acc.write(i).addr
           bio.write.data := io.acc.write(i).data
           bio.write.acc := io.acc.write(i).acc
-          bio.write.mask := io.acc.write(i).mask // TODO add wmask to AccumulatorMem as well, so that we support non-aligned accesses
+          bio.write.mask := io.acc.write(i).mask
         }.elsewhen (dmaread) {
-          bio.write.addr := mvin_scale_acc_out.bits.tag.addr
-          bio.write.data := mvin_scale_acc_out.bits.out.asTypeOf(acc_row_t)
-          bio.write.acc := false.B
-          bio.write.mask := mvin_scale_acc_out.bits.tag.mask // TODO add wmask to AccumulatorMem as well, so that we support non-aligned accesses
+          bio.write.addr := Mux(from_mvin_scale_acc, mvin_scale_acc_out.bits.tag.addr, mvin_scale_out.bits.tag.addr)
+          // bio.write.data := mvin_scale_acc_out.bits.out.asTypeOf(acc_row_t)
+          bio.write.data := Mux(from_mvin_scale_acc,
+            mvin_scale_acc_out.bits.out.asTypeOf(acc_row_t),
+            VecInit(mvin_scale_out.bits.out.map(e => e.withWidthOf(accType))).asTypeOf(acc_row_t))
+          bio.write.acc := Mux(from_mvin_scale_acc, mvin_scale_acc_out.bits.tag.accumulate,
+            mvin_scale_out.bits.tag.accumulate)
+          bio.write.mask :=
+            Mux(from_mvin_scale_acc,
+              mvin_scale_acc_out.bits.tag.mask,
+              {
+                val n = accType.getWidth / inputType.getWidth
+                val mask = mvin_scale_out.bits.tag.mask take ((spad_w / (aligned_to * 8)) max 1)
+                val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
+                expanded
+              })
 
-          mvin_scale_acc_out.ready := true.B // TODO we combinationally couple valid and ready signals
+          when (from_mvin_scale_acc) {
+            mvin_scale_acc_out.ready := true.B
+          }.otherwise {
+            mvin_scale_out.ready := true.B
+          }
         }.otherwise {
           bio.write.addr := DontCare
           bio.write.data := DontCare

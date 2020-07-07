@@ -18,6 +18,8 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W)
   val is_acc = Bool()
+  val accumulate = Bool()
+  val has_acc_bitwidth = Bool()
   val scale = UInt(mvin_scale_t_bits.W)
   val status = new MStatus
   val len = UInt(16.W) // TODO magic number
@@ -32,6 +34,8 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
   val addr = UInt(log2Up(spad_rows max acc_rows).W)
   val mask = Vec((spadWidth max accWidth) / (aligned_to * 8) max 1, Bool())
   val is_acc = Bool()
+  val accumulate = Bool()
+  val has_acc_bitwidth = Bool()
   val scale = UInt(mvin_scale_t_bits.W)
   val last = Bool()
   val bytes_read = UInt(8.W) // TODO magic number
@@ -82,6 +86,8 @@ class StreamReader[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], nXact
     io.resp.bits.addr := beatPacker.io.out.bits.addr
     io.resp.bits.mask := beatPacker.io.out.bits.mask
     io.resp.bits.is_acc := beatPacker.io.out.bits.is_acc
+    io.resp.bits.accumulate := beatPacker.io.out.bits.accumulate
+    io.resp.bits.has_acc_bitwidth := beatPacker.io.out.bits.has_acc_bitwidth
     io.resp.bits.scale := RegEnable(xactTracker.io.peek.entry.scale, beatPacker.io.req.fire())
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
@@ -131,7 +137,7 @@ class StreamReaderCore[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], n
     val vpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
 
     val bytesRequested = Reg(UInt(log2Ceil(spadWidthBytes max accWidthBytes max maxBytes).W)) // TODO this only needs to count up to (dataBytes/aligned_to), right?
-    val bytesLeft = Mux(req.is_acc, req.len * (config.accType.getWidth / 8).U, req.len * (config.inputType.getWidth / 8).U) - bytesRequested
+    val bytesLeft = Mux(req.has_acc_bitwidth, req.len * (config.accType.getWidth / 8).U, req.len * (config.inputType.getWidth / 8).U) - bytesRequested
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
     io.req.ready := state_machine_ready_for_req
@@ -207,19 +213,20 @@ class StreamReaderCore[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], n
     io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
     io.reserve.entry.is_acc := req.is_acc
+    io.reserve.entry.accumulate := req.accumulate
+    io.reserve.entry.has_acc_bitwidth := req.has_acc_bitwidth
     io.reserve.entry.scale := req.scale
     io.reserve.entry.lg_len_req := DontCare // TODO just remove this from the IO completely
     io.reserve.entry.bytes_to_read := read_bytes_read
     io.reserve.entry.cmd_id := req.cmd_id
 
     io.reserve.entry.addr := req.spaddr + meshRows.U *
-      Mux(req.is_acc,
+      Mux(req.has_acc_bitwidth,
         // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
         // "if" condition and the "else" clause
         if (bytesRequested.getWidth >= log2Up(accWidthBytes+1)) bytesRequested / accWidthBytes.U else 0.U,
         if (bytesRequested.getWidth >= log2Up(spadWidthBytes+1)) bytesRequested / spadWidthBytes.U else 0.U)
-    io.reserve.entry.spad_row_offset := Mux(req.is_acc, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
-
+    io.reserve.entry.spad_row_offset := Mux(req.has_acc_bitwidth, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
     when (tl.a.fire()) {
       val next_vaddr = req.vaddr + read_bytes_read // send_size
       val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
@@ -362,7 +369,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
       val mask = (0 until maxBytes).map { i =>
         if (s > 1) {
-          val paddr_offset = paddr(lg_s-1, 0)
+          val paddr_offset = paddr(lg_s - 1, 0)
 
           i.U >= paddr_offset &&
             i.U < paddr_offset +& bytesLeft
