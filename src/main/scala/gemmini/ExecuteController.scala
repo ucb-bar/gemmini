@@ -350,6 +350,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   }
 
   // Accumulator read
+/*
   for (i <- 0 until acc_banks) {
     val read_a_from_acc = a_valid && a_read_from_acc && dataABankAcc === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros
     val read_b_from_acc = b_valid && b_read_from_acc && dataBBankAcc === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros
@@ -373,6 +374,19 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
 
     io.acc.read(i).resp.ready := true.B
   }
+*/
+
+  // Accumulator read
+  for (i <- 0 until acc_banks) {
+    io.acc.read(i).resp.ready := true.B
+    io.acc.read(i).req.valid := false.B
+    io.acc.read(i).req.bits.shift := DontCare
+    io.acc.read(i).req.bits.relu6_shift := DontCare
+    io.acc.read(i).req.bits.act := DontCare
+    io.acc.read(i).req.bits.fromDMA := false.B
+    io.acc.read(i).req.bits.addr := DontCare
+  }
+
 
   // FSM logic
   switch (control_state) {
