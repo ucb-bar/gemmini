@@ -38,12 +38,13 @@ object GemminiFPConfigs {
     mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
     mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
     mvin_scale_shared = false,
-//    pe_latency = 2
-    pe_latency = 0
+    pe_latency = 1
+    //pe_latency = 0
   )
   
   //FP32 Single Precision Configuration
   val FP32DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 24), outputType = Float(8, 24), accType = Float(8, 24),
+                                               pe_latency = 2,
                                                mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
                                                mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24)))
                                               )
