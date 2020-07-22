@@ -3,7 +3,6 @@ package gemmini
 import chisel3._
 import chisel3.util._
 import Util._
-import midas.targetutils.FpgaDebug
 
 class Im2ColReadReq[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Bundle {
 
@@ -486,25 +485,5 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
    io.spad_reads(req.addr.sp_bank()).req.bits.addr := req.addr.sp_row()
    io.spad_reads(req.addr.sp_bank()).resp
    */
-  FpgaDebug(im2col_state)
-  FpgaDebug(column_counter)
-  FpgaDebug(window_address)
-  FpgaDebug(window_row_counter)
-  FpgaDebug(window_start_counter)
-  FpgaDebug(sram_resp_valid)
-  FpgaDebug(sram_read_valid)
-  FpgaDebug(sram_deq_valid)
-  FpgaDebug(sram_read_req)
-  FpgaDebug(io.req.valid)
-  FpgaDebug(im2col_fin)
-  FpgaDebug(block_done)
-  FpgaDebug(im2col_turn)
-  FpgaDebug(im2col_delay)
-  FpgaDebug(valid_reg)
-  FpgaDebug(sram_req_deq_valid_d)
-  FpgaDebug(im2col_spad_bank)
-  FpgaDebug(im2col_spad_row)
-
-
 
 }
