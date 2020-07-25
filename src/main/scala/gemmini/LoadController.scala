@@ -24,10 +24,7 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
   val control_state = RegInit(waiting_for_command)
 
-  //val stride = RegInit((sp_width / 8).U(coreMaxAddrBits.W))
-  val stride_A = RegInit((sp_width / 8).U(coreMaxAddrBits.W)) //stride for operand A
-  val stride_B = RegInit((sp_width / 8).U(coreMaxAddrBits.W)) //stride for operand B
-
+  val stride = RegInit((sp_width / 8).U(coreMaxAddrBits.W))
   val scale = Reg(UInt(mvin_scale_t_bits.W))
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
@@ -39,17 +36,13 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
   val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
   val cols = cmd.bits.cmd.rs2(32 + mvin_len_bits - 1, 32) // TODO magic numbers
   val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits, 48) // TODO magic numbers
-  val operand = cmd.bits.cmd.rs2(63) //if operand B -> 1
-  //val config_stride = cmd.bits.cmd.rs2
-  val config_stride_A = cmd.bits.cmd.rs2(31, 0)
-  val config_stride_B = cmd.bits.cmd.rs2(63, 32)
-
+  val config_stride = cmd.bits.cmd.rs2
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
   val config_shrink = cmd.bits.cmd.rs1(2)
   val mstatus = cmd.bits.cmd.status
 
   val localaddr_plus_row_counter = localaddr + row_counter
-  val stride = Mux(operand, stride_B, stride_A)
+
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoLoad = !DoConfig // TODO change this if more commands are added
@@ -109,9 +102,7 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
       when (cmd.valid) {
         // when(DoConfig && !cmd_tracker.io.cmd_completed.valid) {
         when(DoConfig) {
-          //stride := config_stride
-          stride_A := config_stride_A
-          stride_B := config_stride_B
+          stride := config_stride
           scale := config_scale
           shrink := config_shrink
           cmd.ready := true.B

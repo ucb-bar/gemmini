@@ -9,13 +9,13 @@ class Im2ColReadReq[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) exte
   val addr = new LocalAddr(config.sp_banks, config.sp_bank_entries, config.acc_banks, config.acc_bank_entries)
   //dimension
   val ocol = UInt(8.W)
-  val krow = UInt(3.W)
+  val krow = UInt(4.W)
   val icol = UInt(9.W)
   val irow = UInt(9.W)
   val stride = UInt(3.W)
   val channel = UInt(9.W)
   val row_turn = UInt(11.W)
-  val kdim2 = UInt(6.W)
+  val kdim2 = UInt(8.W)
   val row_left = UInt(4.W)
 
   val im2col_cmd = Bool()
