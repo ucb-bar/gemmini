@@ -83,8 +83,8 @@ class DefaultGemminiConfig extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
       (p: Parameters) => {
         implicit val q = p
-        implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        gemmini
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -124,8 +124,8 @@ class GemminiHostMiniCore extends Config((site, here, up) => {
     (up(RocketTilesKey, site).length - 1 ->
       Seq((p: Parameters) => {
         implicit val q = p
-        implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        gemmini
       }))
 })
 
@@ -163,8 +163,8 @@ class WithGemminiHostMiniCore extends Config((site, here, up) => {
     (up(RocketTilesKey, site).length ->
       Seq((p: Parameters) => {
         implicit val q = p
-        implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        gemmini
       }))
 })
 
