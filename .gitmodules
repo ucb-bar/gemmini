@@ -13,3 +13,6 @@
 [submodule "software/berkeley-softfloat-3"]
 	path = software/berkeley-softfloat-3
 	url = https://github.com/alonamid/berkeley-softfloat-3.git
+[submodule "software/blasfeo"]
+	path = software/blasfeo
+	url = https://github.com/alonamid/blasfeo.git
