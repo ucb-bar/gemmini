@@ -17,4 +17,21 @@ object GemminiISA {
   val CONFIG_LOAD = 1.U
   val CONFIG_STORE = 2.U
   val CONFIG_EX = 0.U
+
+  //==========================================================================
+  // cisc-gemmini opcodes
+  //==========================================================================
+  val CISC_CONFIG  = 10.U(7.W) // same as COMPUTE_AND_FLIP
+  val ADDR_AB      = 11.U(7.W)
+  val ADDR_CD      = 12.U(7.W)
+  val SIZE0        = 13.U(7.W)
+  val SIZE1        = 14.U(7.W)
+  val RPT_BIAS     = 15.U(7.W)
+  val RESET        = 16.U(7.W)
+  val COMPUTE_CISC = 17.U(7.W)
+
+  //==========================================================================
+  // dataflow configuration
+  //==========================================================================
+  val GARBAGE_ADDR      = "hffffffff".U(32.W)
 }
