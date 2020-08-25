@@ -1,0 +1,9 @@
+{
+  "name" : "blasfeo-tests",
+  "workdir" : ".",
+  "base" : "br-base.json",
+  "overlay" : "overlay",
+  "host-init" : "blasfeo-host-init.sh",
+  "spike-args" : "--extension=gemmini",
+  "command": "cd /root/blasfeo && ./make-check.sh"
+}

@@ -1,0 +1,8 @@
+{
+  "name" : "blasfeo-tests-interactive",
+  "workdir" : ".",
+  "base" : "br-base.json",
+  "overlay" : "overlay",
+  "host-init" : "blasfeo-host-init.sh",
+  "spike-args" : "--extension=gemmini"
+}
