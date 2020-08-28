@@ -9,6 +9,7 @@ import chisel3.experimental._
 import freechips.rocketchip.config._
 import freechips.rocketchip.tile._
 import GemminiISA._
+import Util.regwire
 
 class TilerFSM[T <: Data : Arithmetic, U <: Data]
   (config: GemminiArrayConfig[T,U])(implicit val p: Parameters) 
@@ -66,14 +67,6 @@ class TilerFSM[T <: Data : Arithmetic, U <: Data]
   //=========================================================================
   // Internal State
   //=========================================================================
-
-  // creates a Reg and the next-state Wire, and returns both
-  def regwire(bits: Int) = {
-    val wire = Wire(UInt(bits.W))
-    val reg = RegNext(wire)
-    wire := reg // default wire to read from reg
-    (reg, wire)
-  }
 
   //------------------------------------------------------------------------
   // input data-specific constants

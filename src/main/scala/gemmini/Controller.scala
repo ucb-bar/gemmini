@@ -134,8 +134,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data]
   val is_cisc_funct = (funct === CISC_CONFIG) ||
                       (funct === ADDR_AB) ||
                       (funct === ADDR_CD) ||
-                      (funct === SIZE0) ||
-                      (funct === SIZE1) ||
+                      (funct === SIZE_MN) ||
+                      (funct === SIZE_K) ||
                       (funct === RPT_BIAS) ||
                       (funct === RESET) ||
                       (funct === COMPUTE_CISC)

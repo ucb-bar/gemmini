@@ -107,4 +107,13 @@ object Util {
   object UDValid {
     def apply[T <: Data](t: T): UDValid[T] = new UDValid(t)
   }
+
+  // creates a Reg and the next-state Wire, and returns both
+  def regwire(bits: Int) = {
+    val wire = Wire(UInt(bits.W))
+    val reg = RegNext(wire)
+    wire := reg // default wire to read from reg
+    (reg, wire)
+  }
+
 }

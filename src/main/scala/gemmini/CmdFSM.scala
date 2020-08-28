@@ -166,12 +166,12 @@ class CmdFSM[T <: Data: Arithmetic, U <: Data]
         addr_d := rs2
         addr_cd_valid := true.B
       }
-      .elsewhen (funct === SIZE0) {
+      .elsewhen (funct === SIZE_MN) {
         m := rs1
         n := rs2
         size0_valid := true.B
       }
-      .elsewhen (funct === SIZE1) {
+      .elsewhen (funct === SIZE_K) {
         k := rs1
         size1_valid := true.B
       }
