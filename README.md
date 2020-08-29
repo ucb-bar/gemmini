@@ -256,3 +256,57 @@ Example:
 - `rs1` and `rs2` have the same encoding as the `matmul.compute.preloaded` encoding
 - If output-stationary, this instruction will compute on the previously computed result (C) in the systolic array
 - If weight-stationary, this instruction will compute on the previously preloaded weights (B) in the systolic array
+
+# Hardware Tiler ISA
+
+This section describes an additional set of RoCC instructions that configure and invoke the hardware tiler in Gemmini. From the software's perspective the original instructions and these new instructions should be seen as totally unrelated. It is easy for software to safely interleave original instructions with these hardware tiling instructions, but this comes at the cost of increased serialization latency; for example, if you issue an original `preload` and `matmul` from above, and then immediately issue a `compute_cisc`, the last RoCC instruction will not start to be processed until the `preload` and `matmul` are completely finished from the software's perspective (the same works in the opposite direction -- `compute_cisc` before a `preload` and `matmul`).
+
+## Hardware Tiler Configuration
+### `config_cisc` configures the Execute pipeline
+**Format:** `config_ex rs1 rs2`
+- `rs1[4:3]` = activation function: either relu (1), relu6 (2), or no activation function (0)
+- `rs1[63:32]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the accumulator
+- `rs2[31:0]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the systolic array
+- `rs2[63:32]` = the number of bits by which 6 should be left-shifted before applying relu6
+- `funct` = 10
+
+**Action:** semantically equivalent subset of the `config_ex` instruction fields.
+
+### `addr_ab` sets the virtual address of the A and B matrices
+**Format:** `addr_ab rs1, rs2`
+- `rs1` = the A matrix virtual address
+- `rs2` = the B matrix virtual address
+- `funct` = 11
+
+### `addr_cd` sets the virtual address of the C and D matrices
+**Format:** `addr_ab rs1, rs2`
+- `rs1` = the C matrix virtual address
+- `rs2` = the D matrix virtual address
+- `funct` = 12
+
+### `size_mn` sets the M and N dimensions in terms of elements
+**Format:** `size_mn rs1, rs2`
+- `rs1` = sets M, the number of rows in A, C, and D matrices 
+- `rs2` = sets N, the number of columns in B, C, and D matrices
+- `funct` = 13
+
+### `size_k` sets the K dimension in terms of elements
+**Format:** `size_k rs1`
+- `rs1` = sets K, the number of columns in A, and rows in B
+- `funct` = 14
+
+### `RPT_BIAS` sets whether the D is a repeating row
+**Format:** `rpt_bias rs1`
+- `rs1[0]` = set to 1 if D is not a 2D matrix, but really a 1D row that should be duplicated by the hardware
+- `funct` = 15
+
+### `reset` resets the hardware tiler input processing engine
+**Format:** `reset`
+- `funct` = 16
+
+**Action:** this is only used if Gemmini has entered an error state while in the hardware-tiler mode due to invalid RoCC commands. Using this command will reset Gemmini. However, right now, there is no way for the software to check for these errors. 
+
+
+### `COMPUTE_CISC` runs a complete hardware tiling sequence with the configured A, B, C, D, M, N, K, RPT_BIAS values
+**Format:** `compute_cisc`
+- `funct` = 17
