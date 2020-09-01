@@ -1,5 +1,6 @@
 package gemmini
 
+import scala.math.{pow,sqrt}
 import chisel3._
 import chisel3.util._
 
@@ -71,6 +72,84 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
   val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
   val mvout_len_bits = log2Up(meshColumns * tileColumns + 1)
   val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
+
+  //==========================================================================
+  // sanity check mesh size
+  //==========================================================================
+  val BLOCK_ROWS = tileRows * meshRows
+  val BLOCK_COLS = tileColumns * meshColumns
+  require(BLOCK_ROWS == BLOCK_COLS, "BLOCK_ROWS != BLOCK_COLS!")
+
+  val DIM             = BLOCK_ROWS
+  val LOG2_DIM        = log2Up(DIM)
+  val LOG2_DIM_COUNT  = log2Up(DIM + 1)
+  require(DIM >= 2, "the systolic array must have DIM of at least 2")
+
+  //==========================================================================
+  // cisc-gemmini miscellaneous constants (some redundant with above)
+  //==========================================================================
+  val ROB_ENTRIES      = rob_entries
+  val LOG2_ROB_ENTRIES = log2Up(rob_entries)
+
+  //==========================================================================
+  // cisc-gemmini hardware-specific compile-time global constants
+  //==========================================================================
+
+  val ITYPE_BITS       = inputType.getWidth
+  val ITYPE_BYTES      = (inputType.getWidth+7) / 8
+  val LOG2_ITYPE_BYTES = if(ITYPE_BYTES <= 1) 0 else log2Up(ITYPE_BYTES)
+
+  val OTYPE_BITS       = accType.getWidth
+  val LOG2_OTYPE_BITS  = log2Up(OTYPE_BITS)
+  val OTYPE_BYTES      = (accType.getWidth+7) / 8
+  val LOG2_OTYPE_BYTES = if(OTYPE_BYTES <= 1) 0 else log2Up(OTYPE_BYTES)
+
+  val SP_BANKS        = sp_banks
+  val SP_BANK_ROWS    = sp_bank_entries
+  val SP_ROWS         = SP_BANKS * SP_BANK_ROWS
+  val LOG2_SP_ROWS    = log2Up(SP_ROWS)
+
+  val ACC_BANKS       = acc_banks
+  val ACC_BANK_ROWS   = acc_bank_entries
+  val ACC_ROWS        = ACC_BANKS * ACC_BANK_ROWS
+  val LOG2_ACC_ROWS   = log2Up(ACC_ROWS)
+
+  val MNK_BYTES                   = Int.MaxValue / DIM  // TODO: upper bound?
+  val LOG2_MNK_BYTES              = log2Up(MNK_BYTES)
+  val MNK_BYTES_PER_TILE_ROW      = MNK_BYTES * DIM
+  val LOG2_MNK_BYTES_PER_TILE_ROW = log2Up(MNK_BYTES_PER_TILE_ROW)
+  val TILE_IDX                    = MNK_BYTES / (DIM / 8)
+  val LOG2_TILE_IDX               = log2Up(TILE_IDX)
+
+  //--------------------------------------------------------------------------
+  val I_TILE_BYTE_WIDTH = DIM * ((inputType.getWidth+7) / 8)
+  val O_TILE_BYTE_WIDTH = DIM * ((accType.getWidth+7) / 8)
+  val I_TILE_BYTE_WIDTH_LOG2 = log2Up(I_TILE_BYTE_WIDTH)
+  val O_TILE_BYTE_WIDTH_LOG2 = log2Up(O_TILE_BYTE_WIDTH)
+  require(pow(2,I_TILE_BYTE_WIDTH_LOG2) == I_TILE_BYTE_WIDTH,
+    s"I_TILE_BYTE_WIDTH is not power of 2: $I_TILE_BYTE_WIDTH")
+  require(pow(2,O_TILE_BYTE_WIDTH_LOG2) == O_TILE_BYTE_WIDTH,
+    s"O_TILE_BYTE_WIDTH is not power of 2: $O_TILE_BYTE_WIDTH")
+
+  val GBL_B_SP_ROW_ADDR_1 = (SP_BANKS * SP_BANK_ROWS) - 2*DIM
+  val GBL_B_SP_ROW_ADDR_2 = (SP_BANKS * SP_BANK_ROWS) - 1*DIM
+
+  val USABLE_SP_TILES = (SP_ROWS / DIM) - 2
+  val TOTAL_ACC_TILES = (ACC_ROWS / DIM)
+  val SQRT_ACC_TILES = sqrt(TOTAL_ACC_TILES).toInt
+  assert(USABLE_SP_TILES >= TOTAL_ACC_TILES, 
+    s"SP_TILES($USABLE_SP_TILES) + 2 < ACC_TILES($TOTAL_ACC_TILES)")
+
+  // prioritize sizes that cause the output-group to be further from square
+  val OG_HEIGHT_MAP = (1 to TOTAL_ACC_TILES).sortWith((h1, h2) => {
+    (h1 - SQRT_ACC_TILES).abs > (h2 - SQRT_ACC_TILES).abs
+  })
+
+  val BYTE_ROWS_PER_TILE = DIM
+
+  //==========================================================================
+  // other stuff
+  //==========================================================================
 
   require(isPow2(sp_bank_entries), "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement
   require(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
