@@ -24,10 +24,10 @@ class VectorScalarMultiplierResp[T <: Data, Tag <: Data](block_cols: Int, t: T, 
 // class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](config: GemminiArrayConfig[T, U], tag_t: Tag) extends Module {
   // import config._
   // val block_cols = meshColumns * tileColumns
-class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args: Option[MvinScaleArguments[T, U]], block_cols: Int, t: T, tag_t: Tag) extends Module {
+class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args: Option[MvinMvoutScaleArguments[T, U]], block_cols: Int, t: T, tag_t: Tag) extends Module {
 
   val u = mvin_scale_args match {
-    case Some(MvinScaleArguments(_, _, multiplicand_t)) => multiplicand_t
+    case Some(MvinMvoutScaleArguments(_, _, multiplicand_t)) => multiplicand_t
     case None => Bool() // TODO make this a 0 width UInt
   }
 
@@ -39,7 +39,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args:
   val req = Reg(UDValid(chiselTypeOf(io.req.bits)))
 
   mvin_scale_args match {
-    case Some(MvinScaleArguments(mvin_scale_func, _, t)) => {
+    case Some(MvinMvoutScaleArguments(mvin_scale_func, _, t)) => {
       io.req.ready := !req.valid || io.resp.fire()
       io.resp.valid := req.valid
       io.resp.bits.out := req.bits.in.map(x => mvin_scale_func(x, req.bits.scale.asTypeOf(t)))
@@ -74,13 +74,13 @@ object VectorScalarMultiplier {
   def apply[T <: Data, U <: Data, Tag <: Data](config: GemminiArrayConfig[T, U], tag_t: Tag, is_acc: Boolean) = {
     val mvin_scale_args = if (is_acc) config.mvin_scale_acc_args else config.mvin_scale_args
     val t = if (is_acc) config.accType else config.inputType
-    val block_cols = config.meshColumns * config.tileColumns
+    val block_cols = config.array_dim // config.meshColumns * config.tileColumns // TODO should this just be array_dim?
 
     val vsm = Module(new VectorScalarMultiplier(mvin_scale_args, block_cols, t, tag_t))
 
     val in = vsm.io.req
     val out = mvin_scale_args match {
-      case Some(MvinScaleArguments(_, latency, _)) => Pipeline(vsm.io.resp, latency)
+      case Some(MvinMvoutScaleArguments(_, latency, _)) => Pipeline(vsm.io.resp, latency)
       case None => vsm.io.resp
     }
 

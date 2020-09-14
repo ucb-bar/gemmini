@@ -18,8 +18,11 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
                                    df: Dataflow.Value, pe_latency: Int,
                                    val tileRows: Int, val tileColumns: Int,
                                    val meshRows: Int, val meshColumns: Int) extends Module {
+
+  val array_dim = (meshRows*tileRows) max (meshColumns*tileColumns)
+
   val io = IO(new Bundle {
-    val in_a   = Input(Vec(meshRows, Vec(tileRows, inputType)))
+    val in_a   = Input(Vec(array_dim / tileRows, Vec(tileRows, inputType))) // Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b   = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
     val in_d   = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
     val in_control   = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
@@ -28,12 +31,24 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
     val in_valid = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
     val out_valid = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
   })
+
+  val dim = (meshRows * tileRows) max (meshColumns * tileColumns)
+  val array_rows = dim / tileRows
+  val array_cols = dim / tileColumns
+
   // mesh(r)(c) => Tile at row r, column c
-  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, pe_latency, tileRows, tileColumns)))
+  // val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, pe_latency, tileRows, tileColumns)))
+  val mesh =
+    for (r <- 0 until array_rows)
+      yield for (c <- 0 until array_cols)
+        yield Module(new Tile(inputType, outputType, accType, df, pe_latency, tileRows, tileColumns,
+          passthru=(r * tileRows >= meshRows) || (c * tileColumns >= meshColumns)))
+
   val meshT = mesh.transpose
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
-  for (r <- 0 until meshRows) {
+  // for (r <- 0 until meshRows) {
+  for (r <- 0 until array_rows) {
     mesh(r).foldLeft(io.in_a(r)) {
       case (in_a, tile) =>
         tile.io.in_a := RegNext(in_a)

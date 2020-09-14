@@ -114,7 +114,7 @@ class AlwaysOutTransposer[T <: Data](val dim: Int, val dataType: T) extends Tran
   }
 
   val pes = Seq.fill(dim,dim)(Module(new PE))
-  val counter = RegInit(0.U((log2Ceil(dim) max 1).W)) // TODO replace this with a standard Chisel counter
+  val counter = RegInit(0.U(log2Up(dim).W)) // TODO replace this with a standard Chisel counter
   val dir = RegInit(LEFT_DIR)
 
   // Wire up horizontal signals
@@ -142,9 +142,10 @@ class AlwaysOutTransposer[T <: Data](val dim: Int, val dataType: T) extends Tran
   io.outCol.bits := Mux(dir === LEFT_DIR, left_out, up_out)
 
   when (io.inRow.fire()) {
-    counter := wrappingAdd(counter, 1.U, dim)
+    counter := wrappingAdd(counter, 1.U, dim) // TODO NVDLA
   }
 
+  // TODO NVDLA
   when (counter === (dim-1).U && io.inRow.fire()) {
     dir := ~dir
   }

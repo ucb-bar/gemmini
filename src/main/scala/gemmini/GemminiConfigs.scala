@@ -7,7 +7,7 @@ sealed abstract trait GemminiMemCapacity
 case class CapacityInKilobytes(kilobytes: Int) extends GemminiMemCapacity
 case class CapacityInMatrices(matrices: Int) extends GemminiMemCapacity
 
-case class MvinScaleArguments[T <: Data, U <: Data](mvin_scale_func: (T, U) => T, mvin_scale_latency: Int, multiplicand_t: U)
+case class MvinMvoutScaleArguments[T <: Data, U <: Data](scale_func: (T, U) => T, scale_latency: Int, multiplicand_t: U)
 
 case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
                                                                   tileRows: Int,
@@ -31,8 +31,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
                                                                   inputType: T,
                                                                   outputType: T,
                                                                   accType: T,
-                                                                  mvin_scale_args: Option[MvinScaleArguments[T, U]],
-                                                                  mvin_scale_acc_args: Option[MvinScaleArguments[T, U]],
+                                                                  mvin_scale_args: Option[MvinMvoutScaleArguments[T, U]],
+                                                                  mvin_scale_acc_args: Option[MvinMvoutScaleArguments[T, U]],
                                                                   mvin_scale_shared: Boolean,
                                                                   pe_latency: Int,
                                                                   // enable_a_transpose: Boolean,
@@ -52,12 +52,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
   val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries)
 
   val mvin_scale_t = mvin_scale_args match {
-    case Some(MvinScaleArguments(_, _, t)) => t
+    case Some(MvinMvoutScaleArguments(_, _, t)) => t
     case None => Bool() // TODO replace this with UInt(0.W)
   }
 
   val mvin_scale_acc_t = mvin_scale_acc_args match {
-    case Some(MvinScaleArguments(_, _, t)) => t
+    case Some(MvinMvoutScaleArguments(_, _, t)) => t
     case None => Bool() // TODO replace this with UInt(0.W)
   }
 
@@ -67,14 +67,19 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
 
   val max_in_flight_reqs = 16 // TODO calculate this somehow
 
+  val array_rows = meshRows * tileRows
+  val array_cols = meshColumns * tileColumns
+  val array_dim = array_rows max array_cols
+
   val mvin_len_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
-  val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
+  val mvin_rows_bits = log2Up(array_dim + 1) // log2Up(meshRows * tileRows + 1)
   val mvout_len_bits = log2Up(meshColumns * tileColumns + 1)
-  val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
+  val mvout_rows_bits = log2Up(array_dim + 1) // log2Up(meshRows * tileRows + 1)
 
   require(isPow2(sp_bank_entries), "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement
   require(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
-  require(meshColumns * tileColumns == meshRows * tileRows, "the systolic array must be square") // TODO remove this requirement
+  // require(meshColumns * tileColumns == meshRows * tileRows, "the systolic array must be square") // TODO remove this requirement
+  require(meshColumns * tileColumns >= meshRows * tileRows, "the systolic array must have more columns than rows") // TODO remove this requirement
   require(meshColumns * tileColumns >= 2, "the systolic array must have a dimension of at least 2") // TODO remove this requirement
   require(isPow2(meshColumns * tileColumns), "the systolic array's dimensions must be powers of 2") // TODO remove this requirement
   require(acc_bank_entries % (meshRows * tileRows) == 0, "the number of rows in an accumulator bank must be a multiple of the dimensions of the systolic array")
@@ -122,7 +127,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
       }
     }
 
-    assert(tileColumns*meshColumns == tileRows*meshRows)
+    // assert(tileColumns*meshColumns == tileRows*meshRows)
     assert(Set(8, 16, 32, 64).contains(inputType.getWidth))
     // assert(Set(8, 16, 32, 64).contains(outputType.getWidth))
     assert(Set(8, 16, 32, 64).contains(accType.getWidth))
@@ -134,7 +139,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
     header ++= s"#include <stdint.h>\n"
     header ++= s"#include <limits.h>\n\n"
 
-    header ++= s"#define DIM ${tileColumns*meshColumns}\n"
+    header ++= s"#define DIM $array_dim\n"
+    header ++= s"#define DIM_ROWS $array_rows\n"
     header ++= s"#define ADDR_LEN 32\n"
     header ++= s"#define BANK_NUM $sp_banks\n"
     header ++= s"#define BANK_ROWS $sp_bank_entries\n"
@@ -195,7 +201,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
     header ++= s"#define row_align_acc(blocks) __attribute__((aligned(blocks*DIM*sizeof(acc_t))))\n\n"
 
     val mvin_scale_one = mvin_scale_args match {
-      case Some(MvinScaleArguments(_, _, multiplicand_t)) =>
+      case Some(MvinMvoutScaleArguments(_, _, multiplicand_t)) =>
         multiplicand_t match {
           case _: SInt | _: UInt => "0"
           case _: Float => "1.0"

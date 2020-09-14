@@ -33,8 +33,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   val control_state = RegInit(waiting_for_command)
 
   val stride = RegInit((sp_width / 8).U(coreMaxAddrBits.W))
-  val block_rows = meshRows * tileRows
-  val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
+  val row_counter = RegInit(0.U(log2Ceil(array_dim).W))
 
   // Pooling variables
   val pool_stride = RegInit(0.U(2.W)) // When this is 0, pooling is disabled // TODO magic number
@@ -102,7 +101,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
     val rob_id = UInt(log2Up(rob_entries).W)
   }
 
-  val cmd_tracker_max_rows = (block_rows max
+  val cmd_tracker_max_rows = (array_dim max
     (((1 << pool_orows.getWidth)-1) * ((1 << pool_ocols.getWidth)-1) + 2*((1 << pool_lpad.getWidth)-1) + 2*((1 << pool_upad.getWidth)-1))) min
     ((config.sp_banks * config.sp_bank_entries) max
     (config.acc_banks * config.acc_bank_entries))

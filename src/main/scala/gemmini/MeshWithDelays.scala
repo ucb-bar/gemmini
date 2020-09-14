@@ -18,7 +18,16 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
    leftBanks: Int, upBanks: Int, outBanks: Int = 1)
   extends Module {
 
-  val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
+//  val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
+//  val B_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
+//  val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType))
+//  val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
+//  val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
+
+  // assert(meshRows*tileRows == meshColumns*tileColumns)
+  val array_dim = (meshRows*tileRows) max (meshColumns*tileColumns)
+
+  val A_TYPE = Vec(array_dim / tileRows, Vec(tileRows, inputType)) // TODO NVDLA
   val B_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
   val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType))
   val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
@@ -40,6 +49,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val tag_in = Flipped(Decoupled(tagType))
     val tag_out = Output(tagType)
     val tags_in_progress = Output(Vec(tagqlen, tagType))
+
+    // val cycles = Input(UInt(log2Up(array_dim + 1).W))
 
     val out = Valid(C_TYPE) // TODO make this ready-valid
 
@@ -70,16 +81,13 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     }
   }
 
-  assert(meshRows*tileRows == meshColumns*tileColumns)
-  val block_size = meshRows*tileRows
-
   val active = RegInit(0.U(1.W)) // Which buffer is currently being read from?
   val not_active = (~active).asUInt()
 
   val flushing = RegInit(false.B)
   val flushing_or_about_to = flushing || io.flush.fire()
 
-  val fire_counter = RegInit(0.U((log2Ceil(block_size) max 1).W))
+  val fire_counter = RegInit(0.U(log2Up(array_dim).W))
   val fire_started = RegInit(false.B)
 
   val a_buf = RegEnable(io.a.bits, io.a.fire())
@@ -117,7 +125,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     b_written := false.B
     d_written := false.B
 
-    fire_counter := wrappingAdd(fire_counter, 1.U, block_size)
+    fire_counter := wrappingAdd(fire_counter, 1.U, array_dim) // TODO NVDLA
     fire_started := true.B // We only need to write to this here, rather than in a "when (buffering_done)" statement
   }
 
@@ -131,7 +139,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val a_is_from_transposer = Mux(io.pe_control.dataflow === Dataflow.OS.id.U, !io.a_transpose, io.a_transpose)
   val b_is_from_transposer = io.pe_control.dataflow === Dataflow.OS.id.U && io.bd_transpose
   val d_is_from_transposer = io.pe_control.dataflow === Dataflow.WS.id.U && io.bd_transpose
-  val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
+  val transposer = Module(new AlwaysOutTransposer(array_dim, inputType))
   transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
   // transposer.io.inRow.bits := VecInit(
   //   Mux(a_is_from_transposer, Mux(io.a.fire(), io.a.bits, a_buf), Mux(io.b.fire(), io.b.bits, b_buf)).flatten)
@@ -193,7 +201,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   val tag_id_reg = RegInit(0.U(1.W)) // Used to keep track of when we should increment // TODO inelegant
   val tag_id = WireInit(tag_id_reg)
-  val tag_id_delayed = ShiftRegister(tag_id, (meshRows + S_TYPE.size - 1) * (pe_latency + 1) + 1, 0.U, true.B)
+  // val tag_id_delayed = ShiftRegister(tag_id, (meshRows + S_TYPE.size - 1) * (pe_latency + 1) + 1, 0.U, true.B)
+  val tag_id_delayed = ShiftRegister(tag_id, ((array_dim / tileRows) + S_TYPE.size - 1) * (pe_latency + 1) + 1, 0.U, true.B) // TODO NVDLA use the one above again
 
   tag_queue.io.out.next := tag_id_delayed =/= RegNext(tag_id_delayed, 0.U)
 
@@ -251,7 +260,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
       tag_queue.io.in.valid := true.B
     }
 
-    val about_to_finish_flushing = flush_counter === 0.U && fire_counter === (block_size-1).U // TODO change when non-square requirement lifted
+    // TODO NVDLA
+    val about_to_finish_flushing = flush_counter === 0.U && fire_counter === (array_dim-1).U // TODO change when non-square requirement lifted
     when (about_to_finish_flushing) {
       fire_counter := 0.U
       tag_queue.io.in.valid := true.B

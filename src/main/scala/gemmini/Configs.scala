@@ -41,7 +41,7 @@ object GemminiConfigs {
     tileColumns = 1,
     // meshRows = 4,
     // meshColumns = 4,
-    meshRows = 16,
+    meshRows = 1,
     meshColumns = 16,
     ld_queue_length = 8,
     st_queue_length = 2,
@@ -63,7 +63,7 @@ object GemminiConfigs {
     // inputType = Float(8, 24),
     // outputType = Float(8, 24),
     // accType = Float(8, 24),
-    mvin_scale_args = Some(MvinScaleArguments(
+    mvin_scale_args = Some(MvinMvoutScaleArguments(
       (t: SInt, s: SInt) => {
         // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
 

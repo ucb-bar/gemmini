@@ -26,9 +26,7 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
 
   val stride = RegInit((sp_width / 8).U(coreMaxAddrBits.W))
   val scale = Reg(UInt(mvin_scale_t_bits.W))
-  val block_rows = meshRows * tileRows
-  val block_cols = meshColumns * tileColumns
-  val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
+  val row_counter = RegInit(0.U(log2Ceil(array_dim).W))
   val shrink = RegInit(false.B) // Shrink inputs to accumulator
 
   val cmd = Queue(io.cmd, ld_queue_length)
@@ -55,9 +53,9 @@ class LoadController[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], cor
     val rob_id = UInt(log2Up(rob_entries).W)
   }
 
-  val maxBytesInRowRequest = config.dma_maxbytes max (block_cols * config.inputType.getWidth / 8) max
-    (block_cols * config.accType.getWidth / 8)
-  val maxBytesInMatRequest = block_rows * maxBytesInRowRequest
+  val maxBytesInRowRequest = config.dma_maxbytes max (array_dim * config.inputType.getWidth / 8) max
+    (array_dim * config.accType.getWidth / 8)
+  val maxBytesInMatRequest = array_dim * maxBytesInRowRequest
 
   val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, maxBytesInMatRequest, deps_t))
 

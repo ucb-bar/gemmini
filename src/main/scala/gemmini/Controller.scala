@@ -12,7 +12,7 @@ import GemminiISA._
 import Util._
 
 import midas.targetutils.FpgaDebug
-import midas.targetutils.PerfCounter
+//import midas.targetutils.PerfCounter
 
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
@@ -124,12 +124,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data]
 
   // Incoming commands and ROB
   val raw_cmd = Queue(io.cmd)
-  val unrolled_cmd = LoopUnroller(raw_cmd, outer.config.meshRows * outer.config.tileRows)
+  val unrolled_cmd = LoopUnroller(raw_cmd, array_dim)
   // val (compressed_cmd, compressor_busy) = InstCompressor(unrolled_cmd)
   // compressed_cmd.ready := false.B
   unrolled_cmd.ready := false.B
 
-  val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, meshRows*tileRows, meshColumns*tileColumns))
+  val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, array_dim, array_dim))
   // val cmd_decompressor = Module(new InstDecompressor(rob_entries))
 
   // cmd_decompressor.io.in.valid := rob.io.issue.ex.valid
@@ -240,13 +240,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data]
   FpgaDebug(st_ex_cycles)
   FpgaDebug(ld_st_ex_cycles)
 
-  PerfCounter(incr_ld_cycles, "ld_cycles_cnt", "cycles where only load-controller is busy")
-  PerfCounter(incr_st_cycles, "st_cycles_cnt", "cycles where only store-controller is busy")
-  PerfCounter(incr_ex_cycles, "ex_cycles_cnt", "cycles where only execute-controller is busy")
-  PerfCounter(incr_ld_st_cycles, "ld_st_cycles_cnt", "cycles where only load-store-controller is busy")
-  PerfCounter(incr_ld_ex_cycles, "ld_ex_cycles_cnt", "cycles where only load-execute-controller is busy")
-  PerfCounter(incr_st_ex_cycles, "st_ex_cycles_cnt", "cycles where only store-execute-controller is busy")
-  PerfCounter(incr_ld_st_ex_cycles, "ld_st_ex_cycles_cnt", "cycles where only load-store-execute-controller is busy")
+//  PerfCounter(incr_ld_cycles, "ld_cycles_cnt", "cycles where only load-controller is busy")
+//  PerfCounter(incr_st_cycles, "st_cycles_cnt", "cycles where only store-controller is busy")
+//  PerfCounter(incr_ex_cycles, "ex_cycles_cnt", "cycles where only execute-controller is busy")
+//  PerfCounter(incr_ld_st_cycles, "ld_st_cycles_cnt", "cycles where only load-store-controller is busy")
+//  PerfCounter(incr_ld_ex_cycles, "ld_ex_cycles_cnt", "cycles where only load-execute-controller is busy")
+//  PerfCounter(incr_st_ex_cycles, "st_ex_cycles_cnt", "cycles where only store-execute-controller is busy")
+//  PerfCounter(incr_ld_st_ex_cycles, "ld_st_ex_cycles_cnt", "cycles where only load-store-execute-controller is busy")
 
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here

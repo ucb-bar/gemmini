@@ -17,7 +17,7 @@ class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
   * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
   * @param width Data width of operands
   */
-class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, latency: Int)
+class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, latency: Int, passthru: Boolean)
                    (implicit ev: Arithmetic[T]) extends Module { // Debugging variables
   import ev._
 
@@ -37,6 +37,8 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   })
 
   val cType = if (df == Dataflow.WS) inputType else accType
+
+  val latency_ = latency // if (passthru) 0 else latency // TODO NVDLA
 
   val a  = ShiftRegister(io.in_a, latency)
   val b  = ShiftRegister(io.in_b, latency)
@@ -68,24 +70,24 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
 
   when ((df == Dataflow.OS).B || ((df == Dataflow.BOTH).B && dataflow === OUTPUT_STATIONARY)) {
     when(prop === PROPAGATE) {
-      io.out_c := (c1 >> shift_offset).clippedToWidthOf(outputType)
+      io.out_c := (if (passthru) c1 else (c1 >> shift_offset).clippedToWidthOf(outputType))
       io.out_b := b
-      c2 := c2.mac(a, b.asTypeOf(inputType))
+      c2 := (if (passthru) c2 else c2.mac(a, b.asTypeOf(inputType)))
       c1 := d.withWidthOf(cType)
     }.otherwise {
-      io.out_c := (c2 >> shift_offset).clippedToWidthOf(outputType)
+      io.out_c := (if (passthru) c2 else (c2 >> shift_offset).clippedToWidthOf(outputType))
       io.out_b := b
-      c1 := c1.mac(a, b.asTypeOf(inputType))
+      c1 := (if (passthru) c1 else c1.mac(a, b.asTypeOf(inputType)))
       c2 := d.withWidthOf(cType)
     }
   }.elsewhen ((df == Dataflow.WS).B || ((df == Dataflow.BOTH).B && dataflow === WEIGHT_STATIONARY)) {
     when(prop === PROPAGATE) {
       io.out_c := c1
-      io.out_b := b.mac(a, c2.asTypeOf(inputType))
+      io.out_b := (if (passthru) b else b.mac(a, c2.asTypeOf(inputType)))
       c1 := d
     }.otherwise {
       io.out_c := c2
-      io.out_b := b.mac(a, c1.asTypeOf(inputType))
+      io.out_b := (if (passthru) b else b.mac(a, c1.asTypeOf(inputType)))
       c2 := d
     }
   }.otherwise {

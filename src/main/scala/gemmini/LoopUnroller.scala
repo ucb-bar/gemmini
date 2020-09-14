@@ -30,7 +30,7 @@ class LoopUnroller(block_size: Int)(implicit p: Parameters) extends Module {
 
   val i = RegInit(0.U(16.W))
   val j = RegInit(0.U(16.W))
-  val k = RegInit(0.U)
+  val k = RegInit(0.U(16.W))
 
   val max_i = cmd.bits.rs2(iterator_bitwidth-1, 0)
   val max_j = cmd.bits.rs2(iterator_bitwidth * 2 - 1, iterator_bitwidth)
@@ -40,7 +40,7 @@ class LoopUnroller(block_size: Int)(implicit p: Parameters) extends Module {
 
   val bias = cmd.bits.rs2(iterator_bitwidth * 3)
 
-  val a_start = cmd.bits.rs1(31, 0)
+  val a_start = 0.U
   val b_start = cmd.bits.rs1(63, 32)
   val c_start = (3.U << 30).asUInt()
   val d_start = (1.U << 31).asUInt()

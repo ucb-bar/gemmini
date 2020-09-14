@@ -143,8 +143,8 @@ class Scratchpad[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
   val maxBytes = dma_maxbytes
   val dataBits = dma_buswidth
 
-  val block_rows = meshRows * tileRows
-  val block_cols = meshColumns * tileColumns
+  val block_rows = array_dim // meshRows * tileRows // TODO should this just be array_dim?
+  val block_cols = array_dim // meshColumns * tileColumns // TODO should this just be array_dim?
   val spad_w = inputType.getWidth *  block_cols
   val acc_w = accType.getWidth * block_cols
 
