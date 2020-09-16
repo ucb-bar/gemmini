@@ -178,7 +178,7 @@ This limitation may be lifted in the future.
 ### `config_mvout` configures the Store pipeline
 **Format:** `config_mvout rs1 rs2`
 - `rs1[0:1]` must be `10`
-- `rs2` = the stride in bytes
+- `rs2` = the stride in bytes 
 - `funct` = 0
 
 During `mvout` operations, Gemmini can also perform max-pooling.

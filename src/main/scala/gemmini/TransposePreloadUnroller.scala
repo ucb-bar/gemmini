@@ -6,7 +6,7 @@ import chisel3.experimental.ChiselEnum
 import chipsalliance.rocketchip.config.Parameters
 import Util._
 
-class TransposePreloadUnroller[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
+class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V])
                                                                  (implicit p: Parameters) extends Module {
   import config._
   import GemminiISA._
@@ -74,7 +74,7 @@ class TransposePreloadUnroller[T <: Data, U <: Data](config: GemminiArrayConfig[
 }
 
 object TransposePreloadUnroller {
-  def apply[T <: Data, U <: Data](in: ReadyValidIO[GemminiCmd], config: GemminiArrayConfig[T, U])(implicit p: Parameters): DecoupledIO[GemminiCmd] = {
+  def apply[T <: Data, U <: Data, V <: Data](in: ReadyValidIO[GemminiCmd], config: GemminiArrayConfig[T, U, V])(implicit p: Parameters): DecoupledIO[GemminiCmd] = {
     val mod = Module(new TransposePreloadUnroller(config))
     mod.io.in <> in
     mod.io.out

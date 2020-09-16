@@ -9,6 +9,7 @@ import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.system._
 import gemmini.Arithmetic.SIntArithmetic
+import hardfloat._
 
 
 // ------------------
@@ -35,7 +36,7 @@ class WithMultiRoCC extends Config((site, here, up) => {
 object GemminiConfigs {
   // import Arithmetic.FloatArithmetic._
 
-  val defaultConfig = GemminiArrayConfig[SInt, SInt](
+  val defaultConfig = GemminiArrayConfig[SInt, SInt, Float](
   // val defaultConfig = GemminiArrayConfig[Float, Float](
     tileRows = 1,
     tileColumns = 1,
@@ -57,13 +58,15 @@ object GemminiConfigs {
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
+
     inputType = SInt(8.W),
     outputType = SInt(19.W),
     accType = SInt(32.W),
     // inputType = Float(8, 24),
     // outputType = Float(8, 24),
     // accType = Float(8, 24),
-    mvin_scale_args = Some(MvinScaleArguments(
+
+    mvin_scale_args = Some(ScaleArguments(
       (t: SInt, s: SInt) => {
         // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
 
@@ -77,7 +80,7 @@ object GemminiConfigs {
 
         Mux(s >= 0.S, ((t >> u).asSInt() + Mux(r, 1.S, 0.S)).asSInt(), (t << (0.S-s).asUInt()).asSInt())
       },
-      0, SInt(8.W))),
+      0, SInt(8.W), "0")),
     // mvin_scale_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
     // mvin_scale_acc_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
     // mvin_scale_args = None,
@@ -85,6 +88,63 @@ object GemminiConfigs {
     // mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
     // mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
     mvin_scale_shared = false,
+
+//    acc_scale_args = ScaleArguments(
+//      (t: SInt, u: UInt) => {
+//        // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
+//
+//        // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
+//        val point_five = Mux(u === 0.U, 0.U, t(u - 1.U))
+//        val zeros = Mux(u <= 1.U, 0.U, t.asUInt() & ((1.U << (u - 1.U)).asUInt() - 1.U)) =/= 0.U
+//        val ones_digit = t(u)
+//
+//        val r = (point_five & (zeros | ones_digit)).asBool()
+//
+//        (t >> u).asSInt() + Mux(r, 1.S, 0.S)
+//      },
+//      0, UInt(8.W),
+//      c_str = "ROUNDING_RIGHT_SHIFT(x, scale)"
+//    ),
+
+    acc_scale_args = ScaleArguments(
+      (t: SInt, f: Float) => {
+        val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)
+
+        val in_to_rec_fn = Module(new INToRecFN(t.getWidth, f.expWidth, f.sigWidth))
+        in_to_rec_fn.io.signedIn := true.B
+        in_to_rec_fn.io.in := t.asTypeOf(UInt(t.getWidth.W))
+        in_to_rec_fn.io.roundingMode := consts.round_near_even
+        in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+        val t_rec = in_to_rec_fn.io.out
+
+        val muladder = Module(new MulAddRecFN(f.expWidth, f.sigWidth))
+        muladder.io.op := 0.U
+        muladder.io.roundingMode := consts.round_near_even
+        muladder.io.detectTininess := consts.tininess_afterRounding
+
+        muladder.io.a := t_rec
+        muladder.io.b := f_rec
+        muladder.io.c := 0.U
+
+        val rec_fn_to_in = Module(new RecFNToIN(f.expWidth, f.sigWidth, t.getWidth))
+        rec_fn_to_in.io.in := muladder.io.out
+        rec_fn_to_in.io.roundingMode := consts.round_near_even
+        rec_fn_to_in.io.signedOut := true.B
+
+        val overflow = rec_fn_to_in.io.intExceptionFlags(1)
+        val maxsat = ((1 << (t.getWidth-1))-1).S
+        val minsat = (-(1 << (t.getWidth-1))).S
+        val sign = rawFloatFromRecFN(f.expWidth, f.sigWidth, rec_fn_to_in.io.in).sign
+        val sat = Mux(sign, minsat, maxsat)
+
+        Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
+      },
+      0, Float(8, 24),
+      identity = "1.0",
+      c_str = "({float y = (x) * (scale); y > INT_MAX ? INT_MAX : (y < INT_MIN ? INT_MIN : (acc_t)y);})"
+    ),
+
     pe_latency = 0
   )
 }

@@ -3,14 +3,15 @@ package gemmini
 import chisel3._
 import chisel3.util._
 
-
-class AccumulatorReadReq(val n: Int, val shift_width: Int) extends Bundle {
+class AccumulatorReadReq[T <: Data](n: Int, shift_width: Int, scale_t: T) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
-  val shift = UInt(shift_width.W)
+  val scale = scale_t
   val relu6_shift = UInt(shift_width.W)
   val act = UInt(2.W)
 
   val fromDMA = Bool()
+
+  override def cloneType: this.type = new AccumulatorReadReq(n, shift_width, scale_t.cloneType).asInstanceOf[this.type]
 }
 
 class AccumulatorReadResp[T <: Data: Arithmetic](rdataType: Vec[Vec[T]]) extends Bundle {
@@ -20,11 +21,11 @@ class AccumulatorReadResp[T <: Data: Arithmetic](rdataType: Vec[Vec[T]]) extends
   override def cloneType: this.type = new AccumulatorReadResp(rdataType.cloneType).asInstanceOf[this.type]
 }
 
-class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, shift_width: Int, rdataType: Vec[Vec[T]]) extends Bundle {
-  val req = Decoupled(new AccumulatorReadReq(n, shift_width))
+class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, shift_width: Int, rdataType: Vec[Vec[T]], scale_t: U) extends Bundle {
+  val req = Decoupled(new AccumulatorReadReq(n, shift_width, scale_t))
   val resp = Flipped(Decoupled(new AccumulatorReadResp(rdataType.cloneType)))
 
-  override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType.cloneType).asInstanceOf[this.type]
+  override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType.cloneType, scale_t.cloneType).asInstanceOf[this.type]
 }
 
 class AccumulatorWriteIO[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
@@ -33,18 +34,19 @@ class AccumulatorWriteIO[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends 
   val data = Output(t)
   val acc = Output(Bool())
   val mask = Output(Vec(t.getWidth / 8, Bool())) // TODO Use aligned_to here
+  val current_waddr = Flipped(Valid(UInt(log2Ceil(n).W))) // This is the raddr that is being fed into the SRAM right now
 
   override def cloneType: this.type = new AccumulatorWriteIO(n, t).asInstanceOf[this.type]
 }
 
-class AccumulatorMemIO [T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]], rdata: Vec[Vec[T]]) extends Bundle {
-  val read = Flipped(new AccumulatorReadIO(n, log2Ceil(t.head.head.getWidth), rdata))
+class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], rdata: Vec[Vec[T]], scale_t: U) extends Bundle {
+  val read = Flipped(new AccumulatorReadIO(n, log2Ceil(t.head.head.getWidth), rdata, scale_t))
   val write = Flipped(new AccumulatorWriteIO(n, t))
 
-  override def cloneType: this.type = new AccumulatorMemIO(n, t, rdata).asInstanceOf[this.type]
+  override def cloneType: this.type = new AccumulatorMemIO(n, t, rdata, scale_t).asInstanceOf[this.type]
 }
 
-class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], mem_pipeline: Int)
+class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], mem_pipeline: Int, scale_args: ScaleArguments[T, U])
                                (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
   // to it, then we might not get the written data. We might need some kind of cooldown counter after addresses in the
@@ -58,7 +60,7 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   import ev._
 
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t, rdataType))
+  val io = IO(new AccumulatorMemIO(n, t, rdataType, scale_args.multiplicand_t))
 
   val mem = TwoPortSyncMem(n, t, t.getWidth / 8) // TODO We assume byte-alignment here. Use aligned_to instead
 
@@ -84,15 +86,15 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
 
   class PipelinedRdataAndActT extends Bundle {
     val data = mem.io.rdata.cloneType
-    val shift = io.read.req.bits.shift.cloneType
+    val scale = io.read.req.bits.scale.cloneType
     val relu6_shift = io.read.req.bits.relu6_shift.cloneType
     val act = io.read.req.bits.act.cloneType
     val fromDMA = io.read.req.bits.fromDMA.cloneType
   }
-  
+
   val q = Module(new Queue(new PipelinedRdataAndActT, 1, true, true))
   q.io.enq.bits.data := mem.io.rdata
-  q.io.enq.bits.shift := RegNext(io.read.req.bits.shift)
+  q.io.enq.bits.scale := RegNext(io.read.req.bits.scale)
   q.io.enq.bits.relu6_shift := RegNext(io.read.req.bits.relu6_shift)
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
   q.io.enq.bits.fromDMA := RegNext(io.read.req.bits.fromDMA)
@@ -101,7 +103,9 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   val p = Pipeline(q.io.deq, mem_pipeline, Seq.fill(mem_pipeline)((x: PipelinedRdataAndActT) => x) :+ {
     x: PipelinedRdataAndActT =>
       val activated_rdata = VecInit(x.data.map(v => VecInit(v.map { e =>
-        val e_clipped = (e >> x.shift).clippedToWidthOf(rdataType.head.head)
+        // val e_scaled = e >> x.shift
+        val e_scaled = scale_args.scale_func(e, x.scale)
+        val e_clipped = e_scaled.clippedToWidthOf(rdataType.head.head)
         val e_act = MuxCase(e_clipped, Seq(
           (x.act === Activation.RELU) -> e_clipped.relu,
           (x.act === Activation.RELU6) -> e_clipped.relu6(x.relu6_shift)))
@@ -128,8 +132,8 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   io.read.resp.valid := p.valid
   p.ready := io.read.resp.ready
 
-  val read_write_same_address_1 = !(io.read.req.fire() && io.write.en && io.read.req.bits.addr === io.write.addr)
-  val read_write_same_address_2 = !(io.read.req.fire() && w_buf_valid && waddr_buf === io.read.req.bits.addr)
+  io.write.current_waddr.valid := mem.io.wen
+  io.write.current_waddr.bits := mem.io.waddr
 
   // assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
   assert(!(io.read.req.fire() && io.write.en && io.read.req.bits.addr === io.write.addr), "reading from and writing to same address is not supported")

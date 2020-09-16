@@ -42,7 +42,7 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
   override def cloneType: StreamReadResponse.this.type = new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to, mvin_scale_t_bits).asInstanceOf[this.type]
 }
 
-class StreamReader[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
+class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
                    spad_rows: Int, acc_rows: Int, meshRows: Int)
                   (implicit p: Parameters) extends LazyModule {
   val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows))
@@ -101,7 +101,7 @@ class StreamReadBeat (val nXacts: Int, val beatBits: Int, val maxReqBytes: Int) 
 }
 
 // TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
-class StreamReaderCore[T <: Data, U <: Data](config: GemminiArrayConfig[T, U], nXacts: Int, beatBits: Int, maxBytes: Int,
+class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int,
                                   spadWidth: Int, accWidth: Int, aligned_to: Int,
                                   spad_rows: Int, acc_rows: Int, meshRows: Int)
                                  (implicit p: Parameters) extends LazyModule {

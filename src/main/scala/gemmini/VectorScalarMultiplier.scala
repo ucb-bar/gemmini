@@ -24,11 +24,11 @@ class VectorScalarMultiplierResp[T <: Data, Tag <: Data](block_cols: Int, t: T, 
 // class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](config: GemminiArrayConfig[T, U], tag_t: Tag) extends Module {
   // import config._
   // val block_cols = meshColumns * tileColumns
-class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args: Option[MvinScaleArguments[T, U]], block_cols: Int, t: T, tag_t: Tag) extends Module {
+class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args: Option[ScaleArguments[T, U]], block_cols: Int, t: T, tag_t: Tag) extends Module {
 
   val u = mvin_scale_args match {
-    case Some(MvinScaleArguments(_, _, multiplicand_t)) => multiplicand_t
-    case None => Bool() // TODO make this a 0 width UInt
+    case Some(ScaleArguments(_, _, multiplicand_t, _, _)) => multiplicand_t
+    case None => Bool() // TODO make this a 0-width UInt
   }
 
   val io = IO(new Bundle {
@@ -39,10 +39,10 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args:
   val req = Reg(UDValid(chiselTypeOf(io.req.bits)))
 
   mvin_scale_args match {
-    case Some(MvinScaleArguments(mvin_scale_func, _, t)) => {
+    case Some(ScaleArguments(mvin_scale_func, _, multiplicand_t, _, _)) => {
       io.req.ready := !req.valid || io.resp.fire()
       io.resp.valid := req.valid
-      io.resp.bits.out := req.bits.in.map(x => mvin_scale_func(x, req.bits.scale.asTypeOf(t)))
+      io.resp.bits.out := req.bits.in.map(x => mvin_scale_func(x, req.bits.scale.asTypeOf(multiplicand_t)))
       io.resp.bits.tag := req.bits.tag
     }
 
@@ -63,24 +63,18 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args:
   when (reset.toBool()) {
     req.pop()
   }
-
-  dontTouch(io.req)
-  dontTouch(io.resp)
-  dontTouch(req)
 }
 
 object VectorScalarMultiplier {
   // Returns the input and output IO of the module (together with the pipeline)
-  def apply[T <: Data, U <: Data, Tag <: Data](config: GemminiArrayConfig[T, U], tag_t: Tag, is_acc: Boolean) = {
-    val mvin_scale_args = if (is_acc) config.mvin_scale_acc_args else config.mvin_scale_args
-    val t = if (is_acc) config.accType else config.inputType
-    val block_cols = config.meshColumns * config.tileColumns
+  def apply[T <: Data, U <: Data, Tag <: Data](scale_args: Option[ScaleArguments[T, U]], t: T, cols: Int, tag_t: Tag, is_acc: Boolean, is_mvin: Boolean=true) = {
+    assert(!is_acc || is_mvin)
 
-    val vsm = Module(new VectorScalarMultiplier(mvin_scale_args, block_cols, t, tag_t))
+    val vsm = Module(new VectorScalarMultiplier(scale_args, cols, t, tag_t))
 
     val in = vsm.io.req
-    val out = mvin_scale_args match {
-      case Some(MvinScaleArguments(_, latency, _)) => Pipeline(vsm.io.resp, latency)
+    val out = scale_args match {
+      case Some(ScaleArguments(_, latency, _, _, _)) => Pipeline(vsm.io.resp, latency)
       case None => vsm.io.resp
     }
 

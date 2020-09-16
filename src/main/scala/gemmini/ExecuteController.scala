@@ -7,10 +7,10 @@ import Util._
 import freechips.rocketchip.config.Parameters
 
 import midas.targetutils.FpgaDebug
-import midas.targetutils.PerfCounter
+// import midas.targetutils.PerfCounter
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
-class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U])
+class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
                                   (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
   import config._
   import ev._
@@ -24,7 +24,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     }
 
     val acc = new Bundle {
-      val read = Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType))))
+      val read = Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType)), acc_scale_args.multiplicand_t))
       val write = Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))))
     }
 
@@ -84,7 +84,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   }
 
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
-  val acc_shift = Reg(UInt(log2Up(accType.getWidth).W))
+  val acc_scale = Reg(acc_scale_args.multiplicand_t)
   val relu6_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val activation = Reg(UInt(2.W))
   val a_transpose = Reg(Bool())
@@ -360,7 +360,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     }
 
     io.acc.read(i).req.valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
-    io.acc.read(i).req.bits.shift := acc_shift
+    io.acc.read(i).req.bits.scale := acc_scale
     io.acc.read(i).req.bits.relu6_shift := relu6_shift
     io.acc.read(i).req.bits.act := activation
     io.acc.read(i).req.bits.fromDMA := false.B
@@ -386,7 +386,7 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
         when(DoConfig && !matmul_in_progress && !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) {
           activation := rs1s(0)(4, 3) // TODO magic number
           in_shift := rs2s(0)(31, 0) // TODO magic number
-          acc_shift := rs1s(0)(xLen-1, 32) // TODO magic number
+          acc_scale := rs1s(0)(xLen-1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
           relu6_shift := rs2s(0)(xLen-1, 32) // TODO magic number
           a_addr_stride := rs1s(0)(31, 16) // TODO magic number
           a_transpose := rs1s(0)(8)
@@ -778,8 +778,8 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   FpgaDebug(mul_pre_counter)
   FpgaDebug(waiting_for_mesh_cycle_counter)
 
-  PerfCounter(perform_single_preload, "pre_cnt", "how many cycles did we preload only?")
-  PerfCounter(perform_single_mul, "mul_cnt", "how many cycles did we only multiply?")
-  PerfCounter(perform_mul_pre, "mul_pre_cnt", "how many cycles did we both preload and multiply?")
-  PerfCounter(incr_waiting_for_mesh_cycle_counter, "mesh_waiting_cnt", "how many cycles do we wait for the mesh?")
+  // PerfCounter(perform_single_preload, "pre_cnt", "how many cycles did we preload only?")
+  // PerfCounter(perform_single_mul, "mul_cnt", "how many cycles did we only multiply?")
+  // PerfCounter(perform_mul_pre, "mul_pre_cnt", "how many cycles did we both preload and multiply?")
+  // PerfCounter(incr_waiting_for_mesh_cycle_counter, "mesh_waiting_cnt", "how many cycles do we wait for the mesh?")
 }

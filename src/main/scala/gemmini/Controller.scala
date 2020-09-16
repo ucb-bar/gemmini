@@ -12,13 +12,13 @@ import GemminiISA._
 import Util._
 
 import midas.targetutils.FpgaDebug
-import midas.targetutils.PerfCounter
+// import midas.targetutils.PerfCounter
 
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
 
-  override def cloneType: this.type = (new GemminiCmd(rob_entries)).asInstanceOf[this.type]
+  override def cloneType: this.type = new GemminiCmd(rob_entries).asInstanceOf[this.type]
 }
 
 class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_entries: Int) extends Bundle {
@@ -80,7 +80,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
   override def cloneType: LocalAddr.this.type = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries).asInstanceOf[this.type]
 }
 
-class Gemmini[T <: Data : Arithmetic, U <: Data](opcodes: OpcodeSet, val config: GemminiArrayConfig[T, U])
+class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](opcodes: OpcodeSet, val config: GemminiArrayConfig[T, U, V])
                                      (implicit p: Parameters)
   extends LazyRoCC (
     opcodes = OpcodeSet.custom3,
@@ -95,8 +95,8 @@ class Gemmini[T <: Data : Arithmetic, U <: Data](opcodes: OpcodeSet, val config:
   override val tlNode = spad.id_node
 }
 
-class GemminiModule[T <: Data: Arithmetic, U <: Data]
-    (outer: Gemmini[T, U])
+class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
+    (outer: Gemmini[T, U, V])
     extends LazyRoCCModuleImp(outer)
     with HasCoreParameters {
 
@@ -240,13 +240,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data]
   FpgaDebug(st_ex_cycles)
   FpgaDebug(ld_st_ex_cycles)
 
-  PerfCounter(incr_ld_cycles, "ld_cycles_cnt", "cycles where only load-controller is busy")
-  PerfCounter(incr_st_cycles, "st_cycles_cnt", "cycles where only store-controller is busy")
-  PerfCounter(incr_ex_cycles, "ex_cycles_cnt", "cycles where only execute-controller is busy")
-  PerfCounter(incr_ld_st_cycles, "ld_st_cycles_cnt", "cycles where only load-store-controller is busy")
-  PerfCounter(incr_ld_ex_cycles, "ld_ex_cycles_cnt", "cycles where only load-execute-controller is busy")
-  PerfCounter(incr_st_ex_cycles, "st_ex_cycles_cnt", "cycles where only store-execute-controller is busy")
-  PerfCounter(incr_ld_st_ex_cycles, "ld_st_ex_cycles_cnt", "cycles where only load-store-execute-controller is busy")
+  // PerfCounter(incr_ld_cycles, "ld_cycles_cnt", "cycles where only load-controller is busy")
+  // PerfCounter(incr_st_cycles, "st_cycles_cnt", "cycles where only store-controller is busy")
+  // PerfCounter(incr_ex_cycles, "ex_cycles_cnt", "cycles where only execute-controller is busy")
+  // PerfCounter(incr_ld_st_cycles, "ld_st_cycles_cnt", "cycles where only load-store-controller is busy")
+  // PerfCounter(incr_ld_ex_cycles, "ld_ex_cycles_cnt", "cycles where only load-execute-controller is busy")
+  // PerfCounter(incr_st_ex_cycles, "st_ex_cycles_cnt", "cycles where only store-execute-controller is busy")
+  // PerfCounter(incr_ld_st_ex_cycles, "ld_st_ex_cycles_cnt", "cycles where only load-store-execute-controller is busy")
 
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here

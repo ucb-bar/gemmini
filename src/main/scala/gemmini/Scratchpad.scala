@@ -134,7 +134,7 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int) extends
   io.read.resp <> rdata_p
 }
 
-class Scratchpad[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
+class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V])
     (implicit p: Parameters, ev: Arithmetic[T]) extends LazyModule {
 
   import config._
@@ -179,9 +179,8 @@ class Scratchpad[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
       }
 
       // Accumulator ports
-      // val acc = new AccumulatorMemIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType)))
       val acc = new Bundle {
-        val read = Flipped(Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType)))))
+        val read = Flipped(Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType)), acc_scale_args.multiplicand_t)))
         val write = Flipped(Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType)))))
       }
 
@@ -207,6 +206,27 @@ class Scratchpad[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
     writeData.valid := false.B
     writeData.bits := DontCare
     val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()
+
+//    val (mvout_scale_in, mvout_scale_out) = VectorScalarMultiplier(config, chiselTypeOf(writer.module.io.req.bits), is_acc = false, is_mvin = false)
+//
+//    mvout_scale_in.valid := write_issue_q.io.deq.valid && (writeData.valid || writeData_is_all_zeros)
+//    write_issue_q.io.deq.ready := mvout_scale_in.ready && (writeData.valid || writeData_is_all_zeros)
+//    mvout_scale_in.bits.tag.vaddr := write_issue_q.io.deq.bits.vaddr
+//    mvout_scale_in.bits.tag.len := write_issue_q.io.deq.bits.len
+//    mvout_scale_in.bits.tag.data := Mux(writeData_is_all_zeros, 0.U, writeData.bits)
+//    mvout_scale_in.bits.tag.status := write_issue_q.io.deq.bits.status
+//    mvout_scale_in.bits.tag.pool_en := write_issue_q.io.deq.bits.pool_en
+//    mvout_scale_in.bits.tag.store_en := write_issue_q.io.deq.bits.store_en
+//    mvout_scale_in.bits.scale := write_issue_q.io.deq.bits.scale
+//
+//    writer.module.io.req.valid := mvout_scale_out.valid
+//    mvout_scale_out.ready := writer.module.io.req.ready
+//    writer.module.io.req.bits.vaddr := mvout_scale_out.bits.tag.vaddr
+//    writer.module.io.req.bits.len := mvout_scale_out.bits.tag.len * (inputType.getWidth / 8).U
+//    writer.module.io.req.bits.data := mvout_scale_out.bits.tag.data
+//    writer.module.io.req.bits.status := mvout_scale_out.bits.tag.status
+//    writer.module.io.req.bits.pool_en := mvout_scale_out.bits.tag.pool_en
+//    writer.module.io.req.bits.store_en := mvout_scale_out.bits.tag.store_en
 
     writer.module.io.req.valid := write_issue_q.io.deq.valid && (writeData.valid || writeData_is_all_zeros)
     write_issue_q.io.deq.ready := writer.module.io.req.ready && (writeData.valid || writeData_is_all_zeros)
@@ -235,9 +255,9 @@ class Scratchpad[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
     reader.module.io.req.bits.status := read_issue_q.io.deq.bits.status
     reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
 
-    val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(config, chiselTypeOf(reader.module.io.resp.bits), is_acc = false)
+    val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(config.mvin_scale_args, config.inputType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits), is_acc = false)
     val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out) else
-      VectorScalarMultiplier(config, chiselTypeOf(reader.module.io.resp.bits), is_acc = true)
+      VectorScalarMultiplier(config.mvin_scale_acc_args, config.accType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits), is_acc = true)
 
     mvin_scale_in.valid := reader.module.io.resp.valid && (mvin_scale_shared.B || !reader.module.io.resp.bits.is_acc ||
       (reader.module.io.resp.bits.is_acc && !reader.module.io.resp.bits.has_acc_bitwidth))
@@ -363,7 +383,7 @@ class Scratchpad[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
       val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
       val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
 
-      val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(acc_bank_entries, acc_row_t, spad_row_t, mem_pipeline)) }
+      val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(acc_bank_entries, acc_row_t, spad_row_t, mem_pipeline, acc_scale_args)) }
       val bank_ios = VecInit(banks.map(_.io))
 
       // Getting the output of the bank that's about to be issued to the writer
@@ -384,7 +404,7 @@ class Scratchpad[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
           write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.acc_bank() === i.U
 
         bio.read.req.valid := exread || (dmawrite && !write_dispatch_q.bits.laddr.is_garbage())
-        bio.read.req.bits.shift := ex_read_req.bits.shift
+        bio.read.req.bits.scale := ex_read_req.bits.scale
         bio.read.req.bits.relu6_shift := ex_read_req.bits.relu6_shift
         bio.read.req.bits.act := ex_read_req.bits.act
         ex_read_req.ready := bio.read.req.ready
@@ -426,10 +446,12 @@ class Scratchpad[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
 
         val dmaread_bank = Mux(from_mvin_scale_acc, mvin_scale_acc_out.bits.tag.addr.asTypeOf(local_addr_t).acc_bank(),
           mvin_scale_out.bits.tag.addr.asTypeOf(local_addr_t).acc_bank())
+        val dmaread_row = Mux(from_mvin_scale_acc, mvin_scale_acc_out.bits.tag.addr, mvin_scale_out.bits.tag.addr)
         val mvin_scale_out_last = mvin_scale_out.valid && mvin_scale_out.bits.tag.last
 
         val dmaread = (from_mvin_scale || from_mvin_scale_acc) &&
           dmaread_bank === i.U &&
+          !(bio.write.current_waddr.valid && bio.write.current_waddr.bits === dmaread_row) &&
           (mvin_scale_same.B || from_mvin_scale || !mvin_scale_out_last)
 
         bio.write.en := exwrite || dmaread
@@ -440,7 +462,7 @@ class Scratchpad[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
           bio.write.acc := io.acc.write(i).acc
           bio.write.mask := io.acc.write(i).mask
         }.elsewhen (dmaread) {
-          bio.write.addr := Mux(from_mvin_scale_acc, mvin_scale_acc_out.bits.tag.addr, mvin_scale_out.bits.tag.addr)
+          bio.write.addr := dmaread_row
           // bio.write.data := mvin_scale_acc_out.bits.out.asTypeOf(acc_row_t)
           bio.write.data := Mux(from_mvin_scale_acc,
             mvin_scale_acc_out.bits.out.asTypeOf(acc_row_t),
