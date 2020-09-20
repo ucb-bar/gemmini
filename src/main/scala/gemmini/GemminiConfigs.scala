@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -31,6 +32,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
                                                                   inputType: T,
                                                                   outputType: T,
                                                                   accType: T,
+                                                                hasIm2col: Boolean,
                                                                   mvin_scale_args: Option[MvinScaleArguments[T, U]],
                                                                   mvin_scale_acc_args: Option[MvinScaleArguments[T, U]],
                                                                   mvin_scale_shared: Boolean,

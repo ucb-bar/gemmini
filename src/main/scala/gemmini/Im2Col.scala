@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -50,31 +51,10 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
     val req = Flipped(Decoupled(new Im2ColReadReq(config))) // from ExecuteController
     val resp = Decoupled(new Im2ColReadResp(config)) // to ExecuteController
 
-    /*
-    val req = new Bundle {
-      val valid = Input(Bool())
-      val ready = Output(Bool())
-      val bits = Input(new Im2ColReadReq(config))
-    }
-    val resp = new Bundle {
-      val valid = Output(Bool())
-      val ready = Input(Bool())
-      val bits = Output(new Im2ColReadResp(config))
-    }
-    */
-
     val sram_reads = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)) // from Scratchpad
   })
-  /*
-    object State extends ChiselEnum {
-      val idle, busy = Value
-    }
-    import State._
-    val state = RegInit(idle)
-  */
   val req = Reg(new Im2ColReadReq(config))
 
-  //when (io.req.ready && io.req.valid) {
   when(io.req.ready){
     io.sram_reads(req.addr.sp_bank()).req.valid := true.B
     io.sram_reads(req.addr.sp_bank()).req.bits.addr := req.addr.sp_row()
@@ -92,16 +72,7 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   val channel = Mux(channel_counter > block_size.U, block_size.U, channel_counter) //channel > 16, then do DIM of channel first until channel < DIM
 
   val filter_dim2 = io.req.bits.kdim2
-  //val im2col_width = channel * filter_dim2
-  //val output_dim = ocol*orow
-  //Todo: ocol*orow - block_done*block_size
-  //Todo: row_turn
-  //Todo: turn
 
-
-
-  // first do simple case: channel 4, output width: 3x3
-  //val row_counter = RegInit(0.U(10.W)) // im2col_width
   val column_counter = RegInit(0.U(6.W))
   val window_row_counter = RegInit(0.U(13.W))
   val window_start_counter = RegInit(0.U((window_row_counter.getWidth).W))
@@ -121,9 +92,6 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   //how much horizonal turn we have to compute (input_channel*kernel_dim/16)
   //val turn = Mux(im2col_width(3,0) === 0.U, (im2col_width >> (log2Up(block_size)).U).asUInt(), (im2col_width >> (log2Up(block_size)).U).asUInt + 1.U)
   val turn = filter_dim2//Mux(channel(3,0) === 0.U, filter_dim2*channel(6, 4), filter_dim2*channel(6, 4) + 1.U)
-
-  //val ch_per_turn = WireInit(0.U(5.W))
-
 
   //Seah: added for more than 16 rows of output
   //how much vertical turn we have to compute (output_dim/16)
@@ -380,7 +348,6 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
     when(!im2col_fin){
       when(column_counter_last_row_block || column_counter === block_size.U - 1.U){
         im2col_fin := true.B
-        //}.elsewhen((column_counter + 1.U + block_done * block_size.U) % ocol === 0.U){
       }.elsewhen((column_counter + 1.U + block_done * block_size.U) - modulo_block_done === ocol){
         window_start_counter := window_start_counter + kdim + (stride - 1.U) * icol
         modulo_block_done := modulo_block_done + ocol
@@ -399,10 +366,8 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
 
   when(im2col_state =/= im2col_done) {
     when(im2col_fin_reg) {
-      //when(channel === block_size.U) {
       when(turn_count_save - im2col_turn + 1.U === filter_dim2) { // when 16 channels finished
         window_row_counter := 0.U
-        //}.elsewhen((turn - im2col_turn + 1.U) % kcol === 0.U) { //when finishing 1 weight row
       }.elsewhen((turn - im2col_turn + 1.U) - modulo_im2col_turn === kdim) { //when finishing 1 weight row
         window_row_counter := window_row_counter + icol - kdim + 1.U //copy window_row_counter below
         modulo_im2col_turn := modulo_im2col_turn + kdim
@@ -466,7 +431,6 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
     val block_done = UInt(9.W)
     val start_inputting = Bool()
     val sram_bank = UInt(2.W)
-    //val sram_resp_valid = Bool()
   }
   sram_read_signals_q.io.enq.valid :=sram_read_valid && io.req.valid && sram_resp_valid
   sram_read_signals_q.io.enq.bits.column_counter := column_counter
@@ -476,14 +440,13 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   sram_read_signals_q.io.enq.bits.block_done := block_done
   sram_read_signals_q.io.enq.bits.start_inputting := start_inputting_A
   sram_read_signals_q.io.enq.bits.sram_bank := im2col_spad_bank
-  //sram_read_signals_q.io.enq.bits.sram_resp_valid := sram_resp_valid
 
   sram_read_signals_q.io.deq.ready := true.B//sram_resp_valid
 
-  /* Example of how to interface with scratchpad
-   io.spad_reads(req.addr.sp_bank()).req.valid := true.B
-   io.spad_reads(req.addr.sp_bank()).req.bits.addr := req.addr.sp_row()
-   io.spad_reads(req.addr.sp_bank()).resp
-   */
+  if(!hasIm2col){ //to default values
+    io.resp.valid := false.B
+    io.req.ready := true.B
+    io.sram_reads.foreach(_.req.valid := false.B)
+  }
 
 }

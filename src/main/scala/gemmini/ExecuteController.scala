@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -354,19 +355,6 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
     }
   }
 
-  /*
-  //Seah: for OS counter address sync
-  val counter_save = WireInit(b_fire_counter)
-  when(io.im2col.resp.bits.im2col_end){
-    when(io.im2col.resp.valid){
-      counter_save := b_fire_counter
-    }.otherwise{
-      counter_save := b_fire_counter - 1.U
-    }
-  }.otherwise{
-    counter_save := b_fire_counter
-  }
-   */
   val d_fire_counter_mulpre = WireInit(b_fire_counter)
   when(performing_mul_pre && !io.im2col.resp.bits.im2col_delay&&im2col_en){
     d_fire_counter_mulpre := d_fire_counter - mul_pre_counter_sub
@@ -464,7 +452,6 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
 
       when(cmd.valid(0))
       {
-        // when(DoConfig && !matmul_in_progress && !pending_completed_rob_id.valid) {
         when(DoConfig && !matmul_in_progress && !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) { // see config command from ROB
           activation := rs1s(0)(4, 3)
           in_shift := rs2s(0)(19, 0)//rs2s(0)(31, 0) // TODO magic number
