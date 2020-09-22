@@ -442,11 +442,9 @@ class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Mod
   sram_read_signals_q.io.enq.bits.sram_bank := im2col_spad_bank
 
   sram_read_signals_q.io.deq.ready := true.B//sram_resp_valid
-
   if(!hasIm2col){ //to default values
     io.resp.valid := false.B
     io.req.ready := true.B
     io.sram_reads.foreach(_.req.valid := false.B)
   }
-
 }

@@ -12,6 +12,7 @@ class XactTrackerEntry[U <: Data](maxShift: Int, spadWidth: Int, accWidth: Int,
   val is_acc = Bool()
   val accumulate = Bool()
   val has_acc_bitwidth = Bool()
+
   val scale = UInt(mvin_scale_t_bits.W)
   val spad_row_offset = UInt(log2Up(spadWidth max accWidth).W)
   val lg_len_req = UInt(log2Up(log2Up(maxReqBytes+1)+1).W)

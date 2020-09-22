@@ -17,7 +17,9 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val len = UInt(8.W) // TODO don't use a magic number for the width here
 
   val scale = UInt(scale_t_bits.W)
-  val has_acc_bitwidth = Bool()
+
+  val has_acc_bitwidth = Bool() //for resadd
+
 
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
 
@@ -240,6 +242,7 @@ class Scratchpad[T <: Data, U <: Data](config: GemminiArrayConfig[T, U])
 
     mvin_scale_in.valid := reader.module.io.resp.valid && (mvin_scale_shared.B || !reader.module.io.resp.bits.is_acc ||
       (reader.module.io.resp.bits.is_acc && !reader.module.io.resp.bits.has_acc_bitwidth))
+
     mvin_scale_in.bits.in := reader.module.io.resp.bits.data.asTypeOf(chiselTypeOf(mvin_scale_in.bits.in))
     mvin_scale_in.bits.scale := reader.module.io.resp.bits.scale.asTypeOf(mvin_scale_t)
     mvin_scale_in.bits.tag := reader.module.io.resp.bits

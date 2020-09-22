@@ -9,5 +9,5 @@ cd gemmini-rocc-tests
 autoconf
 mkdir -p build && cd build
 ../configure
-make TARGET=riscv64-unknown-linux-gnu-
+make TARGET=riscv64-unknown-linux-gnu- -j
 cp -r ./* ../../overlay/root/

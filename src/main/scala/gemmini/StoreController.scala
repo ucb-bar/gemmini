@@ -8,7 +8,6 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
-
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
 class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayConfig[T, U], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
@@ -93,7 +92,6 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   }
 
   val pool_vaddr = vaddr + (porow_counter * pool_out_dim + pocol_counter) * stride // TODO get rid of these multiplications
-  //also use for 1D mvout
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoStore = !DoConfig // TODO change this if more commands are added
@@ -108,11 +106,12 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
     val rob_id = UInt(log2Up(rob_entries).W)
   }
 
-  //how does this work?
+
   val cmd_tracker_max_rows = (block_rows max
     (((1 << pool_orows.getWidth)-1) * ((1 << pool_ocols.getWidth)-1) + 2*((1 << pool_lpad.getWidth)-1) + 2*((1 << pool_upad.getWidth)-1))) min
     ((config.sp_banks * config.sp_bank_entries) max
-      (config.acc_banks * config.acc_bank_entries))
+    (config.acc_banks * config.acc_bank_entries))
+
   val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, cmd_tracker_max_rows, deps_t))
 
   // DMA IO wiring
@@ -120,8 +119,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
     control_state === waiting_for_dma_req_ready ||
     (control_state === sending_rows && row_counter =/= 0.U) || // TODO Do we really have to check whether the counters should be 0 here?
     (control_state === pooling && (wcol_counter =/= 0.U || wrow_counter =/= 0.U || pocol_counter =/= 0.U || porow_counter =/= 0.U))
+
   io.dma.req.bits.vaddr := Mux(pooling_is_enabled || mvout_1d_enabled, pool_vaddr, vaddr + row_counter * stride)
   io.dma.req.bits.laddr := Mux(pooling_is_enabled, pool_row_addr, localaddr_plus_row_counter) //Todo: laddr for 1D?
+
   io.dma.req.bits.len := cols
   io.dma.req.bits.status := mstatus
   io.dma.req.bits.pool_en := pooling_is_enabled && (wrow_counter =/= 0.U || wcol_counter =/= 0.U)
@@ -131,7 +132,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore
   cmd_tracker.io.alloc.bits.bytes_to_read := Mux(!pooling_is_enabled, Mux(mvout_1d_enabled, mvout_1d_rows, rows), pool_total_rows) // TODO do we have to add upad and lpad to this?
-  cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id
+  cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
+
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.bytes_read := 1.U
@@ -172,7 +174,6 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
           pool_size := config_pool_size
           pool_stride := config_pool_stride
           when (config_pool_stride =/= 0.U) {
-            //pool_size := config_pool_size
             pool_out_dim := config_pool_out_dim
             pool_porows := config_porows
             pool_pocols := config_pocols
@@ -185,10 +186,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
             pool_ocols := config_ocols
             pool_out_dim := config_pool_out_dim
           }
-
           cmd.ready := true.B
         }
-
           .elsewhen(DoStore && cmd_tracker.io.alloc.fire()) {
             val next_state = Mux(pooling_is_enabled, pooling, sending_rows)
             control_state := Mux(io.dma.req.fire(), next_state, waiting_for_dma_req_ready)
