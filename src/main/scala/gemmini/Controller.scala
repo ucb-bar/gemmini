@@ -232,13 +232,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     ld_st_ex_cycles := ld_st_ex_cycles + 1.U
   }
 
-  FpgaDebug(ld_cycles)
-  FpgaDebug(st_cycles)
-  FpgaDebug(ex_cycles)
-  FpgaDebug(ld_st_cycles)
-  FpgaDebug(ld_ex_cycles)
-  FpgaDebug(st_ex_cycles)
-  FpgaDebug(ld_st_ex_cycles)
+  // FpgaDebug(ld_cycles)
+  // FpgaDebug(st_cycles)
+  // FpgaDebug(ex_cycles)
+  // FpgaDebug(ld_st_cycles)
+  // FpgaDebug(ld_ex_cycles)
+  // FpgaDebug(st_ex_cycles)
+  // FpgaDebug(ld_st_ex_cycles)
 
   // PerfCounter(incr_ld_cycles, "ld_cycles_cnt", "cycles where only load-controller is busy")
   // PerfCounter(incr_st_cycles, "st_cycles_cnt", "cycles where only store-controller is busy")

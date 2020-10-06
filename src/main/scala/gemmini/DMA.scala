@@ -10,6 +10,8 @@ import testchipip.TLHelper
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
+import midas.targetutils.FpgaDebug
+
 import Util._
 
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
@@ -468,6 +470,22 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         }
       }
     }
+
+    FpgaDebug(io.req.valid)
+    FpgaDebug(io.req.ready)
+    FpgaDebug(req.data)
+    FpgaDebug(req.len)
+
+    FpgaDebug(state)
+    FpgaDebug(bytesSent)
+    FpgaDebug(beatsLeft)
+    FpgaDebug(beatsSent)
+
+    FpgaDebug(tl.a.valid)
+    FpgaDebug(tl.a.ready)
+    FpgaDebug(tl.a.bits.data)
+    FpgaDebug(tl.a.bits.size)
+    FpgaDebug(tl.a.bits.mask)
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
