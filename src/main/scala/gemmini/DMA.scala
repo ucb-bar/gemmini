@@ -475,6 +475,9 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     FpgaDebug(io.req.ready)
     FpgaDebug(req.data)
     FpgaDebug(req.len)
+    FpgaDebug(req.vaddr)
+    FpgaDebug(last_vpn_translated)
+    FpgaDebug(last_vpn_translated_valid)
 
     FpgaDebug(state)
     FpgaDebug(bytesSent)
@@ -486,6 +489,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     FpgaDebug(tl.a.bits.data)
     FpgaDebug(tl.a.bits.size)
     FpgaDebug(tl.a.bits.mask)
+    FpgaDebug(tl.a.bits.address)
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
