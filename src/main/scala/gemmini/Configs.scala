@@ -60,7 +60,7 @@ object GemminiConfigs {
     aligned_to = 1,
 
     inputType = SInt(8.W),
-    outputType = SInt(19.W),
+    outputType = SInt(20.W),
     accType = SInt(32.W),
     // inputType = Float(8, 24),
     // outputType = Float(8, 24),
