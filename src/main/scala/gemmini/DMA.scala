@@ -476,8 +476,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     FpgaDebug(req.data)
     FpgaDebug(req.len)
     FpgaDebug(req.vaddr)
-    FpgaDebug(last_vpn_translated)
-    FpgaDebug(last_vpn_translated_valid)
+    // FpgaDebug(last_vpn_translated)
+    // FpgaDebug(last_vpn_translated_valid)
 
     FpgaDebug(state)
     FpgaDebug(bytesSent)

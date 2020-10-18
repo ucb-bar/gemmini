@@ -240,9 +240,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
     writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
 
-    FpgaDebug(write_issue_q.io.deq.bits.laddr.data)
-    FpgaDebug(write_issue_q.io.deq.bits.laddr.accumulate)
-    FpgaDebug(write_issue_q.io.deq.bits.laddr.is_acc_addr)
+    // FpgaDebug(write_issue_q.io.deq.bits.laddr.data)
+    // FpgaDebug(write_issue_q.io.deq.bits.laddr.accumulate)
+    // FpgaDebug(write_issue_q.io.deq.bits.laddr.is_acc_addr)
 
     io.dma.write.resp.valid := false.B
     io.dma.write.resp.bits.cmd_id := write_dispatch_q.bits.cmd_id
@@ -287,6 +287,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     reader.module.io.resp.ready := Mux(reader.module.io.resp.bits.is_acc && reader.module.io.resp.bits.has_acc_bitwidth,
       mvin_scale_acc_in.ready, mvin_scale_in.ready)
 
+    FpgaDebug(reader.module.io.resp.valid)
+    FpgaDebug(reader.module.io.resp.ready)
+    FpgaDebug(reader.module.io.resp.bits.addr)
+    FpgaDebug(reader.module.io.resp.bits.data)
+    FpgaDebug(reader.module.io.resp.bits.scale)
+
     val mvin_scale_finished = mvin_scale_out.fire() && mvin_scale_out.bits.tag.last
     val mvin_scale_acc_finished = mvin_scale_acc_out.fire() && mvin_scale_acc_out.bits.tag.last
     io.dma.read.resp.valid := mvin_scale_finished || mvin_scale_acc_finished
@@ -311,6 +317,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to)) }
       val bank_ios = VecInit(banks.map(_.io))
+
+      FpgaDebug(banks(0).io.write)
 
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.sp_bank())
