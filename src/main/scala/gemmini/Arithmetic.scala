@@ -119,7 +119,7 @@ object Arithmetic {
 
     override implicit def cast(self: Float): ArithmeticOps[Float] = new ArithmeticOps(self) {
       override def *(t: Float): Float = {
-        val t_rec = recFNFromFN(self.expWidth, self.sigWidth, t.bits)
+        val t_rec = recFNFromFN(t.expWidth, t.sigWidth, t.bits)
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
 
         val t_resizer =  Module(new RecFNToRecFN(t.expWidth, t.sigWidth, self.expWidth, self.sigWidth))
@@ -155,7 +155,7 @@ object Arithmetic {
         m1_resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
         m1_resizer.io.detectTininess := consts.tininess_afterRounding
         val m1_rec_resized = m1_resizer.io.out
-        
+
         // Resize m2 to self's width
         val m2_resizer = Module(new RecFNToRecFN(m2.expWidth, m2.sigWidth, self.expWidth, self.sigWidth))
         m2_resizer.io.in := m2_rec
