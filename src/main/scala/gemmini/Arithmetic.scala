@@ -119,7 +119,7 @@ object Arithmetic {
 
     override implicit def cast(self: Float): ArithmeticOps[Float] = new ArithmeticOps(self) {
       override def *(t: Float): Float = {
-        val t_rec = recFNFromFN(self.expWidth, self.sigWidth, t.bits)
+        val t_rec = recFNFromFN(t.expWidth, t.sigWidth, t.bits)
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
 
         val t_resizer =  Module(new RecFNToRecFN(t.expWidth, t.sigWidth, self.expWidth, self.sigWidth))
