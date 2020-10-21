@@ -37,6 +37,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
                                                                   mvin_scale_args: Option[MvinScaleArguments[T, U]],
                                                                   mvin_scale_acc_args: Option[MvinScaleArguments[T, U]],
                                                                   mvin_scale_shared: Boolean,
+                                                                  use_dedicated_tl_port: Boolean,
                                                                   pe_latency: Int,
                                                                   headerFileName: String = "gemmini_params.h"
                                                        ) {

@@ -9,6 +9,7 @@ import chisel3.util._
 import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
+import freechips.rocketchip.tilelink.{TLIdentityNode}
 import GemminiISA._
 import Util._
 
@@ -94,7 +95,10 @@ class Gemmini[T <: Data : Arithmetic, U <: Data](opcodes: OpcodeSet, val config:
   val spad = LazyModule(new Scratchpad(config))
 
   override lazy val module = new GemminiModule(this)
-  override val tlNode = spad.id_node
+  override val tlNode = if (config.use_dedicated_tl_port) spad.id_node else TLIdentityNode()
+  override val atlNode = if (config.use_dedicated_tl_port) TLIdentityNode() else spad.id_node
+
+  val node = if (config.use_dedicated_tl_port) tlNode else atlNode
 }
 
 class GemminiModule[T <: Data: Arithmetic, U <: Data]
@@ -108,7 +112,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data]
   val tagWidth = 32
 
   // TLB
-  implicit val edge = outer.tlNode.edges.out.head
+  implicit val edge = outer.node.edges.out.head
   val tlb = Module(new FrontendTLB(2, 4, dma_maxbytes))
   (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
   tlb.io.exp.flush_skip := false.B
