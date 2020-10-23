@@ -36,6 +36,8 @@ object DSEBaseConfig {
     mvin_scale_args = None,
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
+    acc_read_full_width = true,
+    acc_read_small_width = true,
     pe_latency = 0
   )
 }

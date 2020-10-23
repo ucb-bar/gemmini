@@ -35,6 +35,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
                                                                   mvin_scale_acc_args: Option[MvinScaleArguments[T, U]],
                                                                   mvin_scale_shared: Boolean,
                                                                   pe_latency: Int,
+                                                                  acc_read_full_width: Boolean,
+                                                                  acc_read_small_width: Boolean,
                                                                   // enable_a_transpose: Boolean,
                                                                   // enable_b_transpose: Boolean,
                                                                   headerFileName: String = "gemmini_params.h"
@@ -212,6 +214,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data](
       case None => "1"
     }
     header ++= s"#define MVIN_SCALE_ONE $mvin_scale_one\n\n"
+
+    if (acc_read_small_width)
+      header ++= s"#define ACC_READ_SMALL_WIDTH\n"
+    if (acc_read_full_width)
+      header ++= s"#define ACC_READ_FULL_WIDTH\n"
+    header ++= s"\n"
 
     header ++= s"#endif // $guard"
     header.toString()

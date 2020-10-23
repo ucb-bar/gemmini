@@ -123,6 +123,7 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 - `rs1` = virtual DRAM address (byte addressed) to write to from scratchpad
 - `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
     - if the 32nd (Most Significant) bit is set to logical 1, `rs2[31:0]` refers to an address in the the accumulator memory space. In this case, the bitwidth of the elements is `tileColumns x meshColumns x accumulated result bitwidth`.
+    - if the 30th bit is set to logical 1, the `mvout` command will store the full accumulator row in main memory, rather than scaling it down to the input type. Activation functions and accumulator scaling will not be applied in this case
 - `rs2[47:32]` = number of columns to store
 - `rs2[63:48]` = number of rows to store
 - `funct` = 3

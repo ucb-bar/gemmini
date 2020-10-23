@@ -9,22 +9,24 @@ class AccumulatorReadReq(val n: Int, val shift_width: Int) extends Bundle {
   val shift = UInt(shift_width.W)
   val relu6_shift = UInt(shift_width.W)
   val act = UInt(2.W)
+  val full = Bool() // Whether or not we return the full bitwidth output
 
   val fromDMA = Bool()
 }
 
-class AccumulatorReadResp[T <: Data: Arithmetic](rdataType: Vec[Vec[T]]) extends Bundle {
+class AccumulatorReadResp[T <: Data: Arithmetic](rdataType: Vec[Vec[T]], fullDataType: Vec[Vec[T]]) extends Bundle {
   val data = rdataType.cloneType
+  val full_data = fullDataType.cloneType
   val fromDMA = Bool()
 
-  override def cloneType: this.type = new AccumulatorReadResp(rdataType.cloneType).asInstanceOf[this.type]
+  override def cloneType: this.type = new AccumulatorReadResp(rdataType.cloneType, fullDataType.cloneType).asInstanceOf[this.type]
 }
 
-class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, shift_width: Int, rdataType: Vec[Vec[T]]) extends Bundle {
+class AccumulatorReadIO[T <: Data: Arithmetic](n: Int, shift_width: Int, rdataType: Vec[Vec[T]], fullDataType: Vec[Vec[T]]) extends Bundle {
   val req = Decoupled(new AccumulatorReadReq(n, shift_width))
-  val resp = Flipped(Decoupled(new AccumulatorReadResp(rdataType.cloneType)))
+  val resp = Flipped(Decoupled(new AccumulatorReadResp(rdataType.cloneType, fullDataType.cloneType)))
 
-  override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType.cloneType).asInstanceOf[this.type]
+  override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType.cloneType, fullDataType.cloneType).asInstanceOf[this.type]
 }
 
 class AccumulatorWriteIO[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
@@ -38,13 +40,14 @@ class AccumulatorWriteIO[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends 
 }
 
 class AccumulatorMemIO [T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]], rdata: Vec[Vec[T]]) extends Bundle {
-  val read = Flipped(new AccumulatorReadIO(n, log2Ceil(t.head.head.getWidth), rdata))
+  val read = Flipped(new AccumulatorReadIO(n, log2Ceil(t.head.head.getWidth), rdata, t))
   val write = Flipped(new AccumulatorWriteIO(n, t))
 
   override def cloneType: this.type = new AccumulatorMemIO(n, t, rdata).asInstanceOf[this.type]
 }
 
-class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], mem_pipeline: Int)
+class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], mem_pipeline: Int,
+                                read_small_data: Boolean, read_full_data: Boolean)
                                (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
   // to it, then we might not get the written data. We might need some kind of cooldown counter after addresses in the
@@ -84,6 +87,7 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
 
   class PipelinedRdataAndActT extends Bundle {
     val data = mem.io.rdata.cloneType
+    val full_data = mem.io.rdata.cloneType
     val shift = io.read.req.bits.shift.cloneType
     val relu6_shift = io.read.req.bits.relu6_shift.cloneType
     val act = io.read.req.bits.act.cloneType
@@ -92,6 +96,7 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
   
   val q = Module(new Queue(new PipelinedRdataAndActT, 1, true, true))
   q.io.enq.bits.data := mem.io.rdata
+  q.io.enq.bits.full_data := mem.io.rdata
   q.io.enq.bits.shift := RegNext(io.read.req.bits.shift)
   q.io.enq.bits.relu6_shift := RegNext(io.read.req.bits.relu6_shift)
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
@@ -123,10 +128,19 @@ class AccumulatorMem[T <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], 
       !(RegNext(io.write.en) && RegNext(io.write.addr) === io.read.req.bits.addr) &&
       !(w_buf_valid && waddr_buf === io.read.req.bits.addr)
     )
-  io.read.resp.bits.data := p.bits.data
   io.read.resp.bits.fromDMA := p.bits.fromDMA
   io.read.resp.valid := p.valid
   p.ready := io.read.resp.ready
+
+  if (read_small_data)
+    io.read.resp.bits.data := p.bits.data
+  else
+    io.read.resp.bits.data := 0.U.asTypeOf(p.bits.data) // TODO make this DontCare instead
+
+  if (read_full_data)
+    io.read.resp.bits.full_data := p.bits.full_data
+  else
+    io.read.resp.bits.full_data := 0.U.asTypeOf(q.io.enq.bits.full_data) // TODO make this DontCare instead
 
   val read_write_same_address_1 = !(io.read.req.fire() && io.write.en && io.read.req.bits.addr === io.write.addr)
   val read_write_same_address_2 = !(io.read.req.fire() && w_buf_valid && waddr_buf === io.read.req.bits.addr)

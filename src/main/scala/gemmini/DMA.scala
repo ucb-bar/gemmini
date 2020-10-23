@@ -268,7 +268,7 @@ class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends Cor
 }
 
 class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int,
-                                          aligned_to: Int, inputType: T)
+                                          aligned_to: Int, inputType: T, block_cols: Int)
                   (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-writer", sourceId = IdRange(0, nXacts))
@@ -461,11 +461,11 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
       val pooled = {
-        val block_size = dataWidth / inputType.getWidth
-        val v1 = io.req.bits.data.asTypeOf(Vec(block_size, inputType))
-        val v2 = req.data.asTypeOf(Vec(block_size, inputType))
+        val cols = dataWidth / inputType.getWidth
+        val v1 = io.req.bits.data.asTypeOf(Vec(cols, inputType))
+        val v2 = req.data.asTypeOf(Vec(cols, inputType))
         val m = v1.zip(v2)
-        VecInit(m.map{case (x, y) => maxOf(x, y)}).asUInt()
+        VecInit(m.zipWithIndex.map{case ((x, y), i) => if (i < block_cols) maxOf(x, y) else y}).asUInt()
       }
 
       req := io.req.bits

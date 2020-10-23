@@ -70,6 +70,8 @@ object GemminiConfigs {
     // mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
     // mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
     mvin_scale_shared = false,
+    acc_read_full_width = true,
+    acc_read_small_width = true,
     pe_latency = 0
   )
 }

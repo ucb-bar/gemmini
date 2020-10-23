@@ -150,7 +150,8 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
 
   val reader = LazyModule(new StreamReader(config, max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows))
-  val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes, spad_w, aligned_to, inputType))
+  val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes,
+    if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols))
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node
@@ -178,7 +179,7 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
       // Accumulator ports
       // val acc = new AccumulatorMemIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType)), Vec(meshColumns, Vec(tileColumns, inputType)))
       val acc = new Bundle {
-        val read = Flipped(Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType)))))
+        val read = Flipped(Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType)), Vec(meshColumns, Vec(tileColumns, accType)))))
         val write = Flipped(Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType)))))
       }
 
@@ -203,13 +204,22 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
     val writeData = Wire(Valid(UInt((spad_w max acc_w).W)))
     writeData.valid := false.B
     writeData.bits := DontCare
+    val fullAccWriteData = Wire(UInt(acc_w.W))
+    fullAccWriteData := DontCare
+    val writeData_is_full_width = write_issue_q.io.deq.bits.laddr.is_acc_addr &&
+      write_issue_q.io.deq.bits.laddr.read_full_acc_row
     val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()
 
     writer.module.io.req.valid := write_issue_q.io.deq.valid && (writeData.valid || writeData_is_all_zeros)
     write_issue_q.io.deq.ready := writer.module.io.req.ready && (writeData.valid || writeData_is_all_zeros)
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
-    writer.module.io.req.bits.len := write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U
-    writer.module.io.req.bits.data := Mux(writeData_is_all_zeros, 0.U, writeData.bits)
+    writer.module.io.req.bits.len := Mux(writeData_is_full_width,
+      write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
+      write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
+    writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
+      writeData_is_all_zeros -> 0.U,
+      writeData_is_full_width -> fullAccWriteData
+    ))
     writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
     writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
@@ -355,7 +365,8 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
       val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
       val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
 
-      val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(acc_bank_entries, acc_row_t, spad_row_t, mem_pipeline)) }
+      val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(acc_bank_entries, acc_row_t, spad_row_t, mem_pipeline,
+        acc_read_small_width, acc_read_full_width)) }
       val bank_ios = VecInit(banks.map(_.io))
 
       // Getting the output of the bank that's about to be issued to the writer
@@ -364,6 +375,7 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
       when (write_issue_q.io.deq.bits.laddr.is_acc_addr) {
         writeData.valid := bank_issued_io.read.resp.valid && bank_issued_io.read.resp.bits.fromDMA
         writeData.bits := bank_issued_io.read.resp.bits.data.asUInt()
+        fullAccWriteData := bank_issued_io.read.resp.bits.full_data.asUInt()
       }
 
       // Reading from the Accumulator banks
@@ -384,9 +396,11 @@ class Scratchpad[T <: Data: Arithmetic, U <: Data](config: GemminiArrayConfig[T,
         // The ExecuteController gets priority when reading from accumulator banks
         when (exread) {
           bio.read.req.bits.addr := ex_read_req.bits.addr
+          bio.read.req.bits.full := false.B
           bio.read.req.bits.fromDMA := false.B
         }.elsewhen (dmawrite) {
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.acc_row()
+          bio.read.req.bits.full := write_dispatch_q.bits.laddr.read_full_acc_row
           bio.read.req.bits.fromDMA := true.B
 
           when (bio.read.req.fire() || write_dispatch_q.bits.laddr.is_garbage()) {
