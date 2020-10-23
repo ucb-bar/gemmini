@@ -224,6 +224,24 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       header ++= "\n\n"
     }
 
+    header ++= """#ifdef __cplusplus
+                 |#define SAME_TYPE(x) decltype(x)
+                 |#else
+                 |#define SAME_TYPE(x) typeof(x)
+                 |#endif
+                 |
+                 |#define ROUND_NEAR_EVEN(x) \
+                 |    ({ const SAME_TYPE(x) x_ = (x); \
+                 |         const long long i = x_; \
+                 |         const long long next = x_ < 0 ? x_ - 1 : x_ + 1; \
+                 |         SAME_TYPE(x) rem = x_ - i; \
+                 |         rem = rem < 0 ? -rem : rem; \
+                 |         SAME_TYPE(x) result = rem < 0.5 ? i : (rem > 0.5 ? next : ( \
+                 |                     i % 2 == 0 ? i : next)); \
+                 |         result; })
+                 |""".stripMargin
+    header ++= "\n"
+
     header ++= """#define ACC_SCALE(x, scale) \
 """
     header ++= s"    ${acc_scale_args.c_str}"
