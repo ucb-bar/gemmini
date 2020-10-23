@@ -70,6 +70,18 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
     is_acc_addr === other.is_acc_addr &&
       Mux(is_acc_addr, full_acc_addr() > other.full_acc_addr(), full_sp_addr() > other.full_sp_addr())
 
+  def add_with_overflow(other: UInt): Tuple2[LocalAddr, Bool] = {
+    require(isPow2(sp_bank_entries)) // TODO remove this requirement
+    require(isPow2(acc_bank_entries)) // TODO remove this requirement
+
+    val sum = data +& other
+
+    val result = WireInit(this)
+    result.data := sum(data.getWidth-1, 0)
+
+    (result, sum(data.getWidth))
+  }
+
   def make_this_garbage(dummy: Int = 0): Unit = {
     is_acc_addr := true.B
     accumulate := true.B
@@ -123,13 +135,16 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   spad.module.io.flush := tlb.io.exp.flush()
 
   // Incoming commands and ROB
+  val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, meshRows*tileRows, meshColumns*tileColumns))
+
   val raw_cmd = Queue(io.cmd)
-  val unrolled_cmd = LoopUnroller(raw_cmd, outer.config.meshRows * outer.config.tileRows)
+  // val unrolled_cmd = LoopUnroller(raw_cmd, outer.config.meshRows * outer.config.tileRows)
   // val (compressed_cmd, compressor_busy) = InstCompressor(unrolled_cmd)
   // compressed_cmd.ready := false.B
+  val (unrolled_cmd, loop_unroller_busy) = LoopMatmul(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
+    meshRows*tileRows, coreMaxAddrBits, rob_entries, 4, 12, 2, sp_banks * sp_bank_entries)
   unrolled_cmd.ready := false.B
 
-  val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, meshRows*tileRows, meshColumns*tileColumns))
   // val cmd_decompressor = Module(new InstDecompressor(rob_entries))
 
   // cmd_decompressor.io.in.valid := rob.io.issue.ex.valid
@@ -190,10 +205,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // Wire up global RoCC signals
   // io.busy := raw_cmd.valid || compressor_busy || unrolled_cmd.valid || rob.io.busy || spad.module.io.busy
-  io.busy := raw_cmd.valid || unrolled_cmd.valid || rob.io.busy || spad.module.io.busy
+  // io.busy := raw_cmd.valid || unrolled_cmd.valid || rob.io.busy || spad.module.io.busy
+  io.busy := raw_cmd.valid || loop_unroller_busy || rob.io.busy || spad.module.io.busy
   io.interrupt := tlb.io.exp.interrupt
 
   rob.io.solitary_preload := ex_controller.io.solitary_preload
+
+  assert(!io.interrupt, "Interrupt handlers have not been written yet")
 
   // Cycle counters
   val ld_cycles = RegInit(0.U(34.W))

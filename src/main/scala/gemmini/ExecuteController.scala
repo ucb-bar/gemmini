@@ -233,11 +233,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val b_row_is_not_all_zeros = b_fire_counter < b_rows
   val d_row_is_not_all_zeros = block_size.U - 1.U - d_fire_counter < d_rows
 
-  def same_bank(addr1: LocalAddr, addr2: LocalAddr, start_inputting1: Bool, start_inputting2: Bool): Bool = {
+  def same_bank(addr1: LocalAddr, addr2: LocalAddr, is_garbage1: Bool, is_garbage2: Bool, start_inputting1: Bool, start_inputting2: Bool): Bool = {
     val addr1_read_from_acc = addr1.is_acc_addr
     val addr2_read_from_acc = addr2.is_acc_addr
 
-    val is_garbage = addr1.is_garbage() || addr2.is_garbage() ||
+    val is_garbage = is_garbage1 || is_garbage2 ||
       !start_inputting1 || !start_inputting2
 
     !is_garbage && ((addr1_read_from_acc && addr2_read_from_acc) ||
@@ -248,18 +248,18 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val b_ready = WireInit(true.B)
   val d_ready = WireInit(true.B)
 
-  case class Operand(addr: LocalAddr, start_inputting: Bool, counter: UInt, started: Bool, priority: Int) {
+  case class Operand(addr: LocalAddr, is_garbage: Bool, start_inputting: Bool, counter: UInt, started: Bool, priority: Int) {
     val done = counter === 0.U && started
   }
-  val a_operand = Operand(a_address, start_inputting_a, a_fire_counter, a_fire_started, 0)
-  val b_operand = Operand(b_address, start_inputting_b, b_fire_counter, b_fire_started, 1)
-  val d_operand = Operand(d_address, start_inputting_d, d_fire_counter, d_fire_started, 2)
+  val a_operand = Operand(a_address, a_address_rs1.is_garbage(), start_inputting_a, a_fire_counter, a_fire_started, 0)
+  val b_operand = Operand(b_address, b_address_rs2.is_garbage(), start_inputting_b, b_fire_counter, b_fire_started, 1)
+  val d_operand = Operand(d_address, d_address_rs1.is_garbage(), start_inputting_d, d_fire_counter, d_fire_started, 2)
   val operands = Seq(a_operand, b_operand, d_operand)
 
-  val Seq(a_valid, b_valid, d_valid) = operands.map { case Operand(addr, start_inputting, counter, started, priority) =>
+  val Seq(a_valid, b_valid, d_valid) = operands.map { case Operand(addr, is_garbage, start_inputting, counter, started, priority) =>
       val others = operands.filter(_.priority != priority)
 
-      val same_banks = others.map(o => same_bank(addr, o.addr, start_inputting, o.start_inputting))
+      val same_banks = others.map(o => same_bank(addr, o.addr, is_garbage, o.is_garbage, start_inputting, o.start_inputting))
       val same_counter = others.map(o => counter === o.counter)
 
       val one_ahead = {
