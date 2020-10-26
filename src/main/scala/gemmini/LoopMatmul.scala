@@ -216,10 +216,12 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
     val j = Output(UInt(iterator_bitwidth.W))
     val i = Output(UInt(iterator_bitwidth.W))
 
-    val ld_k = Input(UInt(iterator_bitwidth.W))
+    val ld_ka = Input(UInt(iterator_bitwidth.W))
+    val ld_kb = Input(UInt(iterator_bitwidth.W))
     val ld_j = Input(UInt(iterator_bitwidth.W))
     val ld_i = Input(UInt(iterator_bitwidth.W))
-    val ld_completed = Input(Bool())
+    val lda_completed = Input(Bool())
+    val ldb_completed = Input(Bool())
 
     val a_addr_start = Input(UInt(log2Up(max_addr).W))
     val b_addr_start = Input(UInt(log2Up(max_addr).W))
@@ -277,8 +279,9 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   io.idle := state === idle
 
   // The order here is k, j, i
-  val ld_ahead = io.ld_completed || io.ld_j > j || (io.ld_j === j && io.ld_k > k) ||
-    (io.ld_j === j && io.ld_k === k && io.ld_i > i)
+  val lda_ahead = io.lda_completed || io.ld_ka > k || (io.ld_ka === k && io.ld_i > i)
+  val ldb_ahead = io.ldb_completed || io.ld_kb > k || (io.ld_ka === k && io.ld_j > j)
+  val ld_ahead = lda_ahead && ldb_ahead
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && ld_ahead
   io.cmd.bits := Mux(state === pre, pre_cmd, comp_cmd)
@@ -311,6 +314,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 // StC
 
 class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterator_bitwidth: Int) extends Bundle {
+  val max_k = UInt(iterator_bitwidth.W)
   val max_j = UInt(iterator_bitwidth.W)
   val max_i = UInt(iterator_bitwidth.W)
   val pad_j = UInt(log2Up(block_size).W)
@@ -325,6 +329,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     val req = Flipped(Decoupled(new LoopMatmulStCReq(block_size, coreMaxAddrBits, iterator_bitwidth)))
     val cmd = Decoupled(Output(new RoCCCommand))
 
+    val ex_k = Input(UInt(iterator_bitwidth.W))
     val ex_j = Input(UInt(iterator_bitwidth.W))
     val ex_i = Input(UInt(iterator_bitwidth.W))
     val ex_completed = Input(Bool())
@@ -366,7 +371,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   io.idle := state === idle
 
   // The order here is k, j, i
-  val ex_ahead = io.ex_completed || io.ex_j > j || (io.ex_j === j && io.ex_i > i)
+  val ex_ahead = io.ex_completed || (io.ex_k === req.max_k - 1.U && (io.ex_j > j || (io.ex_j === j && io.ex_i > i)))
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && ex_ahead
   io.cmd.bits := mvin_cmd
@@ -393,7 +398,6 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 }
 
 // Combined loop
-
 class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int, max_addr: Int)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
@@ -420,15 +424,11 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   val stC = Module(new LoopMatmulStC(block_size, coreMaxAddrBits, 16))
 
   // Create command queue
-  val cmd = Queue(io.in, 2)
+  val cmd = Queue(io.in)
 
   io.busy := cmd.valid || state =/= idle
 
   // Create ld arbiter
-  // val ld_arb = Module(new RRArbiter(new RoCCCommand(), 2))
-  // ld_arb.io.in(0) <> ldA.io.cmd
-  // ld_arb.io.in(1) <> ldB.io.cmd
-
   val ld_arb = Module(new WeightedArbiter(new RoCCCommand(), weightA=3))
   ld_arb.io.inA <> ldA.io.cmd
   ld_arb.io.inB <> ldB.io.cmd
@@ -458,12 +458,15 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   stC.io.rob_overloaded := io.st_utilization >= max_sts.U
 
   // Wire up iterator inputs
-  ex.io.ld_completed := ldA.io.idle && ldB.io.idle
-  ex.io.ld_k := MuxCase(minOf(ldA.io.k, ldB.io.k), Seq(ldA.io.idle -> ldB.io.k, ldB.io.idle -> ldA.io.k))
+  ex.io.lda_completed := ldA.io.idle
+  ex.io.ldb_completed := ldB.io.idle
+  ex.io.ld_ka := ldA.io.k
+  ex.io.ld_kb := ldB.io.k
   ex.io.ld_j := ldB.io.j
   ex.io.ld_i := ldA.io.i
 
   stC.io.ex_completed := ex.io.idle
+  stC.io.ex_k := ex.io.k
   stC.io.ex_j := ex.io.j
   stC.io.ex_i := ex.io.i
 
@@ -557,6 +560,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
 
   ex.io.req.valid := state === idle && cmd.valid && is_loop_cmd
 
+  stC.io.req.bits.max_k := max_k
   stC.io.req.bits.max_j := max_j
   stC.io.req.bits.max_i := max_i
   stC.io.req.bits.pad_j := pad_j

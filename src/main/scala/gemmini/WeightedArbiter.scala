@@ -15,6 +15,9 @@ class WeightedArbiter[T <: Data](t: T, weightA: Int) extends Module {
   val A_chosen = WireInit(false.B)
   val B_chosen = WireInit(false.B)
 
+  io.inA.ready := false.B
+  io.inB.ready := false.B
+
   when(io.inA.valid && io.inB.valid) {
     when (count < weightA.U) {
       io.out <> io.inA
@@ -24,9 +27,9 @@ class WeightedArbiter[T <: Data](t: T, weightA: Int) extends Module {
       B_chosen := true.B
     }
   }.elsewhen(io.inA.valid) {
-    io.out <> io.inA.valid
+    io.out <> io.inA
   }.otherwise {
-    io.out <> io.inB.valid
+    io.out <> io.inB
   }
 
   when (io.out.fire()) {

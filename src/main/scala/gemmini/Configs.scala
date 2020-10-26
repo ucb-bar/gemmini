@@ -49,7 +49,7 @@ object GemminiConfigs {
     ex_queue_length = 8,
     rob_entries = 16,
     sp_banks = 4,
-    acc_banks = 1,
+    acc_banks = 2,
     sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     dataflow = Dataflow.BOTH,
