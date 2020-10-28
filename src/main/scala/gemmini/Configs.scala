@@ -88,6 +88,7 @@ object GemminiConfigs {
     // mvin_scale_acc_args = None,
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
+    use_dedicated_tl_port = false,
     pe_latency = 0
   )
 }
