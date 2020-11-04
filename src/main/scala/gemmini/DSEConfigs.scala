@@ -49,6 +49,8 @@ object DSEBaseConfig {
 
         (t >> u).asSInt() + Mux(r, 1.S, 0.S)
       }, 0, UInt(8.W)),
+    acc_read_full_width = true,
+    acc_read_small_width = true,
     pe_latency = 0
   )
 }

@@ -36,8 +36,9 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
 
   val is_acc_addr = Bool()
   val accumulate = Bool()
-  val garbage = UInt(((localAddrBits - maxAddrBits - 3) max 0).W)
-  val garbage_bit = if (localAddrBits - maxAddrBits >= 3) UInt(1.W) else UInt(0.W)
+  val read_full_acc_row = Bool()
+  val garbage = UInt(((localAddrBits - maxAddrBits - 4) max 0).W)
+  val garbage_bit = if (localAddrBits - maxAddrBits >= 4) UInt(1.W) else UInt(0.W)
   val data = UInt(maxAddrBits.W)
 
   def sp_bank(dummy: Int = 0) = if (spAddrBits == spBankRowBits) 0.U else data(spAddrBits - 1, spBankRowBits)
@@ -50,7 +51,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
 
   def is_same_address(other: LocalAddr): Bool = is_acc_addr === other.is_acc_addr && data === other.data
   def is_same_address(other: UInt): Bool = is_same_address(other.asTypeOf(this))
-  def is_garbage(dummy: Int = 0) = is_acc_addr && accumulate && data.andR() &&
+  def is_garbage(dummy: Int = 0) = is_acc_addr && accumulate && read_full_acc_row && data.andR() &&
     (if (garbage_bit.getWidth > 0) garbage_bit.toBool() else true.B)
 
   def +(other: UInt) = {
@@ -85,6 +86,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
   def make_this_garbage(dummy: Int = 0): Unit = {
     is_acc_addr := true.B
     accumulate := true.B
+    read_full_acc_row := true.B
     garbage_bit := 1.U
     data := ~(0.U(maxAddrBits.W))
   }

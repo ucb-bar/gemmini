@@ -24,7 +24,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
 
     val acc = new Bundle {
-      val read = Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType)), acc_scale_args.multiplicand_t))
+      val read = Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType)), Vec(meshColumns, Vec(tileColumns, accType)), acc_scale_args.multiplicand_t))
       val write = Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))))
     }
 
@@ -361,6 +361,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     io.acc.read(i).req.valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
     io.acc.read(i).req.bits.scale := acc_scale
+    io.acc.read(i).req.bits.full := false.B
     io.acc.read(i).req.bits.relu6_shift := relu6_shift
     io.acc.read(i).req.bits.act := activation
     io.acc.read(i).req.bits.fromDMA := false.B

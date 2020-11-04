@@ -37,6 +37,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              mvin_scale_shared: Boolean,
                                                                              acc_scale_args: ScaleArguments[T, V],
                                                                              pe_latency: Int,
+                                                                             acc_read_full_width: Boolean,
+                                                                             acc_read_small_width: Boolean,
                                                                              // enable_a_transpose: Boolean,
                                                                              // enable_b_transpose: Boolean,
                                                                              headerFileName: String = "gemmini_params.h"
@@ -266,6 +268,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       header ++= s"#define ACC_SCALE_EXP_BITS ${acc_scale_args.multiplicand_t.asInstanceOf[Float].expWidth}\n"
       header ++= s"#define ACC_SCALE_SIG_BITS ${acc_scale_args.multiplicand_t.asInstanceOf[Float].sigWidth}\n\n"
     }
+
+    if (acc_read_small_width)
+      header ++= s"#define ACC_READ_SMALL_WIDTH\n"
+    if (acc_read_full_width)
+      header ++= s"#define ACC_READ_FULL_WIDTH\n"
+    header ++= s"\n"
 
     header ++= s"#endif // $guard"
     header.toString()
