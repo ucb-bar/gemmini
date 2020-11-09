@@ -8,6 +8,8 @@ class WeightedArbiter[T <: Data](t: T, weightA: Int) extends Module {
   val io = IO(new Bundle {
     val inA = Flipped(Decoupled(t))
     val inB = Flipped(Decoupled(t))
+    val forceA = Input(Bool())
+    val forceB = Input(Bool())
     val out = Decoupled(t)
   })
 
@@ -18,7 +20,11 @@ class WeightedArbiter[T <: Data](t: T, weightA: Int) extends Module {
   io.inA.ready := false.B
   io.inB.ready := false.B
 
-  when(io.inA.valid && io.inB.valid) {
+  when(io.forceA) {
+    io.out <> io.inA
+  }.elsewhen(io.forceB) {
+    io.out <> io.inB
+  }.elsewhen(io.inA.valid && io.inB.valid) {
     when (count < weightA.U) {
       io.out <> io.inA
       A_chosen := true.B
@@ -40,5 +46,6 @@ class WeightedArbiter[T <: Data](t: T, weightA: Int) extends Module {
     }
   }
 
+  assert(!(io.forceA && io.forceB))
   assert(!(A_chosen && B_chosen))
 }
