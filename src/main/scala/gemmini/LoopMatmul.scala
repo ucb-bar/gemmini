@@ -343,7 +343,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   })
 
   object State extends ChiselEnum {
-    val idle, ld = Value
+    val idle, st = Value
   }
   import State._
   val state = RegInit(idle)
@@ -374,12 +374,14 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   // The order here is k, j, i
   val ex_ahead = io.ex_completed || (io.ex_k === req.max_k - 1.U && (io.ex_j > j || (io.ex_j === j && io.ex_i > i)))
 
-  io.cmd.valid := state =/= idle && !io.rob_overloaded && ex_ahead
+  io.cmd.valid := state =/= idle && !io.rob_overloaded && ex_ahead && req.dram_addr =/= 0.U
   io.cmd.bits := mvin_cmd
 
   io.loop_id := req.loop_id
 
-  when (io.cmd.fire()) {
+  when (req.dram_addr === 0.U) {
+    state := idle
+  }.elsewhen (io.cmd.fire()) {
     // The order here is k, j, i
     val next_i = floorAdd(i, 1.U, req.max_i)
     val next_j = floorAdd(j, 1.U, req.max_j, next_i === 0.U)
@@ -394,7 +396,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   when (io.req.fire()) {
     req := io.req.bits
-    state := ld
+    state := st
     j := 0.U
     i := 0.U
   }
@@ -440,7 +442,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
 
   val a_addr_start = UInt(log2Up(max_addr).W)
   val b_addr_end = UInt(log2Up(max_addr).W)
-  val c_addr_start = UInt(log2Up(max_acc_addr).W)
+  // val c_addr_start = UInt(log2Up(max_acc_addr).W)
 
   def reset(): Unit = {
     configured := false.B
@@ -586,6 +588,9 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   }
 
   // Wire up request signals
+  val ex_c_addr_start = RegInit(0.U(log2Up(max_acc_addr).W))
+  val st_c_addr_start = RegInit(0.U(log2Up(max_acc_addr).W))
+
   val loop_requesting_ldA_id = Mux(head_loop.lda_started, tail_loop_id, head_loop_id)
   val loop_requesting_ldA = loops(loop_requesting_ldA_id)
   ldA.io.req.bits.max_k := loop_requesting_ldA.max_k
@@ -633,17 +638,22 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   ex.io.req.bits.bias := loop_requesting_ex.bias
   ex.io.req.bits.a_addr_start := loop_requesting_ex.a_addr_start
   ex.io.req.bits.b_addr_end := loop_requesting_ex.b_addr_end
-  ex.io.req.bits.c_addr_start := loop_requesting_ex.c_addr_start
+  ex.io.req.bits.c_addr_start := ex_c_addr_start // loop_requesting_ex.c_addr_start
   ex.io.req.bits.loop_id := loop_requesting_ex_id
 
-  ex.io.req.valid := !loop_requesting_ex.ex_started && loop_requesting_ex.configured
+  ex.io.req.valid := !loop_requesting_ex.ex_started && loop_requesting_ex.lda_started &&
+    loop_requesting_ex.ldb_started && loop_requesting_ex.configured
 
   when (ex.io.req.fire()) {
     loop_requesting_ex.running := true.B
     loop_requesting_ex.ex_started := true.B
+
+    when (loop_requesting_ex.c_dram_addr =/= 0.U) {
+      ex_c_addr_start := floorAdd(ex_c_addr_start, (max_acc_addr / concurrent_loops).U, max_acc_addr.U)
+    }
   }
 
-  val loop_requesting_st_id = Mux(head_loop.ex_started, tail_loop_id, head_loop_id)
+  val loop_requesting_st_id = Mux(head_loop.st_started, tail_loop_id, head_loop_id)
   val loop_requesting_st = loops(loop_requesting_st_id)
   stC.io.req.bits.max_k := loop_requesting_st.max_k
   stC.io.req.bits.max_j := loop_requesting_st.max_j
@@ -652,30 +662,34 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   stC.io.req.bits.pad_i := loop_requesting_st.pad_i
   stC.io.req.bits.dram_addr := loop_requesting_st.c_dram_addr
   stC.io.req.bits.dram_stride := loop_requesting_st.c_dram_stride
-  stC.io.req.bits.addr_start := loop_requesting_st.c_addr_start
+  stC.io.req.bits.addr_start := st_c_addr_start // loop_requesting_st.c_addr_start
   stC.io.req.bits.loop_id := loop_requesting_st_id
 
-  stC.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.configured
+  stC.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started && loop_requesting_st.configured
 
   when (stC.io.req.fire()) {
     loop_requesting_st.running := true.B
     loop_requesting_st.st_started := true.B
+
+    when (loop_requesting_st.c_dram_addr =/= 0.U) {
+      st_c_addr_start := floorAdd(st_c_addr_start, (max_acc_addr / concurrent_loops).U, max_acc_addr.U)
+    }
   }
 
   // Handle completed signals
-  when (ldA.io.idle && loops(ldA.io.loop_id).running) {
+  when (ldA.io.idle && loops(ldA.io.loop_id).running && loops(ldA.io.loop_id).lda_started) {
     loops(ldA.io.loop_id).lda_completed := true.B
   }
 
-  when (ldB.io.idle && loops(ldB.io.loop_id).running) {
+  when (ldB.io.idle && loops(ldB.io.loop_id).running && loops(ldB.io.loop_id).ldb_started) {
     loops(ldB.io.loop_id).ldb_completed := true.B
   }
 
-  when (ex.io.idle && loops(ex.io.loop_id).running) {
+  when (ex.io.idle && loops(ex.io.loop_id).running && loops(ex.io.loop_id).ex_started) {
     loops(ex.io.loop_id).ex_completed := true.B
   }
 
-  when (stC.io.idle && loops(stC.io.loop_id).running) {
+  when (stC.io.idle && loops(stC.io.loop_id).running && loops(stC.io.loop_id).st_started) {
     loops(stC.io.loop_id).st_completed := true.B
   }
 
@@ -690,7 +704,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
       l.reset()
       l.a_addr_start := (i * (max_addr / concurrent_loops)).U
       l.b_addr_end := ((i+1) * (max_addr / concurrent_loops) - block_size).U
-      l.c_addr_start := (i * (max_acc_addr / concurrent_loops)).U
+      // l.c_addr_start := (i * (max_acc_addr / concurrent_loops)).U
     }
   }
 }
