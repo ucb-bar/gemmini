@@ -381,10 +381,10 @@ class ExecuteController[T <: Data, U <: Data](xLen: Int, tagWidth: Int, config: 
   for (i <- 0 until acc_banks) {
     io.acc.read(i).resp.ready := true.B
     io.acc.read(i).req.valid := false.B
-    io.acc.read(i).req.bits.shift := DontCare
+    io.acc.read(i).req.bits.shift := acc_shift
     io.acc.read(i).req.bits.full := DontCare
-    io.acc.read(i).req.bits.relu6_shift := DontCare
-    io.acc.read(i).req.bits.act := DontCare
+    io.acc.read(i).req.bits.relu6_shift := relu6_shift
+    io.acc.read(i).req.bits.act := activation
     io.acc.read(i).req.bits.fromDMA := false.B
     io.acc.read(i).req.bits.addr := DontCare
   }
