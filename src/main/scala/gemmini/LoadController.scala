@@ -24,12 +24,12 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
   val control_state = RegInit(waiting_for_command)
 
-  val stride = RegInit((sp_width / 8).U(coreMaxAddrBits.W))
-  val scale = Reg(UInt(mvin_scale_t_bits.W))
+  val strides = Reg(Vec(3, UInt(coreMaxAddrBits.W)))
+  val scales = Reg(Vec(3, UInt(mvin_scale_t_bits.W)))
+  val shrinks = Reg(Vec(3, Bool())) // Shrink inputs to accumulator
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
-  val shrink = RegInit(false.B) // Shrink inputs to accumulator
 
   val cmd = Queue(io.cmd, ld_queue_length)
   val vaddr = cmd.bits.cmd.rs1
@@ -40,6 +40,15 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
   val config_shrink = cmd.bits.cmd.rs1(2)
   val mstatus = cmd.bits.cmd.status
+
+  val load_state_id = MuxCase(0.U, Seq((cmd.bits.cmd.inst.funct === LOAD2_CMD) -> 1.U,
+    (cmd.bits.cmd.inst.funct === LOAD3_CMD) -> 2.U))
+  val config_state_id = cmd.bits.cmd.rs1(4,3)
+  val state_id = Mux(cmd.bits.cmd.inst.funct === CONFIG_CMD, config_state_id, load_state_id)
+
+  val stride = strides(state_id)
+  val scale = scales(state_id)
+  val shrink = shrinks(state_id)
 
   val localaddr_plus_row_counter = localaddr + row_counter
 

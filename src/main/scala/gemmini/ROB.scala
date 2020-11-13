@@ -107,21 +107,19 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     new_entry.op1.valid := funct === PRELOAD_CMD || funct_is_compute
     new_entry.op1.bits := cmd.rs1.asTypeOf(local_addr_t)
 
-    new_entry.op2.valid := funct_is_compute || funct === LOAD_CMD || funct === STORE_CMD
+    new_entry.op2.valid := funct_is_compute || funct === STORE_CMD
     new_entry.op2.bits := cmd.rs2.asTypeOf(local_addr_t)
 
     // new_entry.op3.valid := funct_is_compute
     // new_entry.op3.bits := cmd.rs1(63, 32).asTypeOf(local_addr_t)
 
     val mvin_mvout_len = cmd.rs2(48, spAddrBits)
-    // new_entry.dst.valid := funct_is_compute || funct === LOAD_CMD
-    // new_entry.dst.bits.start := Mux(funct_is_compute, cmd.rs2(63, 32), cmd.rs2(31, 0)).asTypeOf(local_addr_t)
-    new_entry.dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD
+    new_entry.dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
     new_entry.dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     new_entry.dst.bits.len := Mux(funct === PRELOAD_CMD, 1.U, mvin_mvout_len / block_cols.U + (mvin_mvout_len % block_cols.U =/= 0.U))
 
-    val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
-    val is_store = (funct === STORE_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
+    val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
+    val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
     val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
 
     new_entry.q := Mux1H(Seq(
@@ -147,10 +145,13 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     }
 
     val waws = entries.map { e =>
+      def is_accumulative(laddr: LocalAddr): Bool = laddr.is_acc_addr && laddr.accumulate
+
       // We search for all entries which write to an address that we write to
-      e.valid && new_entry.dst.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
-        (new_entry.dst.bits.start <= e.bits.dst.bits.start && (new_entry.dst.bits.end() > e.bits.dst.bits.start || new_entry.dst.bits.wraps_around())) ||
-          (e.bits.dst.bits.start <= new_entry.dst.bits.start && (e.bits.dst.bits.end() > new_entry.dst.bits.start || e.bits.dst.bits.wraps_around())))
+      e.valid && new_entry.dst.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q &&
+        !(is_accumulative(new_entry.dst.bits.start) && is_accumulative(e.bits.dst.bits.start)) &&
+          ((new_entry.dst.bits.start <= e.bits.dst.bits.start && (new_entry.dst.bits.end() > e.bits.dst.bits.start || new_entry.dst.bits.wraps_around())) ||
+            (e.bits.dst.bits.start <= new_entry.dst.bits.start && (e.bits.dst.bits.end() > new_entry.dst.bits.start || e.bits.dst.bits.wraps_around())))
     }
 
     val older_in_same_q = entries.map { e =>

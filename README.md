@@ -170,6 +170,7 @@ This limitation may be lifted in the future.
 **Format:** `config_mvin rs1 rs2`
 - `rs1[0:1]` must be `01`
 - `rs1[2]` is 0 if `mvin`s to the accumulator have the same bitwidth as accumulator types, and 1 if they have the same bitwidth as inputs to the systolic array
+- `rs1[4:3]` is 0 if the stride is being set for `mvin`, 1 if the stride is being set for `mvin2`, and 2 if the stride is being set for `mvin3`
 - `rs1[63:32]` is the "scale" by which to multiply data as it's being moved in to the scratchpad. This is ignored if Gemmini isn't built with the capability to scale values during `mvin`s.
 - `rs2` = the stride in bytes
 - `funct` = 0
