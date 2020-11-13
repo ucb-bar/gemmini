@@ -10,8 +10,6 @@ import testchipip.TLHelper
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
-import midas.targetutils.FpgaDebug
-
 import Util._
 
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
@@ -137,7 +135,6 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val vpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
 
     val bytesRequested = Reg(UInt(log2Ceil(spadWidthBytes max accWidthBytes max maxBytes).W)) // TODO this only needs to count up to (dataBytes/aligned_to), right?
-    // val bytesLeft = Mux(req.is_acc, req.len * (config.accType.getWidth / 8).U, req.len * (config.inputType.getWidth / 8).U) - bytesRequested
     val bytesLeft = Mux(req.has_acc_bitwidth, req.len * (config.accType.getWidth / 8).U, req.len * (config.inputType.getWidth / 8).U) - bytesRequested
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
@@ -222,15 +219,12 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.reserve.entry.cmd_id := req.cmd_id
 
     io.reserve.entry.addr := req.spaddr + meshRows.U *
-      // Mux(req.is_acc,
       Mux(req.has_acc_bitwidth,
         // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
         // "if" condition and the "else" clause
         if (bytesRequested.getWidth >= log2Up(accWidthBytes+1)) bytesRequested / accWidthBytes.U else 0.U,
         if (bytesRequested.getWidth >= log2Up(spadWidthBytes+1)) bytesRequested / spadWidthBytes.U else 0.U)
-    // io.reserve.entry.spad_row_offset := Mux(req.is_acc, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
     io.reserve.entry.spad_row_offset := Mux(req.has_acc_bitwidth, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
-
     when (tl.a.fire()) {
       val next_vaddr = req.vaddr + read_bytes_read // send_size
       val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
@@ -471,26 +465,6 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       }
     }
 
-    FpgaDebug(io.req.valid)
-    FpgaDebug(io.req.ready)
-    FpgaDebug(req.data)
-    FpgaDebug(req.len)
-    FpgaDebug(req.vaddr)
-    // FpgaDebug(last_vpn_translated)
-    // FpgaDebug(last_vpn_translated_valid)
-
-    FpgaDebug(state)
-    FpgaDebug(bytesSent)
-    FpgaDebug(beatsLeft)
-    FpgaDebug(beatsSent)
-
-    FpgaDebug(tl.a.valid)
-    FpgaDebug(tl.a.ready)
-    FpgaDebug(tl.a.bits.data)
-    FpgaDebug(tl.a.bits.size)
-    FpgaDebug(tl.a.bits.mask)
-    FpgaDebug(tl.a.bits.address)
-
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
       val pooled = {
@@ -510,5 +484,5 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(io.req.bits.store_en, Mux(vpn_already_translated, s_writing_new_block, s_translate_req), s_idle)
     }
-  }
+ }
 }

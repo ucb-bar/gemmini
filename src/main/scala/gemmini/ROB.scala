@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -7,6 +8,7 @@ import freechips.rocketchip.tile.RoCCCommand
 
 import GemminiISA._
 import Util._
+//import midas.targetutils.FpgaDebug
 
 // TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {
@@ -242,6 +244,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < 10000.U, "pipeline stall")
+
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {

@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -30,6 +31,7 @@ object DSEBaseConfig {
     dma_maxbytes = 128, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 16,
+    hasIm2col = false,
     inputType = SInt(8.W),
     outputType = SInt(19.W),
     accType = SInt(32.W),
@@ -51,6 +53,7 @@ object DSEBaseConfig {
       }, 0, UInt(8.W)),
     acc_read_full_width = true,
     acc_read_small_width = true,
+    use_dedicated_tl_port = false,
     pe_latency = 0
   )
 }

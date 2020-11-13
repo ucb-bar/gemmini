@@ -5,7 +5,6 @@ import chisel3.util._
 
 import Util._
 
-
 class BeatMergerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, val accRows: Int,
                     val alignedTo: Int) extends Bundle {
   val data = UInt((spadWidth max accWidth).W)
@@ -45,7 +44,6 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
   val buflen = maxReqBytes max spadWidthBytes max accWidthBytes // in bytes
   val buffer = Reg(UInt((buflen*8).W))
 
-  // val rowBytes = Mux(req.bits.is_acc, accWidthBytes.U, spadWidthBytes.U)
   val rowBytes = Mux(req.bits.has_acc_bitwidth, accWidthBytes.U, spadWidthBytes.U)
 
   val bytesSent = Reg(UInt(log2Up(buflen+1).W))
@@ -76,7 +74,6 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
   })
   io.out.bits.addr := req.bits.addr + meshRows.U * {
     val total_bytes_sent = req.bits.spad_row_offset + bytesSent
-    // Mux(req.bits.is_acc,
     Mux(req.bits.has_acc_bitwidth,
       // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
       // "if" condition and the "else" clause
@@ -88,6 +85,8 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
   io.out.bits.accumulate := req.bits.accumulate
   io.out.bits.has_acc_bitwidth := req.bits.has_acc_bitwidth
   io.out.bits.last := last_sending
+  io.out.bits.accumulate := req.bits.accumulate
+  io.out.bits.has_acc_bitwidth := req.bits.has_acc_bitwidth
 
   when (bytesRead === (1.U << req.bits.lg_len_req).asUInt() &&
     bytesSent === req.bits.bytes_to_read) {

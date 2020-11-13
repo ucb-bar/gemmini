@@ -1,3 +1,4 @@
+
 package gemmini
 
 import java.nio.charset.StandardCharsets
@@ -8,11 +9,9 @@ import chisel3.util._
 import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
+import freechips.rocketchip.tilelink.{TLIdentityNode}
 import GemminiISA._
 import Util._
-
-import midas.targetutils.FpgaDebug
-// import midas.targetutils.PerfCounter
 
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
@@ -20,6 +19,7 @@ class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
 
   override def cloneType: this.type = new GemminiCmd(rob_entries).asInstanceOf[this.type]
 }
+
 
 class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_entries: Int) extends Bundle {
   private val localAddrBits = 32 // TODO magic number
@@ -106,7 +106,10 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](opcodes: OpcodeSet, 
   val spad = LazyModule(new Scratchpad(config))
 
   override lazy val module = new GemminiModule(this)
-  override val tlNode = spad.id_node
+  override val tlNode = if (config.use_dedicated_tl_port) spad.id_node else TLIdentityNode()
+  override val atlNode = if (config.use_dedicated_tl_port) TLIdentityNode() else spad.id_node
+
+  val node = if (config.use_dedicated_tl_port) tlNode else atlNode
 }
 
 class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
@@ -120,7 +123,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val tagWidth = 32
 
   // TLB
-  implicit val edge = outer.tlNode.edges.out.head
+  implicit val edge = outer.node.edges.out.head
   val tlb = Module(new FrontendTLB(2, 4, dma_maxbytes))
   (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
   tlb.io.exp.flush_skip := false.B
@@ -136,11 +139,50 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   spad.module.io.flush := tlb.io.exp.flush()
 
+  /*
+  //=========================================================================
+  // Frontends: Incoming commands and ROB
+  //=========================================================================
+
+  // forward cmd to correct frontend. if the rob is busy, do not forward new
+  // commands to tiler, and vice versa
+  val is_cisc_mode = RegInit(false.B)
+
+  val raw_cmd = Queue(io.cmd)
+  val funct = raw_cmd.bits.inst.funct
+
+  val is_cisc_funct = (funct === CISC_CONFIG) ||
+                      (funct === ADDR_AB) ||
+                      (funct === ADDR_CD) ||
+                      (funct === SIZE_MN) ||
+                      (funct === SIZE_K) ||
+                      (funct === RPT_BIAS) ||
+                      (funct === RESET) ||
+                      (funct === COMPUTE_CISC)
+
+  val raw_cisc_cmd = WireInit(raw_cmd)
+  val raw_risc_cmd = WireInit(raw_cmd)
+  raw_cisc_cmd.valid := false.B
+  raw_risc_cmd.valid := false.B
+  raw_cmd.ready := false.B
+
+  //-------------------------------------------------------------------------
+  // cisc
+  val cmd_fsm = CmdFSM(outer.config)
+  cmd_fsm.io.cmd <> raw_cisc_cmd
+  val tiler = TilerController(outer.config)
+  tiler.io.cmd_in <> cmd_fsm.io.tiler
+
+  //-------------------------------------------------------------------------
+  // risc
+  val unrolled_cmd = LoopUnroller(raw_risc_cmd, outer.config.meshRows * outer.config.tileRows)
+  */
+
   // Incoming commands and ROB
   val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, meshRows*tileRows, meshColumns*tileColumns))
 
   val raw_cmd = Queue(io.cmd)
-  // val unrolled_cmd = LoopUnroller(raw_cmd, outer.config.meshRows * outer.config.tileRows)
+
   // val (compressed_cmd, compressor_busy) = InstCompressor(unrolled_cmd)
   // compressed_cmd.ready := false.B
   val (unrolled_cmd, loop_unroller_busy) = LoopMatmul(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
@@ -156,11 +198,70 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // rob.io.issue.ex.ready := cmd_decompressor.io.in.ready
 
   // val decompressed_cmd = cmd_decompressor.io.out
+  
+  // Wire up controllers to ROB
+  rob.io.alloc.valid := false.B
+  // rob.io.alloc.bits := compressed_cmd.bits
+  rob.io.alloc.bits := unrolled_cmd.bits
 
+  /*
+  //-------------------------------------------------------------------------
+  // finish muxing control signals to rob (risc) or tiler (cisc)
+  when (raw_cmd.valid && is_cisc_funct && !rob.io.busy) {
+    is_cisc_mode       := true.B
+    raw_cisc_cmd.valid := true.B
+    raw_cmd.ready      := raw_cisc_cmd.ready
+  } 
+  .elsewhen (raw_cmd.valid && !is_cisc_funct && !tiler.io.busy) {
+    is_cisc_mode       := false.B
+    raw_risc_cmd.valid := true.B
+    raw_cmd.ready      := raw_risc_cmd.ready
+  }
+  */
+
+  //=========================================================================
   // Controllers
+  //=========================================================================
   val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
   val store_controller = Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t))
   val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config))
+
+  /*
+  tiler.io.issue.load.ready := false.B
+  tiler.io.issue.store.ready := false.B
+  tiler.io.issue.exec.ready := false.B
+  */
+
+  rob.io.issue.ld.ready := false.B
+  rob.io.issue.st.ready := false.B
+  rob.io.issue.ex.ready := false.B
+
+  /*
+  when (is_cisc_mode) {
+    load_controller.io.cmd  <> tiler.io.issue.load
+    store_controller.io.cmd <> tiler.io.issue.store
+    ex_controller.io.cmd  <> tiler.io.issue.exec
+  }
+  .otherwise {
+    load_controller.io.cmd.valid := rob.io.issue.ld.valid
+    rob.io.issue.ld.ready := load_controller.io.cmd.ready
+    load_controller.io.cmd.bits.cmd := rob.io.issue.ld.cmd
+    load_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
+    load_controller.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+
+    store_controller.io.cmd.valid := rob.io.issue.st.valid
+    rob.io.issue.st.ready := store_controller.io.cmd.ready
+    store_controller.io.cmd.bits.cmd := rob.io.issue.st.cmd
+    store_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.st.cmd.inst.funct
+    store_controller.io.cmd.bits.rob_id.push(rob.io.issue.st.rob_id)
+
+    ex_controller.io.cmd.valid := rob.io.issue.ex.valid
+    rob.io.issue.ex.ready := ex_controller.io.cmd.ready
+    ex_controller.io.cmd.bits.cmd := rob.io.issue.ex.cmd
+    ex_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ex.cmd.inst.funct
+    ex_controller.io.cmd.bits.rob_id.push(rob.io.issue.ex.rob_id)
+  }
+  */
 
   load_controller.io.cmd.valid := rob.io.issue.ld.valid
   rob.io.issue.ld.ready := load_controller.io.cmd.ready
@@ -179,7 +280,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ex_controller.io.cmd.bits.cmd := rob.io.issue.ex.cmd
   ex_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ex.cmd.inst.funct
   ex_controller.io.cmd.bits.rob_id.push(rob.io.issue.ex.rob_id)
-  // ex_controller.io.cmd <> decompressed_cmd
 
   // Wire up scratchpad to controllers
   spad.module.io.dma.read <> load_controller.io.dma
@@ -189,11 +289,60 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ex_controller.io.acc.read <> spad.module.io.acc.read
   ex_controller.io.acc.write <> spad.module.io.acc.write
 
+  // Im2Col unit
+  val im2col = Module(new Im2Col(outer.config))
+
+  // Wire up Im2col
+  // im2col.io.sram_reads <> spad.module.io.srams.read
+  im2col.io.req <> ex_controller.io.im2col.req
+  ex_controller.io.im2col.resp <> im2col.io.resp
+
+  // Wire arbiter for ExecuteController and Im2Col scratchpad reads
+  (ex_controller.io.srams.read, im2col.io.sram_reads, spad.module.io.srams.read).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
+    val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
+
+    req_arb.io.in(0) <> ex_read.req
+    req_arb.io.in(1) <> im2col_read.req
+
+    spad_read.req <> req_arb.io.out
+
+    // TODO if necessary, change how the responses are handled when fromIm2Col is added to spad read interface
+
+    ex_read.resp.valid := spad_read.resp.valid
+    im2col_read.resp.valid := spad_read.resp.valid
+
+    ex_read.resp.bits := spad_read.resp.bits
+    im2col_read.resp.bits := spad_read.resp.bits
+
+    spad_read.resp.ready := ex_read.resp.ready || im2col_read.resp.ready
+  }
+
   // Wire up controllers to ROB
   rob.io.alloc.valid := false.B
   // rob.io.alloc.bits := compressed_cmd.bits
   rob.io.alloc.bits := unrolled_cmd.bits
 
+  /*
+  //=========================================================================
+  // committed insn return path to frontends
+  //=========================================================================
+
+  //-------------------------------------------------------------------------
+  // cisc
+  tiler.io.completed.exec.valid := ex_controller.io.completed.valid
+  tiler.io.completed.exec.bits := ex_controller.io.completed.bits
+
+  tiler.io.completed.load <> load_controller.io.completed
+  tiler.io.completed.store <> store_controller.io.completed
+
+  // mux with cisc frontend arbiter
+  tiler.io.completed.exec.valid  := ex_controller.io.completed.valid && is_cisc_mode
+  tiler.io.completed.load.valid  := load_controller.io.completed.valid && is_cisc_mode
+  tiler.io.completed.store.valid := store_controller.io.completed.valid && is_cisc_mode
+  */
+
+  //-------------------------------------------------------------------------
+  // risc
   val rob_completed_arb = Module(new Arbiter(UInt(log2Up(rob_entries).W), 3))
 
   rob_completed_arb.io.in(0).valid := ex_controller.io.completed.valid
@@ -202,13 +351,16 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   rob_completed_arb.io.in(1) <> load_controller.io.completed
   rob_completed_arb.io.in(2) <> store_controller.io.completed
 
+  // mux with cisc frontend arbiter
+  rob_completed_arb.io.in(0).valid := ex_controller.io.completed.valid // && !is_cisc_mode
+  rob_completed_arb.io.in(1).valid := load_controller.io.completed.valid // && !is_cisc_mode
+  rob_completed_arb.io.in(2).valid := store_controller.io.completed.valid // && !is_cisc_mode
+
   rob.io.completed.valid := rob_completed_arb.io.out.valid
   rob.io.completed.bits := rob_completed_arb.io.out.bits
   rob_completed_arb.io.out.ready := true.B
 
   // Wire up global RoCC signals
-  // io.busy := raw_cmd.valid || compressor_busy || unrolled_cmd.valid || rob.io.busy || spad.module.io.busy
-  // io.busy := raw_cmd.valid || unrolled_cmd.valid || rob.io.busy || spad.module.io.busy
   io.busy := raw_cmd.valid || loop_unroller_busy || rob.io.busy || spad.module.io.busy
   io.interrupt := tlb.io.exp.interrupt
 
@@ -253,32 +405,16 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     ld_st_ex_cycles := ld_st_ex_cycles + 1.U
   }
 
-  // FpgaDebug(ld_cycles)
-  // FpgaDebug(st_cycles)
-  // FpgaDebug(ex_cycles)
-  // FpgaDebug(ld_st_cycles)
-  // FpgaDebug(ld_ex_cycles)
-  // FpgaDebug(st_ex_cycles)
-  // FpgaDebug(ld_st_ex_cycles)
-
-  // PerfCounter(incr_ld_cycles, "ld_cycles_cnt", "cycles where only load-controller is busy")
-  // PerfCounter(incr_st_cycles, "st_cycles_cnt", "cycles where only store-controller is busy")
-  // PerfCounter(incr_ex_cycles, "ex_cycles_cnt", "cycles where only execute-controller is busy")
-  // PerfCounter(incr_ld_st_cycles, "ld_st_cycles_cnt", "cycles where only load-store-controller is busy")
-  // PerfCounter(incr_ld_ex_cycles, "ld_ex_cycles_cnt", "cycles where only load-execute-controller is busy")
-  // PerfCounter(incr_st_ex_cycles, "st_ex_cycles_cnt", "cycles where only store-execute-controller is busy")
-  // PerfCounter(incr_ld_st_ex_cycles, "ld_st_ex_cycles_cnt", "cycles where only load-store-execute-controller is busy")
-
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here
   // when (compressed_cmd.valid) {
   when (unrolled_cmd.valid) {
     // val config_cmd_type = cmd.bits.rs1(1,0) // TODO magic numbers
 
-    // val funct = compressed_cmd.bits.inst.funct
-    val funct = unrolled_cmd.bits.inst.funct
+    //val funct = unrolled_cmd.bits.inst.funct
+    val risc_funct = unrolled_cmd.bits.inst.funct
 
-    val is_flush = funct === FLUSH_CMD
+    val is_flush = risc_funct === FLUSH_CMD
     /*
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_store = (funct === STORE_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
@@ -305,32 +441,19 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       }
     }
 
-    /*
-    .elsewhen (is_load) {
-      load_controller.io.cmd.valid := true.B
-
-      when (load_controller.io.cmd.fire()) {
-        cmd.ready := true.B
-      }
-    }
-
-    .elsewhen (is_store) {
-      store_controller.io.cmd.valid := true.B
-
-      when (store_controller.io.cmd.fire()) {
-        cmd.ready := true.B
-      }
-    }
-
-    .otherwise {
-      ex_controller.io.cmd.valid := true.B
-
-      when (ex_controller.io.cmd.fire()) {
-        cmd.ready := true.B
-      }
-
-      assert(is_ex, "unknown gemmini command")
-    }
-    */
   }
+
+  /*
+  //=========================================================================
+  // Wire up global RoCC signals
+  //=========================================================================
+  io.busy := raw_cmd.valid || unrolled_cmd.valid || rob.io.busy || spad.module.io.busy || tiler.io.busy
+  io.interrupt := tlb.io.exp.interrupt
+
+  // hack
+  when(is_cisc_mode || !(unrolled_cmd.valid || rob.io.busy || tiler.io.busy)){
+    tlb.io.exp.flush_retry := cmd_fsm.io.flush_retry
+    tlb.io.exp.flush_skip  := cmd_fsm.io.flush_skip
+  }
+  */
 }

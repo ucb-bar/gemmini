@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -55,6 +56,7 @@ object GemminiConfigs {
     dataflow = Dataflow.BOTH,
     acc_capacity = CapacityInKilobytes(64),
     mem_pipeline = 1,
+    hasIm2col = true, //declare im2col block
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
@@ -187,6 +189,7 @@ object GemminiConfigs {
 
     acc_read_full_width = true,
     acc_read_small_width = true,
+    use_dedicated_tl_port = false,
     pe_latency = 0
   )
 }
@@ -200,8 +203,8 @@ class DefaultGemminiConfig extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
       (p: Parameters) => {
         implicit val q = p
-        implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        gemmini
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -241,8 +244,8 @@ class GemminiHostMiniCore extends Config((site, here, up) => {
     (up(RocketTilesKey, site).length - 1 ->
       Seq((p: Parameters) => {
         implicit val q = p
-        implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        gemmini
       }))
 })
 
@@ -280,8 +283,8 @@ class WithGemminiHostMiniCore extends Config((site, here, up) => {
     (up(RocketTilesKey, site).length ->
       Seq((p: Parameters) => {
         implicit val q = p
-        implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        gemmini
       }))
 })
 

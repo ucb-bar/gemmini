@@ -8,8 +8,6 @@ import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar}
 
-import midas.targetutils.FpgaDebug
-
 import Util._
 
 class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
@@ -256,6 +254,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     mvin_scale_in.valid := reader.module.io.resp.valid && (mvin_scale_shared.B || !reader.module.io.resp.bits.is_acc ||
       (reader.module.io.resp.bits.is_acc && !reader.module.io.resp.bits.has_acc_bitwidth))
+
     mvin_scale_in.bits.in := reader.module.io.resp.bits.data.asTypeOf(chiselTypeOf(mvin_scale_in.bits.in))
     mvin_scale_in.bits.scale := reader.module.io.resp.bits.scale.asTypeOf(mvin_scale_t)
     mvin_scale_in.bits.tag := reader.module.io.resp.bits
@@ -274,12 +273,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     reader.module.io.resp.ready := Mux(reader.module.io.resp.bits.is_acc && reader.module.io.resp.bits.has_acc_bitwidth,
       mvin_scale_acc_in.ready, mvin_scale_in.ready)
-
-    FpgaDebug(reader.module.io.resp.valid)
-    FpgaDebug(reader.module.io.resp.ready)
-    FpgaDebug(reader.module.io.resp.bits.addr)
-    FpgaDebug(reader.module.io.resp.bits.data)
-    FpgaDebug(reader.module.io.resp.bits.scale)
 
     val mvin_scale_finished = mvin_scale_out.fire() && mvin_scale_out.bits.tag.last
     val mvin_scale_acc_finished = mvin_scale_acc_out.fire() && mvin_scale_acc_out.bits.tag.last
@@ -305,8 +298,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to)) }
       val bank_ios = VecInit(banks.map(_.io))
-
-      FpgaDebug(banks(0).io.write)
 
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.sp_bank())
@@ -453,6 +444,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val dmaread_bank = Mux(from_mvin_scale_acc, mvin_scale_acc_out.bits.tag.addr.asTypeOf(local_addr_t).acc_bank(),
           mvin_scale_out.bits.tag.addr.asTypeOf(local_addr_t).acc_bank())
         val dmaread_row = Mux(from_mvin_scale_acc, mvin_scale_acc_out.bits.tag.addr, mvin_scale_out.bits.tag.addr)
+
         val mvin_scale_out_last = mvin_scale_out.valid && mvin_scale_out.bits.tag.last
 
         val dmaread = (from_mvin_scale || from_mvin_scale_acc) &&
@@ -469,7 +461,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.mask := io.acc.write(i).mask
         }.elsewhen (dmaread) {
           bio.write.addr := dmaread_row
-          // bio.write.data := mvin_scale_acc_out.bits.out.asTypeOf(acc_row_t)
           bio.write.data := Mux(from_mvin_scale_acc,
             mvin_scale_acc_out.bits.out.asTypeOf(acc_row_t),
             VecInit(mvin_scale_out.bits.out.map(e => e.withWidthOf(accType))).asTypeOf(acc_row_t))
@@ -494,7 +485,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.addr := DontCare
           bio.write.data := DontCare
           bio.write.acc := DontCare
-          bio.write.mask := DontCare // TODO add wmask to AccumulatorMem as well, so that we support non-aligned accesses
+          bio.write.mask := DontCare
         }
       }
     }

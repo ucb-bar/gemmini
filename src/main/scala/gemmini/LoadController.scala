@@ -30,6 +30,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
+  val shrink = RegInit(false.B) // Shrink inputs to accumulator
 
   val cmd = Queue(io.cmd, ld_queue_length)
   val vaddr = cmd.bits.cmd.rs1
@@ -39,6 +40,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val config_stride = cmd.bits.cmd.rs2
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
   val config_shrink = cmd.bits.cmd.rs1(2)
+
   val mstatus = cmd.bits.cmd.status
 
   val load_state_id = MuxCase(0.U, Seq((cmd.bits.cmd.inst.funct === LOAD2_CMD) -> 1.U,
@@ -98,6 +100,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
   io.completed.valid := cmd_tracker.io.cmd_completed.valid
   io.completed.bits := cmd_tracker.io.cmd_completed.bits.tag.rob_id
+
+  io.busy := cmd.valid || cmd_tracker.io.busy
 
   // Row counter
   when (io.dma.req.fire()) {
