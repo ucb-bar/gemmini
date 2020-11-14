@@ -30,7 +30,6 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
-  val shrink = RegInit(false.B) // Shrink inputs to accumulator
 
   val cmd = Queue(io.cmd, ld_queue_length)
   val vaddr = cmd.bits.cmd.rs1

@@ -27,10 +27,10 @@ object GemminiISA {
   val CONFIG_LOAD = 1.U
   val CONFIG_STORE = 2.U
 
-  /*
   //==========================================================================
   // cisc-gemmini opcodes
   //==========================================================================
+  // TODO the numbers here overlap with the LOOP_WS commands
   val CISC_CONFIG  = 10.U(7.W) // same as COMPUTE_AND_FLIP
   val ADDR_AB      = 11.U(7.W)
   val ADDR_CD      = 12.U(7.W)
@@ -39,7 +39,6 @@ object GemminiISA {
   val RPT_BIAS     = 15.U(7.W)
   val RESET        = 16.U(7.W)
   val COMPUTE_CISC = 17.U(7.W)
-  */
 
   //==========================================================================
   // dataflow configuration

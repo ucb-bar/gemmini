@@ -797,18 +797,16 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
 
   // Scratchpad writes
-  val w_address = mesh.io.tag_out.addr
+  val output_counter = new Counter(block_size)
+
+  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, mesh.io.tag_out.addr + output_counter.value,
+    mesh.io.tag_out.addr + (block_size.U - 1.U - output_counter.value))
   val write_to_acc = w_address.is_acc_addr
 
   val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address.sp_bank())
   val w_row = Mux(write_to_acc, w_address.acc_row(), w_address.sp_row())
 
-  val output_counter = new Counter(block_size)
-
-  val current_w_bank_address = Mux(current_dataflow === Dataflow.WS.id.U, w_row + output_counter.value, //+ 16.U * (row_turn - row_turn_counter), //Seah: added for row overflowing at WS
-    w_row + block_size.U - 1.U - output_counter.value)
-
-  val is_garbage_addr = w_address.is_garbage()
+  val is_garbage_addr = mesh.io.tag_out.addr.is_garbage()
 
   val w_matrix_rows = mesh.io.tag_out.rows
   val w_matrix_cols = mesh.io.tag_out.cols
@@ -829,7 +827,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     })))
 
     io.srams.write(i).en := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
-    io.srams.write(i).addr := current_w_bank_address
+    io.srams.write(i).addr := w_row
     io.srams.write(i).data := activated_wdata.asUInt()
     // io.srams.write(i).mask := VecInit(Seq.fill(io.srams.write(0).mask.length)(true.B))
     io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(inputType.getWidth / (aligned_to * 8))(b))
@@ -838,7 +836,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Write to accumulator
   for (i <- 0 until acc_banks) {
     io.acc.write(i).en := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
-    io.acc.write(i).addr := current_w_bank_address
+    io.acc.write(i).addr := w_row
     io.acc.write(i).data := VecInit(mesh.io.out.bits.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))
     io.acc.write(i).acc := w_address.accumulate
     io.acc.write(i).mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
