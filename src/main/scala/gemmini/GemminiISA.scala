@@ -26,6 +26,7 @@ object GemminiISA {
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U
   val CONFIG_STORE = 2.U
+  val CONFIG_IM2COL = 3.U
 
   //==========================================================================
   // cisc-gemmini opcodes

@@ -490,29 +490,33 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       when(cmd.valid(0))
       {
         when(DoConfig && !matmul_in_progress && !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) {
-          activation := rs1s(0)(4, 3) // TODO magic number
-          in_shift := rs2s(0)(31, 0) // TODO magic number
-          acc_scale := rs1s(0)(xLen-1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
-          relu6_shift := rs2s(0)(xLen-1, 32) // TODO magic number
-          a_addr_stride := rs1s(0)(31, 16) // TODO magic number
-          a_transpose := rs1s(0)(8)
-          bd_transpose := rs1s(0)(9)
+          val config_cmd_type = rs1s(0)(1,0) // TODO magic numbers
 
-          ocol := cmd.bits(0).cmd.rs2(63, 56)
-          kdim2 := cmd.bits(0).cmd.rs2(55, 48) //increased bitwidth
-          krow := cmd.bits(0).cmd.rs2(47, 44) //increased bitwidth
-          channel := cmd.bits(0).cmd.rs2(31, 23)
-          weight_stride := cmd.bits(0).cmd.rs2(22, 20)
-          weight_double_bank := cmd.bits(0).cmd.rs1(58) //added
-          weight_triple_bank := cmd.bits(0).cmd.rs1(59)
-          row_left := cmd.bits(0).cmd.rs1(57, 54)
-          row_turn := cmd.bits(0).cmd.rs1(53, 42)
+          when (config_cmd_type === CONFIG_EX) {
+            activation := rs1s(0)(4, 3) // TODO magic number
+            in_shift := rs2s(0)(31, 0) // TODO magic number
+            acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
+            relu6_shift := rs2s(0)(xLen - 1, 32) // TODO magic number
+            a_addr_stride := rs1s(0)(31, 16) // TODO magic number
+            a_transpose := rs1s(0)(8)
+            bd_transpose := rs1s(0)(9)
 
-          if (dataflow == Dataflow.BOTH) {
-            current_dataflow := rs1s(0)(2)
+            if (dataflow == Dataflow.BOTH) {
+              current_dataflow := rs1s(0)(2)
+            }
+
+            config_initialized := true.B
+          }.otherwise { // config_cmd_type === CONFIG_IM2COL
+            ocol := cmd.bits(0).cmd.rs2(63, 56)
+            kdim2 := cmd.bits(0).cmd.rs2(55, 48) //increased bitwidth
+            krow := cmd.bits(0).cmd.rs2(47, 44) //increased bitwidth
+            channel := cmd.bits(0).cmd.rs2(31, 23)
+            weight_stride := cmd.bits(0).cmd.rs2(22, 20)
+            weight_double_bank := cmd.bits(0).cmd.rs1(58) //added
+            weight_triple_bank := cmd.bits(0).cmd.rs1(59)
+            row_left := cmd.bits(0).cmd.rs1(57, 54)
+            row_turn := cmd.bits(0).cmd.rs1(53, 42)
           }
-
-          config_initialized := true.B
 
           io.completed := cmd.bits(0).rob_id
 
