@@ -45,6 +45,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              use_dedicated_tl_port: Boolean,
                                                                              // enable_a_transpose: Boolean,
                                                                              // enable_b_transpose: Boolean,
+
+                                                                             tlb_size: Int,
+                                                                             use_tlb_register_filter: Boolean,
+                                                                             max_in_flight_reqs: Int,
+
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth
@@ -76,7 +81,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
   val acc_scale_t_bits = acc_scale_t.getWidth
 
-  val max_in_flight_reqs = 16 // TODO calculate this somehow
+  // val max_in_flight_reqs = 16 // TODO calculate this somehow
 
   val mvin_len_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvin_rows_bits = log2Up(meshRows * tileRows + 1)

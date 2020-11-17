@@ -153,8 +153,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val xbar_node = TLXbar()
 
   val reader = LazyModule(new StreamReader(config, max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
-    sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows))
-  val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes, if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols))
+    sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter))
+  val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes,
+    if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter))
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node

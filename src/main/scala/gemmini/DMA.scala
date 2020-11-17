@@ -43,9 +43,9 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
 }
 
 class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
-                   spad_rows: Int, acc_rows: Int, meshRows: Int)
+                   spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean)
                   (implicit p: Parameters) extends LazyModule {
-  val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows))
+  val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows, use_tlb_register_filter))
   val node = core.node
 
   lazy val module = new LazyModuleImp(this) {
@@ -103,7 +103,7 @@ class StreamReadBeat (val nXacts: Int, val beatBits: Int, val maxReqBytes: Int) 
 // TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
 class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int,
                                   spadWidth: Int, accWidth: Int, aligned_to: Int,
-                                  spad_rows: Int, acc_rows: Int, meshRows: Int)
+                                  spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean)
                                  (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-reader", sourceId = IdRange(0, nXacts))
@@ -256,7 +256,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       req := io.req.bits
       bytesRequested := 0.U
 
-      val vpn_already_translated = last_vpn_translated_valid &&
+      val vpn_already_translated = use_tlb_register_filter.B && last_vpn_translated_valid &&
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(vpn_already_translated, s_req_new_block, s_translate_req)
     }
@@ -274,8 +274,8 @@ class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends Cor
   val store_en = Bool()
 }
 
-class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int,
-                                          aligned_to: Int, inputType: T, block_cols: Int)
+class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int,
+                                          inputType: T, block_cols: Int, use_tlb_register_filter: Boolean)
                   (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-writer", sourceId = IdRange(0, nXacts))
@@ -480,7 +480,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
       bytesSent := 0.U
 
-      val vpn_already_translated = last_vpn_translated_valid &&
+      val vpn_already_translated = use_tlb_register_filter.B && last_vpn_translated_valid &&
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(io.req.bits.store_en, Mux(vpn_already_translated, s_writing_new_block, s_translate_req), s_idle)
     }

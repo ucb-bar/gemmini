@@ -54,7 +54,11 @@ object DSEBaseConfig {
     acc_read_full_width = true,
     acc_read_small_width = true,
     use_dedicated_tl_port = false,
-    pe_latency = 0
+    pe_latency = 0,
+
+    tlb_size = 4,
+    use_tlb_register_filter = true,
+    max_in_flight_reqs = 16,
   )
 }
 

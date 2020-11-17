@@ -124,7 +124,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // TLB
   implicit val edge = outer.node.edges.out.head
-  val tlb = Module(new FrontendTLB(2, 4, dma_maxbytes))
+  val tlb = Module(new FrontendTLB(2, tlb_size, dma_maxbytes))
   (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
   tlb.io.exp.flush_skip := false.B
   tlb.io.exp.flush_retry := false.B

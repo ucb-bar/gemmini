@@ -100,12 +100,11 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val mvout_1d_rows = pool_orows * pool_ocols //for 1D mvout
   // Command tracker instantiation
-  val nCmds = 2 // TODO make this a config parameter
+  val nCmds = (max_in_flight_reqs / block_rows) + 1
 
   val deps_t = new Bundle {
     val rob_id = UInt(log2Up(rob_entries).W)
   }
-
 
   val cmd_tracker_max_rows = (block_rows max
     (((1 << pool_orows.getWidth)-1) * ((1 << pool_ocols.getWidth)-1) + 2*((1 << pool_lpad.getWidth)-1) + 2*((1 << pool_upad.getWidth)-1))) min
