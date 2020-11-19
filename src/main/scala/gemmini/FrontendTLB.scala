@@ -39,7 +39,7 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
     val exp = new TLBExceptionIO
   }
 
-  val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(entries)))
+  val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(nSets=1, nWays=entries)))
   val req = RegEnableThru(io.req.bits, io.req.fire())
 
   val s_idle :: s_waiting_for_resp :: s_interrupt :: Nil = Enum(3)

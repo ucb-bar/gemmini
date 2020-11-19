@@ -52,7 +52,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
   def is_same_address(other: LocalAddr): Bool = is_acc_addr === other.is_acc_addr && data === other.data
   def is_same_address(other: UInt): Bool = is_same_address(other.asTypeOf(this))
   def is_garbage(dummy: Int = 0) = is_acc_addr && accumulate && read_full_acc_row && data.andR() &&
-    (if (garbage_bit.getWidth > 0) garbage_bit.toBool() else true.B)
+    (if (garbage_bit.getWidth > 0) garbage_bit.asBool() else true.B)
 
   def +(other: UInt) = {
     require(isPow2(sp_bank_entries)) // TODO remove this requirement
@@ -198,7 +198,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // rob.io.issue.ex.ready := cmd_decompressor.io.in.ready
 
   // val decompressed_cmd = cmd_decompressor.io.out
-  
+
   // Wire up controllers to ROB
   rob.io.alloc.valid := false.B
   // rob.io.alloc.bits := compressed_cmd.bits
@@ -211,7 +211,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     is_cisc_mode       := true.B
     raw_cisc_cmd.valid := true.B
     raw_cmd.ready      := raw_cisc_cmd.ready
-  } 
+  }
   .elsewhen (raw_cmd.valid && !is_cisc_funct && !tiler.io.busy) {
     is_cisc_mode       := false.B
     raw_risc_cmd.valid := true.B
