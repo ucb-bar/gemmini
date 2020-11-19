@@ -131,23 +131,7 @@ object GemminiConfigs {
 
     mvin_scale_shared = false,
 
-//    acc_scale_args = ScaleArguments(
-//      (t: SInt, u: UInt) => {
-//        // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
-//
-//        // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
-//        val point_five = Mux(u === 0.U, 0.U, t(u - 1.U))
-//        val zeros = Mux(u <= 1.U, 0.U, t.asUInt() & ((1.U << (u - 1.U)).asUInt() - 1.U)) =/= 0.U
-//        val ones_digit = t(u)
-//
-//        val r = (point_five & (zeros | ones_digit)).asBool()
-//
-//        (t >> u).asSInt() + Mux(r, 1.S, 0.S)
-//      },
-//      0, UInt(8.W),
-//      c_str = "ROUNDING_RIGHT_SHIFT(x, scale)"
-//    ),
-
+    /*
     acc_scale_args = ScaleArguments(
       (t: SInt, f: Float) => {
         val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)
@@ -185,6 +169,14 @@ object GemminiConfigs {
       0, Float(8, 24),
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT_MAX ? INT_MAX : (y < INT_MIN ? INT_MIN : (acc_t)y);})"
+    ),
+    */
+
+    acc_scale_args = ScaleArguments(
+      (t: SInt, f: Float) => t,
+      0, Float(8, 24),
+      identity = "1.0",
+      c_str = "(x)"
     ),
 
     acc_read_full_width = true,

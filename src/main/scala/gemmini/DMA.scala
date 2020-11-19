@@ -59,9 +59,10 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     })
 
     val nCmds = (nXacts / meshRows) + 1
+
     val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits, nCmds))
 
-    val beatPacker = Module(new BeatMerger(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows, config.mvin_scale_t_bits))
+    val beatPacker = Module(new BeatMerger(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows, config.mvin_scale_t_bits, nCmds))
 
     core.module.io.req <> io.req
     io.tlb <> core.module.io.tlb
@@ -120,9 +121,11 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val accWidthBytes = accWidth / 8
     val beatBytes = beatBits / 8
 
+    val nCmds = (nXacts / meshRows) + 1
+
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits)))
-      val reserve = new XactTrackerAllocIO(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits)
+      val reserve = new XactTrackerAllocIO(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits, nCmds)
       val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits, maxBytes))
       val tlb = new FrontendTLBIO
       val flush = Input(Bool())

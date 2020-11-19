@@ -26,10 +26,10 @@ class BeatMergerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, va
   maxReqBytes: in bytes
   aligned_to: in bytes
  */
-class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, spadRows: Int, accRows: Int, maxReqBytes: Int, alignedTo: Int, meshRows: Int, mvin_scale_t_bits: Int)
+class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, spadRows: Int, accRows: Int, maxReqBytes: Int, alignedTo: Int, meshRows: Int, mvin_scale_t_bits: Int, nCmds: Int)
   extends Module {
   val io = IO(new Bundle {
-    val req = Flipped(Decoupled(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits)))
+    val req = Flipped(Decoupled(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds)))
     val in = Flipped(Decoupled(UInt(beatBits.W)))
     // val in = Flipped(Decoupled(new BeatPackerIn(beatBits)))
     val out = Decoupled(new BeatMergerOut(spadWidth, accWidth, spadRows, accRows, alignedTo))
@@ -39,7 +39,7 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
   val spadWidthBytes = spadWidth/8
   val accWidthBytes = accWidth/8
 
-  val req = Reg(UDValid(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits)))
+  val req = Reg(UDValid(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds)))
 
   val buflen = maxReqBytes max spadWidthBytes max accWidthBytes // in bytes
   val buffer = Reg(UInt((buflen*8).W))

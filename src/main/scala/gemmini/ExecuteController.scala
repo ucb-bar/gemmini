@@ -429,16 +429,32 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       }
     }
 
+    /*
     io.acc.read(i).req.valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
     io.acc.read(i).req.bits.scale := acc_scale
     io.acc.read(i).req.bits.full := false.B
-    io.acc.read(i).req.bits.relu6_shift := relu6_shift
     io.acc.read(i).req.bits.relu6_shift := relu6_shift
     io.acc.read(i).req.bits.act := activation
     io.acc.read(i).req.bits.fromDMA := false.B
     io.acc.read(i).req.bits.addr := MuxCase(a_address_rs1.acc_row() + a_fire_counter,
       Seq(read_b_from_acc -> (b_address_rs2.acc_row() + b_fire_counter),
         read_d_from_acc -> (d_address_rs1.acc_row() + block_size.U - 1.U - d_fire_counter)))
+
+    when(im2col_en === false.B){
+      io.acc.read(i).req.bits.addr := MuxCase(a_address.acc_row(),
+        Seq(read_b_from_acc -> b_address.acc_row(),
+          read_d_from_acc -> d_address.acc_row()))
+    }
+    */
+
+    // TODO Remove the ability to read into Mesh from AccumulatorMem completely
+    io.acc.read(i).req.valid := false.B
+    io.acc.read(i).req.bits.scale := acc_scale
+    io.acc.read(i).req.bits.full := false.B
+    io.acc.read(i).req.bits.relu6_shift := relu6_shift
+    io.acc.read(i).req.bits.act := activation
+    io.acc.read(i).req.bits.fromDMA := false.B
+    io.acc.read(i).req.bits.addr := DontCare
 
     when(im2col_en === false.B){
       io.acc.read(i).req.bits.addr := MuxCase(a_address.acc_row(),
@@ -734,11 +750,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh_cntl_signals_q.io.enq.bits.im2colling := im2col_wire && im2col_en //im2col_wire
 
   val readData = VecInit(io.srams.read.map(_.resp.bits.data))
-  val accReadData = VecInit(io.acc.read.map(_.resp.bits.data.asUInt()))
+  val accReadData = readData // VecInit(io.acc.read.map(_.resp.bits.data.asUInt())) // TODO remove ability to read from AccumulatorMem
   val im2ColData = io.im2col.resp.bits.a_im2col.asUInt()
 
   val readValid = VecInit(io.srams.read.map(bank => bank.resp.valid && !bank.resp.bits.fromDMA))
-  val accReadValid = VecInit(io.acc.read.map(bank => bank.resp.valid && !bank.resp.bits.fromDMA))
+  val accReadValid = false.B // VecInit(io.acc.read.map(bank => bank.resp.valid && !bank.resp.bits.fromDMA)) // TODO remove ability to read from AccumulatorMem
   val im2ColValid = io.im2col.resp.valid
 
   mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) &&
