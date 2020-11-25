@@ -131,7 +131,6 @@ object GemminiConfigs {
 
     mvin_scale_shared = false,
 
-    /*
     acc_scale_args = ScaleArguments(
       (t: SInt, f: Float) => {
         val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)
@@ -169,14 +168,6 @@ object GemminiConfigs {
       0, Float(8, 24),
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT_MAX ? INT_MAX : (y < INT_MIN ? INT_MIN : (acc_t)y);})"
-    ),
-    */
-
-    acc_scale_args = ScaleArguments(
-      (t: SInt, f: Float) => t,
-      0, Float(8, 24),
-      identity = "1.0",
-      c_str = "(x)"
     ),
 
     acc_read_full_width = true,
