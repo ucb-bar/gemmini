@@ -8,6 +8,8 @@ import Util._
 class VectorScalarMultiplierReq[T <: Data, U <: Data, Tag <: Data](block_cols: Int, t: T, u: U, tag_t: Tag) extends Bundle {
   val in: Vec[T] = Vec(block_cols, t.cloneType)
   val scale: U = u.cloneType
+  val repeats: UInt = UInt(16.W) // TODO magic number
+  val last: Bool = Bool()
   val tag: Tag = tag_t.cloneType
 
   override def cloneType: VectorScalarMultiplierReq.this.type = new VectorScalarMultiplierReq(block_cols, t, u, tag_t).asInstanceOf[this.type]
@@ -15,6 +17,8 @@ class VectorScalarMultiplierReq[T <: Data, U <: Data, Tag <: Data](block_cols: I
 
 class VectorScalarMultiplierResp[T <: Data, Tag <: Data](block_cols: Int, t: T, tag_t: Tag) extends Bundle {
   val out: Vec[T] = Vec(block_cols, t.cloneType)
+  val row: UInt = UInt(16.W) // TODO magic number
+  val last: Bool = Bool()
   val tag: Tag = tag_t.cloneType
 
   override def cloneType: VectorScalarMultiplierResp.this.type = new VectorScalarMultiplierResp(block_cols, t, tag_t).asInstanceOf[this.type]
@@ -38,26 +42,26 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args:
 
   val req = Reg(UDValid(chiselTypeOf(io.req.bits)))
 
-  mvin_scale_args match {
-    case Some(ScaleArguments(mvin_scale_func, _, multiplicand_t, _, _)) => {
-      io.req.ready := !req.valid || io.resp.fire()
-      io.resp.valid := req.valid
-      io.resp.bits.out := req.bits.in.map(x => mvin_scale_func(x, req.bits.scale.asTypeOf(multiplicand_t)))
-      io.resp.bits.tag := req.bits.tag
-    }
+  io.req.ready := !req.valid || (req.bits.repeats === 0.U && io.resp.fire())
+  io.resp.valid := req.valid
+  io.resp.bits.tag := req.bits.tag
+  io.resp.bits.last := req.bits.repeats === 0.U && req.bits.last
+  io.resp.bits.row := req.bits.repeats
+  io.resp.bits.out := (mvin_scale_args match {
+    case Some(ScaleArguments(mvin_scale_func, _, multiplicand_t, _, _)) =>
+      req.bits.in.map(x => mvin_scale_func(x, req.bits.scale.asTypeOf(multiplicand_t)))
 
-    case None => {
-      io.req.ready := io.resp.ready
-      io.resp.valid := io.req.valid
-      io.resp.bits.out := io.req.bits.in
-      io.resp.bits.tag := io.req.bits.tag
-    }
-  }
+    case None => req.bits.in
+  })
 
   when (io.req.fire()) {
     req.push(io.req.bits)
   }.elsewhen(io.resp.fire()) {
-    req.pop()
+    when (req.bits.repeats === 0.U) {
+      req.pop()
+    }.otherwise {
+      req.bits.repeats := req.bits.repeats - 1.U
+    }
   }
 
   when (reset.toBool()) {

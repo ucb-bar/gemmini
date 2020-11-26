@@ -35,7 +35,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val vaddr = cmd.bits.cmd.rs1
   val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
   val cols = cmd.bits.cmd.rs2(32 + mvin_len_bits - 1, 32) // TODO magic numbers
-  val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits, 48) // TODO magic numbers
+  val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits - 1, 48) // TODO magic numbers
   val config_stride = cmd.bits.cmd.rs2
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
   val config_shrink = cmd.bits.cmd.rs1(2)
@@ -52,6 +52,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val shrink = shrinks(state_id)
 
   val localaddr_plus_row_counter = localaddr + row_counter
+
+  val actual_rows_read = Mux(stride === 0.U, 1.U, rows)
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoLoad = !DoConfig // TODO change this if more commands are added
@@ -80,6 +82,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.vaddr := vaddr + row_counter * stride
   io.dma.req.bits.laddr := localaddr_plus_row_counter
   io.dma.req.bits.len := cols
+  io.dma.req.bits.repeats := Mux(stride === 0.U, rows - 1.U, 0.U)
   io.dma.req.bits.scale := scale
   io.dma.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
   io.dma.req.bits.status := mstatus
@@ -87,7 +90,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
   cmd_tracker.io.alloc.bits.bytes_to_read :=
-    Mux(io.dma.req.bits.has_acc_bitwidth, cols * rows * config.accType.getWidth.U, cols * rows * config.inputType.getWidth.U) / 8.U
+    Mux(io.dma.req.bits.has_acc_bitwidth, cols * actual_rows_read * config.accType.getWidth.U,
+      cols * actual_rows_read * config.inputType.getWidth.U) / 8.U
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
@@ -104,7 +108,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
   // Row counter
   when (io.dma.req.fire()) {
-    row_counter := wrappingAdd(row_counter, 1.U, rows)
+    row_counter := wrappingAdd(row_counter, 1.U, actual_rows_read)
   }
 
   // Control logic
@@ -132,7 +136,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     }
 
     is (sending_rows) {
-      val last_row = row_counter === 0.U || (row_counter === rows-1.U && io.dma.req.fire())
+      val last_row = row_counter === 0.U || (row_counter === actual_rows_read-1.U && io.dma.req.fire())
 
       when (last_row) {
         control_state := waiting_for_command
