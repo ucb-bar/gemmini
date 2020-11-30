@@ -132,6 +132,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val b_is_from_transposer = io.pe_control.dataflow === Dataflow.OS.id.U && io.bd_transpose
   val d_is_from_transposer = io.pe_control.dataflow === Dataflow.WS.id.U && io.bd_transpose
   val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
+
   transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
   // transposer.io.inRow.bits := VecInit(
   //   Mux(a_is_from_transposer, Mux(io.a.fire(), io.a.bits, a_buf), Mux(io.b.fire(), io.b.bits, b_buf)).flatten)
@@ -147,6 +148,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val mesh = Module(new Mesh(inputType, outputType, accType, df, pe_latency, tileRows, tileColumns, meshRows, meshColumns))
 
   // TODO wire only to *_buf here, instead of io.*.bits
+
   /*val a_shifter_in = WireInit(Mux(io.pe_control.dataflow === Dataflow.OS.id.U,
     a_transposed, Mux(io.a.fire(), io.a.bits, a_buf)))*/
   val a_shifter_in = WireInit(Mux(a_is_from_transposer,

@@ -13,15 +13,20 @@ import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet}
 
 object GemminiFPConfigs {
   import Arithmetic.FloatArithmetic._
-  val defaultFPConfig = GemminiArrayConfig[Float, Float](
+  val defaultFPConfig = GemminiArrayConfig[Float, Float, Float](
     tileRows = 1,
     tileColumns = 1,
     meshRows = 4,
     meshColumns = 4,
+
     ld_queue_length = 8,
     st_queue_length = 2,
     ex_queue_length = 8,
+
     rob_entries = 16,
+
+    hasIm2col = false,
+
     sp_banks = 4,
     acc_banks = 1,
     sp_capacity = CapacityInKilobytes(256),
@@ -29,40 +34,50 @@ object GemminiFPConfigs {
     dataflow = Dataflow.BOTH,
     acc_capacity = CapacityInKilobytes(64),
     mem_pipeline = 1,
+
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
+    tlb_size = 4,
+    use_tlb_register_filter = true,
+    max_in_flight_reqs = 16,
+    use_dedicated_tl_port = false,
+
     inputType = Float(8, 24),
     outputType = Float(8, 24),
     accType = Float(8, 24),
-    mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
-    mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
+
+    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24), identity = "1.0", c_str="((x) * (scale))")),
+    mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24), identity = "1.0", c_str="((x) * (scale))")),
     mvin_scale_shared = false,
+    acc_scale_args = ScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24), identity = "1.0",
+      c_str = "((x) * (scale))"
+    ),
     acc_read_full_width = true,
     acc_read_small_width = true,
-    pe_latency = 1
-    //pe_latency = 0
+
+    pe_latency = 1,
   )
   
   //FP32 Single Precision Configuration
   val FP32DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 24), outputType = Float(8, 24), accType = Float(8, 24),
                                                pe_latency = 2,
-                                               mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
-                                               mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24)))
+                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24), identity = "1.0", c_str="((x) * (scale))")),
+                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24), identity = "1.0", c_str="((x) * (scale))")),
                                               )
   
   //FP16 Half Precision Configuration
   val FP16DefaultConfig = defaultFPConfig.copy(inputType = Float(5, 11), outputType = Float(5, 11), accType = Float(8, 24),
                                                pe_latency = 2,
-                                               mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(5, 11))),
-                                               mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(5, 11)))
+                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(5, 11), identity = "1.0", c_str="((x) * (scale))")),
+                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(5, 11), identity = "1.0", c_str="((x) * (scale))")),
                                               )
   
   //Bfloat16 Brain-half Precision Configuration
   val BF16DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 8), outputType = Float(8, 8), accType = Float(8, 24),
                                                pe_latency = 2,
-                                               mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
-                                               mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24)))
+                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24), identity = "1.0", c_str="((x) * (scale))")),
+                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24), identity = "1.0", c_str="((x) * (scale))")),
                                               )
 }
 
