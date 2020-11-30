@@ -53,12 +53,14 @@ object GemminiFPConfigs {
   
   //FP16 Half Precision Configuration
   val FP16DefaultConfig = defaultFPConfig.copy(inputType = Float(5, 11), outputType = Float(5, 11), accType = Float(8, 24),
+                                               pe_latency = 2,
                                                mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(5, 11))),
                                                mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(5, 11)))
                                               )
   
   //Bfloat16 Brain-half Precision Configuration
   val BF16DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 8), outputType = Float(8, 8), accType = Float(8, 24),
+                                               pe_latency = 2,
                                                mvin_scale_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24))),
                                                mvin_scale_acc_args = Some(MvinScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24)))
                                               )
