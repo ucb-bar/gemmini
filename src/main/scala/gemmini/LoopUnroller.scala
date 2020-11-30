@@ -38,16 +38,26 @@ class LoopUnroller(block_size: Int)(implicit p: Parameters) extends Module {
 
   val last_iteration = i === max_i - 1.U && j === max_j - 1.U && k === max_k - 1.U
 
-  val bias = cmd.bits.rs2(iterator_bitwidth * 3)
+  //pad I, J, K
+  val pad_i = cmd.bits.rs1(9, 0)
+  val pad_j = cmd.bits.rs1(19, 10)
+  val pad_k = cmd.bits.rs1(29, 20)
 
-  val a_start = cmd.bits.rs1(31, 0)
+  val last_i = i === max_i - 1.U
+  val last_j = j === max_j - 1.U
+  val last_k = k === max_k - 1.U
+
+  val bias = cmd.bits.rs2(iterator_bitwidth * 3)
+  val b_transpose = cmd.bits.rs2(iterator_bitwidth * 3 + 1)
+
+  val a_start = 0.U(32.W)//cmd.bits.rs1(31, 0)
   val b_start = cmd.bits.rs1(63, 32)
   val c_start = (3.U << 30).asUInt()
   val d_start = (1.U << 31).asUInt()
 
   // TODO get rid of the x * max_y multiplications here
   val a_addr = a_start + (i * max_k + k) * block_size.U
-  val b_addr = b_start + (k * max_j + j) * block_size.U
+  val b_addr = Mux(b_transpose, b_start + (j * max_k + k) * block_size.U, b_start + (k * max_j + j) * block_size.U)
   val c_addr = c_start + (i * max_j + j) * block_size.U
   val d_addr = d_start + (i * max_j + j) * block_size.U
 
@@ -56,16 +66,23 @@ class LoopUnroller(block_size: Int)(implicit p: Parameters) extends Module {
   val pre_addr = Mux(i === 0.U, b_addr, GARBAGE_ADDR)
   val out_addr = Mux(bias || k =/= 0.U, c_addr, d_addr)
 
+  val A_cols = Mux(last_k, block_size.U - pad_k, block_size.U)
+  val A_rows = Mux(last_i, block_size.U - pad_i, block_size.U)
+  val C_cols = Mux(last_j, block_size.U - pad_j, block_size.U)
+  val B_cols = Mux(b_transpose, A_cols, C_cols)
+  val B_rows = Mux(b_transpose, C_cols, A_cols)
+  val C_rows = A_rows
+
   val preload_cmd = Wire(new RoCCCommand)
   preload_cmd := DontCare
   preload_cmd.inst.funct := PRELOAD_CMD
-  preload_cmd.rs1 := pre_addr
-  preload_cmd.rs2 := out_addr
+  preload_cmd.rs1 := ((B_rows << 48.U).asUInt() | (B_cols << 32.U).asUInt() | pre_addr.asUInt())
+  preload_cmd.rs2 := ((C_rows << 48.U).asUInt() | (C_cols << 32.U).asUInt() | out_addr)
 
   val compute_cmd = Wire(new RoCCCommand())
   compute_cmd := DontCare
   compute_cmd.inst.funct := Mux(i === 0.U, COMPUTE_AND_FLIP_CMD, COMPUTE_AND_STAY_CMD)
-  compute_cmd.rs1 := a_addr
+  compute_cmd.rs1 := ((A_rows << 48.U).asUInt() | (A_cols << 32.U).asUInt() | a_addr)
   compute_cmd.rs2 := GARBAGE_ADDR
 
   cmd.ready := false.B
