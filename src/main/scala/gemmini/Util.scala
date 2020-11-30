@@ -35,6 +35,15 @@ object Util {
     Mux(u +& v > max, max, u + v)
   }
 
+  def floorAdd(u: UInt, n: UInt, max_plus_one: UInt, en: Bool = true.B): UInt = {
+    val max = max_plus_one - 1.U
+
+    MuxCase(u + n, Seq(
+      (!en) -> u,
+      ((u +& n) > max) -> 0.U
+    ))
+  }
+
   def wrappingSub(u: UInt, n: UInt, max_plus_one: Int): UInt = {
     val max = max_plus_one - 1
     assert(n <= max.U, "cannot wrapSub when n is larger than max")
@@ -107,4 +116,13 @@ object Util {
   object UDValid {
     def apply[T <: Data](t: T): UDValid[T] = new UDValid(t)
   }
+
+  // creates a Reg and the next-state Wire, and returns both
+  def regwire(bits: Int) = {
+    val wire = Wire(UInt(bits.W))
+    val reg = RegNext(wire)
+    wire := reg // default wire to read from reg
+    (reg, wire)
+  }
+
 }
