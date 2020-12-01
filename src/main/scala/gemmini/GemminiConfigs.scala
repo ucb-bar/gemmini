@@ -84,7 +84,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   // val max_in_flight_reqs = 16 // TODO calculate this somehow
 
   val mvin_len_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
-  val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
+  val mvin_rows_bits = 16 // log2Up(meshRows * tileRows + 1)
   val mvout_len_bits = log2Up(meshColumns * tileColumns + 1)
   val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
 
