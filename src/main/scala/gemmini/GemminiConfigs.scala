@@ -382,12 +382,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       header ++= s"#define ACC_READ_FULL_WIDTH\n"
     header ++= s"\n"
 
-    if (acc_read_small_width)
-      header ++= s"#define ACC_READ_SMALL_WIDTH\n"
-    if (acc_read_full_width)
-      header ++= s"#define ACC_READ_FULL_WIDTH\n"
-    header ++= s"\n"
-
     header ++= s"#endif // $guard"
     header.toString()
   }
