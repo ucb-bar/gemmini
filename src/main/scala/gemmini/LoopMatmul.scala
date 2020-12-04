@@ -180,7 +180,7 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   io.cmd.bits := mvin_cmd
 
   io.loop_id := req.loop_id
-/*
+
   when (dram_addr === 0.U) {
     state := idle
   }.elsewhen (io.cmd.fire()) {
@@ -196,30 +196,20 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     }
   }
 
- */
-  when (io.cmd.fire()) {
-    // The order here is k, j, i
-    val next_j = floorAdd(j, max_blocks, req.max_j)
-    val next_k = floorAdd(k, 1.U, req.max_k, next_j === 0.U)
 
-    k := next_k
-    j := next_j
-
-    when (next_j === 0.U && next_k === 0.U) {
-      state := idle
-    }
-  }
   when (io.req.fire()) {
     req := io.req.bits
     state := ld
     j := 0.U
     k := 0.U
   }
-
+/*
   //added for reuse
   when (dram_addr === 0.U) {
     state := idle
   }
+
+ */
 }
 
 // LdD
