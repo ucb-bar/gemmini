@@ -10,19 +10,18 @@ import testchipip.TLHelper
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
-import midas.targetutils.FpgaDebug
-
 import Util._
 
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
-  val spaddr = UInt(log2Up(spad_rows max acc_rows).W)
+  val spaddr = UInt(log2Up(spad_rows max acc_rows).W) // TODO use LocalAddr in DMA
   val is_acc = Bool()
   val accumulate = Bool()
   val has_acc_bitwidth = Bool()
   val scale = UInt(mvin_scale_t_bits.W)
   val status = new MStatus
   val len = UInt(16.W) // TODO magic number
+  val repeats = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
   override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
@@ -37,6 +36,7 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
   val accumulate = Bool()
   val has_acc_bitwidth = Bool()
   val scale = UInt(mvin_scale_t_bits.W)
+  val rows = UInt(16.W) // TODO magic number
   val last = Bool()
   val bytes_read = UInt(8.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
@@ -45,9 +45,9 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
 }
 
 class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
-                   spad_rows: Int, acc_rows: Int, meshRows: Int)
+                   spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean)
                   (implicit p: Parameters) extends LazyModule {
-  val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows))
+  val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows, use_tlb_register_filter))
   val node = core.node
 
   lazy val module = new LazyModuleImp(this) {
@@ -60,9 +60,11 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
       val flush = Input(Bool())
     })
 
-    val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits))
+    val nCmds = (nXacts / meshRows) + 1
 
-    val beatPacker = Module(new BeatMerger(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows, config.mvin_scale_t_bits))
+    val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits, nCmds))
+
+    val beatPacker = Module(new BeatMerger(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows, config.mvin_scale_t_bits, nCmds))
 
     core.module.io.req <> io.req
     io.tlb <> core.module.io.tlb
@@ -89,6 +91,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.accumulate := beatPacker.io.out.bits.accumulate
     io.resp.bits.has_acc_bitwidth := beatPacker.io.out.bits.has_acc_bitwidth
     io.resp.bits.scale := RegEnable(xactTracker.io.peek.entry.scale, beatPacker.io.req.fire())
+    io.resp.bits.rows := RegEnable(xactTracker.io.peek.entry.rows, beatPacker.io.req.fire())
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
@@ -105,7 +108,7 @@ class StreamReadBeat (val nXacts: Int, val beatBits: Int, val maxReqBytes: Int) 
 // TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
 class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int,
                                   spadWidth: Int, accWidth: Int, aligned_to: Int,
-                                  spad_rows: Int, acc_rows: Int, meshRows: Int)
+                                  spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean)
                                  (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-reader", sourceId = IdRange(0, nXacts))
@@ -121,9 +124,11 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val accWidthBytes = accWidth / 8
     val beatBytes = beatBits / 8
 
+    val nCmds = (nXacts / meshRows) + 1
+
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits)))
-      val reserve = new XactTrackerAllocIO(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits)
+      val reserve = new XactTrackerAllocIO(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits, nCmds)
       val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits, maxBytes))
       val tlb = new FrontendTLBIO
       val flush = Input(Bool())
@@ -137,7 +142,6 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val vpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
 
     val bytesRequested = Reg(UInt(log2Ceil(spadWidthBytes max accWidthBytes max maxBytes).W)) // TODO this only needs to count up to (dataBytes/aligned_to), right?
-    // val bytesLeft = Mux(req.is_acc, req.len * (config.accType.getWidth / 8).U, req.len * (config.inputType.getWidth / 8).U) - bytesRequested
     val bytesLeft = Mux(req.has_acc_bitwidth, req.len * (config.accType.getWidth / 8).U, req.len * (config.inputType.getWidth / 8).U) - bytesRequested
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
@@ -217,18 +221,18 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.reserve.entry.accumulate := req.accumulate
     io.reserve.entry.has_acc_bitwidth := req.has_acc_bitwidth
     io.reserve.entry.scale := req.scale
+    io.reserve.entry.rows := req.repeats
     io.reserve.entry.lg_len_req := DontCare // TODO just remove this from the IO completely
     io.reserve.entry.bytes_to_read := read_bytes_read
     io.reserve.entry.cmd_id := req.cmd_id
 
     io.reserve.entry.addr := req.spaddr + meshRows.U *
-      // Mux(req.is_acc,
       Mux(req.has_acc_bitwidth,
         // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
         // "if" condition and the "else" clause
         if (bytesRequested.getWidth >= log2Up(accWidthBytes+1)) bytesRequested / accWidthBytes.U else 0.U,
         if (bytesRequested.getWidth >= log2Up(spadWidthBytes+1)) bytesRequested / spadWidthBytes.U else 0.U)
-    // io.reserve.entry.spad_row_offset := Mux(req.is_acc, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
+
     io.reserve.entry.spad_row_offset := Mux(req.has_acc_bitwidth, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
 
     when (tl.a.fire()) {
@@ -262,7 +266,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       req := io.req.bits
       bytesRequested := 0.U
 
-      val vpn_already_translated = last_vpn_translated_valid &&
+      val vpn_already_translated = use_tlb_register_filter.B && last_vpn_translated_valid &&
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(vpn_already_translated, s_req_new_block, s_translate_req)
     }
@@ -280,8 +284,8 @@ class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends Cor
   val store_en = Bool()
 }
 
-class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int,
-                                          aligned_to: Int, inputType: T)
+class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int,
+                                          inputType: T, block_cols: Int, use_tlb_register_filter: Boolean)
                   (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-writer", sourceId = IdRange(0, nXacts))
@@ -471,30 +475,14 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       }
     }
 
-    FpgaDebug(io.req.valid)
-    FpgaDebug(io.req.ready)
-    FpgaDebug(req.data)
-    FpgaDebug(req.len)
-
-    FpgaDebug(state)
-    FpgaDebug(bytesSent)
-    FpgaDebug(beatsLeft)
-    FpgaDebug(beatsSent)
-
-    FpgaDebug(tl.a.valid)
-    FpgaDebug(tl.a.ready)
-    FpgaDebug(tl.a.bits.data)
-    FpgaDebug(tl.a.bits.size)
-    FpgaDebug(tl.a.bits.mask)
-
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
       val pooled = {
-        val block_size = dataWidth / inputType.getWidth
-        val v1 = io.req.bits.data.asTypeOf(Vec(block_size, inputType))
-        val v2 = req.data.asTypeOf(Vec(block_size, inputType))
+        val cols = dataWidth / inputType.getWidth
+        val v1 = io.req.bits.data.asTypeOf(Vec(cols, inputType))
+        val v2 = req.data.asTypeOf(Vec(cols, inputType))
         val m = v1.zip(v2)
-        VecInit(m.map{case (x, y) => maxOf(x, y)}).asUInt()
+        VecInit(m.zipWithIndex.map{case ((x, y), i) => if (i < block_cols) maxOf(x, y) else y}).asUInt()
       }
 
       req := io.req.bits
@@ -502,9 +490,9 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
       bytesSent := 0.U
 
-      val vpn_already_translated = last_vpn_translated_valid &&
+      val vpn_already_translated = use_tlb_register_filter.B && last_vpn_translated_valid &&
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(io.req.bits.store_en, Mux(vpn_already_translated, s_writing_new_block, s_translate_req), s_idle)
     }
-  }
+ }
 }

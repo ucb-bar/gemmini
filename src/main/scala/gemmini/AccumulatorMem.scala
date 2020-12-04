@@ -3,52 +3,54 @@ package gemmini
 import chisel3._
 import chisel3.util._
 
-import midas.targetutils.FpgaDebug
+import Util._
 
 class AccumulatorReadReq[T <: Data](n: Int, shift_width: Int, scale_t: T) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
   val scale = scale_t
   val relu6_shift = UInt(shift_width.W)
   val act = UInt(2.W)
+  val full = Bool() // Whether or not we return the full bitwidth output
 
   val fromDMA = Bool()
 
   override def cloneType: this.type = new AccumulatorReadReq(n, shift_width, scale_t.cloneType).asInstanceOf[this.type]
 }
 
-class AccumulatorReadResp[T <: Data: Arithmetic](rdataType: Vec[Vec[T]]) extends Bundle {
+class AccumulatorReadResp[T <: Data: Arithmetic](rdataType: Vec[Vec[T]], fullDataType: Vec[Vec[T]]) extends Bundle {
   val data = rdataType.cloneType
+  val full_data = fullDataType.cloneType
   val fromDMA = Bool()
 
-  override def cloneType: this.type = new AccumulatorReadResp(rdataType.cloneType).asInstanceOf[this.type]
+  override def cloneType: this.type = new AccumulatorReadResp(rdataType.cloneType, fullDataType.cloneType).asInstanceOf[this.type]
 }
 
-class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, shift_width: Int, rdataType: Vec[Vec[T]], scale_t: U) extends Bundle {
+class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, shift_width: Int, rdataType: Vec[Vec[T]], fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
   val req = Decoupled(new AccumulatorReadReq(n, shift_width, scale_t))
-  val resp = Flipped(Decoupled(new AccumulatorReadResp(rdataType.cloneType)))
+  val resp = Flipped(Decoupled(new AccumulatorReadResp(rdataType.cloneType, fullDataType.cloneType)))
 
-  override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType.cloneType, scale_t.cloneType).asInstanceOf[this.type]
+  override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, rdataType.cloneType, fullDataType.cloneType, scale_t.cloneType).asInstanceOf[this.type]
 }
 
-class AccumulatorWriteIO[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
-  val en = Output(Bool())
-  val addr = Output(UInt(log2Ceil(n).W))
-  val data = Output(t)
-  val acc = Output(Bool())
-  val mask = Output(Vec(t.getWidth / 8, Bool())) // TODO Use aligned_to here
-  val current_waddr = Flipped(Valid(UInt(log2Ceil(n).W))) // This is the raddr that is being fed into the SRAM right now
+class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
+  val addr = UInt(log2Up(n).W)
+  val data = t.cloneType
+  val acc = Bool()
+  val mask = Vec(t.getWidth / 8, Bool()) // TODO Use aligned_to here
+  // val current_waddr = Flipped(Valid(UInt(log2Ceil(n).W))) // This is the raddr that is being fed into the SRAM right now
 
-  override def cloneType: this.type = new AccumulatorWriteIO(n, t).asInstanceOf[this.type]
+  override def cloneType: this.type = new AccumulatorWriteReq(n, t).asInstanceOf[this.type]
 }
 
 class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], rdata: Vec[Vec[T]], scale_t: U) extends Bundle {
-  val read = Flipped(new AccumulatorReadIO(n, log2Ceil(t.head.head.getWidth), rdata, scale_t))
-  val write = Flipped(new AccumulatorWriteIO(n, t))
+  val read = Flipped(new AccumulatorReadIO(n, log2Ceil(t.head.head.getWidth), rdata, t, scale_t))
+  // val write = Flipped(new AccumulatorWriteIO(n, t))
+  val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
 
   override def cloneType: this.type = new AccumulatorMemIO(n, t, rdata, scale_t).asInstanceOf[this.type]
 }
 
-class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], mem_pipeline: Int, scale_args: ScaleArguments[T, U])
+class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], mem_pipeline: Int, scale_args: ScaleArguments[T, U], read_small_data: Boolean, read_full_data: Boolean)
                                (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
   // to it, then we might not get the written data. We might need some kind of cooldown counter after addresses in the
@@ -68,11 +70,11 @@ class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Ve
 
   // For any write operation, we spend 2 cycles reading the existing address out, buffering it in a register, and then
   // accumulating on top of it (if necessary)
-  val wdata_buf = ShiftRegister(io.write.data, 2)
-  val waddr_buf = ShiftRegister(io.write.addr, 2)
-  val acc_buf = ShiftRegister(io.write.acc, 2)
-  val mask_buf = ShiftRegister(io.write.mask, 2)
-  val w_buf_valid = ShiftRegister(io.write.en, 2)
+  val wdata_buf = ShiftRegister(io.write.bits.data, 2)
+  val waddr_buf = ShiftRegister(io.write.bits.addr, 2)
+  val acc_buf = ShiftRegister(io.write.bits.acc, 2)
+  val mask_buf = ShiftRegister(io.write.bits.mask, 2)
+  val w_buf_valid = ShiftRegister(io.write.fire(), 2)
 
   val w_sum = VecInit((RegNext(mem.io.rdata) zip wdata_buf).map { case (rv, wv) =>
     VecInit((rv zip wv).map(t => t._1 + t._2))
@@ -83,11 +85,12 @@ class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Ve
   mem.io.wdata := Mux(acc_buf, w_sum, wdata_buf)
   mem.io.mask := mask_buf
 
-  mem.io.raddr := Mux(io.write.en && io.write.acc, io.write.addr, io.read.req.bits.addr)
-  mem.io.ren := io.read.req.fire() || (io.write.en && io.write.acc)
+  mem.io.raddr := Mux(io.write.fire() && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
+  mem.io.ren := io.read.req.fire() || (io.write.fire() && io.write.bits.acc)
 
   class PipelinedRdataAndActT extends Bundle {
     val data = mem.io.rdata.cloneType
+    val full_data = mem.io.rdata.cloneType
     val scale = io.read.req.bits.scale.cloneType
     val relu6_shift = io.read.req.bits.relu6_shift.cloneType
     val act = io.read.req.bits.act.cloneType
@@ -96,6 +99,7 @@ class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Ve
 
   val q = Module(new Queue(new PipelinedRdataAndActT, 1, true, true))
   q.io.enq.bits.data := mem.io.rdata
+  q.io.enq.bits.full_data := mem.io.rdata
   q.io.enq.bits.scale := RegNext(io.read.req.bits.scale)
   q.io.enq.bits.relu6_shift := RegNext(io.read.req.bits.relu6_shift)
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
@@ -124,22 +128,34 @@ class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Ve
   val q_will_be_empty = (q.io.count +& q.io.enq.fire()) - q.io.deq.fire() === 0.U
   io.read.req.ready := q_will_be_empty && (
       // Make sure we aren't accumulating, which would take over both ports
-      !(io.write.en && io.write.acc) &&
+      !(io.write.fire() && io.write.bits.acc) &&
       // Make sure we aren't reading something that is still being written
-      !(RegNext(io.write.en) && RegNext(io.write.addr) === io.read.req.bits.addr) &&
+      !(RegNext(io.write.fire()) && RegNext(io.write.bits.addr) === io.read.req.bits.addr) &&
       !(w_buf_valid && waddr_buf === io.read.req.bits.addr)
     )
+
   io.read.resp.bits.data := p.bits.data
+  io.read.resp.bits.full_data := p.bits.full_data
   io.read.resp.bits.fromDMA := p.bits.fromDMA
   io.read.resp.valid := p.valid
   p.ready := io.read.resp.ready
 
-  io.write.current_waddr.valid := mem.io.wen
-  io.write.current_waddr.bits := mem.io.waddr
+  if (read_small_data)
+    io.read.resp.bits.data := p.bits.data
+  else
+    io.read.resp.bits.data := 0.U.asTypeOf(p.bits.data) // TODO make this DontCare instead
 
-  // FpgaDebug(io.read)
+  if (read_full_data)
+    io.read.resp.bits.full_data := p.bits.full_data
+  else
+    io.read.resp.bits.full_data := 0.U.asTypeOf(q.io.enq.bits.full_data) // TODO make this DontCare instead
+
+  // io.write.current_waddr.valid := mem.io.wen
+  // io.write.current_waddr.bits := mem.io.waddr
+  io.write.ready := !io.write.bits.acc || (!(io.write.bits.addr === mem.io.waddr && mem.io.wen) &&
+    !(io.write.bits.addr === RegNext(io.write.bits.addr) && RegNext(io.write.fire())))
 
   // assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
-  assert(!(io.read.req.fire() && io.write.en && io.read.req.bits.addr === io.write.addr), "reading from and writing to same address is not supported")
+  assert(!(io.read.req.fire() && io.write.fire() && io.read.req.bits.addr === io.write.bits.addr), "reading from and writing to same address is not supported")
   assert(!(io.read.req.fire() && w_buf_valid && waddr_buf === io.read.req.bits.addr), "reading from an address immediately after writing to it is not supported")
 }

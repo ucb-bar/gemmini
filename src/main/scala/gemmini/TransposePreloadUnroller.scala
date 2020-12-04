@@ -49,6 +49,9 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
   val second_preload_cmd = WireInit(cmds(0))
   second_preload_cmd.cmd.rs1 := Cat(cmds(0).cmd.rs1(63, 32), garbage_addr)
 
+  val config_cmd_type = cmds(0).cmd.rs1(1,0) // TODO magic numbers
+  val is_config = functs(0) === CONFIG_CMD && config_cmd_type === CONFIG_EX
+
   io.out.valid := MuxCase(valids(0), Seq(
     first_preload -> (!b_transposed_and_ws || valids(1)),
     (state > first_compute) -> true.B
@@ -63,7 +66,7 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
   q.pop := Mux(io.out.fire() && !(first_preload && unroll_preload) && state =/= first_compute, 1.U, 0.U)
 
   when (io.out.fire()) {
-    when (functs(0) === CONFIG_CMD) {
+    when (is_config) {
       b_transposed_and_ws := ((dataflow == Dataflow.WS).B || cmds(0).cmd.rs1(2) === Dataflow.WS.id.U) && cmds(0).cmd.rs1(9)
     }.elsewhen (first_preload && unroll_preload) {
       state := first_compute
