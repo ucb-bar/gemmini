@@ -679,9 +679,15 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   stC.io.ex_j := ex.io.j
   stC.io.ex_i := ex.io.i
 
+  //added for reuse
+  //  val loop_left_ldB_id = Mux(head_loop.ldb_started, head_loop_id, tail_loop_id)
+  //  val loop_left_ldB = loops(loop_left_ldB_id)
+  val b_dram_new_null = RegInit(false.B)
+  val b_dram_new_null_d = RegNext(b_dram_new_null)
+  val flip_b_spad = b_dram_new_null && !b_dram_new_null_d
+
   // Create config registers
   when(cmd.valid && is_loop_cmd && !loop_being_configured.configured) {
-
     switch (cmd.bits.inst.funct) {
       is (LOOP_WS_CONFIG_BOUNDS) {
         loop_being_configured.max_k := cmd.bits.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2)
@@ -696,6 +702,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
       is (LOOP_WS_CONFIG_ADDRS_AB) {
         loop_being_configured.a_dram_addr := cmd.bits.rs1
         loop_being_configured.b_dram_addr := cmd.bits.rs2
+        //added for B reuse
+        b_dram_new_null := (cmd.bits.rs2 === 0.U)
       }
 
       is (LOOP_WS_CONFIG_ADDRS_DC) {
@@ -723,14 +731,6 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
       }
     }
   }
-
-  //added for reuse
-//  val loop_left_ldB_id = Mux(head_loop.ldb_started, head_loop_id, tail_loop_id)
-//  val loop_left_ldB = loops(loop_left_ldB_id)
-  val b_dram_new = loop_being_configured.b_dram_addr
-  val b_dram_new_null = (b_dram_new === 0.U)
-  val b_dram_new_null_d = RegNext(b_dram_new_null)
-  val flip_b_spad = b_dram_new_null && !b_dram_new_null_d
 
   // Wire up request signals
   val ld_d_addr_start = RegInit(0.U(log2Up(max_acc_addr).W))

@@ -29,10 +29,10 @@ object GemminiFPConfigs {
 
     sp_banks = 4,
     acc_banks = 2,
-    sp_capacity = CapacityInKilobytes(128),
+    sp_capacity = CapacityInKilobytes(64),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     dataflow = Dataflow.BOTH,
-    acc_capacity = CapacityInKilobytes(64), //64
+    acc_capacity = CapacityInKilobytes(32), //64
     mem_pipeline = 1,
 
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
