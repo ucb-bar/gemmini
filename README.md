@@ -5,6 +5,10 @@ The Gemmini project is developing a systolic-array based matrix multiplication a
 
 Gemmini is part of the [Chipyard](https://github.com/ucb-bar/chipyard) ecosystem. **For instructions on how to produce Gemmini RTL or to run Gemmini simulations, consult [this page](https://chipyard.readthedocs.io/en/latest/Generators/Gemmini.html) in the Chipyard documentation**. This document is intended to provide more in-depth information for those who might want to start hacking on Gemmini's source code.
 
+
+**Developer Note**
+To track compatible versions of Chipyard and Spike, please update the CHIPYARD.hash and SPIKE.hash files with updated hashes of Chipyard and Spike commits when bumping Chipyard or Spike.
+
 ![Image description](./gemmini-system.png)
 
 Architecture
