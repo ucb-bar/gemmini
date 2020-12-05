@@ -210,12 +210,13 @@ class LoopMatmulLdDReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val pad_i = UInt(log2Up(block_size).W)
   val dram_addr = UInt(coreMaxAddrBits.W)
   val dram_stride = UInt(coreMaxAddrBits.W)
+  val low_d = Bool()
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
-class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, acc_w: Int,
-                    max_block_len_acc: Int, concurrent_loops: Int)
+class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int,
+                    acc_w: Int, max_block_len: Int, max_block_len_acc: Int, concurrent_loops: Int)
                    (implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new LoopMatmulLdDReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, concurrent_loops)))
@@ -235,14 +236,16 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val req = Reg(new LoopMatmulLdDReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, concurrent_loops))
 
-  val max_blocks = Mux(req.max_j <= max_block_len_acc.U, req.max_j, max_block_len_acc.U)
+  val max_blocks = Mux(req.low_d, Mux(req.max_j <= max_block_len.U, req.max_j, max_block_len.U),
+    Mux(req.max_j <= max_block_len_acc.U, req.max_j, max_block_len_acc.U))
 
   val j = Reg(UInt(iterator_bitwidth.W))
   val i = Reg(UInt(iterator_bitwidth.W))
 
   val acc_addr_start = (BigInt(1) << 31).U | req.addr_start
 
-  val dram_addr = req.dram_addr + (i * req.dram_stride + j) * block_size.U * (acc_w/8).U
+  val dram_addr = Mux(req.low_d, req.dram_addr + (i * req.dram_stride + j) * block_size.U * (input_w/8).U,
+    req.dram_addr + (i * req.dram_stride + j) * block_size.U * (acc_w/8).U)
   val sp_addr = acc_addr_start + (i * req.max_j + j) * block_size.U
   val blocks = Mux(j + max_blocks <= req.max_j, max_blocks, req.max_j-j)
   val cols = (blocks * block_size.U) - Mux(j + blocks >= req.max_j, req.pad_j, 0.U)
@@ -544,6 +547,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val a_transpose = Bool()
   val b_transpose = Bool()
 
+  val low_d = Bool()
   val full_c = Bool()
   val ex_accumulate = Bool()
 
@@ -619,7 +623,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   // Create inner modules
   val ldA = Module(new LoopMatmulLdA(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, input_w, max_block_len, concurrent_loops))
   val ldB = Module(new LoopMatmulLdB(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, input_w, max_block_len, concurrent_loops))
-  val ldD = Module(new LoopMatmulLdD(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, acc_w, max_block_len_acc, concurrent_loops))
+  val ldD = Module(new LoopMatmulLdD(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, max_block_len, max_block_len_acc, concurrent_loops))
   val ex = Module(new LoopMatmulExecute(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops))
   val stC = Module(new LoopMatmulStC(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, concurrent_loops))
 
@@ -714,6 +718,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
       is (LOOP_WS) {
         loop_being_configured.ex_accumulate := cmd.bits.rs1(0)
         loop_being_configured.full_c := cmd.bits.rs1(1)
+        loop_being_configured.low_d := cmd.bits.rs1(2)
         loop_being_configured.a_transpose := cmd.bits.rs2(0)
         loop_being_configured.b_transpose := cmd.bits.rs2(1)
 
@@ -801,6 +806,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   ldD.io.req.bits.pad_i := loop_requesting_ldD.pad_i
   ldD.io.req.bits.dram_addr := loop_requesting_ldD.d_dram_addr
   ldD.io.req.bits.dram_stride := loop_requesting_ldD.d_dram_stride
+  ldD.io.req.bits.low_d := loop_requesting_ldD.low_d
   ldD.io.req.bits.addr_start := ld_d_addr_start
   ldD.io.req.bits.loop_id := loop_requesting_ldD_id
 
