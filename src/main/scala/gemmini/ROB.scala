@@ -8,7 +8,7 @@ import freechips.rocketchip.tile.RoCCCommand
 
 import GemminiISA._
 import Util._
-//import midas.targetutils.FpgaDebug
+import midas.targetutils.FpgaDebug
 
 // TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {
@@ -230,6 +230,9 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   val packed_deps = VecInit(entries.map(e => Cat(e.bits.deps)))
   dontTouch(packed_deps)
 
+  val packed_functs = VecInit(entries.map(e => e.bits.cmd.inst.funct))
+  FpgaDebug(packed_deps)
+
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
   // assert(min_pop_count < 2.U)
@@ -245,6 +248,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   }
   assert(cycles_since_issue < 10000.U, "pipeline stall")
 
+  FpgaDebug(cycles_since_issue)
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {

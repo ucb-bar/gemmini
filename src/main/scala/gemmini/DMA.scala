@@ -12,6 +12,8 @@ import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
 import Util._
 
+import midas.targetutils.FpgaDebug
+
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W) // TODO use LocalAddr in DMA
@@ -270,6 +272,12 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(vpn_already_translated, s_req_new_block, s_translate_req)
     }
+
+    FpgaDebug(state)
+    FpgaDebug(io.req.valid)
+    FpgaDebug(io.req.ready)
+    FpgaDebug(io.req.bits.len)
+    FpgaDebug(io.req.bits.vaddr)
   }
 }
 
@@ -474,6 +482,12 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         }
       }
     }
+
+    FpgaDebug(state)
+    FpgaDebug(io.req.valid)
+    FpgaDebug(io.req.ready)
+    FpgaDebug(io.req.bits.len)
+    FpgaDebug(io.req.bits.vaddr)
 
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {

@@ -7,6 +7,7 @@ import freechips.rocketchip.tile.RoCCCommand
 import freechips.rocketchip.config.Parameters
 import GemminiISA._
 import Util._
+import midas.targetutils.FpgaDebug
 
 // LdA
 
@@ -879,6 +880,56 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
       l.b_addr_end := ((i+1) * (max_addr / concurrent_loops) - block_size).U
     }
   }
+
+  FpgaDebug(io.out.bits.inst)
+  FpgaDebug(io.out.bits.rs1)
+  FpgaDebug(io.out.bits.rs2)
+
+  FpgaDebug(loops(0).a_transpose)
+  FpgaDebug(loops(0).b_transpose)
+
+  FpgaDebug(loops(0).low_d)
+  FpgaDebug(loops(0).full_c)
+  FpgaDebug(loops(0).ex_accumulate)
+
+  FpgaDebug(loops(0).configured)
+
+  FpgaDebug(loops(0).running)
+
+  FpgaDebug(loops(0).lda_started)
+  FpgaDebug(loops(0).ldb_started)
+  FpgaDebug(loops(0).ex_started)
+  FpgaDebug(loops(0).ldd_started)
+  FpgaDebug(loops(0).st_started)
+
+  FpgaDebug(loops(0).lda_completed)
+  FpgaDebug(loops(0).ldb_completed)
+  FpgaDebug(loops(0).ex_completed)
+  FpgaDebug(loops(0).ldd_completed)
+  FpgaDebug(loops(0).st_completed)
+
+  FpgaDebug(loops(1).a_transpose)
+  FpgaDebug(loops(1).b_transpose)
+
+  FpgaDebug(loops(1).low_d)
+  FpgaDebug(loops(1).full_c)
+  FpgaDebug(loops(1).ex_accumulate)
+
+  FpgaDebug(loops(1).configured)
+
+  FpgaDebug(loops(1).running)
+
+  FpgaDebug(loops(1).lda_started)
+  FpgaDebug(loops(1).ldb_started)
+  FpgaDebug(loops(1).ex_started)
+  FpgaDebug(loops(1).ldd_started)
+  FpgaDebug(loops(1).st_started)
+
+  FpgaDebug(loops(1).lda_completed)
+  FpgaDebug(loops(1).ldb_completed)
+  FpgaDebug(loops(1).ex_completed)
+  FpgaDebug(loops(1).ldd_completed)
+  FpgaDebug(loops(1).st_completed)
 }
 
 object LoopMatmul {

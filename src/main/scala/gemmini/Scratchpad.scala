@@ -8,7 +8,7 @@ import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar}
 
-import Util._
+import midas.targetutils.FpgaDebug
 
 class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
                               (implicit p: Parameters) extends CoreBundle {
@@ -287,6 +287,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     io.dma.read.resp.valid := mvin_scale_finished || mvin_scale_acc_finished
     io.dma.read.resp.bits.cmd_id := Mux(mvin_scale_finished, mvin_scale_out.bits.tag.cmd_id, mvin_scale_acc_out.bits.tag.cmd_id)
     io.dma.read.resp.bits.bytesRead := Mux(mvin_scale_finished, mvin_scale_out.bits.tag.bytes_read, mvin_scale_acc_out.bits.tag.bytes_read)
+
+    FpgaDebug(mvin_scale_out.valid)
+    FpgaDebug(mvin_scale_out.ready)
+    FpgaDebug(mvin_scale_acc_out.valid)
+    FpgaDebug(mvin_scale_acc_out.ready)
+
+    FpgaDebug(mvin_scale_out.bits.tag.is_acc)
+    FpgaDebug(mvin_scale_acc_out.bits.tag.is_acc)
 
     io.tlb(0) <> writer.module.io.tlb
     io.tlb(1) <> reader.module.io.tlb

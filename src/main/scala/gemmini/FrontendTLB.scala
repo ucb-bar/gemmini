@@ -10,7 +10,7 @@ import freechips.rocketchip.tilelink.TLEdgeOut
 import freechips.rocketchip.util.InOrderArbiter
 
 import Util._
-
+import midas.targetutils.FpgaDebug
 
 class DecoupledTLBReq(val lgMaxSize: Int)(implicit p: Parameters) extends CoreBundle {
   val tlb_req = new TLBReq(lgMaxSize)
@@ -63,6 +63,12 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 
   io.ptw <> tlb.io.ptw
   tlb.io.ptw.status := req.status
+
+  FpgaDebug(state)
+  FpgaDebug(tlb.io.resp.pf.ld)
+  FpgaDebug(tlb.io.resp.ae.ld)
+  FpgaDebug(tlb.io.resp.pf.st)
+  FpgaDebug(tlb.io.resp.ae.st)
 
   when (io.req.fire() || state === s_waiting_for_resp) {
     // We could actually check the response from the TLB instantaneously to get a response in the same cycle. However,
