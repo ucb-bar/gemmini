@@ -1,0 +1,176 @@
+# CircleCI Configuration File
+
+# version of circleci
+version: 2.1
+
+# "plugins" to use
+orbs:
+    aws-cli: circleci/aws-cli@1.0.0
+
+# default execution env.s
+executors:
+    main-env:
+        docker:
+            - image: ucbbar/chipyard-image:1.0.1
+        environment:
+            JVM_OPTS: -Xmx3200m # Customize the JVM maximum heap limit
+
+# pipeline parameters
+parameters:
+    tools-cache-version:
+        type: string
+        default: "v1"
+    chipyard-cache-version:
+        type: string
+        default: "v2"
+
+# re-usable commands
+commands:
+    toolchain-build:
+        description: "Build a toolchain"
+        parameters:
+            tools-version:
+                type: string
+        steps:
+            - checkout
+            - run:
+                name: Create hash of toolchains
+                command: |
+                    .circleci/create-hash.sh
+            - restore_cache:
+                keys:
+                    - << parameters.tools-version >>-installed-<< pipeline.parameters.tools-cache-version >>-{{ checksum "../<< parameters.tools-version >>.hash" }}
+            - run:
+                name: Building << parameters.tools-version >>
+                command: |
+                    .circleci/build-toolchains.sh << parameters.tools-version >>
+                no_output_timeout: 120m
+            - save_cache:
+                key: << parameters.tools-version >>-installed-<< pipeline.parameters.tools-cache-version >>-{{ checksum "../<< parameters.tools-version >>.hash" }}
+                paths:
+                    - "/home/riscvuser/<< parameters.tools-version >>-install"
+
+    prepare-rtl:
+        description: "Run the prepare step of RTL"
+        parameters:
+            tools-version:
+                type: string
+                default: "esp-tools"
+            timeout:
+                type: string
+                default: "120m"
+        steps:
+            - checkout
+            - run:
+                name: Create hash of toolchains
+                command: |
+                    .circleci/create-hash.sh
+            - restore_cache:
+                keys:
+                    - << parameters.tools-version >>-installed-<< pipeline.parameters.tools-cache-version >>-{{ checksum "../<< parameters.tools-version >>.hash" }}
+            - restore_cache:
+                keys:
+                    - chipyard-<< pipeline.parameters.chipyard-cache-version >>-{{ checksum "CHIPYARD.hash" }}
+            - run:
+                name: Building Gemmini Config using Verilator
+                command: .circleci/do-rtl-build.sh
+                no_output_timeout: << parameters.timeout >>
+            - save_cache:
+                key: gemmini-config-{{ .Branch }}-{{ .Revision }}
+                paths:
+                    - "/home/riscvuser/chipyard"
+
+    test-setup:
+        description: "Setup the environment for tests to run"
+        parameters:
+            tools-version:
+                type: string
+                default: "esp-tools"
+        steps:
+            - checkout
+            - run:
+                name: Create hash of toolchains
+                command: |
+                    .circleci/create-hash.sh
+            - restore_cache:
+                keys:
+                    - << parameters.tools-version >>-installed-<< pipeline.parameters.tools-cache-version >>-{{ checksum "../<< parameters.tools-version >>.hash" }}
+            - restore_cache:
+                keys:
+                    - gemmini-config-{{ .Branch }}-{{ .Revision }}
+
+# set of jobs to run
+jobs:
+    install-esp-toolchain:
+        executor: main-env
+        steps:
+            - toolchain-build:
+                tools-version: "esp-tools"
+    prepare-build-environment:
+        executor: main-env
+        steps:
+            - checkout
+            - restore_cache:
+                keys:
+                    - chipyard-<< pipeline.parameters.chipyard-cache-version >>-{{ checksum "CHIPYARD.hash" }}
+            - run:
+                name: Setup build environment
+                command: |
+                    .circleci/prepare-for-rtl-build.sh
+                no_output_timeout: 120m
+            - run:
+                name: Install Verilator to remote
+                command: |
+                    .circleci/install-verilator.sh
+            - save_cache:
+                key: chipyard-<< pipeline.parameters.chipyard-cache-version >>-{{ checksum "CHIPYARD.hash" }}
+                paths:
+                    - "/home/riscvuser/chipyard"
+                    - "/home/riscvuser/verilator-install"
+
+    prepare-gemminiconfig:
+        executor: main-env
+        steps:
+            - prepare-rtl
+
+    spike-run-tests:
+        executor: main-env
+        steps:
+            - test-setup
+            - run:
+                name: Run Gemmini spike tests
+                command: .circleci/run-tests-spike.sh
+    rtl-run-tests:
+        executor: main-env
+        steps:
+            - test-setup
+            - run:
+                name: Run Gemmini RTL tests
+                command: .circleci/run-tests-rtl.sh
+                no_output_timeout: 30m
+
+
+# Order and dependencies of jobs to run
+workflows:
+    version: 2
+    build-and-test-gemmini-configs:
+        jobs:
+            # Make the toolchains
+            - install-esp-toolchain
+
+            # Setup build environment
+            - prepare-build-environment
+
+            # Prepare the verilator builds
+            - prepare-gemminiconfig:
+                requires:
+                    - prepare-build-environment
+                    - install-esp-toolchain
+
+            # Run the SmallBoomConfig tests
+            - rtl-run-tests:
+                requires:
+                    - prepare-gemminiconfig
+            - spike-run-tests:
+                requires:
+                    - prepare-gemminiconfig

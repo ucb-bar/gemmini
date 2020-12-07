@@ -5,7 +5,7 @@ import chisel3._
 import chisel3.util._
 import Util._
 
-class Im2ColReadReq[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Bundle {
+class Im2ColReadReq[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V]) extends Bundle {
 
   val addr = new LocalAddr(config.sp_banks, config.sp_bank_entries, config.acc_banks, config.acc_bank_entries)
   //dimension
@@ -28,7 +28,7 @@ class Im2ColReadReq[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) exte
 
 }
 
-class Im2ColReadResp[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Bundle {
+class Im2ColReadResp[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V]) extends Bundle {
 
   val a_im2col = Vec(config.meshColumns * config.tileColumns, config.inputType)
   val im2col_end = Bool()
@@ -42,7 +42,7 @@ class Im2ColReadResp[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) ext
 
 }
 
-class Im2Col[T <: Data, U <: Data](config: GemminiArrayConfig[T, U]) extends Module {
+class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V]) extends Module {
   import config._
 
   val block_size = meshRows*tileRows

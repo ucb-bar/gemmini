@@ -10,8 +10,8 @@ import freechips.rocketchip.config.Parameters
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
-class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayConfig[T, U], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
-                                                        (implicit p: Parameters) extends Module {
+class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
+                     (implicit p: Parameters) extends Module {
   import config._
 
   val io = IO(new Bundle {
@@ -33,13 +33,13 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
 
   val control_state = RegInit(waiting_for_command)
 
-  val stride = RegInit((sp_width / 8).U(coreMaxAddrBits.W))
+  val stride = Reg(UInt(coreMaxAddrBits.W))
   val block_rows = meshRows * tileRows
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
   val row_counter = RegInit(0.U(12.W))
 
   // Pooling variables
-  val pool_stride = RegInit(0.U(2.W)) // When this is 0, pooling is disabled // TODO magic number
+  val pool_stride = Reg(UInt(2.W)) // When this is 0, pooling is disabled // TODO magic number
   val pool_size = Reg(UInt(2.W)) // TODO magic number
   val pool_out_dim = Reg(UInt(8.W)) // TODO magic number
   val pool_porows = Reg(UInt(8.W)) // TODO magic number
@@ -100,12 +100,11 @@ class StoreController[T <: Data : Arithmetic, U <: Data](config: GemminiArrayCon
 
   val mvout_1d_rows = pool_orows * pool_ocols //for 1D mvout
   // Command tracker instantiation
-  val nCmds = 2 // TODO make this a config parameter
+  val nCmds = (max_in_flight_reqs / block_rows) + 1
 
   val deps_t = new Bundle {
     val rob_id = UInt(log2Up(rob_entries).W)
   }
-
 
   val cmd_tracker_max_rows = (block_rows max
     (((1 << pool_orows.getWidth)-1) * ((1 << pool_ocols.getWidth)-1) + 2*((1 << pool_lpad.getWidth)-1) + 2*((1 << pool_upad.getWidth)-1))) min

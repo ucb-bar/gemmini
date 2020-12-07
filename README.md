@@ -5,6 +5,10 @@ The Gemmini project is developing a systolic-array based matrix multiplication a
 
 Gemmini is part of the [Chipyard](https://github.com/ucb-bar/chipyard) ecosystem. **For instructions on how to produce Gemmini RTL or to run Gemmini simulations, consult [this page](https://chipyard.readthedocs.io/en/latest/Generators/Gemmini.html) in the Chipyard documentation**. This document is intended to provide more in-depth information for those who might want to start hacking on Gemmini's source code.
 
+
+**Developer Note**
+To track compatible versions of Chipyard and Spike, please update the CHIPYARD.hash and SPIKE.hash files with updated hashes of Chipyard and Spike commits when bumping Chipyard or Spike.
+
 ![Image description](./gemmini-system.png)
 
 Architecture
@@ -124,6 +128,7 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 - `rs1` = virtual DRAM address (byte addressed) to write to from scratchpad
 - `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
     - if the 32nd (Most Significant) bit is set to logical 1, `rs2[31:0]` refers to an address in the the accumulator memory space. In this case, the bitwidth of the elements is `tileColumns x meshColumns x accumulated result bitwidth`.
+    - if the 30th bit is set to logical 1, the `mvout` command will store the full accumulator row in main memory, rather than scaling it down to the input type. Activation functions and accumulator scaling will not be applied in this case
 - `rs2[47:32]` = number of columns to store
 - `rs2[63:48]` = number of rows to store
 - `funct` = 3
@@ -169,6 +174,8 @@ This limitation may be lifted in the future.
 ### `config_mvin` configures the Load pipeline
 **Format:** `config_mvin rs1 rs2`
 - `rs1[0:1]` must be `01`
+- `rs1[2]` is 0 if `mvin`s to the accumulator have the same bitwidth as accumulator types, and 1 if they have the same bitwidth as inputs to the systolic array
+- `rs1[4:3]` is 0 if the stride is being set for `mvin`, 1 if the stride is being set for `mvin2`, and 2 if the stride is being set for `mvin3`
 - `rs1[63:32]` is the "scale" by which to multiply data as it's being moved in to the scratchpad. This is ignored if Gemmini isn't built with the capability to scale values during `mvin`s.
 - `rs2` = the stride in bytes
 - `funct` = 0
@@ -178,7 +185,7 @@ This limitation may be lifted in the future.
 ### `config_mvout` configures the Store pipeline
 **Format:** `config_mvout rs1 rs2`
 - `rs1[0:1]` must be `10`
-- `rs2` = the stride in bytes
+- `rs2` = the stride in bytes 
 - `funct` = 0
 
 During `mvout` operations, Gemmini can also perform max-pooling.

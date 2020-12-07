@@ -10,8 +10,8 @@ import freechips.rocketchip.tile._
 import GemminiISA._
 import Util._
 
-class TilerScheduler[T <: Data: Arithmetic, U <: Data]
-  (config: GemminiArrayConfig[T,U])(implicit val p: Parameters) 
+class TilerScheduler[T <: Data: Arithmetic, U <: Data, V <: Data]
+  (config: GemminiArrayConfig[T,U,V])(implicit val p: Parameters)
   extends Module with HasCoreParameters {
   import config._
 
@@ -446,7 +446,7 @@ class TilerScheduler[T <: Data: Arithmetic, U <: Data]
 }
 
 object TilerScheduler {
-  def apply[T <: Data: Arithmetic, U <: Data]
-    (config: GemminiArrayConfig[T,U])(implicit p: Parameters)
+  def apply[T <: Data: Arithmetic, U <: Data, V <: Data]
+    (config: GemminiArrayConfig[T,U,V])(implicit p: Parameters)
       = Module(new TilerScheduler(config))
 }

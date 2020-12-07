@@ -12,7 +12,7 @@ import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet}
 // -----------------------------
 
 object DSEBaseConfig {
-  val baseConfig = GemminiArrayConfig[SInt, Bool](
+  val baseConfig = GemminiArrayConfig[SInt, Bool, UInt](
     tileRows = 1,
     tileColumns = 1,
     meshRows = 16,
@@ -38,7 +38,27 @@ object DSEBaseConfig {
     mvin_scale_args = None,
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
-    pe_latency = 0
+    acc_scale_args = ScaleArguments(
+      (t: SInt, u: UInt) => {
+        // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
+
+        // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
+        val point_five = Mux(u === 0.U, 0.U, t(u - 1.U))
+        val zeros = Mux(u <= 1.U, 0.U, t.asUInt() & ((1.U << (u - 1.U)).asUInt() - 1.U)) =/= 0.U
+        val ones_digit = t(u)
+
+        val r = (point_five & (zeros | ones_digit)).asBool()
+
+        (t >> u).asSInt() + Mux(r, 1.S, 0.S)
+      }, 0, UInt(8.W)),
+    acc_read_full_width = true,
+    acc_read_small_width = true,
+    use_dedicated_tl_port = false,
+    pe_latency = 0,
+
+    tlb_size = 4,
+    use_tlb_register_filter = true,
+    max_in_flight_reqs = 16,
   )
 }
 
