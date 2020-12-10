@@ -4,6 +4,9 @@ import chisel3._
 import chisel3.util._
 import gemmini.Util.UDValid
 
+import midas.targetutils.SynthesizePrintf
+
+
 class XactTrackerEntry[U <: Data](maxShift: Int, spadWidth: Int, accWidth: Int,
                                   spadRows: Int, accRows: Int, maxReqBytes: Int, mvin_scale_t_bits: Int,
                                   nCmds: Int) extends Bundle {
@@ -81,5 +84,11 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
 
   when (reset.toBool()) {
     entries.foreach(_.valid := false.B)
+  }
+  val valids = VecInit(entries.map(_.valid)).asUInt()
+  val utilization = PopCount(valids)
+  val cntr = Counter(1000)
+  when (cntr.inc()) {
+    printf(SynthesizePrintf("Reader TL reqs in flight: %d\n", utilization))
   }
 }

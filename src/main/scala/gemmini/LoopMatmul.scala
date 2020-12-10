@@ -175,7 +175,8 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   io.j := j
   io.idle := state === idle
 
-  io.cmd.valid := state =/= idle && !io.rob_overloaded
+  val b_dram_addr_null = (dram_addr === 0.U)
+  io.cmd.valid := state =/= idle && !io.rob_overloaded && !b_dram_addr_null
   io.cmd.bits := mvin_cmd
 
   io.loop_id := req.loop_id
@@ -195,12 +196,20 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     }
   }
 
+
   when (io.req.fire()) {
     req := io.req.bits
     state := ld
     j := 0.U
     k := 0.U
   }
+/*
+  //added for reuse
+  when (dram_addr === 0.U) {
+    state := idle
+  }
+
+ */
 }
 
 // LdD
@@ -775,6 +784,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   when(flip_b_spad){
     ld_b_addr_end := wrappingAdd(ld_b_addr_end, (max_addr / concurrent_loops).U, max_addr.U)
     ex_b_addr_end := wrappingAdd(ex_b_addr_end, (max_addr / concurrent_loops).U, max_addr)
+    b_dram_new_null := false.B //reset
   }
 
 

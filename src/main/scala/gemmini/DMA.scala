@@ -11,6 +11,8 @@ import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
 import Util._
+import midas.targetutils.PerfCounter
+import midas.targetutils.SynthesizePrintf
 
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
@@ -169,6 +171,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       state := s_translate_resp
     }
 
+    PerfCounter(state === s_translate_req, "reader_translate_req_cycles", "how many cycles does the DMA reader spend in the s_translate_req state?")
+    PerfCounter(state === s_translate_resp, "reader_translate_resp_cycles", "how many cycles does the DMA reader spend in the s_translate_resp state?")
+
     // Select the size and mask of the TileLink request
     class Packet extends Bundle {
       val size = UInt(log2Up(maxBytes+1).W)
@@ -214,6 +219,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     tl.a.valid := state === s_req_new_block && io.reserve.ready
     tl.a.bits := get
+
+    PerfCounter(tl.a.valid && !tl.a.ready, "reader_blocked_on_tilelink_port", "how many cycles was the reader ready to make a TL request but TL wasn't ready")
+    PerfCounter(tl.a.fire(), "reader_tl_req_cnt", "number of tilelink requests made in reader")
 
     io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
@@ -261,6 +269,18 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.beatData.bits.last := edge.last(tl.d)
     // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
 
+    val vpn_already_translated_signal = WireInit(false.B)
+    val bytes_read = RegInit(0.U(32.W))
+    val bytes_read_this_req = (1.U << tl.d.bits.size).asUInt()
+    when(tl.d.fire() && edge.first(tl.d)){
+      bytes_read := bytes_read + bytes_read_this_req
+    }
+
+    val cntr = Counter(1000)
+    when(cntr.inc()){
+      printf(SynthesizePrintf("Reader TL bytes read: %d \n", bytes_read))
+    }
+
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
       req := io.req.bits
@@ -270,6 +290,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(vpn_already_translated, s_req_new_block, s_translate_req)
     }
+    PerfCounter(io.req.fire(), "reader_reqs", "how many requests were made to the reader?")
+    PerfCounter(vpn_already_translated_signal, "reader_vpn_already_translated", "how often was the vpn already translated in the reader?")
   }
 }
 
@@ -354,6 +376,9 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       state := s_translate_resp
     }
 
+    PerfCounter(state === s_translate_req, "writer_translate_req_cycles", "how many cycles does the DMA writer spend in the s_translate_req state?")
+    PerfCounter(state === s_translate_resp, "writer_translate_resp_cycles", "how many cycles does the DMA writer spend in the s_translate_resp state?")
+
     // Select the size and mask of the TileLink request
     class Packet extends Bundle {
       val size = UInt(log2Ceil(maxBytes).W)
@@ -434,6 +459,19 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     tl.a.bits := Mux(write_full, putFull, putPartial)
     tl.d.ready := xactBusy.orR()
 
+    val bytes_written = RegInit(0.U(32.W))
+    when(tl.a.fire()){
+      bytes_written := bytes_written_this_beat + bytes_written
+    }
+
+    PerfCounter(tl.a.valid && !tl.a.ready, "writer_blocked_on_tilelink_port", "how many cycles was the writer ready to make a TL request but TL wasn't ready")
+    PerfCounter(tl.a.fire(), "writer_tl_req_cnt", "number of tilelink requests made in writer")
+    val cntr = Counter(1000)
+    when (cntr.inc()) {
+      printf(SynthesizePrintf("Writer TL reqs in flight: %d\n", PopCount(xactBusy)))
+      printf(SynthesizePrintf("Writer TL bytes written: %d\n",  bytes_written))
+    }
+
     when (tl.a.fire()) {
       when (state === s_writing_new_block) {
         beatsLeft := write_beats - 1.U
@@ -475,6 +513,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       }
     }
 
+    val vpn_already_translated_signal = WireInit(false.B)
+
     // Accepting requests to kick-start the state machine
     when (io.req.fire()) {
       val pooled = {
@@ -493,6 +533,9 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val vpn_already_translated = use_tlb_register_filter.B && last_vpn_translated_valid &&
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(io.req.bits.store_en, Mux(vpn_already_translated, s_writing_new_block, s_translate_req), s_idle)
-    }
+       vpn_already_translated_signal := vpn_already_translated
+   }
+    PerfCounter(io.req.fire(), "writer_reqs", "how many requests were made to the writer?")
+    PerfCounter(vpn_already_translated_signal, "writer_vpn_already_translated", "how often was the vpn already translated in the writer?")
  }
 }

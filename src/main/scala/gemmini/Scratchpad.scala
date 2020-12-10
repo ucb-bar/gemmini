@@ -229,10 +229,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
     writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
 
-    // FpgaDebug(write_issue_q.io.deq.bits.laddr.data)
-    // FpgaDebug(write_issue_q.io.deq.bits.laddr.accumulate)
-    // FpgaDebug(write_issue_q.io.deq.bits.laddr.is_acc_addr)
-
     io.dma.write.resp.valid := false.B
     io.dma.write.resp.bits.cmd_id := write_dispatch_q.bits.cmd_id
 

@@ -8,7 +8,7 @@ import freechips.rocketchip.tile.RoCCCommand
 
 import GemminiISA._
 import Util._
-//import midas.targetutils.FpgaDebug
+
 
 // TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {

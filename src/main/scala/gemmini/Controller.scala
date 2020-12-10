@@ -13,6 +13,8 @@ import freechips.rocketchip.tilelink.{TLIdentityNode}
 import GemminiISA._
 import Util._
 
+import midas.targetutils.PerfCounter
+
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
@@ -404,6 +406,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }.elsewhen (incr_ld_st_ex_cycles) {
     ld_st_ex_cycles := ld_st_ex_cycles + 1.U
   }
+
+  PerfCounter(incr_ld_cycles, "ld_cycles_cnt", "cycles where only load-controller is busy")
+  PerfCounter(incr_st_cycles, "st_cycles_cnt", "cycles where only store-controller is busy")
+  PerfCounter(incr_ex_cycles, "ex_cycles_cnt", "cycles where only execute-controller is busy")
+  PerfCounter(incr_ld_st_cycles, "ld_st_cycles_cnt", "cycles where only load-store-controller is busy")
+  PerfCounter(incr_ld_ex_cycles, "ld_ex_cycles_cnt", "cycles where only load-execute-controller is busy")
+  PerfCounter(incr_st_ex_cycles, "st_ex_cycles_cnt", "cycles where only store-execute-controller is busy")
+  PerfCounter(incr_ld_st_ex_cycles, "ld_st_ex_cycles_cnt", "cycles where only load-store-execute-controller is busy")
 
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here
