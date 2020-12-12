@@ -22,6 +22,8 @@ object GemminiISA {
 
   val LOAD3_CMD = 14.U
 
+  val FENCE_CMD = 127.U
+
   // rs1[2:0] values
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U
