@@ -514,7 +514,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
             in_shift := rs2s(0)(31, 0) // TODO magic number
             acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
             relu6_shift := rs2s(0)(xLen - 1, 32) // TODO magic number
-            a_addr_stride := rs1s(0)(31, 16) // TODO magic number
+            a_addr_stride := rs1s(0)(31, 16) // TODO magic number // TODO this needs to be kept in sync with ROB.scala
             a_transpose := rs1s(0)(8)
             bd_transpose := rs1s(0)(9)
 

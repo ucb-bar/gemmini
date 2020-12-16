@@ -22,6 +22,7 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val status = new MStatus
   val len = UInt(16.W) // TODO magic number
   val repeats = UInt(16.W) // TODO magic number
+  val block_stride = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
   override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
@@ -36,7 +37,7 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
   val accumulate = Bool()
   val has_acc_bitwidth = Bool()
   val scale = UInt(mvin_scale_t_bits.W)
-  val rows = UInt(16.W) // TODO magic number
+  val repeats = UInt(16.W) // TODO magic number
   val last = Bool()
   val bytes_read = UInt(8.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
@@ -91,7 +92,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.accumulate := beatPacker.io.out.bits.accumulate
     io.resp.bits.has_acc_bitwidth := beatPacker.io.out.bits.has_acc_bitwidth
     io.resp.bits.scale := RegEnable(xactTracker.io.peek.entry.scale, beatPacker.io.req.fire())
-    io.resp.bits.rows := RegEnable(xactTracker.io.peek.entry.rows, beatPacker.io.req.fire())
+    io.resp.bits.repeats := RegEnable(xactTracker.io.peek.entry.repeats, beatPacker.io.req.fire())
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
@@ -135,6 +136,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     })
 
     val s_idle :: s_translate_req :: s_translate_resp :: s_req_new_block :: Nil = Enum(4)
+
     val state = RegInit(s_idle)
 
     val req = Reg(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits))
@@ -221,18 +223,20 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.reserve.entry.accumulate := req.accumulate
     io.reserve.entry.has_acc_bitwidth := req.has_acc_bitwidth
     io.reserve.entry.scale := req.scale
-    io.reserve.entry.rows := req.repeats
+    io.reserve.entry.repeats := req.repeats
+    io.reserve.entry.block_stride := req.block_stride
     io.reserve.entry.lg_len_req := DontCare // TODO just remove this from the IO completely
     io.reserve.entry.bytes_to_read := read_bytes_read
     io.reserve.entry.cmd_id := req.cmd_id
 
-    io.reserve.entry.addr := req.spaddr + meshRows.U *
+    io.reserve.entry.addr := req.spaddr + req.block_stride *
       Mux(req.has_acc_bitwidth,
         // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
         // "if" condition and the "else" clause
         if (bytesRequested.getWidth >= log2Up(accWidthBytes+1)) bytesRequested / accWidthBytes.U else 0.U,
         if (bytesRequested.getWidth >= log2Up(spadWidthBytes+1)) bytesRequested / spadWidthBytes.U else 0.U)
     io.reserve.entry.spad_row_offset := Mux(req.has_acc_bitwidth, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
+
     when (tl.a.fire()) {
       val next_vaddr = req.vaddr + read_bytes_read // send_size
       val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
@@ -266,6 +270,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
       val vpn_already_translated = use_tlb_register_filter.B && last_vpn_translated_valid &&
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
+
       state := Mux(vpn_already_translated, s_req_new_block, s_translate_req)
     }
   }
@@ -306,8 +311,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val flush = Input(Bool())
     })
 
-    val (s_idle :: s_translate_req :: s_translate_resp ::
-      s_writing_new_block :: s_writing_beats :: Nil) = Enum(5)
+    val s_idle :: s_translate_req :: s_translate_resp :: s_writing_new_block :: s_writing_beats :: Nil = Enum(5)
+
     val state = RegInit(s_idle)
 
     val req = Reg(new StreamWriteRequest(dataWidth))

@@ -179,7 +179,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   */
 
   // Incoming commands and ROB
-  val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, meshRows*tileRows, meshColumns*tileColumns))
+  val rob = Module(new ROB(outer.config, new RoCCCommand))
 
   val raw_cmd = Queue(io.cmd)
 
