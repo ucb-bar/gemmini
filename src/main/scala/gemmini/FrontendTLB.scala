@@ -11,7 +11,6 @@ import freechips.rocketchip.util.InOrderArbiter
 
 import Util._
 
-
 class DecoupledTLBReq(val lgMaxSize: Int)(implicit p: Parameters) extends CoreBundle {
   val tlb_req = new TLBReq(lgMaxSize)
   val status = new MStatus
@@ -24,8 +23,6 @@ class TLBExceptionIO extends Bundle {
 
   def flush(dummy: Int = 0): Bool = flush_retry || flush_skip
 }
-
-
 
 // TODO can we make TLB hits only take one cycle?
 class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Parameters)
@@ -43,7 +40,7 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   val interrupt = RegInit(false.B)
   io.exp.interrupt := interrupt
 
-  val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(entries)))
+  val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(nSets=1, nWays=entries)))
   tlb.io.req.valid := io.req.valid
   tlb.io.req.bits := io.req.bits.tlb_req
   io.resp := tlb.io.resp
