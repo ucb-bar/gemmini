@@ -8,12 +8,18 @@ set -e
 # this script may be called multiple times.
 echo "Building Blis"
 cd blis
-# configure to statically build for riscv64 (single thread, static library)
-#./configure CC=riscv64-unknown-linux-gnu-gcc CFLAGS=-static LDFLAGS=-static --disable-threading --disable-pba-pools --disable-sba-pools --disable-shared riscv64
-# configure to build for gemmini (single thread, shared library)
-#./configure CC=riscv64-unknown-linux-gnu-gcc --disable-threading --disable-pba-pools --disable-sba-pools --enable-shared --enable-cblas gemmini
-# configure to build for gemmini (multi-thread, shared library)
+# configure to build for riscv64 (single thread, static library)
+#./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --enable-cblas riscv64
+# configure to build for gemmini (shared library)
 ./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --enable-cblas gemmini
+# configure to build for gemmini (explicity disable threading and pools, shared library)
+#./configure CC=riscv64-unknown-linux-gnu-gcc --disable-threading --disable-pba-pools --disable-sba-pools --enable-shared --enable-cblas gemmini
+# configure to build for gemmini (openmp multithread, independant testing since statically built)
+#./configure CC=riscv64-unknown-linux-gnu-gcc LDFLAGS=-static -t openmp --enable-shared --enable-cblas gemmini
+# configure to build for gemmini (pthreads multithread slightly slower than openmp, shared library)
+#./configure CC=riscv64-unknown-linux-gnu-gcc -t pthreads --enable-shared --enable-cblas gemmini
+# configure to build for gemmini (openmp multithread, shared library assuming fedora - not buildroot - because of libgomp.so req)
+#./configure CC=riscv64-unknown-linux-gnu-gcc -t openmp --enable-shared --enable-cblas gemmini
 # clean up state
 rm -rf ../overlay/root/blis/
 make clean
