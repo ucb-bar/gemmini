@@ -6,10 +6,18 @@ set -e
 # (e.g. workloads/example-fed) every time the workload is built.
 # It is recommended to call into something like a makefile because
 # this script may be called multiple times.
-echo "Building Blis"
+
+# clean up state
+rm -rf ../overlay/root/blis/
+
 cd blis
+echo "Building RISCV Blis"
 # configure to build for riscv64 (single thread, static library)
-#./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --enable-cblas riscv64
+./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --enable-cblas riscv64
+make clean
+make -j8
+
+echo "Building Gemmini Blis"
 # configure to build for gemmini (shared library)
 ./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --enable-cblas gemmini
 # configure to build for gemmini (explicity disable threading and pools, shared library)
@@ -20,10 +28,8 @@ cd blis
 #./configure CC=riscv64-unknown-linux-gnu-gcc -t pthreads --enable-shared --enable-cblas gemmini
 # configure to build for gemmini (openmp multithread, shared library assuming fedora - not buildroot - because of libgomp.so req)
 #./configure CC=riscv64-unknown-linux-gnu-gcc -t openmp --enable-shared --enable-cblas gemmini
-# clean up state
-rm -rf ../overlay/root/blis/
-make clean
 # build library
+make clean
 make -j8
 # build tests
 echo "Building Blis Tests"
