@@ -495,6 +495,5 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }
       }
     }
-    */
   }
 }

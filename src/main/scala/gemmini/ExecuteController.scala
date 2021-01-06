@@ -139,8 +139,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val c_address_rs2 = rs2s(preload_cmd_place).asTypeOf(local_addr_t)
 
   val multiply_garbage = a_address_rs1.is_garbage()
-  val accumulate_zeros = d_address_rs2.is_garbage()
-  val preload_zeros = b_address_rs1.is_garbage()
+  val accumulate_zeros = b_address_rs2.is_garbage()
+  val preload_zeros = d_address_rs1.is_garbage()
 
   val a_cols_default = rs1s(a_address_place)(32 + log2Up(block_size + 1) - 1, 32) // TODO magic numbers
   val a_rows_default = rs1s(a_address_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers
@@ -178,14 +178,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
 
   mesh.io.a.valid := false.B
-  mesh.io.d.valid := false.B
   mesh.io.b.valid := false.B
+  mesh.io.d.valid := false.B
   mesh.io.tag_in.valid := false.B
   mesh.io.flush.valid := control_state === flush && !cntl_valid // We want to make sure that the mesh has absorbed all inputs before flushing
 
   mesh.io.a.bits := DontCare
-  mesh.io.d.bits := DontCare
   mesh.io.b.bits := DontCare
+  mesh.io.d.bits := DontCare
   mesh.io.tag_in.bits := DontCare
   mesh.io.pe_control.propagate := Mux(control_state === flush, in_prop_flush, cntl.prop)
   mesh.io.pe_control.dataflow := cntl.dataflow
@@ -243,16 +243,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val dataDBankAcc = d_address.acc_bank()
 
   val a_read_from_acc = a_address_rs1.is_acc_addr
-  val d_read_from_acc = d_address_rs2.is_acc_addr
-  val b_read_from_acc = b_address_rs1.is_acc_addr
-
-  val dataABankAcc = a_address_rs1.acc_bank()
-  val dataBBankAcc = b_address_rs1.acc_bank()
-  val dataDBankAcc = d_address_rs2.acc_bank()
+  val b_read_from_acc = b_address_rs2.is_acc_addr
+  val d_read_from_acc = d_address_rs1.is_acc_addr
 
   val start_inputting_a = WireInit(false.B)
-  val start_inputting_d = WireInit(false.B)
   val start_inputting_b = WireInit(false.B)
+  val start_inputting_d = WireInit(false.B)
   val start_array_outputting = WireInit(false.B)
 
   // TODO merge these into one enum
@@ -290,8 +286,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
 
   val a_ready = WireInit(true.B)
-  val d_ready = WireInit(true.B)
   val b_ready = WireInit(true.B)
+  val d_ready = WireInit(true.B)
 
   case class Operand(addr: LocalAddr, is_garbage: Bool, start_inputting: Bool, counter: UInt, started: Bool, can_be_im2colled: Boolean, priority: Int) {
     val done = counter === 0.U && started
@@ -331,9 +327,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   dontTouch(a_fire)
   val b_fire = b_valid && b_ready
   val d_fire = d_valid && d_ready
-  val b_fire = b_valid && b_ready
 
-  val firing = start_inputting_a || start_inputting_d || start_inputting_b
+  val firing = start_inputting_a || start_inputting_b || start_inputting_d
 
   when (!firing) {
     a_fire_counter := 0.U
@@ -499,7 +494,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     io.im2col.resp.ready := mesh.io.a.ready
   }
-  */
 
 
   // FSM logic
@@ -671,31 +665,27 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val perform_single_preload = Bool()
 
     val a_bank = UInt(log2Up(sp_banks).W)
-    val d_bank = UInt(log2Up(sp_banks).W)
     val b_bank = UInt(log2Up(sp_banks).W)
+    val d_bank = UInt(log2Up(sp_banks).W)
 
     val a_bank_acc = UInt(log2Up(acc_banks).W)
     val b_bank_acc = UInt(log2Up(acc_banks).W)
     val d_bank_acc = UInt(log2Up(acc_banks).W)
 
     val a_read_from_acc = Bool()
-    val d_read_from_acc = Bool()
     val b_read_from_acc = Bool()
-
-    val a_bank_acc = UInt(log2Up(acc_banks).W)
-    val b_bank_acc = UInt(log2Up(acc_banks).W)
-    val d_bank_acc = UInt(log2Up(acc_banks).W)
+    val d_read_from_acc = Bool()
 
     val a_garbage = Bool()
-    val d_garbage = Bool()
     val b_garbage = Bool()
+    val d_garbage = Bool()
 
     val accumulate_zeros = Bool()
     val preload_zeros = Bool()
 
     val a_fire = Bool()
-    val d_fire = Bool()
     val b_fire = Bool()
+    val d_fire = Bool()
 
     val a_unpadded_cols = UInt(log2Up(block_size + 1).W)
     val b_unpadded_cols = UInt(log2Up(block_size + 1).W)
@@ -721,24 +711,20 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh_cntl_signals_q.io.enq.bits.perform_single_preload := performing_single_preload
 
   mesh_cntl_signals_q.io.enq.bits.a_bank := dataAbank
-  mesh_cntl_signals_q.io.enq.bits.d_bank := dataDbank
   mesh_cntl_signals_q.io.enq.bits.b_bank := dataBbank
-
-  mesh_cntl_signals_q.io.enq.bits.a_bank_acc := dataABankAcc
-  mesh_cntl_signals_q.io.enq.bits.b_bank_acc := dataBBankAcc
-  mesh_cntl_signals_q.io.enq.bits.d_bank_acc := dataDBankAcc
+  mesh_cntl_signals_q.io.enq.bits.d_bank := dataDbank
 
   mesh_cntl_signals_q.io.enq.bits.a_bank_acc := dataABankAcc
   mesh_cntl_signals_q.io.enq.bits.b_bank_acc := dataBBankAcc
   mesh_cntl_signals_q.io.enq.bits.d_bank_acc := dataDBankAcc
 
   mesh_cntl_signals_q.io.enq.bits.a_garbage := a_address_rs1.is_garbage() || !start_inputting_a
-  mesh_cntl_signals_q.io.enq.bits.d_garbage := d_address_rs2.is_garbage() || !start_inputting_d
-  mesh_cntl_signals_q.io.enq.bits.b_garbage := b_address_rs1.is_garbage() || !start_inputting_b
+  mesh_cntl_signals_q.io.enq.bits.b_garbage := b_address_rs2.is_garbage() || !start_inputting_b
+  mesh_cntl_signals_q.io.enq.bits.d_garbage := d_address_rs1.is_garbage() || !start_inputting_d
 
   mesh_cntl_signals_q.io.enq.bits.a_read_from_acc := a_read_from_acc
-  mesh_cntl_signals_q.io.enq.bits.d_read_from_acc := d_read_from_acc
   mesh_cntl_signals_q.io.enq.bits.b_read_from_acc := b_read_from_acc
+  mesh_cntl_signals_q.io.enq.bits.d_read_from_acc := d_read_from_acc
 
   mesh_cntl_signals_q.io.enq.bits.accumulate_zeros := accumulate_zeros
   mesh_cntl_signals_q.io.enq.bits.preload_zeros := preload_zeros //&& (in_shift(19) =/= 1.U)) //fixed for negative shift?
@@ -773,8 +759,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val im2ColValid = io.im2col.resp.valid
 
   mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) &&
-    (!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready) &&
-    (!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready)
+    (!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) &&
+    (!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready)
 
   val dataA_valid = cntl.a_garbage || cntl.a_unpadded_cols === 0.U || Mux(cntl.im2colling, im2ColValid, Mux(cntl.a_read_from_acc, accReadValid(cntl.a_bank_acc), readValid(cntl.a_bank)))
 
@@ -808,8 +794,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.tag_in.valid := true.B
 
     mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
+    mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
     mesh.io.tag_in.bits.rob_id := cntl.rob_id
     mesh.io.tag_in.bits.addr := cntl.c_addr

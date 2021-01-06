@@ -19,7 +19,7 @@ object GemminiEE290Configs{
 
   // For Lab2 Part 3.6
   val Lab2LargeSPConfig = defaultConfig.copy(meshRows = 8, meshColumns = 8, dataflow = Dataflow.WS, sp_capacity = CapacityInKilobytes(2048))
-  
+
   // For Lab3
   val Lab3Config = defaultConfig.copy(meshRows = 32, meshColumns = 32, dataflow = Dataflow.WS, outputType = SInt(21.W))
 
@@ -27,14 +27,13 @@ object GemminiEE290Configs{
   val Lab3SmallSPConfig = defaultConfig.copy(meshRows = 32, meshColumns = 32, dataflow = Dataflow.WS, sp_capacity = CapacityInKilobytes(128), acc_capacity = CapacityInKilobytes(32), outputType = SInt(21.W))
 }
 
-
 //===========EE290 Lab2 Config=========
 class GemminiEE290Lab2Config extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
-        implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab2Config))
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab2Config))
+        gemmini
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -45,8 +44,8 @@ class GemminiEE290Lab2LargeSPConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
-        implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab2LargeSPConfig))
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab2LargeSPConfig))
+        gemmini
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -57,8 +56,8 @@ class GemminiEE290Lab3Config extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
-        implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab3Config))
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab3Config))
+        gemmini
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -69,8 +68,8 @@ class GemminiEE290Lab3SmallSPConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
-        implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab3SmallSPConfig))
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiEE290Configs.Lab3SmallSPConfig))
+        gemmini
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
