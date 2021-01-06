@@ -6,5 +6,8 @@
 # this script may be called multiple times.
 echo "Building gemmini-rocc-tests benchmark"
 cd gemmini-rocc-tests
-./build.sh
-cp -r build/* ../overlay/root/
+autoconf
+mkdir -p build && cd build
+../configure
+make TARGET=riscv64-unknown-linux-gnu- -j
+cp -r ./* ../../overlay/root/

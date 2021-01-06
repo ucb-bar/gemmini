@@ -14,15 +14,34 @@ object Util {
     }
   }
 
-  def wrappingAdd(u: UInt, n: UInt, max_plus_one: UInt): UInt = {
+  def wrappingAdd(u: UInt, n: UInt, max_plus_one: UInt, en: Bool = true.B): UInt = {
     val max = max_plus_one - 1.U
     assert(n <= max || max === 0.U, "cannot wrapAdd when n is larger than max, unless max is 0")
-    Mux (max === 0.U, 0.U,
-      Mux(u >= max - n + 1.U && n =/= 0.U, n - (max - u) - 1.U, u + n))
+
+    /*
+    Mux(!en, u,
+      Mux (max === 0.U, 0.U,
+        Mux(u >= max - n + 1.U && n =/= 0.U, n - (max - u) - 1.U, u + n)))
+    */
+
+    MuxCase(u + n, Seq(
+      (!en) -> u,
+      (max === 0.U) -> 0.U,
+      (u >= max - n + 1.U && n =/= 0.U) -> (n - (max - u) - 1.U)
+    ))
   }
 
   def satAdd(u: UInt, v: UInt, max: UInt): UInt = {
     Mux(u +& v > max, max, u + v)
+  }
+
+  def floorAdd(u: UInt, n: UInt, max_plus_one: UInt, en: Bool = true.B): UInt = {
+    val max = max_plus_one - 1.U
+
+    MuxCase(u + n, Seq(
+      (!en) -> u,
+      ((u +& n) > max) -> 0.U
+    ))
   }
 
   def wrappingSub(u: UInt, n: UInt, max_plus_one: Int): UInt = {
@@ -38,7 +57,7 @@ object Util {
 
   def closestLowerPowerOf2(u: UInt): UInt = {
     // TODO figure out a more efficient way of doing this. Is this many muxes really necessary?
-    val exp = u.toBools().zipWithIndex.map { case (b, i) =>
+    val exp = u.asBools().zipWithIndex.map { case (b, i) =>
         Mux(b, i.U, 0.U)
     }.reduce((acc, u) => Mux(acc > u, acc, u))
 
@@ -49,7 +68,7 @@ object Util {
     val lgRowBytes = log2Ceil(rowBytes)
 
     // TODO figure out a more efficient way of doing this. Is this many muxes really necessary?
-    val exp = u.toBools().zipWithIndex.map { case (b, i) =>
+    val exp = u.asBools().zipWithIndex.map { case (b, i) =>
       Mux(b && addr(i + lgRowBytes - 1, 0) === 0.U && stride(i + lgRowBytes - 1, 0) === 0.U, i.U, 0.U)
     }.reduce((acc, u) => Mux(acc > u, acc, u))
 
@@ -65,6 +84,11 @@ object Util {
 
   def maxOf(u1: UInt, u2: UInt): UInt = {
     Mux(u1 > u2, u1, u2)
+  }
+
+  def maxOf[T <: Data](x: T, y: T)(implicit ev: Arithmetic[T]): T = {
+    import ev._
+    Mux(x > y, x, y)
   }
 
   def minOf(u1: UInt, u2: UInt): UInt = {
@@ -92,4 +116,13 @@ object Util {
   object UDValid {
     def apply[T <: Data](t: T): UDValid[T] = new UDValid(t)
   }
+
+  // creates a Reg and the next-state Wire, and returns both
+  def regwire(bits: Int) = {
+    val wire = Wire(UInt(bits.W))
+    val reg = RegNext(wire)
+    wire := reg // default wire to read from reg
+    (reg, wire)
+  }
+
 }

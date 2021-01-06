@@ -34,6 +34,9 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     // TODO make pe_control a ready-valid interface as well
     val pe_control = Input(new PEControl(accType))
 
+    val a_transpose = Input(Bool())
+    val bd_transpose = Input(Bool())
+
     val tag_in = Flipped(Decoupled(tagType))
     val tag_out = Output(tagType)
     val tags_in_progress = Output(Vec(tagqlen, tagType))
@@ -125,27 +128,44 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val pause = (waiting_on_non_matrix_inputs || !next_row_input) && !flushing_or_about_to
 
   // Transposer
+  val a_is_from_transposer = Mux(io.pe_control.dataflow === Dataflow.OS.id.U, !io.a_transpose, io.a_transpose)
+  val b_is_from_transposer = io.pe_control.dataflow === Dataflow.OS.id.U && io.bd_transpose
+  val d_is_from_transposer = io.pe_control.dataflow === Dataflow.WS.id.U && io.bd_transpose
   val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
-  transposer.io.inRow.valid := !pause && io.pe_control.dataflow === Dataflow.OS.id.U
-  transposer.io.inRow.bits := VecInit(Mux(io.a.fire(), io.a.bits, a_buf).flatten)
+
+  transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
+  // transposer.io.inRow.bits := VecInit(
+  //   Mux(a_is_from_transposer, Mux(io.a.fire(), io.a.bits, a_buf), Mux(io.b.fire(), io.b.bits, b_buf)).flatten)
+  transposer.io.inRow.bits := MuxCase(VecInit(Mux(io.a.fire(), io.a.bits, a_buf).flatten), Seq(
+    b_is_from_transposer -> VecInit(Mux(io.b.fire(), io.b.bits, b_buf).flatten),
+    d_is_from_transposer -> VecInit(Mux(io.d.fire(), io.d.bits, d_buf).flatten.reverse)
+  ))
+
   transposer.io.outCol.ready := true.B
-  val a_transposed = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
+  val transposer_out = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
 
   // Wire up mesh's IO to this module's IO
   val mesh = Module(new Mesh(inputType, outputType, accType, df, pe_latency, tileRows, tileColumns, meshRows, meshColumns))
 
   // TODO wire only to *_buf here, instead of io.*.bits
-  val a_shifter_in = WireInit(Mux(io.pe_control.dataflow === Dataflow.OS.id.U,
-    a_transposed, Mux(io.a.fire(), io.a.bits, a_buf)))
-  val d_shifter_in = WireInit(Mux(io.d.fire(), io.d.bits, d_buf))
-  val b_shifter_in = Mux(io.b.fire(), io.b.bits, b_buf)
+
+  /*val a_shifter_in = WireInit(Mux(io.pe_control.dataflow === Dataflow.OS.id.U,
+    a_transposed, Mux(io.a.fire(), io.a.bits, a_buf)))*/
+  val a_shifter_in = WireInit(Mux(a_is_from_transposer,
+    transposer_out, Mux(io.a.fire(), io.a.bits, a_buf)))
+  // val b_shifter_in = WireInit(Mux(io.b.fire(), io.b.bits, b_buf))
+  val b_shifter_in = WireInit(Mux(b_is_from_transposer,
+    transposer_out, Mux(io.b.fire(), io.b.bits, b_buf)))
+  // val d_shifter_in = Mux(io.d.fire(), io.d.bits, d_buf)
+  val d_shifter_in = WireInit(Mux(d_is_from_transposer,
+    VecInit(transposer_out.flatten.reverse.grouped(tileRows).map(VecInit(_)).toSeq),
+    Mux(io.d.fire(), io.d.bits, d_buf)))
 
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_d := shifted(d_shifter_in, upBanks)
   mesh.io.in_b := shifted(b_shifter_in, upBanks)
 
   mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>
-    // ss.foreach(_ := ShiftRegister(Cat(io.mesh_control.dataflow, in_s), i * (pe_latency + 1)))
     ss.foreach(_.dataflow := ShiftRegister(io.pe_control.dataflow, i * (pe_latency + 1)))
     ss.foreach(_.propagate := ShiftRegister(in_prop, i * (pe_latency + 1)))
   }
@@ -175,8 +195,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   val tag_id_reg = RegInit(0.U(1.W)) // Used to keep track of when we should increment // TODO inelegant
   val tag_id = WireInit(tag_id_reg)
-  // val tag_id_delayed = ShiftRegister(tag_id, meshRows + S_TYPE.size, 0.U, true.B)
-  val tag_id_delayed = ShiftRegister(tag_id, (meshRows + S_TYPE.size - 1) * (pe_latency + 1), 0.U, true.B)
+  val tag_id_delayed = ShiftRegister(tag_id, (meshRows + S_TYPE.size - 1) * (pe_latency + 1) + 1, 0.U, true.B)
 
   tag_queue.io.out.next := tag_id_delayed =/= RegNext(tag_id_delayed, 0.U)
 
