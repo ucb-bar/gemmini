@@ -19,17 +19,17 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
-  val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
-  val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType))
   val B_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
+  val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType))
+  val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
 
   val tagqlen = (if (meshColumns == 1) 4 else 5) * (pe_latency+1) // TODO change the tag-queue so we can make this 3
 
   val io = IO(new Bundle {
     val a = Flipped(Decoupled(A_TYPE))
-    val d = Flipped(Decoupled(D_TYPE))
     val b = Flipped(Decoupled(B_TYPE))
+    val d = Flipped(Decoupled(D_TYPE))
 
     // TODO make pe_control a ready-valid interface as well
     val pe_control = Input(new PEControl(accType))
@@ -83,15 +83,15 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val fire_started = RegInit(false.B)
 
   val a_buf = RegEnable(io.a.bits, io.a.fire())
-  val d_buf = RegEnable(io.d.bits, io.d.fire())
   val b_buf = RegEnable(io.b.bits, io.b.fire())
+  val d_buf = RegEnable(io.d.bits, io.d.fire())
 
   val in_prop_reg = Reg(UInt(1.W)) // TODO inelegant
   val in_prop = WireInit(in_prop_reg)
 
   val a_written = RegInit(false.B)
-  val d_written = RegInit(false.B)
   val b_written = RegInit(false.B)
+  val d_written = RegInit(false.B)
 
   val tag_written = RegInit(false.B)
 
@@ -102,28 +102,28 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     a_written := true.B
   }
 
-  when (io.d.fire()) {
-    d_written := true.B
-  }
-
   when (io.b.fire()) {
     b_written := true.B
   }
 
-  val next_row_input = (io.a.fire() || a_written) && (io.d.fire() || d_written) && (io.b.fire() || b_written)
+  when (io.d.fire()) {
+    d_written := true.B
+  }
+
+  val next_row_input = (io.a.fire() || a_written) && (io.b.fire() || b_written) && (io.d.fire() || d_written)
 
   when (next_row_input || flushing_or_about_to) {
     a_written := false.B
-    d_written := false.B
     b_written := false.B
+    d_written := false.B
 
     fire_counter := wrappingAdd(fire_counter, 1.U, block_size)
     fire_started := true.B // We only need to write to this here, rather than in a "when (buffering_done)" statement
   }
 
   io.a.ready := !a_written
-  io.d.ready := !d_written
   io.b.ready := !b_written
+  io.d.ready := !d_written
 
   val pause = (waiting_on_non_matrix_inputs || !next_row_input) && !flushing_or_about_to
 
@@ -162,8 +162,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     Mux(io.d.fire(), io.d.bits, d_buf)))
 
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
-  mesh.io.in_d := shifted(d_shifter_in, upBanks)
   mesh.io.in_b := shifted(b_shifter_in, upBanks)
+  mesh.io.in_d := shifted(d_shifter_in, upBanks)
 
   mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_.dataflow := ShiftRegister(io.pe_control.dataflow, i * (pe_latency + 1)))
@@ -249,7 +249,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   }
 
   when (flushing) {
-    Seq(io.a.ready, io.d.ready, io.b.ready, io.tag_in.ready).foreach(_ := false.B)
+    Seq(io.a.ready, io.b.ready, io.d.ready, io.tag_in.ready).foreach(_ := false.B)
 
     tag_written := true.B
 

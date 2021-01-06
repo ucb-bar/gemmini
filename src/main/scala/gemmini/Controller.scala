@@ -129,8 +129,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   tlb.io.exp.flush_skip := false.B
   tlb.io.exp.flush_retry := false.B
 
-  dontTouch(outer.spad.module.io.tlb)
-
   io.ptw.head <> tlb.io.ptw
   /*io.ptw.head.req <> tlb.io.ptw.req
   tlb.io.ptw.resp <> io.ptw.head.resp
