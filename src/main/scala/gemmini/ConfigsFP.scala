@@ -16,8 +16,8 @@ object GemminiFPConfigs {
   val defaultFPConfig = GemminiArrayConfig[Float, Float, Float](
     tileRows = 1,
     tileColumns = 1,
-    meshRows = 4,
-    meshColumns = 4,
+    meshRows = 8,
+    meshColumns = 8,
 
     ld_queue_length = 8,
     st_queue_length = 2,
@@ -29,10 +29,10 @@ object GemminiFPConfigs {
 
     sp_banks = 4,
     acc_banks = 2,
-    sp_capacity = CapacityInKilobytes(64),
+    sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
-    dataflow = Dataflow.BOTH,
-    acc_capacity = CapacityInKilobytes(32), //64
+    dataflow = Dataflow.WS,
+    acc_capacity = CapacityInKilobytes(128), //64
     mem_pipeline = 1,
 
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
@@ -40,7 +40,7 @@ object GemminiFPConfigs {
     aligned_to = 1,
     tlb_size = 4,
     use_tlb_register_filter = true,
-    max_in_flight_reqs = 16,
+    max_in_flight_reqs = 64,
     use_dedicated_tl_port = false,
 
     inputType = Float(8, 24),

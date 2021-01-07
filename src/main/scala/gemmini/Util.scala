@@ -44,6 +44,16 @@ object Util {
     ))
   }
 
+  def floorAddto(u: UInt, n: UInt, max_plus_one: UInt, floor: UInt, en: Bool = true.B): UInt = {
+    val max = max_plus_one - 1.U
+
+    MuxCase(u + n, Seq(
+      (!en) -> u,
+      ((u +& n) > max) -> floor
+    ))
+  }
+
+
   def wrappingSub(u: UInt, n: UInt, max_plus_one: Int): UInt = {
     val max = max_plus_one - 1
     assert(n <= max.U, "cannot wrapSub when n is larger than max")
