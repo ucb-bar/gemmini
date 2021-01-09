@@ -324,11 +324,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
 
   val a_fire = a_valid && a_ready
-  dontTouch(a_fire)
+  val a_blocked = a_valid && !a_ready
   val b_fire = b_valid && b_ready
+  val b_blocked = b_valid && !b_ready
   val d_fire = d_valid && d_ready
+  val d_blocked = d_valid && !d_ready
 
-  val firing = start_inputting_a || start_inputting_b || start_inputting_d
+  val firing = (start_inputting_a || start_inputting_b || start_inputting_d) && !a_blocked && !b_blocked && !d_blocked
 
   when (!firing) {
     a_fire_counter := 0.U
