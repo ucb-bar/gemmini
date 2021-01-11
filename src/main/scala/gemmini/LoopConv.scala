@@ -995,8 +995,6 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
       l.b_addr_end := ((i+1) * (max_addr / concurrent_loops) - block_size).U
     }
   }
-
-  assert(loops.map(_.running.asUInt()).reduce(_ +& _) <= 1.U, "Only one loop can be running at a time")
 }
 
 object LoopConv {
