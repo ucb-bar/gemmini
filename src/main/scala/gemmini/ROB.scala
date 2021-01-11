@@ -171,6 +171,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       is_ex -> exq
     ))
 
+    assert(is_load || is_store || is_ex)
+
     val raws = entries.map { e =>
       // We search for all entries which write to an address which we read from
       e.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (

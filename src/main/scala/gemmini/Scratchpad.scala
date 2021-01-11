@@ -376,8 +376,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val dmaread = mvin_scale_out.valid && !mvin_scale_out.bits.tag.is_acc &&
           laddr.sp_bank() === i.U
 
+        // We need to make sure that we don't try to return a dma read resp from both zero_writer and either mvin_scale
+        // or mvin_acc_scale at the same time. The scalers always get priority in those cases
         val zerowrite = zero_writer.io.resp.valid && !zero_writer.io.resp.bits.laddr.is_acc_addr &&
-          zero_writer.io.resp.bits.laddr.sp_bank() === i.U
+          zero_writer.io.resp.bits.laddr.sp_bank() === i.U &&
+          !((mvin_scale_out.valid && mvin_scale_out.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
 
         bio.write.en := exwrite || dmaread || zerowrite
 
@@ -496,8 +499,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           dmaread_bank === i.U /* &&
           (mvin_scale_same.B || from_mvin_scale || !spad_dmaread_last) */
 
+        // We need to make sure that we don't try to return a dma read resp from both zero_writer and either mvin_scale
+        // or mvin_acc_scale at the same time. The scalers always get priority in those cases
         val zerowrite = zero_writer.io.resp.valid && zero_writer.io.resp.bits.laddr.is_acc_addr &&
-          zero_writer.io.resp.bits.laddr.acc_bank() === i.U
+          zero_writer.io.resp.bits.laddr.acc_bank() === i.U &&
+          !((mvin_scale_out.valid && mvin_scale_out.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
 
         bio.write.valid := exwrite || ((dmaread || zerowrite) && !spad_last)
 
