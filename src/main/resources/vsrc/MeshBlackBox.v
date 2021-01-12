@@ -3,7 +3,7 @@
 // Assume TILEROWS=1, and TILECOLUMNS=1
 module MeshBlackBox
     #(parameter MESHROWS, MESHCOLUMNS, INPUT_BITWIDTH, OUTPUT_BITWIDTH, TILEROWS=1, TILECOLUMNS=1)
-     (
+    (
         input                               clock,
         input                               reset,
         input signed [INPUT_BITWIDTH-1:0]   in_a[MESHROWS-1:0][TILEROWS-1:0],
@@ -15,23 +15,53 @@ module MeshBlackBox
         output signed [OUTPUT_BITWIDTH-1:0] out_c[MESHCOLUMNS-1:0][TILECOLUMNS-1:0],
         output signed [OUTPUT_BITWIDTH-1:0] out_b[MESHCOLUMNS-1:0][TILECOLUMNS-1:0],
         output                              out_valid[MESHCOLUMNS-1:0][TILECOLUMNS-1:0]
-     );
+    );
 
+    // ---------------------------------------------------------
+    // ---------------------------------------------------------
+    //           DO NOT MODIFY ANYTHING ABOVE THIS
+    // ---------------------------------------------------------
+    // ---------------------------------------------------------
 
-//**********************************************************
-//**********************************************************
-//**********************************************************
-//******************** FILL THIS  **************************
-//**********************************************************
-//**********************************************************
-//**********************************************************
-
+    //**********************************************************
+    //**********************************************************
+    //**********************************************************
+    //******************** FILL THIS ***************************
+    //**********************************************************
+    //**********************************************************
+    //**********************************************************
 
 endmodule // MeshBlackBox
 
+//**********************************************************
+//**********************************************************
+//**********************************************************
+//********** FEEL FREE TO ADD MODULES HERE *****************
+//**********************************************************
+//**********************************************************
+//**********************************************************
+
+// ---------------------------------------------------------
+// ---------------------------------------------------------
+//           DO NOT MODIFY ANYTHING BELOW THIS
+// ---------------------------------------------------------
+// ---------------------------------------------------------
 
 // We are providing this adapter, due to the format of Chisel-generated Verilog
-// and it's compatibility with a blackbox interface
+// and it's compatibility with a blackbox interface.
+//
+// This adapter converts the Gemmini multiplication function into something
+// more amenable to teaching:
+//
+// Assumed that bias matrix is 0.
+//
+// Originally Gemmini does:
+//   A*D + B => B
+//   0 => C
+//
+// This adapter converts it to the following:
+//   A*B + D => C
+//   0 => B
 module MeshBlackBoxAdapter
   #(parameter MESHROWS, MESHCOLUMNS, INPUT_BITWIDTH, OUTPUT_BITWIDTH, TILEROWS=1, TILECOLUMNS=1)
     (
@@ -69,7 +99,7 @@ module MeshBlackBoxAdapter
   end
   endgenerate
 
-  generate        
+  generate
   for (i = 0; i < MESHCOLUMNS ; i++) begin
     for (j = 0; j < TILECOLUMNS ; j++) begin
            assign in_d_2d[i][j] = in_d[i*(TILECOLUMNS*INPUT_BITWIDTH)+(j+1)*(INPUT_BITWIDTH)-1:i*(TILECOLUMNS*INPUT_BITWIDTH)+j*(INPUT_BITWIDTH)];
@@ -86,21 +116,22 @@ module MeshBlackBoxAdapter
 
   // Instantiate the Mesh BlackBox implementation (the one you are writing in
   // this assignment)
+  // Note: This swaps signals around a bit:
+  //   in_b <-> in_d
+  //   out_c <-> out_b
   MeshBlackBox #(.MESHROWS(MESHROWS),.TILEROWS(TILEROWS),.MESHCOLUMNS(MESHCOLUMNS),.TILECOLUMNS(TILECOLUMNS),.INPUT_BITWIDTH(INPUT_BITWIDTH),.OUTPUT_BITWIDTH(OUTPUT_BITWIDTH))
    mesh_blackbox_inst (
        .clock                (clock),
        .reset                (reset),
        .in_a                 (in_a_2d),
-       .in_d                 (in_d_2d),
-       .in_b                 (in_b_2d),
+       .in_d                 (in_b_2d),
+       .in_b                 (in_d_2d),
        .in_control_dataflow  (in_control_dataflow_2d),
        .in_control_propagate (in_control_propagate_2d),
        .in_valid             (in_valid_2d),
-       .out_c                (out_c_2d),
-       .out_b                (out_b_2d),
+       .out_c                (out_b_2d),
+       .out_b                (out_c_2d),
        .out_valid            (out_valid_2d)
   );
 
 endmodule  //MeshBlackBoxAdapter
-
-
