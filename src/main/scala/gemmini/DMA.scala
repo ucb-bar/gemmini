@@ -12,6 +12,8 @@ import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
 import Util._
 
+import midas.targetutils.PerfCounter
+
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W) // TODO use LocalAddr in DMA
@@ -169,6 +171,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       state := s_translate_resp
     }
 
+    PerfCounter(state === s_translate_req, "reader_translate_req_cycles", "how many cycles does the DMA reader spend in the s_translate_req state?")
+    PerfCounter(state === s_translate_resp, "reader_translate_resp_cycles", "how many cycles does the DMA reader spend in the s_translate_resp state?")
+
+
     // Select the size and mask of the TileLink request
     class Packet extends Bundle {
       val size = UInt(log2Up(maxBytes+1).W)
@@ -214,6 +220,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     tl.a.valid := state === s_req_new_block && io.reserve.ready
     tl.a.bits := get
+
+    PerfCounter(tl.a.valid && !tl.a.ready, "reader_blocked_on_tilelink_port", "how many cycles was the reader ready to make a TL request but TL wasn't ready")
+    PerfCounter(tl.a.fire(), "reader_tl_req_cnt", "number of tilelink requests made in reader")
+
 
     io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
@@ -354,6 +364,10 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       state := s_translate_resp
     }
 
+    PerfCounter(state === s_translate_req, "writer_translate_req_cycles", "how many cycles does the DMA writer spend in the s_translate_req state?")
+    PerfCounter(state === s_translate_resp, "writer_translate_resp_cycles", "how many cycles does the DMA writer spend in the s_translate_resp state?")
+
+
     // Select the size and mask of the TileLink request
     class Packet extends Bundle {
       val size = UInt(log2Ceil(maxBytes).W)
@@ -433,6 +447,9 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     tl.a.valid := (state === s_writing_new_block || state === s_writing_beats) && !xactBusy.andR()
     tl.a.bits := Mux(write_full, putFull, putPartial)
     tl.d.ready := xactBusy.orR()
+
+    PerfCounter(tl.a.valid && !tl.a.ready, "writer_blocked_on_tilelink_port", "how many cycles was the writer ready to make a TL request but TL wasn't ready")
+    PerfCounter(tl.a.fire(), "writer_tl_req_cnt", "number of tilelink requests made in writer")
 
     when (tl.a.fire()) {
       when (state === s_writing_new_block) {

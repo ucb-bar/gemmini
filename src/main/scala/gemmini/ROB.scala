@@ -8,7 +8,9 @@ import freechips.rocketchip.tile.RoCCCommand
 
 import GemminiISA._
 import Util._
-//import midas.targetutils.FpgaDebug
+
+import midas.targetutils.SynthesizePrintf
+
 
 // TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, nEntries: Int) extends Bundle {
@@ -246,17 +248,15 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   assert(cycles_since_issue < 10000.U, "pipeline stall")
 
 
-  val cntr = Counter(10000000)
+  val cntr = Counter(1000)
   when (cntr.inc()) {
-    printf(p"Utilization: $utilization\n")
-    printf(p"Utilization ld q (incomplete): $utilization_ld_q_unissued\n")
-    printf(p"Utilization st q (incomplete): $utilization_st_q_unissued\n")
-    printf(p"Utilization ex q (incomplete): $utilization_ex_q_unissued\n")
-    printf(p"Utilization ld q: $utilization_ld_q\n")
-    printf(p"Utilization st q: $utilization_st_q\n")
-    printf(p"Utilization ex q: $utilization_ex_q\n")
-    printf(p"Packed deps: $packed_deps\n")
-    printf(p"Last allocated: $last_allocated\n\n")
+    printf(midas.targetutils.SynthesizePrintf("Utilization: %d\n", utilization))
+    printf(midas.targetutils.SynthesizePrintf("Utilization ld q (incomplete): %d\n", utilization_ld_q_unissued))
+    printf(midas.targetutils.SynthesizePrintf("Utilization st q (incomplete): %d\n", utilization_st_q_unissued))
+    printf(midas.targetutils.SynthesizePrintf("Utilization ex q (incomplete): %d\n", utilization_ex_q_unissued))
+    printf(midas.targetutils.SynthesizePrintf("Utilization ld q: %d\n", utilization_ld_q))
+    printf(midas.targetutils.SynthesizePrintf("Utilization st q: %d\n", utilization_st_q))
+    printf(midas.targetutils.SynthesizePrintf("Utilization ex q: %d\n", utilization_ex_q))
   }
 
   when (reset.toBool()) {
