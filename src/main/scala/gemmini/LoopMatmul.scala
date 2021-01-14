@@ -168,7 +168,7 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   //for strided
   //val dim_j = req.J_distance*(j/max_block_len.U) + (j%max_block_len.U)
-  val dim_j = req.J_distance*j
+  val dim_j = (req.J_distance/max_block_len.U)*j
   val row_mult = Mux(req.transpose, dim_j, k)
   val col_mult = Mux(req.transpose, k, dim_j)
   val dram_addr = req.dram_addr + (row_mult * req.dram_stride + col_mult) * block_size.U * (input_w/8).U
@@ -511,8 +511,9 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val acc_addr_start = (BigInt(1) << 31).U | (req.full_c << 29.U).asUInt() | req.addr_start
 
   //added for stride
-  //val dim_j = req.J_distance*(j/max_block_len.U) + (j%max_block_len.U)
-  val dim_j = req.J_distance*j
+  val max_block_width = log2Up(max_block_len)
+  val dim_j = req.J_distance * (j >> max_block_width).asUInt() + j(max_block_width - 1, 0) // (j%max_block_len.U)
+  //val dim_j = req.J_distance*j
 
   val dram_addr = Mux(req.full_c, req.dram_addr + (i * req.dram_stride * req.I_distance + dim_j) * block_size.U * (acc_w/8).U,
     req.dram_addr + (i * req.dram_stride * req.I_distance + dim_j) * block_size.U * (input_w/8).U)
@@ -635,8 +636,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
-  val max_block_len = (dma_max_bytes / (block_size * input_w * 8)) max 1
-  val max_block_len_acc = (dma_max_bytes / (block_size * acc_w * 8)) max 1
+  val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
+  val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
 
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new RoCCCommand))
