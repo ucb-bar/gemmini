@@ -126,8 +126,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   implicit val edge = outer.node.edges.out.head
   val tlb = Module(new FrontendTLB(2, tlb_size, dma_maxbytes))
   (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
-  tlb.io.exp.flush_skip := false.B
-  tlb.io.exp.flush_retry := false.B
 
   io.ptw.head <> tlb.io.ptw
   /*io.ptw.head.req <> tlb.io.ptw.req
@@ -137,7 +135,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   tlb.io.ptw.pmp := io.ptw.head.pmp
   tlb.io.ptw.customCSRs := io.ptw.head.customCSRs*/
 
-  spad.module.io.flush := tlb.io.exp.flush()
+  spad.module.io.flush := tlb.io.exp.flush
 
   /*
   //=========================================================================
@@ -181,7 +179,30 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Incoming commands and ROB
   val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, meshRows*tileRows, meshColumns*tileColumns))
 
-  val raw_cmd = Queue(io.cmd)
+  val raw_cmd_q = Module(new Queue(new RoCCCommand, 2))
+  val fence_stall = io.cmd.bits.inst.funct === FENCE_CMD && io.busy
+  raw_cmd_q.io.enq.valid := io.cmd.valid && io.resp.ready && !fence_stall
+  raw_cmd_q.io.enq.bits  := io.cmd.bits
+
+  io.resp.valid     := io.cmd.valid && raw_cmd_q.io.enq.ready && !fence_stall
+  io.resp.bits.rd   := io.cmd.bits.inst.rd
+  io.resp.bits.data := 0.U
+
+  io.cmd.ready := io.resp.ready && raw_cmd_q.io.enq.ready && !fence_stall
+
+  // When TLB is busy with exception, don't enqueue new instructions, instead use RD to pass back exception info
+  when (tlb.io.exp.interrupt) {
+    io.cmd.ready := true.B
+    raw_cmd_q.io.enq.valid := false.B
+    io.resp.valid := io.cmd.valid 
+    io.resp.bits.data := tlb.io.exp.vaddr
+  }
+
+  tlb.io.exp.flush := io.cmd.fire() && io.cmd.bits.inst.funct === FLUSH_CMD
+
+
+
+  val raw_cmd = raw_cmd_q.io.deq
 
   // val (compressed_cmd, compressor_busy) = InstCompressor(unrolled_cmd)
   // compressed_cmd.ready := false.B
@@ -361,8 +382,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   rob_completed_arb.io.out.ready := true.B
 
   // Wire up global RoCC signals
-  io.busy := raw_cmd.valid || loop_unroller_busy || rob.io.busy || spad.module.io.busy
-  io.interrupt := tlb.io.exp.interrupt
+  io.busy := (raw_cmd.valid || loop_unroller_busy || rob.io.busy || spad.module.io.busy) && !tlb.io.exp.interrupt
+  io.interrupt := false.B
 
   rob.io.solitary_preload := ex_controller.io.solitary_preload
 
@@ -415,32 +436,15 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val risc_funct = unrolled_cmd.bits.inst.funct
 
     val is_flush = risc_funct === FLUSH_CMD
+    val is_fence = risc_funct === FENCE_CMD
     /*
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_store = (funct === STORE_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
     val is_ex = (funct === COMPUTE_AND_FLIP_CMD || funct === COMPUTE_AND_STAY_CMD || funct === PRELOAD_CMD) ||
     (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
     */
-
-    when (is_flush) {
-      // val skip = compressed_cmd.bits.rs1(0)
-      val skip = unrolled_cmd.bits.rs1(0)
-      tlb.io.exp.flush_skip := skip
-      tlb.io.exp.flush_retry := !skip
-
-      // compressed_cmd.ready := true.B // TODO should we wait for an acknowledgement from the TLB?
-      unrolled_cmd.ready := true.B // TODO should we wait for an acknowledgement from the TLB?
-    }
-
-    .otherwise {
-      rob.io.alloc.valid := true.B
-
-      when(rob.io.alloc.fire()) {
-        // compressed_cmd.ready := true.B
-        unrolled_cmd.ready := true.B
-      }
-    }
-
+    unrolled_cmd.ready := is_fence || is_flush || rob.io.alloc.ready
+    rob.io.alloc.valid := !is_flush && !is_fence
   }
 
   /*
