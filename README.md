@@ -317,3 +317,15 @@ This section describes an additional set of RoCC instructions that configure and
 ### `COMPUTE_CISC` runs a complete hardware tiling sequence with the configured A, B, C, D, M, N, K, RPT_BIAS values
 **Format:** `compute_cisc`
 - `funct` = 17
+
+# Citing Gemmini
+If Gemmini helps you in your academic research, you are encouraged to cite our paper. Here is an example bibtex:
+```
+@article{genc2019gemmini,
+  title={Gemmini: An Agile Systolic Array Generator Enabling Systematic Evaluations of Deep-Learning Architectures},
+  author={Genc, Hasan and Haj-Ali, Ameer and Iyer, Vighnesh and Amid, Alon and Mao, Howard and Wright, John and Schmidt, Colin and Zhao, Jerry and Ou, Albert and Banister, Max and Shao, Yakun Sophia and Nikolic, Borivoje and Stoica, Ion and Asanovic, Krste},
+  journal={arXiv preprint arXiv:1911.09925},
+  year={2019}
+}
+```
+
