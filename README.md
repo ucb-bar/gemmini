@@ -5,6 +5,10 @@ The Gemmini project is developing a systolic-array based matrix multiplication a
 
 Gemmini is part of the [Chipyard](https://github.com/ucb-bar/chipyard) ecosystem. **For instructions on how to produce Gemmini RTL or to run Gemmini simulations, consult [this page](https://chipyard.readthedocs.io/en/latest/Generators/Gemmini.html) in the Chipyard documentation**. This document is intended to provide more in-depth information for those who might want to start hacking on Gemmini's source code.
 
+
+**Developer Note**
+To track compatible versions of Chipyard and Spike, please update the CHIPYARD.hash and SPIKE.hash files with updated hashes of Chipyard and Spike commits when bumping Chipyard or Spike.
+
 ![Image description](./gemmini-system.png)
 
 Architecture
@@ -14,7 +18,7 @@ Gemmini is implemented as a RoCC accelerator with non-standard RISC-V custom ins
 
 At the heart of the accelerator lies a systolic array which performs matrix multiplications. By default, the matrix multiplication support both _output-stationary_ and _weight-stationary_ dataflows, which programmers can pick between at runtime. However, the dataflow can also be hardened at elaboration time.
 
-The systolic array's inputs and outputs are stored in an explicity managed scratchpad, made up of banked SRAMs. A DMA engine facilitates the tranfer of data between main memory and the scratchpad.
+The systolic array's inputs and outputs are stored in an explicity managed scratchpad, made up of banked SRAMs. A DMA engine facilitates the transfer of data between main memory and the scratchpad.
 
 Because weight-stationary dataflows require an accumulator outside the systolic array, we add a final SRAM bank, equipped with adder units, which can be conceptually considered an extension of the scratchpad memory space. The systolic array can store results to any address in the accumulator, and can also read new inputs from any address in the accumulator. The DMA engine can also tranfer data directly between the accumulator and main memory, which is often necessary to load in biases.
 
@@ -71,7 +75,7 @@ The ``software`` directory of the generator includes the aforementioned library 
 The Gemmini generator generates a C header file based on the generator parameters. This header files gets compiled together with the matrix multiplication library to tune library performance. The generated header file can be found under ``software/gemmini-rocc-tests/include/gemmini_params.h``
 
 Gemmini can also be used to run ONNX-specified neural-networks through a port of Microsoft's ONNX-Runtime framework. The port is included as the [onnxruntime-riscv](https://github.com/pranav-prakash/onnxruntime-riscv) repository submoduled in the `software` directory.
-To start using ONNX-Runtime, run `git submodule update --init --recursive software/onnxruntime-riscv`, and read the documentation at [here](https://github.com/pranav-prakash/onnxruntime-riscv/blob/systolic/systolic_runner/docs).
+To start using ONNX-Runtime, run `git submodule update --init --recursive software/onnxruntime-riscv`, and read the documentation [here](https://github.com/pranav-prakash/onnxruntime-riscv/blob/systolic/systolic_runner/docs).
 
 ## Build and Run Gemmini Tests
 
@@ -124,6 +128,7 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 - `rs1` = virtual DRAM address (byte addressed) to write to from scratchpad
 - `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
     - if the 32nd (Most Significant) bit is set to logical 1, `rs2[31:0]` refers to an address in the the accumulator memory space. In this case, the bitwidth of the elements is `tileColumns x meshColumns x accumulated result bitwidth`.
+    - if the 30th bit is set to logical 1, the `mvout` command will store the full accumulator row in main memory, rather than scaling it down to the input type. Activation functions and accumulator scaling will not be applied in this case
 - `rs2[47:32]` = number of columns to store
 - `rs2[63:48]` = number of rows to store
 - `funct` = 3
@@ -137,21 +142,40 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 **Format:** `config_ex rs1 rs2`
 - `rs1[0:1]` must be `00`
 - `rs1[2]` determines if output (0) or weight (1) stationary
-- `rs1[4:3]` = the activation function: either relu (1), relu6 (2), or no activation function (0).
+- `rs1[4:3]` = activation function: either relu (1), relu6 (2), or no activation function (0)
+- `rs1[8]` = should A be transposed?
+- `rs1[9]` = should B be transposed?
 - `rs1[31:16]` = the stride (in scratchpad addresses) by which the rows of A are fed into the systolic array.
 "A" in this context refers to the left-hand matrix A in the matmul represented by A * B = C.
 If this stride is 1, then we feed consecutive rows in the scratchpad, starting from the starting address of A, into the systolic array as the A matrix.
 If the stride is 2, then we feed every other row into the systolic array instead.
-- `rs1[63:32]` is the number of bits by which the accumulated result of a matmul is right-shifted when leaving the accumulator
+- `rs1[63:32]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the accumulator
 - `rs2[31:0]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the systolic array
 - `rs2[63:32]` = the number of bits by which 6 should be left-shifted before applying relu6
 - `funct` = 0
 
 **Action:** mode <= rs1(2); shift <= rs2; A_stride <= rs1[31:16]
 
+**Notes:**
+- As of now, certain combinations of transpose options cannot be performed unless the right dataflow is chosen.
+This limitation may be lifted in the future.
+
+| Dataflow | Transpose A | Transpose B | Permitted? |
+| :---: | :---: | :---: | :---: | 
+| OS | No | No | Yes |
+| OS | No | Yes | No |
+| OS | Yes | No | Yes |
+| OS | Yes | Yes | Yes |
+| WS | No | No | Yes |
+| WS | No | Yes | Yes |
+| WS | Yes | No | Yes |
+| WS | Yes | Yes | No |
+
 ### `config_mvin` configures the Load pipeline
 **Format:** `config_mvin rs1 rs2`
 - `rs1[0:1]` must be `01`
+- `rs1[2]` is 0 if `mvin`s to the accumulator have the same bitwidth as accumulator types, and 1 if they have the same bitwidth as inputs to the systolic array
+- `rs1[4:3]` is 0 if the stride is being set for `mvin`, 1 if the stride is being set for `mvin2`, and 2 if the stride is being set for `mvin3`
 - `rs1[63:32]` is the "scale" by which to multiply data as it's being moved in to the scratchpad. This is ignored if Gemmini isn't built with the capability to scale values during `mvin`s.
 - `rs2` = the stride in bytes
 - `funct` = 0
@@ -161,7 +185,7 @@ If the stride is 2, then we feed every other row into the systolic array instead
 ### `config_mvout` configures the Store pipeline
 **Format:** `config_mvout rs1 rs2`
 - `rs1[0:1]` must be `10`
-- `rs2` = the stride in bytes
+- `rs2` = the stride in bytes 
 - `funct` = 0
 
 During `mvout` operations, Gemmini can also perform max-pooling.
@@ -240,6 +264,60 @@ Example:
 - If output-stationary, this instruction will compute on the previously computed result (C) in the systolic array
 - If weight-stationary, this instruction will compute on the previously preloaded weights (B) in the systolic array
 
+# Hardware Tiler ISA
+
+This section describes an additional set of RoCC instructions that configure and invoke the hardware tiler in Gemmini. From the software's perspective the original instructions and these new instructions should be seen as totally unrelated. It is easy for software to safely interleave original instructions with these hardware tiling instructions, but this comes at the cost of increased serialization latency; for example, if you issue an original `preload` and `matmul` from above, and then immediately issue a `compute_cisc`, the last RoCC instruction will not start to be processed until the `preload` and `matmul` are completely finished from the software's perspective (the same works in the opposite direction -- `compute_cisc` before a `preload` and `matmul`).
+
+## Hardware Tiler Configuration
+### `config_cisc` configures the Execute pipeline
+**Format:** `config_ex rs1 rs2`
+- `rs1[4:3]` = activation function: either relu (1), relu6 (2), or no activation function (0)
+- `rs1[63:32]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the accumulator
+- `rs2[31:0]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the systolic array
+- `rs2[63:32]` = the number of bits by which 6 should be left-shifted before applying relu6
+- `funct` = 10
+
+**Action:** semantically equivalent subset of the `config_ex` instruction fields.
+
+### `addr_ab` sets the virtual address of the A and B matrices
+**Format:** `addr_ab rs1, rs2`
+- `rs1` = the A matrix virtual address
+- `rs2` = the B matrix virtual address
+- `funct` = 11
+
+### `addr_cd` sets the virtual address of the C and D matrices
+**Format:** `addr_ab rs1, rs2`
+- `rs1` = the C matrix virtual address
+- `rs2` = the D matrix virtual address
+- `funct` = 12
+
+### `size_mn` sets the M and N dimensions in terms of elements
+**Format:** `size_mn rs1, rs2`
+- `rs1` = sets M, the number of rows in A, C, and D matrices 
+- `rs2` = sets N, the number of columns in B, C, and D matrices
+- `funct` = 13
+
+### `size_k` sets the K dimension in terms of elements
+**Format:** `size_k rs1`
+- `rs1` = sets K, the number of columns in A, and rows in B
+- `funct` = 14
+
+### `RPT_BIAS` sets whether the D is a repeating row
+**Format:** `rpt_bias rs1`
+- `rs1[0]` = set to 1 if D is not a 2D matrix, but really a 1D row that should be duplicated by the hardware
+- `funct` = 15
+
+### `reset` resets the hardware tiler input processing engine
+**Format:** `reset`
+- `funct` = 16
+
+**Action:** this is only used if Gemmini has entered an error state while in the hardware-tiler mode due to invalid RoCC commands. Using this command will reset Gemmini. However, right now, there is no way for the software to check for these errors. 
+
+
+### `COMPUTE_CISC` runs a complete hardware tiling sequence with the configured A, B, C, D, M, N, K, RPT_BIAS values
+**Format:** `compute_cisc`
+- `funct` = 17
+
 # Citing Gemmini
 If Gemmini helps you in your academic research, you are encouraged to cite our paper. Here is an example bibtex:
 ```
@@ -250,3 +328,4 @@ If Gemmini helps you in your academic research, you are encouraged to cite our p
   year={2019}
 }
 ```
+
