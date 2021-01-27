@@ -95,7 +95,7 @@ class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundl
   val data = Output(UInt(w.W))
 }
 
-class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int) extends Module {
+class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_ported: Boolean) extends Module {
   // This is essentially a pipelined SRAM with the ability to stall pipeline stages
 
   require(w % aligned_to == 0 || w < aligned_to)
@@ -107,8 +107,10 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int) extends
     val write = Flipped(new ScratchpadWriteIO(n, w, mask_len))
   })
 
-  // val mem = SyncReadMem(n, UInt(w.W))
   val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
+
+  // When the scratchpad is single-ported, the writes take precedence
+  val singleport_busy_with_write = single_ported.B && io.write.en
 
   when (io.write.en) {
     if (aligned_to >= w)
@@ -119,7 +121,13 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int) extends
 
   val raddr = io.read.req.bits.addr
   val ren = io.read.req.fire()
-  val rdata = mem.read(raddr, ren).asUInt()
+  val rdata = if (single_ported) {
+    assert(!(ren && io.write.en))
+    mem.read(raddr, ren && !io.write.en).asUInt()
+  } else {
+    mem.read(raddr, ren).asUInt()
+  }
+
   val fromDMA = io.read.req.bits.fromDMA
 
   // Make a queue which buffers the result of an SRAM read if it can't immediately be consumed
@@ -129,7 +137,7 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int) extends
   q.io.enq.bits.fromDMA := RegNext(fromDMA)
 
   val q_will_be_empty = (q.io.count +& q.io.enq.fire()) - q.io.deq.fire() === 0.U
-  io.read.req.ready := q_will_be_empty
+  io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
 
   // Build the rest of the resp pipeline
   val rdata_p = Pipeline(q.io.deq, mem_pipeline)
@@ -297,7 +305,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid
 
     {
-      val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to)) }
+      val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to, config.sp_singleported)) }
       val bank_ios = VecInit(banks.map(_.io))
 
       // Getting the output of the bank that's about to be issued to the writer
@@ -315,6 +323,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
         // TODO we tie the write dispatch queue's, and write issue queue's, ready and valid signals together here
         val dmawrite = write_dispatch_q.valid && write_issue_q.io.enq.ready &&
+          !(bio.write.en && config.sp_singleported.B) &&
           !write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.sp_bank() === i.U
 
         bio.read.req.valid := exread || (dmawrite && !write_dispatch_q.bits.laddr.is_garbage())
