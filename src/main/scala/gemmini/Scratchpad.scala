@@ -95,7 +95,7 @@ class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundl
   val data = Output(UInt(w.W))
 }
 
-class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, singlePorted: Boolean) extends Module {
+class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_ported: Boolean) extends Module {
   // This is essentially a pipelined SRAM with the ability to stall pipeline stages
 
   require(w % aligned_to == 0 || w < aligned_to)
@@ -107,8 +107,10 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, singleP
     val write = Flipped(new ScratchpadWriteIO(n, w, mask_len))
   })
 
-  // val mem = SyncReadMem(n, UInt(w.W))
   val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
+
+  // When the scratchpad is single-ported, the writes take precedence
+  val singleport_busy_with_write = single_ported.B && io.write.en
 
   when (io.write.en) {
     if (aligned_to >= w)
@@ -119,7 +121,7 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, singleP
 
   val raddr = io.read.req.bits.addr
   val ren = io.read.req.fire()
-  val rdata = if (singlePorted) {
+  val rdata = if (single_ported) {
     assert(!(ren && io.write.en))
     mem.read(raddr, ren && !io.write.en).asUInt()
   } else {
@@ -134,7 +136,7 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, singleP
   q.io.enq.bits.fromDMA := RegNext(fromDMA)
 
   val q_will_be_empty = (q.io.count +& q.io.enq.fire()) - q.io.deq.fire() === 0.U
-  io.read.req.ready := q_will_be_empty
+  io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
 
   // Build the rest of the resp pipeline
   val rdata_p = Pipeline(q.io.deq, mem_pipeline)
