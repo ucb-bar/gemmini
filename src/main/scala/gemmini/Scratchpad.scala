@@ -121,7 +121,13 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_
 
   val raddr = io.read.req.bits.addr
   val ren = io.read.req.fire()
-  val rdata = mem.read(raddr, ren).asUInt()
+  val rdata = if (single_ported) {
+    assert(!(ren && io.write.en))
+    mem.read(raddr, ren && !io.write.en).asUInt()
+  } else {
+    mem.read(raddr, ren).asUInt()
+  }
+
   val fromDMA = io.read.req.bits.fromDMA
 
   // Make a queue which buffers the result of an SRAM read if it can't immediately be consumed
@@ -136,8 +142,6 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_
   // Build the rest of the resp pipeline
   val rdata_p = Pipeline(q.io.deq, mem_pipeline)
   io.read.resp <> rdata_p
-
-  assert(!(single_ported.B && ren && io.write.en))
 }
 
 class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V])
