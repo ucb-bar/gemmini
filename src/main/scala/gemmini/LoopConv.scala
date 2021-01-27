@@ -81,6 +81,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
 
     val idle = Output(Bool())
     val rob_overloaded = Input(Bool())
+    val wait_for_prev_loop = Input(Bool())
 
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
   })
@@ -134,7 +135,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   io.idle := state === idle
   io.loop_id := req.loop_id
 
-  io.cmd.valid := state =/= idle && !io.rob_overloaded && !skip
+  io.cmd.valid := state =/= idle && !io.rob_overloaded && !io.wait_for_prev_loop && !skip
   io.cmd.bits := Mux(state === config, config_cmd, mvin_cmd)
 
   // Sending outputs
@@ -189,6 +190,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
 
     val idle = Output(Bool())
     val rob_overloaded = Input(Bool())
+    val wait_for_prev_loop = Input(Bool())
 
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
   })
@@ -251,7 +253,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   io.idle := state === idle
   io.loop_id := req.loop_id
 
-  io.cmd.valid := state =/= idle && !io.rob_overloaded
+  io.cmd.valid := state =/= idle && !io.wait_for_prev_loop && !io.rob_overloaded
   io.cmd.bits := Mux(state === config, config_cmd, mvin_cmd)
 
   // Sending outputs
@@ -307,6 +309,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
 
     val idle = Output(Bool())
     val rob_overloaded = Input(Bool())
+    val wait_for_prev_loop = Input(Bool())
 
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
   })
@@ -359,7 +362,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   io.idle := state === idle
   io.loop_id := req.loop_id
 
-  io.cmd.valid := state =/= idle && !io.rob_overloaded
+  io.cmd.valid := state =/= idle && !io.wait_for_prev_loop && !io.rob_overloaded
   io.cmd.bits := Mux(state === config, config_cmd, mvin_cmd)
 
   // Sending outputs
@@ -776,6 +779,15 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)
   arb.io.out.ready := io.out.ready
 
+  // Wire up waiting-for-loads signals
+  val ex_is_waiting_for_loads = loops(ex.io.loop_id).ex_started && !loops(ex.io.loop_id).ex_completed &&
+    !(loops(ex.io.loop_id).ld_input_completed && loops(ex.io.loop_id).ld_weights_completed &&
+      loops(ex.io.loop_id).ld_bias_completed)
+
+  ld_bias.io.wait_for_prev_loop := ex_is_waiting_for_loads && ld_bias.io.loop_id =/= ex.io.loop_id
+  ld_weights.io.wait_for_prev_loop := ex_is_waiting_for_loads && ld_weights.io.loop_id =/= ex.io.loop_id
+  ld_input.io.wait_for_prev_loop := ex_is_waiting_for_loads && ld_input.io.loop_id =/= ex.io.loop_id
+
   // Wire up overloaded signals
   ld_bias.io.rob_overloaded := io.ld_utilization >= max_lds.U
   ld_input.io.rob_overloaded := io.ld_utilization >= max_lds.U
@@ -881,7 +893,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
     loop_requesting_ld_bias.running := true.B
     loop_requesting_ld_bias.ld_bias_started := true.B
 
-    when (loop_requesting_ld_bias.bias_dram_addr =/= 0.U) {
+    // when (loop_requesting_ld_bias.bias_dram_addr =/= 0.U) {
+    when (loop_requesting_ld_bias.output_dram_addr =/= 0.U) {
       ld_bias_addr_start := floorAdd(ld_bias_addr_start, (max_acc_addr / concurrent_loops).U, max_acc_addr.U)
     }
   }
@@ -956,7 +969,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
     loop_requesting_st.running := true.B
     loop_requesting_st.st_started := true.B
 
-    when (loop_requesting_st.bias_dram_addr =/= 0.U) {
+    when (loop_requesting_st.output_dram_addr =/= 0.U) {
       st_addr_start := floorAdd(st_addr_start, (max_acc_addr / concurrent_loops).U, max_acc_addr.U)
     }
   }

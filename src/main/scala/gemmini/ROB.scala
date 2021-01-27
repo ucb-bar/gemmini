@@ -106,6 +106,18 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val new_entry_id = MuxCase((rob_entries-1).U, entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
   val alloc_fire = io.alloc.fire()
 
+  val raws_probe = WireInit(0.U(rob_entries.W))
+  val waws_probe = WireInit(0.U(rob_entries.W))
+  val wars_probe = WireInit(0.U(rob_entries.W))
+  val older_in_same_q_probe = WireInit(0.U(rob_entries.W))
+  val is_st_and_must_wait_for_prior_ex_config_probe = WireInit(0.U(rob_entries.W))
+  val is_ex_config_and_must_wait_for_prior_st_probe = WireInit(0.U(rob_entries.W))
+
+  val wars_op1_probe = WireInit(0.U(rob_entries.W))
+  val wars_op2_probe = WireInit(0.U(rob_entries.W))
+
+  dontTouch(new_entry)
+
   when (io.alloc.fire()) {
     val spAddrBits = 32
     val cmd = io.alloc.bits
@@ -173,18 +185,35 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     assert(is_load || is_store || is_ex)
 
+    // TODO we should checck whether op1 and op2 are valid here
     val raws = entries.map { e =>
       // We search for all entries which write to an address which we read from
       e.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
-        new_entry.op1.bits.overlaps(e.bits.dst.bits) || new_entry.op2.bits.overlaps(e.bits.dst.bits))
+        (new_entry.op1.valid && new_entry.op1.bits.overlaps(e.bits.dst.bits)) ||
+          (new_entry.op2.valid && new_entry.op2.bits.overlaps(e.bits.dst.bits)))
     }
 
+    // TODO we should checck whether op1 and op2 are valid here
     val wars = entries.map { e =>
       // We search for all entries which read from an address that we write to
       e.valid && new_entry.dst.valid && e.bits.q =/= new_entry.q && (
-        e.bits.op1.bits.overlaps(new_entry.dst.bits) || e.bits.op2.bits.overlaps(new_entry.dst.bits))
+        (e.bits.op1.valid && e.bits.op1.bits.overlaps(new_entry.dst.bits)) ||
+          (e.bits.op2.valid && e.bits.op2.bits.overlaps(new_entry.dst.bits)))
     }
 
+    val wars_op1 = entries.map { e =>
+      // We search for all entries which read from an address that we write to
+      e.valid && new_entry.dst.valid && e.bits.q =/= new_entry.q && (
+        e.bits.op1.bits.overlaps(new_entry.dst.bits))
+    }
+
+    val wars_op2 = entries.map { e =>
+      // We search for all entries which read from an address that we write to
+      e.valid && new_entry.dst.valid && e.bits.q =/= new_entry.q && (
+        e.bits.op2.bits.overlaps(new_entry.dst.bits))
+    }
+
+    // TODO we should checck whether op1 and op2 are valid here
     val waws = entries.map { e =>
       // We search for all entries which write to an address that we write to
       e.valid && new_entry.dst.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q &&
@@ -205,6 +234,24 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     new_entry.deps := (Cat(raws) | Cat(wars) | Cat(waws) | Cat(older_in_same_q) |
       Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).toBools().reverse
+
+    raws_probe := Cat(raws)
+    waws_probe := Cat(waws)
+    wars_probe := Cat(wars)
+    wars_op1_probe := Cat(wars_op1)
+    wars_op2_probe := Cat(wars_op2)
+    older_in_same_q_probe := Cat(older_in_same_q)
+    is_st_and_must_wait_for_prior_ex_config_probe := Cat(is_st_and_must_wait_for_prior_ex_config)
+    is_ex_config_and_must_wait_for_prior_st_probe := Cat(is_ex_config_and_must_wait_for_prior_st)
+
+    dontTouch(raws_probe)
+    dontTouch(waws_probe)
+    dontTouch(wars_probe)
+    dontTouch(wars_op1_probe)
+    dontTouch(wars_op2_probe)
+    dontTouch(older_in_same_q_probe)
+    dontTouch(is_st_and_must_wait_for_prior_ex_config_probe)
+    dontTouch(is_ex_config_and_must_wait_for_prior_st_probe)
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
