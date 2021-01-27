@@ -327,7 +327,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           !write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.sp_bank() === i.U
 
         bio.read.req.valid := exread || (dmawrite && !write_dispatch_q.bits.laddr.is_garbage())
-        ex_read_req.ready := bio.read.req.ready && !(bio.write.en && config.sp_singleported.B)
+        ex_read_req.ready := bio.read.req.ready
 
         // The ExecuteController gets priority when reading from SRAMs
         when (exread) {
