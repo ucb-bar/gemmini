@@ -1,0 +1,217 @@
+--- SRC/ilaenv.f	2021-01-06 14:54:19.732267847 -0500
++++ SRC/ilaenv.f	2021-01-06 14:58:03.736256042 -0500
+@@ -276,23 +276,23 @@
+ *        This is for *LAORHR_GETRFNP routine
+ *
+          IF( SNAME ) THEN
+-             NB = 32
++             NB = 512
+          ELSE
+-             NB = 32
++             NB = 512
+          END IF
+       ELSE IF( C2.EQ.'GE' ) THEN
+          IF( C3.EQ.'TRF' ) THEN
+             IF( SNAME ) THEN
+-               NB = 64
++               NB = 512
+             ELSE
+-               NB = 64
++               NB = 512
+             END IF
+          ELSE IF( C3.EQ.'QRF' .OR. C3.EQ.'RQF' .OR. C3.EQ.'LQF' .OR.
+      $            C3.EQ.'QLF' ) THEN
+             IF( SNAME ) THEN
+-               NB = 32
++               NB = 512
+             ELSE
+-               NB = 32
++               NB = 512
+             END IF
+          ELSE IF( C3.EQ.'QR ') THEN
+             IF( N3 .EQ. 1) THEN
+@@ -342,29 +342,29 @@
+             END IF
+          ELSE IF( C3.EQ.'HRD' ) THEN
+             IF( SNAME ) THEN
+-               NB = 32
++               NB = 512
+             ELSE
+-               NB = 32
++               NB = 512
+             END IF
+          ELSE IF( C3.EQ.'BRD' ) THEN
+             IF( SNAME ) THEN
+-               NB = 32
++               NB = 512
+             ELSE
+-               NB = 32
++               NB = 512
+             END IF
+          ELSE IF( C3.EQ.'TRI' ) THEN
+             IF( SNAME ) THEN
+-               NB = 64
++               NB = 512
+             ELSE
+-               NB = 64
++               NB = 512
+             END IF
+          END IF
+       ELSE IF( C2.EQ.'PO' ) THEN
+          IF( C3.EQ.'TRF' ) THEN
+             IF( SNAME ) THEN
+-               NB = 64
++               NB = 512
+             ELSE
+-               NB = 64
++               NB = 512
+             END IF
+          END IF
+       ELSE IF( C2.EQ.'SY' ) THEN
+@@ -373,44 +373,44 @@
+                IF( TWOSTAGE ) THEN
+                   NB = 192
+                ELSE
+-                  NB = 64
++                  NB = 512
+                END IF
+             ELSE
+                IF( TWOSTAGE ) THEN
+                   NB = 192
+                ELSE
+-                  NB = 64
++                  NB = 512
+                END IF
+             END IF
+          ELSE IF( SNAME .AND. C3.EQ.'TRD' ) THEN
+-            NB = 32
++            NB = 512
+          ELSE IF( SNAME .AND. C3.EQ.'GST' ) THEN
+-            NB = 64
++            NB = 512
+          END IF
+       ELSE IF( CNAME .AND. C2.EQ.'HE' ) THEN
+          IF( C3.EQ.'TRF' ) THEN
+             IF( TWOSTAGE ) THEN
+                NB = 192
+             ELSE
+-               NB = 64
++               NB = 512
+             END IF
+          ELSE IF( C3.EQ.'TRD' ) THEN
+-            NB = 32
++            NB = 512
+          ELSE IF( C3.EQ.'GST' ) THEN
+-            NB = 64
++            NB = 512
+          END IF
+       ELSE IF( SNAME .AND. C2.EQ.'OR' ) THEN
+          IF( C3( 1: 1 ).EQ.'G' ) THEN
+             IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. C4.EQ.
+      $          'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. C4.EQ.'BR' )
+      $           THEN
+-               NB = 32
++               NB = 512
+             END IF
+          ELSE IF( C3( 1: 1 ).EQ.'M' ) THEN
+             IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. C4.EQ.
+      $          'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. C4.EQ.'BR' )
+      $           THEN
+-               NB = 32
++               NB = 512
+             END IF
+          END IF
+       ELSE IF( CNAME .AND. C2.EQ.'UN' ) THEN
+@@ -418,13 +418,13 @@
+             IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. C4.EQ.
+      $          'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. C4.EQ.'BR' )
+      $           THEN
+-               NB = 32
++               NB = 512
+             END IF
+          ELSE IF( C3( 1: 1 ).EQ.'M' ) THEN
+             IF( C4.EQ.'QR' .OR. C4.EQ.'RQ' .OR. C4.EQ.'LQ' .OR. C4.EQ.
+      $          'QL' .OR. C4.EQ.'HR' .OR. C4.EQ.'TR' .OR. C4.EQ.'BR' )
+      $           THEN
+-               NB = 32
++               NB = 512
+             END IF
+          END IF
+       ELSE IF( C2.EQ.'GB' ) THEN
+@@ -433,13 +433,13 @@
+                IF( N4.LE.64 ) THEN
+                   NB = 1
+                ELSE
+-                  NB = 32
++                  NB = 512
+                END IF
+             ELSE
+                IF( N4.LE.64 ) THEN
+                   NB = 1
+                ELSE
+-                  NB = 32
++                  NB = 512
+                END IF
+             END IF
+          END IF
+@@ -449,36 +449,36 @@
+                IF( N2.LE.64 ) THEN
+                   NB = 1
+                ELSE
+-                  NB = 32
++                  NB = 512
+                END IF
+             ELSE
+                IF( N2.LE.64 ) THEN
+                   NB = 1
+                ELSE
+-                  NB = 32
++                  NB = 512
+                END IF
+             END IF
+          END IF
+       ELSE IF( C2.EQ.'TR' ) THEN
+          IF( C3.EQ.'TRI' ) THEN
+             IF( SNAME ) THEN
+-               NB = 64
++               NB = 512
+             ELSE
+-               NB = 64
++               NB = 512
+             END IF
+          ELSE IF ( C3.EQ.'EVC' ) THEN
+             IF( SNAME ) THEN
+-               NB = 64
++               NB = 512
+             ELSE
+-               NB = 64
++               NB = 512
+             END IF
+          END IF
+       ELSE IF( C2.EQ.'LA' ) THEN
+          IF( C3.EQ.'UUM' ) THEN
+             IF( SNAME ) THEN
+-               NB = 64
++               NB = 512
+             ELSE
+-               NB = 64
++               NB = 512
+             END IF
+          END IF
+       ELSE IF( SNAME .AND. C2.EQ.'ST' ) THEN
+@@ -486,12 +486,12 @@
+             NB = 1
+          END IF
+       ELSE IF( C2.EQ.'GG' ) THEN
+-         NB = 32
++         NB = 512
+          IF( C3.EQ.'HD3' ) THEN
+             IF( SNAME ) THEN
+-               NB = 32
++               NB = 512
+             ELSE
+-               NB = 32
++               NB = 512
+             END IF
+          END IF
+       END IF
