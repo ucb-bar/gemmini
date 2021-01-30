@@ -42,6 +42,8 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     val busy = Output(Bool())
 
     val solitary_preload = Input(Bool()) // TODO very hacky. from ExecuteController, to prevent infinite fence stalls. remove later
+
+    val counter = new CounterEventIO()
   })
 
   val ldq :: stq :: exq :: Nil = Enum(3)
@@ -262,4 +264,10 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   when (reset.asBool()) {
     entries.foreach(_.valid := false.B)
   }
+
+  io.counter.connectExternalCounter(CounterExternal.ROB_LD_COUNT, utilization_ld_q)
+  io.counter.connectExternalCounter(CounterExternal.ROB_ST_COUNT, utilization_st_q)
+  io.counter.connectExternalCounter(CounterExternal.ROB_EX_COUNT, utilization_ex_q)
+  io.counter.connectEventSignal(CounterEvent.ROB_ACTIVE_CYCLES, io.busy)
+  io.counter.connectEventSignal(CounterEvent.ROB_FULL_CYCLES, !io.alloc.ready)
 }

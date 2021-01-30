@@ -37,6 +37,8 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
     val ptw = new TLBPTWIO
 
     val exp = new TLBExceptionIO
+
+    val counter = new CounterEventIO()
   }
 
   val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(nSets=1, nWays=entries)))
@@ -90,6 +92,10 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   }
 
   assert(!io.exp.flush_retry || !io.exp.flush_skip, "TLB: flushing with both retry and skip at same time")
+
+  io.counter.connectEventSignal(CounterEvent.DMA_TLB_HIT_REQ, RegNext(io.req.fire()) && !tlb.io.resp.miss)
+  io.counter.connectEventSignal(CounterEvent.DMA_TLB_TOTAL_REQ, io.req.fire())
+  io.counter.connectEventSignal(CounterEvent.DMA_TLB_MISS_CYCLE, tlb.io.resp.miss)
 }
 
 class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
@@ -105,6 +111,7 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
     val clients = Flipped(Vec(nClients, new FrontendTLBIO))
     val ptw = new TLBPTWIO
     val exp = new TLBExceptionIO
+    val counter = new CounterEventIO()
   })
 
   val lgMaxSize = log2Ceil(coreDataBytes)
@@ -128,6 +135,8 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
       client.resp.bits := arb_resp.bits
       arb_resp.ready := true.B
   }
+
+  io.counter := tlb.io.counter
 }
 
 /*class TLBArb (nClients: Int, lgMaxSize: Int)(implicit p: Parameters) extends CoreModule {

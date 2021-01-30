@@ -6,6 +6,7 @@ import chisel3.util._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
+import org.w3c.dom.css.Counter
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
@@ -35,6 +36,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val completed = Valid(UInt(log2Up(rob_entries).W))
     val busy = Output(Bool())
     val solitary_preload = Output(Bool()) // TODO very hacky. for ROB, to prevent infinite fence stalls. remove later
+
+    val counter = new CounterEventIO()
   })
 
   val block_size = meshRows*tileRows
@@ -51,7 +54,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
   }
 
-  val unrolled_cmd = TransposePreloadUnroller(io.cmd, config)
+  val unrolled_cmd = TransposePreloadUnroller(io.cmd, config, io.counter)
 
   val cmd_q_heads = 3
   assert(ex_queue_length >= cmd_q_heads)
@@ -900,4 +903,29 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     // pending_completed_rob_id.valid := false.B
     pending_completed_rob_ids.foreach(_.valid := false.B)
   }
+
+  // Performance counter
+  io.counter.connectEventSignal(CounterEvent.EXE_FLUSH_CYCLE, 
+    control_state === flushing || control_state === flush)
+  io.counter.connectEventSignal(CounterEvent.EXE_CONTROL_Q_BLOCK_CYCLE, 
+    !mesh_cntl_signals_q.io.enq.ready && mesh_cntl_signals_q.io.enq.valid)
+  io.counter.connectEventSignal(CounterEvent.EXE_PRELOAD_HAZ_CYCLE, 
+    cmd.valid(0) && DoPreloads(0) && cmd.valid(1) && raw_hazard_pre)
+  io.counter.connectEventSignal(CounterEvent.EXE_OVERLAP_HAZ_CYCLE, 
+    cmd.valid(0) && DoPreloads(1) && cmd.valid(1) && DoComputes(0) && cmd.valid(2) && raw_hazard_mulpre)
+  io.counter.connectEventSignal(CounterEvent.A_GARBAGE_CYCLE, cntl.a_garbage)
+  io.counter.connectEventSignal(CounterEvent.B_GARBAGE_CYCLE, cntl.b_garbage)
+  io.counter.connectEventSignal(CounterEvent.D_GARBAGE_CYCLE, cntl.d_garbage)
+  io.counter.connectEventSignal(CounterEvent.ACC_A_WAIT_CYCLE, 
+    !(!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) && cntl.a_read_from_acc && !cntl.im2colling)
+  io.counter.connectEventSignal(CounterEvent.ACC_B_WAIT_CYCLE, 
+    !(!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) && cntl.b_read_from_acc)
+  io.counter.connectEventSignal(CounterEvent.ACC_D_WAIT_CYCLE, 
+    !(!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready) && cntl.d_read_from_acc)
+  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_A_WAIT_CYCLE, 
+    !(!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) && !cntl.a_read_from_acc && !cntl.im2colling)
+  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_B_WAIT_CYCLE, 
+    !(!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) && !cntl.b_read_from_acc)
+  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_D_WAIT_CYCLE, 
+    !(!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready) && !cntl.d_read_from_acc)
 }

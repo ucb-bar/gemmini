@@ -122,12 +122,15 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   val tagWidth = 32
 
+  val counters = new CounterFile(CounterAddr.n, outer.xLen)
+
   // TLB
   implicit val edge = outer.node.edges.out.head
   val tlb = Module(new FrontendTLB(2, tlb_size, dma_maxbytes))
   (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
   tlb.io.exp.flush_skip := false.B
   tlb.io.exp.flush_retry := false.B
+
 
   io.ptw.head <> tlb.io.ptw
   /*io.ptw.head.req <> tlb.io.ptw.req
@@ -189,6 +192,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     meshRows*tileRows, coreMaxAddrBits, rob_entries, 4, 12, 2, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes)
   unrolled_cmd.ready := false.B
+  counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_unroller_busy)
 
   // val cmd_decompressor = Module(new InstDecompressor(rob_entries))
 
@@ -225,6 +229,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
   val store_controller = Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t))
   val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config))
+
+  counters.io.event_io.collect(load_controller.io.counter)
+  counters.io.event_io.collect(store_controller.io.counter)
+  counters.io.event_io.collect(ex_controller.io.counter)
 
   /*
   tiler.io.issue.load.ready := false.B
@@ -293,6 +301,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val im2col = Module(new Im2Col(outer.config))
 
   // Wire up Im2col
+  counters.io.event_io.collect(im2col.io.counter)
   // im2col.io.sram_reads <> spad.module.io.srams.read
   im2col.io.req <> ex_controller.io.im2col.req
   ex_controller.io.im2col.resp <> im2col.io.resp
@@ -369,16 +378,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   assert(!io.interrupt, "Interrupt handlers have not been written yet")
 
   // Cycle counters
-  val ld_cycles = RegInit(0.U(34.W))
-  val st_cycles = RegInit(0.U(34.W))
-  val ex_cycles = RegInit(0.U(34.W))
-
-  val ld_st_cycles = RegInit(0.U(34.W))
-  val ld_ex_cycles = RegInit(0.U(34.W))
-  val st_ex_cycles = RegInit(0.U(34.W))
-
-  val ld_st_ex_cycles = RegInit(0.U(34.W))
-
   val incr_ld_cycles = load_controller.io.busy && !store_controller.io.busy && !ex_controller.io.busy
   val incr_st_cycles = !load_controller.io.busy && store_controller.io.busy && !ex_controller.io.busy
   val incr_ex_cycles = !load_controller.io.busy && !store_controller.io.busy && ex_controller.io.busy
@@ -388,22 +387,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val incr_st_ex_cycles = !load_controller.io.busy && store_controller.io.busy && ex_controller.io.busy
 
   val incr_ld_st_ex_cycles = load_controller.io.busy && store_controller.io.busy && ex_controller.io.busy
-
-  when (incr_ld_cycles) {
-    ld_cycles := ld_cycles + 1.U
-  }.elsewhen (incr_st_cycles) {
-    st_cycles := st_cycles + 1.U
-  }.elsewhen (incr_ex_cycles) {
-    ex_cycles := ex_cycles + 1.U
-  }.elsewhen (incr_ld_st_cycles) {
-    ld_st_cycles := ld_st_cycles + 1.U
-  }.elsewhen (incr_ld_ex_cycles) {
-    ld_ex_cycles := ld_ex_cycles + 1.U
-  }.elsewhen (incr_st_ex_cycles) {
-    st_ex_cycles := st_ex_cycles + 1.U
-  }.elsewhen (incr_ld_st_ex_cycles) {
-    ld_st_ex_cycles := ld_st_ex_cycles + 1.U
-  }
+  
+  counters.io.event_io.connectEventSignal(CounterEvent.MAIN_LD_CYCLES, incr_ld_cycles)
+  counters.io.event_io.connectEventSignal(CounterEvent.MAIN_ST_CYCLES, incr_st_cycles)
+  counters.io.event_io.connectEventSignal(CounterEvent.MAIN_EX_CYCLES, incr_ex_cycles)
+  counters.io.event_io.connectEventSignal(CounterEvent.MAIN_LD_ST_CYCLES, incr_ld_st_cycles)
+  counters.io.event_io.connectEventSignal(CounterEvent.MAIN_LD_EX_CYCLES, incr_ld_ex_cycles)
+  counters.io.event_io.connectEventSignal(CounterEvent.MAIN_ST_EX_CYCLES, incr_st_ex_cycles)
+  counters.io.event_io.connectEventSignal(CounterEvent.MAIN_LD_ST_EX_CYCLES, incr_ld_st_ex_cycles)
 
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here
@@ -456,4 +447,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     tlb.io.exp.flush_skip  := cmd_fsm.io.flush_skip
   }
   */
+
+  //=========================================================================
+  // Performance Counters Access
+  //=========================================================================
+  
 }

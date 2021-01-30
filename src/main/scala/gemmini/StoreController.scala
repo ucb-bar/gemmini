@@ -22,6 +22,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
     val busy = Output(Bool())
+
+    val counter = new CounterEventIO()
   })
 
   // val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -232,4 +234,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   }
   // assert(pool_cycles_counter <= 1000.U)
   dontTouch(pool_cycles_counter)
+
+  // Performance counter
+  io.counter.connectEventSignal(CounterEvent.STORE_DMA_WAIT_CYCLE, control_state === waiting_for_dma_req_ready)
+  io.counter.connectEventSignal(CounterEvent.STORE_SCRATCHPAD_WAIT_CYCLE, io.dma.req.valid && !io.dma.req.ready)
 }
