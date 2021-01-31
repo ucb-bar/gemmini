@@ -24,6 +24,7 @@ object DSEBaseConfig {
     sp_banks = 4, // TODO support one-bank designs
     acc_banks = 1,
     sp_capacity = CapacityInKilobytes(64),
+    sp_singleported = false,
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     dataflow = Dataflow.OS,
     acc_capacity = CapacityInKilobytes(16),

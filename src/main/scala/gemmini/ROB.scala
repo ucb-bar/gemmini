@@ -169,7 +169,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     }
 
     new_entry.deps := (Cat(raws) | Cat(wars) | Cat(waws) | Cat(older_in_same_q) |
-      Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).toBools().reverse
+      Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).asBools().reverse
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
@@ -231,7 +231,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   dontTouch(packed_deps)
 
   val packed_functs = VecInit(entries.map(e => e.bits.cmd.inst.funct))
-  FpgaDebug(packed_deps)
+  // FpgaDebug(packed_deps)
 
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
@@ -248,7 +248,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   }
   assert(cycles_since_issue < 10000.U, "pipeline stall")
 
-  FpgaDebug(cycles_since_issue)
+  // FpgaDebug(cycles_since_issue)
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {
@@ -263,7 +263,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     printf(p"Last allocated: $last_allocated\n\n")
   }
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     entries.foreach(_.valid := false.B)
   }
 }

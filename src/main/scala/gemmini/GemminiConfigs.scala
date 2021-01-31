@@ -22,6 +22,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              ex_queue_length: Int,
                                                                              rob_entries: Int,
                                                                              sp_banks: Int, // TODO support one-bank designs
+                                                                             sp_singleported: Boolean,
                                                                              sp_capacity: GemminiMemCapacity,
                                                                              acc_banks: Int,
                                                                              acc_capacity: GemminiMemCapacity,

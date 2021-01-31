@@ -28,6 +28,7 @@ object GemminiFPConfigs {
     hasIm2col = false,
 
     sp_banks = 4,
+    sp_singleported = true,
     acc_banks = 1,
     sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
@@ -79,6 +80,15 @@ object GemminiFPConfigs {
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24), identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24), identity = "1.0", c_str="((x) * (scale))")),
                                               )
+
+  //Bfloat16 Brain-half Precision Configuration 8x8 array
+  val BF16Default8Config = defaultFPConfig.copy(inputType = Float(8, 8), outputType = Float(8, 8), accType = Float(8, 24),
+                                               meshRows = 8, meshColumns = 8,
+                                               pe_latency = 2,
+                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24), identity = "1.0", c_str="((x) * (scale))")),
+                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 0, Float(8, 24), identity = "1.0", c_str="((x) * (scale))")),
+                                              )
+
 }
 
 
@@ -114,6 +124,18 @@ class GemminiBF16DefaultConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(OpcodeSet.custom3, GemminiFPConfigs.BF16DefaultConfig))
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
+
+//===========BFLOAT16 Default Config 8x8=========
+class GemminiBF16Default8Config extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiFPConfigs.BF16Default8Config))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
