@@ -14,7 +14,9 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(rob_entries)))
 
-    val dma = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
+    //val dma = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
+    val dma_A = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
+    val dma_B = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
 
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
@@ -74,7 +76,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, maxBytesInMatRequest, deps_t))
 
   io.busy := cmd.valid || cmd_tracker.io.busy
-
+/*
   // DMA IO wiring
   io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
     control_state === waiting_for_dma_req_ready ||
@@ -86,28 +88,58 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.scale := scale
   io.dma.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
   io.dma.req.bits.status := mstatus
+*/
+  when(io.dma_A.req.ready === true.B){
+    io.dma_A.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
+      control_state === waiting_for_dma_req_ready ||
+      (control_state === sending_rows && row_counter =/= 0.U)
+    io.dma_A.req.bits.vaddr := vaddr + row_counter * stride
+    io.dma_A.req.bits.laddr := localaddr_plus_row_counter
+    io.dma_A.req.bits.len := cols
+    io.dma_A.req.bits.repeats := Mux(stride === 0.U, rows - 1.U, 0.U)
+    io.dma_A.req.bits.scale := scale
+    io.dma_A.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
+    io.dma_A.req.bits.status := mstatus
+  }.otherwise{
+    io.dma_B.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
+      control_state === waiting_for_dma_req_ready ||
+      (control_state === sending_rows && row_counter =/= 0.U)
+    io.dma_B.req.bits.vaddr := vaddr + row_counter * stride
+    io.dma_B.req.bits.laddr := localaddr_plus_row_counter
+    io.dma_B.req.bits.len := cols
+    io.dma_B.req.bits.repeats := Mux(stride === 0.U, rows - 1.U, 0.U)
+    io.dma_B.req.bits.scale := scale
+    io.dma_B.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
+    io.dma_B.req.bits.status := mstatus
+  }
+
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
   cmd_tracker.io.alloc.bits.bytes_to_read :=
-    Mux(io.dma.req.bits.has_acc_bitwidth, cols * actual_rows_read * config.accType.getWidth.U,
+    Mux(io.dma_A.req.bits.has_acc_bitwidth || io.dma_B.req.bits.has_acc_bitwidth, cols * actual_rows_read * config.accType.getWidth.U,
       cols * actual_rows_read * config.inputType.getWidth.U) / 8.U
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
-  cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
-  cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
-  cmd_tracker.io.request_returned.bits.bytes_read := io.dma.resp.bits.bytesRead
+  cmd_tracker.io.request_returned.valid := io.dma_A.resp.fire() || io.dma_B.resp.fire() // TODO use a bundle connect
+  cmd_tracker.io.request_returned.bits.cmd_id := Mux(io.dma_A.resp.fire(), io.dma_A.resp.bits.cmd_id, io.dma_B.resp.bits.cmd_id) // TODO use a bundle connect
+  cmd_tracker.io.request_returned.bits.bytes_read := Mux(io.dma_A.resp.fire(), io.dma_A.resp.bits.bytesRead, io.dma_B.resp.bits.bytesRead)
   cmd_tracker.io.cmd_completed.ready := io.completed.ready
 
   val cmd_id = RegEnableThru(cmd_tracker.io.alloc.bits.cmd_id, cmd_tracker.io.alloc.fire()) // TODO is this really better than a simple RegEnable?
-  io.dma.req.bits.cmd_id := cmd_id
-
+  when(io.dma_A.req.ready){
+    io.dma_A.req.bits.cmd_id := cmd_id
+  }.otherwise{
+    io.dma_B.req.bits.cmd_id := cmd_id
+  }
+  //io.dma.req.bits.cmd_id := cmd_id
   io.completed.valid := cmd_tracker.io.cmd_completed.valid
   io.completed.bits := cmd_tracker.io.cmd_completed.bits.tag.rob_id
 
   io.busy := cmd.valid || cmd_tracker.io.busy
 
   // Row counter
-  when (io.dma.req.fire()) {
+  val dma_req_fire = io.dma_A.req.fire() || io.dma_B.req.fire()
+  when (dma_req_fire) {
     row_counter := wrappingAdd(row_counter, 1.U, actual_rows_read)
   }
 
@@ -124,19 +156,19 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
         }
 
         .elsewhen(DoLoad && cmd_tracker.io.alloc.fire()) {
-          control_state := Mux(io.dma.req.fire(), sending_rows, waiting_for_dma_req_ready)
+          control_state := Mux(dma_req_fire, sending_rows, waiting_for_dma_req_ready)
         }
       }
     }
 
     is (waiting_for_dma_req_ready) {
-      when (io.dma.req.fire()) {
+      when (dma_req_fire) {
         control_state := sending_rows
       }
     }
 
     is (sending_rows) {
-      val last_row = row_counter === 0.U || (row_counter === actual_rows_read-1.U && io.dma.req.fire())
+      val last_row = row_counter === 0.U || (row_counter === actual_rows_read-1.U && dma_req_fire)
 
       when (last_row) {
         control_state := waiting_for_command
