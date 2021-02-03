@@ -595,8 +595,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
-  val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
-  val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
+  val max_block_len = (dma_max_bytes / (block_size * input_w * 8)) max 1
+  val max_block_len_acc = (dma_max_bytes / (block_size * acc_w * 8)) max 1
 
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new RoCCCommand))
