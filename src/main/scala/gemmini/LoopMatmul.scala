@@ -619,8 +619,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
 
   val loop_being_configured_id = Mux(head_loop.configured, tail_loop_id, head_loop_id)
   val loop_being_configured = loops(loop_being_configured_id)
-  val max_block_len = Mux(loop_being_configured.a_transpose || loop_being_configured.b_transpose, 1, (dma_max_bytes / (block_size * input_w / 8)) max 1)
-  val max_block_len_acc = Mux(loop_being_configured.a_transpose || loop_being_configured.b_transpose, 1, (dma_max_bytes / (block_size * acc_w / 8)) max 1)
+  val max_block_len = Mux(loop_being_configured.a_transpose || loop_being_configured.b_transpose, 1.asInstanceOf, ((dma_max_bytes / (block_size * input_w / 8)) max 1).asInstanceOf)
+  val max_block_len_acc = Mux(loop_being_configured.a_transpose || loop_being_configured.b_transpose, 1.asInstanceOf, ((dma_max_bytes / (block_size * acc_w / 8)) max 1).asInstanceOf)
 
   // Create inner modules
   val ldA = Module(new LoopMatmulLdA(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, input_w, max_block_len, concurrent_loops))
