@@ -595,8 +595,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
-  val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
-  val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
+  //val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
+  //val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
 
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new RoCCCommand))
@@ -619,6 +619,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
 
   val loop_being_configured_id = Mux(head_loop.configured, tail_loop_id, head_loop_id)
   val loop_being_configured = loops(loop_being_configured_id)
+  val max_block_len = Mux(loop_being_configured.a_transpose || loop_being_configured.b_transpose, 1, (dma_max_bytes / (block_size * input_w / 8)) max 1)
+  val max_block_len_acc = Mux(loop_being_configured.a_transpose || loop_being_configured.b_transpose, 1, (dma_max_bytes / (block_size * acc_w / 8)) max 1)
 
   // Create inner modules
   val ldA = Module(new LoopMatmulLdA(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, input_w, max_block_len, concurrent_loops))
