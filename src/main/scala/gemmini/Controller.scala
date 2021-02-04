@@ -327,14 +327,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // two load controller: scheduling across instruction
   // two DMA per each load controller: scheduling within instruction
   // total of 4
-  val req_arb = Module(new Arbiter(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), num_data_controller*num_dma))
+  val req_arb_ld = Module(new Arbiter(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), num_data_controller*num_dma))
   for(d <- 0 until num_data_controller){
     for(dd <- 0 until num_dma){
-      req_arb.io.in(dd+d*num_dma) <> load_controller(d).io.dma(dd).req
+      req_arb_ld.io.in(dd+d*num_dma) <> load_controller(d).io.dma(dd).req
     }
   }
 
-  spad.module.io.dma.read <> req_arb.io.out
+  spad.module.io.dma.read.req <> req_arb_ld.io.out
 
   // TODO: how to determine whether response is for dma_A or dma_B (try different cmd_id?)
   for(d <- 0 until num_data_controller){
