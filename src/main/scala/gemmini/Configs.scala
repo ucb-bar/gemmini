@@ -50,6 +50,7 @@ object GemminiConfigs {
     ex_queue_length = 8,
     num_dma_readers = 1,
     num_dma_writers = 1,
+    num_load_controllers = 1,
     rob_entries = 16,
     sp_banks = 4,
     sp_singleported = true,

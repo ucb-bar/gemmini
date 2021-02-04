@@ -9,7 +9,7 @@ import chisel3.util._
 import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
-import freechips.rocketchip.tilelink.{TLIdentityNode}
+import freechips.rocketchip.tilelink.{TLIdentityNode, TLArbiter}
 import GemminiISA._
 import Util._
 
@@ -222,7 +222,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   //=========================================================================
   // Controllers
   //=========================================================================
-  val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
+  val load_controllers = Seq.fill(num_load_controllers) {
+    Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
+  }
   val store_controller = Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t))
   val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config))
 
@@ -261,13 +263,26 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     ex_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ex.cmd.inst.funct
     ex_controller.io.cmd.bits.rob_id.push(rob.io.issue.ex.rob_id)
   }
-  */
+   */
+  val load_sel = TLArbiter.roundRobin(
+    num_load_controllers,
+    Cat(load_controllers.map(_.io.cmd.ready).reverse),
+    rob.io.issue.ld.valid
+  )
+  rob.io.issue.ld.ready := false.B
+  for ((load_controller, i) <- load_controllers zipWithIndex) {
+    load_controller.io.cmd.valid := rob.io.issue.ld.valid && (load_sel(i) || rob.io.issue.ld.cmd.inst.funct === CONFIG_CMD)
+    load_controller.io.cmd.bits.cmd := rob.io.issue.ld.cmd
+    load_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
+    load_controller.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+    when (load_sel(i)) {
+      rob.io.issue.ld.ready := load_controller.io.cmd.ready
+    }
+  }
+  when (rob.io.issue.ld.cmd.inst.funct === CONFIG_CMD) {
+    rob.io.issue.ld.ready := load_controllers.map(_.io.cmd.ready).reduce(_&&_)
+  }
 
-  load_controller.io.cmd.valid := rob.io.issue.ld.valid
-  rob.io.issue.ld.ready := load_controller.io.cmd.ready
-  load_controller.io.cmd.bits.cmd := rob.io.issue.ld.cmd
-  load_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
-  load_controller.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
 
   store_controller.io.cmd.valid := rob.io.issue.st.valid
   rob.io.issue.st.ready := store_controller.io.cmd.ready
@@ -282,7 +297,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ex_controller.io.cmd.bits.rob_id.push(rob.io.issue.ex.rob_id)
 
   // Wire up scratchpad to controllers
-  spad.module.io.dma.read <> load_controller.io.dma
+  for (i <- 0 until num_load_controllers) {
+    spad.module.io.dma.read(i) <> load_controllers(i).io.dma
+  }
   spad.module.io.dma.write <> store_controller.io.dma
   ex_controller.io.srams.read <> spad.module.io.srams.read
   ex_controller.io.srams.write <> spad.module.io.srams.write
@@ -343,18 +360,19 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   //-------------------------------------------------------------------------
   // risc
-  val rob_completed_arb = Module(new Arbiter(UInt(log2Up(rob_entries).W), 3))
+  val rob_completed_arb = Module(new Arbiter(UInt(log2Up(rob_entries).W), 2 + num_load_controllers))
 
-  rob_completed_arb.io.in(0).valid := ex_controller.io.completed.valid
-  rob_completed_arb.io.in(0).bits := ex_controller.io.completed.bits
+  var arb_idx = 0
+  rob_completed_arb.io.in(arb_idx).valid := ex_controller.io.completed.valid
+  rob_completed_arb.io.in(arb_idx).bits := ex_controller.io.completed.bits
+  arb_idx += 1
 
-  rob_completed_arb.io.in(1) <> load_controller.io.completed
-  rob_completed_arb.io.in(2) <> store_controller.io.completed
+  for (load_controller <- load_controllers) {
+    rob_completed_arb.io.in(arb_idx) <> load_controller.io.completed
+    arb_idx += 1
+  }
+  rob_completed_arb.io.in(arb_idx) <> store_controller.io.completed
 
-  // mux with cisc frontend arbiter
-  rob_completed_arb.io.in(0).valid := ex_controller.io.completed.valid // && !is_cisc_mode
-  rob_completed_arb.io.in(1).valid := load_controller.io.completed.valid // && !is_cisc_mode
-  rob_completed_arb.io.in(2).valid := store_controller.io.completed.valid // && !is_cisc_mode
 
   rob.io.completed.valid := rob_completed_arb.io.out.valid
   rob.io.completed.bits := rob_completed_arb.io.out.bits
@@ -379,15 +397,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   val ld_st_ex_cycles = RegInit(0.U(34.W))
 
-  val incr_ld_cycles = load_controller.io.busy && !store_controller.io.busy && !ex_controller.io.busy
-  val incr_st_cycles = !load_controller.io.busy && store_controller.io.busy && !ex_controller.io.busy
-  val incr_ex_cycles = !load_controller.io.busy && !store_controller.io.busy && ex_controller.io.busy
+  val load_busy = load_controllers.map(_.io.busy).reduce(_||_)
 
-  val incr_ld_st_cycles = load_controller.io.busy && store_controller.io.busy && !ex_controller.io.busy
-  val incr_ld_ex_cycles = load_controller.io.busy && !store_controller.io.busy && ex_controller.io.busy
-  val incr_st_ex_cycles = !load_controller.io.busy && store_controller.io.busy && ex_controller.io.busy
+  val incr_ld_cycles = load_busy && !store_controller.io.busy && !ex_controller.io.busy
+  val incr_st_cycles = !load_busy && store_controller.io.busy && !ex_controller.io.busy
+  val incr_ex_cycles = !load_busy && !store_controller.io.busy && ex_controller.io.busy
 
-  val incr_ld_st_ex_cycles = load_controller.io.busy && store_controller.io.busy && ex_controller.io.busy
+  val incr_ld_st_cycles = load_busy && store_controller.io.busy && !ex_controller.io.busy
+  val incr_ld_ex_cycles = load_busy && !store_controller.io.busy && ex_controller.io.busy
+  val incr_st_ex_cycles = !load_busy && store_controller.io.busy && ex_controller.io.busy
+
+  val incr_ld_st_ex_cycles = load_busy && store_controller.io.busy && ex_controller.io.busy
 
   when (incr_ld_cycles) {
     ld_cycles := ld_cycles + 1.U

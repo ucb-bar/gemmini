@@ -22,6 +22,7 @@ object DSEBaseConfig {
     ex_queue_length = 8,
     num_dma_readers = 1,
     num_dma_writers = 1,
+    num_load_controllers = 1,
     rob_entries = 8,
     sp_banks = 4, // TODO support one-bank designs
     acc_banks = 1,
