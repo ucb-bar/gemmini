@@ -223,8 +223,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Controllers
   //=========================================================================
   // two load controllers
-  val load_controller_A = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
-  val load_controller_B = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
+  val load_controller = Seq.fill(num_data_controller)(Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t, num_dma)))
   //val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
 
   val store_controller = Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t))
@@ -267,15 +266,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
   */
 
-  rob.io.issue.ld.ready := (load_controller_A.io.cmd.ready) || (load_controller_B.io.cmd.ready)
-  load_controller_A.io.cmd.valid := rob.io.issue.ld.valid
-  load_controller_A.io.cmd.bits.cmd := rob.io.issue.ld.cmd
-  load_controller_A.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
-  load_controller_A.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
-  load_controller_B.io.cmd.valid := rob.io.issue.ld.valid
-  load_controller_B.io.cmd.bits.cmd := rob.io.issue.ld.cmd
-  load_controller_B.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
-  load_controller_B.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+  val load_cmd_ready = load_controller.map(_.io.cmd.ready)
+  rob.io.issue.ld.ready := load_cmd_ready.reduce(_||_)
+  for(d <- 0 until num_data_controller){
+    load_controller(d).io.cmd.valid := rob.io.issue.ld.valid
+    load_controller(d).io.cmd.bits.cmd := rob.io.issue.ld.cmd
+    load_controller(d).io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
+    load_controller(d).io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+  }
 /*
   rob.io.issue.ld.ready := load_controller.io.cmd.ready
   load_controller.io.cmd.valid := rob.io.issue.ld.valid
@@ -300,22 +298,25 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // two load controller: scheduling across instruction
   // two DMA per each load controller: scheduling within instruction
   // total of 4
-  val req_arb = Module(new Arbiter(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), 4))
-  req_arb.io.in(0) <> load_controller_A.io.dma_A.req
-  req_arb.io.in(1) <> load_controller_A.io.dma_B.req
-  req_arb.io.in(2) <> load_controller_B.io.dma_A.req
-  req_arb.io.in(3) <> load_controller_B.io.dma_B.req
+  val req_arb = Module(new Arbiter(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), num_data_controller*num_dma))
+  for(d <- 0 until num_data_controller){
+    for(dd <- 0 until num_dma){
+      req_arb.io.in(dd+d*num_dma) <> load_controller(d).io.dma(dd).req
+    }
+  }
+  //req_arb.io.in(0) <> load_controller_A.io.dma_A.req
+  //req_arb.io.in(1) <> load_controller_A.io.dma_B.req
+  //req_arb.io.in(2) <> load_controller_B.io.dma_A.req
+  //req_arb.io.in(3) <> load_controller_B.io.dma_B.req
   spad.module.io.dma.read <> req_arb.io.out
 
   // TODO: how to determine whether response is for dma_A or dma_B (try different cmd_id?)
-  load_controller_A.io.dma_A.resp.valid := spad.module.io.dma.read.resp.valid
-  load_controller_A.io.dma_B.resp.valid := spad.module.io.dma.read.resp.valid
-  load_controller_B.io.dma_A.resp.valid := spad.module.io.dma.read.resp.valid
-  load_controller_B.io.dma_B.resp.valid := spad.module.io.dma.read.resp.valid
-  load_controller_A.io.dma_A.resp.bits := spad.module.io.dma.read.resp.bits
-  load_controller_A.io.dma_B.resp.bits := spad.module.io.dma.read.resp.bits
-  load_controller_B.io.dma_A.resp.bits := spad.module.io.dma.read.resp.bits
-  load_controller_B.io.dma_B.resp.bits := spad.module.io.dma.read.resp.bits
+  for(d <- 0 until num_data_controller){
+    for(dd <- 0 until num_dma){
+      load_controller(d).io.dma(dd).resp.valid := spad.module.io.dma.read.resp.valid
+      load_controller(d).io.dma(dd).resp.bits := spad.module.io.dma.read.resp.bits
+    }
+  }
 
 
   spad.module.io.dma.write <> store_controller.io.dma
@@ -384,12 +385,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   rob_completed_arb.io.in(0).bits := ex_controller.io.completed.bits
 
   //rob_completed_arb.io.in(1) <> load_controller.io.completed
-  rob_completed_arb.io.in(1) <> Mux(load_controller_A.io.completed.valid, load_controller_A.io.completed, load_controller_B.io.completed)
+  rob_completed_arb.io.in(1) <> Mux(load_controller(0).io.completed.valid, load_controller(0).io.completed, load_controller(1).io.completed) //TODO: how to do this without indexing controller(0) or (1)
   rob_completed_arb.io.in(2) <> store_controller.io.completed
 
   // mux with cisc frontend arbiter
   rob_completed_arb.io.in(0).valid := ex_controller.io.completed.valid // && !is_cisc_mode
-  rob_completed_arb.io.in(1).valid := load_controller_A.io.completed.valid || load_controller_B.io.completed.valid // && !is_cisc_mode
+  rob_completed_arb.io.in(1).valid := load_controller.map(_.io.completed.valid).reduce(_||_)//load_controller_A.io.completed.valid || load_controller_B.io.completed.valid // && !is_cisc_mode
   rob_completed_arb.io.in(2).valid := store_controller.io.completed.valid // && !is_cisc_mode
 
   rob.io.completed.valid := rob_completed_arb.io.out.valid
@@ -415,16 +416,16 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   val ld_st_ex_cycles = RegInit(0.U(34.W))
 
-  val load_controller_busy = load_controller_A.io.busy || load_controller_B.io.busy
-  val incr_ld_cycles = load_controller_busy && !store_controller.io.busy && !ex_controller.io.busy
-  val incr_st_cycles = !load_controller_busy && store_controller.io.busy && !ex_controller.io.busy
-  val incr_ex_cycles = !load_controller_busy && !store_controller.io.busy && ex_controller.io.busy
+  val load_controller_busy = load_controller.map(_.io.busy)
+  val incr_ld_cycles = load_controller_busy.reduce(_||_) && !store_controller.io.busy && !ex_controller.io.busy
+  val incr_st_cycles = !load_controller_busy.reduce(_||_) && store_controller.io.busy && !ex_controller.io.busy
+  val incr_ex_cycles = !load_controller_busy.reduce(_||_) && !store_controller.io.busy && ex_controller.io.busy
 
-  val incr_ld_st_cycles = load_controller_busy && store_controller.io.busy && !ex_controller.io.busy
-  val incr_ld_ex_cycles = load_controller_busy && !store_controller.io.busy && ex_controller.io.busy
-  val incr_st_ex_cycles = !load_controller_busy && store_controller.io.busy && ex_controller.io.busy
+  val incr_ld_st_cycles = load_controller_busy.reduce(_||_) && store_controller.io.busy && !ex_controller.io.busy
+  val incr_ld_ex_cycles = load_controller_busy.reduce(_||_) && !store_controller.io.busy && ex_controller.io.busy
+  val incr_st_ex_cycles = !load_controller_busy.reduce(_||_) && store_controller.io.busy && ex_controller.io.busy
 
-  val incr_ld_st_ex_cycles = load_controller_busy && store_controller.io.busy && ex_controller.io.busy
+  val incr_ld_st_ex_cycles = load_controller_busy.reduce(_||_) && store_controller.io.busy && ex_controller.io.busy
 
   when (incr_ld_cycles) {
     ld_cycles := ld_cycles + 1.U

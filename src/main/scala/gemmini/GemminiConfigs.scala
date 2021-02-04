@@ -46,6 +46,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              use_dedicated_tl_port: Boolean,
                                                                              // enable_a_transpose: Boolean,
                                                                              // enable_b_transpose: Boolean,
+                                                                             num_dma: Int,
+                                                                             num_data_controller: Int,
 
                                                                              tlb_size: Int,
                                                                              use_tlb_register_filter: Boolean,

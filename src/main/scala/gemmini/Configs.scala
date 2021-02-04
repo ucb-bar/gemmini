@@ -61,6 +61,8 @@ object GemminiConfigs {
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
+    num_dma = 2,
+    num_data_controller = 2,
 
     inputType = SInt(8.W),
     outputType = SInt(20.W),
