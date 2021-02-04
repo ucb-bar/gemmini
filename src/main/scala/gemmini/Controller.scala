@@ -272,8 +272,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val rob_load_counter = RegInit(0.U(2.W)) //something like round-robin
   for(d <- 0 until num_data_controller){
     load_controller(d).io.cmd.valid := false.B
-    load_controller(d).io.cmd.bits.cmd := 0.U
-    load_controller(d).io.cmd.bits.cmd.inst.funct := 0.U
+    load_controller(d).io.cmd.bits.cmd := rob.io.issue.ld.cmd
+    load_controller(d).io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
     load_controller(d).io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
   } //initialization
 
