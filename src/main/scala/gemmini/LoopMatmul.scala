@@ -56,7 +56,9 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val col_pad = Mux(req.transpose, req.pad_i, req.pad_k)
 
   val max_col_dim = Mux(req.transpose, req.max_i, req.max_k)
-  val max_blocks = Mux(max_col_dim <= max_block_len.U, max_col_dim, max_block_len.U)
+  val max_block_len_uint = Mux(req.transpose, 1.U, max_block_len.U)
+  val max_blocks = Mux(max_col_dim <= max_block_len_uint, max_col_dim, max_block_len_uint)
+  // TODO: why do we have to use 1 when transpose
 
   val sp_addr_start = req.addr_start
 
@@ -154,7 +156,9 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val col_pad = Mux(req.transpose, req.pad_k, req.pad_j)
 
   val max_col_dim = Mux(req.transpose, req.max_k, req.max_j)
-  val max_blocks = Mux(max_col_dim <= max_block_len.U, max_col_dim, max_block_len.U)
+  val max_block_len_uint = Mux(req.transpose, 1.U, max_block_len.U)
+  val max_blocks = Mux(max_col_dim <= max_block_len_uint, max_col_dim, max_block_len_uint)
+  // TODO: why do we have to use 1 when transpose
 
   val sp_addr_start = req.addr_end - req.max_k * req.max_j * block_size.U
 
@@ -595,8 +599,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
-  val max_block_len = (dma_max_bytes / (block_size * input_w * 8)) max 1
-  val max_block_len_acc = (dma_max_bytes / (block_size * acc_w * 8)) max 1
+  val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
+  val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
 
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new RoCCCommand))
