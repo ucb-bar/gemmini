@@ -22,6 +22,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
     val busy = Output(Bool())
+    //to differentiate between load controller
+    val ld_cont_id = UInt(2.W)
   })
 
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -106,12 +108,12 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   })
 
   // Command tracker IO
-  cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
+  cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad //TODO: no need to check load_controller ID here?
   cmd_tracker.io.alloc.bits.bytes_to_read :=
     Mux(dma_acc_bitwidth.reduce(_||_), cols * actual_rows_read * config.accType.getWidth.U,
       cols * actual_rows_read * config.inputType.getWidth.U) / 8.U
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
-  cmd_tracker.io.request_returned.valid := dma_resp_fires.reduce(_||_)//io.dma_A.resp.fire() || io.dma_B.resp.fire() // TODO use a bundle connect
+  cmd_tracker.io.request_returned.valid := dma_resp_fires.reduce(_||_) && (dma_resp.ld_cont_id === io.ld_cont_id) // to check if the dma response is for this load controller
   cmd_tracker.io.request_returned.bits.cmd_id := dma_resp.cmd_id//Mux(io.dma_A.resp.fire(), io.dma_A.resp.bits.cmd_id, io.dma_B.resp.bits.cmd_id) // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.bytes_read := dma_resp.bytesRead//Mux(io.dma_A.resp.fire(), io.dma_A.resp.bits.bytesRead, io.dma_B.resp.bits.bytesRead)
   cmd_tracker.io.cmd_completed.ready := io.completed.ready
@@ -119,6 +121,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val cmd_id = RegEnableThru(cmd_tracker.io.alloc.bits.cmd_id, cmd_tracker.io.alloc.fire()) // TODO is this really better than a simple RegEnable?
   for(d <- 0 until num_dma){
     io.dma(d).req.bits.cmd_id := cmd_id
+    io.dma(d).req.bits.ld_cont_id := io.ld_cont_id
   }
 
   //io.dma.req.bits.cmd_id := cmd_id

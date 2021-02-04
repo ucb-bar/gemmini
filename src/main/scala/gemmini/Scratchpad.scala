@@ -23,6 +23,8 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val has_acc_bitwidth = Bool()
 
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
+  //for multiple load controlleer
+  val ld_cont_id = UInt(2.W)
 
   val status = new MStatus
 
@@ -54,6 +56,8 @@ class ScratchpadMemWriteResponse extends Bundle {
 class ScratchpadMemReadResponse extends Bundle {
   val bytesRead = UInt(16.W) // TODO magic number here
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
+  //for multiple load controller
+  val ld_cont_id = UInt(2.W)
 }
 
 class ScratchpadReadMemIO[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)

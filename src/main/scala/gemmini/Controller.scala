@@ -317,6 +317,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // TODO: how to determine whether response is for dma_A or dma_B (try different cmd_id?)
   for(d <- 0 until num_data_controller){
+    load_controller(d).io.ld_cont_id := d.asUInt()
     for(dd <- 0 until num_dma){
       load_controller(d).io.dma(dd).resp.valid := spad.module.io.dma.read.resp.valid
       load_controller(d).io.dma(dd).resp.bits := spad.module.io.dma.read.resp.bits
