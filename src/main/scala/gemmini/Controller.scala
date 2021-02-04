@@ -268,8 +268,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // TODO: would this work fine? (want to send cmd to a single controller that is ready)
   val load_cmd_ready = load_controller.map(_.io.cmd.ready)
-  rob.io.issue.ld.ready := load_cmd_ready.reduce(_||_)
+  rob.io.issue.ld.ready := load_controller(0).io.cmd.ready
   val rob_load_counter = RegInit(0.U(2.W)) //something like round-robin
+  for(d <- 0 until num_data_controller){
+    load_controller(d).io.cmd.valid := false.B
+    load_controller(d).io.cmd.bits.cmd := 0.U
+    load_controller(d).io.cmd.bits.cmd.inst.funct := 0.U
+    load_controller(d).io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+  } //initialization
 
   //when it is config command, need to broadcast
   when(rob.io.issue.ld.cmd.inst.funct === CONFIG_CMD){

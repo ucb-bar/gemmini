@@ -83,18 +83,22 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val req_dma = MuxCase(0.U, Seq.tabulate(num_dma){
     i => io.dma(i).req.ready -> i.asUInt()
   })
+  for(d <- 0 until num_dma){
+    io.dma(d).req.valid := false.B
+  } //initialization
+
   io.dma.zipWithIndex.foreach{case(d, i) =>
+    d.req.bits.vaddr := vaddr + row_counter * stride
+    d.req.bits.laddr := localaddr_plus_row_counter
+    d.req.bits.len := cols
+    d.req.bits.repeats := Mux(stride === 0.U, rows - 1.U, 0.U)
+    d.req.bits.scale := scale
+    d.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
+    d.req.bits.status := mstatus
     when(req_dma === i.asUInt()){
       d.req.valid:= (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
         control_state === waiting_for_dma_req_ready ||
         (control_state === sending_rows && row_counter =/= 0.U)
-      d.req.bits.vaddr := vaddr + row_counter * stride
-      d.req.bits.laddr := localaddr_plus_row_counter
-      d.req.bits.len := cols
-      d.req.bits.repeats := Mux(stride === 0.U, rows - 1.U, 0.U)
-      d.req.bits.scale := scale
-      d.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
-      d.req.bits.status := mstatus
     }
   }
 
