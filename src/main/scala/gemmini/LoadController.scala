@@ -77,43 +77,26 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, maxBytesInMatRequest, deps_t))
 
   io.busy := cmd.valid || cmd_tracker.io.busy
-/*
-  when(io.dma_A.req.ready === true.B){
-    io.dma_A.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
-      control_state === waiting_for_dma_req_ready ||
-      (control_state === sending_rows && row_counter =/= 0.U)
-    io.dma_A.req.bits.vaddr := vaddr + row_counter * stride
-    io.dma_A.req.bits.laddr := localaddr_plus_row_counter
-    io.dma_A.req.bits.len := cols
-    io.dma_A.req.bits.repeats := Mux(stride === 0.U, rows - 1.U, 0.U)
-    io.dma_A.req.bits.scale := scale
-    io.dma_A.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
-    io.dma_A.req.bits.status := mstatus
-  }.otherwise{
-    io.dma_B.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
-      control_state === waiting_for_dma_req_ready ||
-      (control_state === sending_rows && row_counter =/= 0.U)
-    io.dma_B.req.bits.vaddr := vaddr + row_counter * stride
-    io.dma_B.req.bits.laddr := localaddr_plus_row_counter
-    io.dma_B.req.bits.len := cols
-    io.dma_B.req.bits.repeats := Mux(stride === 0.U, rows - 1.U, 0.U)
-    io.dma_B.req.bits.scale := scale
-    io.dma_B.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
-    io.dma_B.req.bits.status := mstatus
+
+  // TODO: would this work fine? (want to make a dma request to a single DMA that is ready)
+  val req_dma = MuxCase(0.U, Seq.tabulate(num_dma){
+    i => io.dma(i).req.ready -> i.asUInt()
+  })
+  io.dma.zipWithIndex.foreach{case(d, i) =>
+    when(req_dma === i.asUInt()){
+      d.req.valid:= (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
+        control_state === waiting_for_dma_req_ready ||
+        (control_state === sending_rows && row_counter =/= 0.U)
+      d.req.bits.vaddr := vaddr + row_counter * stride
+      d.req.bits.laddr := localaddr_plus_row_counter
+      d.req.bits.len := cols
+      d.req.bits.repeats := Mux(stride === 0.U, rows - 1.U, 0.U)
+      d.req.bits.scale := scale
+      d.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
+      d.req.bits.status := mstatus
+    }
   }
- */
-  for(d <- 0 until num_dma){
-    io.dma(d).req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
-      control_state === waiting_for_dma_req_ready ||
-      (control_state === sending_rows && row_counter =/= 0.U)
-    io.dma(d).req.bits.vaddr := vaddr + row_counter * stride
-    io.dma(d).req.bits.laddr := localaddr_plus_row_counter
-    io.dma(d).req.bits.len := cols
-    io.dma(d).req.bits.repeats := Mux(stride === 0.U, rows - 1.U, 0.U)
-    io.dma(d).req.bits.scale := scale
-    io.dma(d).req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
-    io.dma(d).req.bits.status := mstatus
-  }
+
   val dma_resp_fires = io.dma.map(_.resp.fire())
   val dma_req_fires = io.dma.map(_.req.fire())
   val dma_acc_bitwidth = io.dma.map(_.req.bits.has_acc_bitwidth)

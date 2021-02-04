@@ -268,12 +268,20 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   val load_cmd_ready = load_controller.map(_.io.cmd.ready)
   rob.io.issue.ld.ready := load_cmd_ready.reduce(_||_)
-  for(d <- 0 until num_data_controller){
-    load_controller(d).io.cmd.valid := rob.io.issue.ld.valid
-    load_controller(d).io.cmd.bits.cmd := rob.io.issue.ld.cmd
-    load_controller(d).io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
-    load_controller(d).io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+
+  // TODO: would this work fine? (want to send cmd to a single controller that is ready)
+  val req_ld = MuxCase(0.U, Seq.tabulate(num_data_controller){
+    i => load_controller(i).io.cmd.ready -> i.asUInt()
+  })
+  load_controller.zipWithIndex.foreach{case(d, i) =>
+    when(req_ld === i.asUInt()){
+      d.io.cmd.valid := rob.io.issue.ld.valid
+      d.io.cmd.bits.cmd := rob.io.issue.ld.cmd
+      d.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
+      d.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+    }
   }
+
 /*
   rob.io.issue.ld.ready := load_controller.io.cmd.ready
   load_controller.io.cmd.valid := rob.io.issue.ld.valid
@@ -304,10 +312,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       req_arb.io.in(dd+d*num_dma) <> load_controller(d).io.dma(dd).req
     }
   }
-  //req_arb.io.in(0) <> load_controller_A.io.dma_A.req
-  //req_arb.io.in(1) <> load_controller_A.io.dma_B.req
-  //req_arb.io.in(2) <> load_controller_B.io.dma_A.req
-  //req_arb.io.in(3) <> load_controller_B.io.dma_B.req
+
   spad.module.io.dma.read <> req_arb.io.out
 
   // TODO: how to determine whether response is for dma_A or dma_B (try different cmd_id?)
