@@ -33,6 +33,9 @@ object DSEBaseConfig {
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 16,
     hasIm2col = false,
+    //for 2 ld_controller, 2 DMA
+    num_dma = 2,
+    num_data_controller = 2,
     inputType = SInt(8.W),
     outputType = SInt(19.W),
     accType = SInt(32.W),
