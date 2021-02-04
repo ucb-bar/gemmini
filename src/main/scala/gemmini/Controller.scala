@@ -266,19 +266,34 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
   */
 
+  // TODO: would this work fine? (want to send cmd to a single controller that is ready)
   val load_cmd_ready = load_controller.map(_.io.cmd.ready)
   rob.io.issue.ld.ready := load_cmd_ready.reduce(_||_)
+  val rob_load_counter = RegInit(0.U(2.W)) //something like round-robin
 
-  // TODO: would this work fine? (want to send cmd to a single controller that is ready)
-  val req_ld = MuxCase(0.U, Seq.tabulate(num_data_controller){
-    i => load_controller(i).io.cmd.ready -> i.asUInt()
-  })
-  load_controller.zipWithIndex.foreach{case(d, i) =>
-    when(req_ld === i.asUInt()){
-      d.io.cmd.valid := rob.io.issue.ld.valid
-      d.io.cmd.bits.cmd := rob.io.issue.ld.cmd
-      d.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
-      d.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+  //when it is config command, need to broadcast
+  when(rob.io.issue.ld.cmd.inst.funct === CONFIG_CMD){
+    rob.io.issue.ld.ready := load_cmd_ready.reduce(_&&_)
+    load_controller.zipWithIndex.foreach{case(d, i) =>
+      when(load_cmd_ready.reduce(_&&_)) { // when both load controllers are ready
+        d.io.cmd.valid := rob.io.issue.ld.valid
+        d.io.cmd.bits.cmd := rob.io.issue.ld.cmd
+        d.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
+        d.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+      }
+    }
+  }.otherwise{
+    load_controller.zipWithIndex.foreach{case(d, i) =>
+      when(d.io.ld_cont_id === rob_load_counter){
+        rob.io.issue.ld.ready := d.io.cmd.ready
+        d.io.cmd.valid := rob.io.issue.ld.valid
+        d.io.cmd.bits.cmd := rob.io.issue.ld.cmd
+        d.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
+        d.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+      }
+    }
+    when(rob.io.issue.ld.fire()){
+      rob_load_counter := wrappingAdd(rob_load_counter, 1.U, num_data_controller.asUInt())
     }
   }
 
