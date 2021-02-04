@@ -15,9 +15,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     val cmd = Flipped(Decoupled(new GemminiCmd(rob_entries)))
 
     //val dma = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
-    //val dma_A = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
-    //val dma_B = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
-    val dma = Vec(num_dma, new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits))
+    val dma = Vec(num_dma, Output(new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)))
+    //for bundle, use Vec instead of Seq.fill
 
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
