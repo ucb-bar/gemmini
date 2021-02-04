@@ -20,6 +20,8 @@ object DSEBaseConfig {
     ld_queue_length = 4,
     st_queue_length = 2,
     ex_queue_length = 8,
+    num_dma_readers = 1,
+    num_dma_writers = 1,
     rob_entries = 8,
     sp_banks = 4, // TODO support one-bank designs
     acc_banks = 1,
