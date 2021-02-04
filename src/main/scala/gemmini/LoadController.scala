@@ -17,7 +17,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     //val dma = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
     //val dma_A = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
     //val dma_B = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
-    val dma = Seq.fill(num_dma)(Module(new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)))
+    val dma = Seq.fill(num_dma)(new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits))
 
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
