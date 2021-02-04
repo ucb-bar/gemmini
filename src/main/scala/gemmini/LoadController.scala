@@ -118,11 +118,9 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val dma_req_fires = io.dma.map(_.req.fire())
   val dma_acc_bitwidth = io.dma.map(_.req.bits.has_acc_bitwidth)
   // TODO: what if both dma's resp.fire() are 1?
-  val dma_resp = MuxCase(io.dma(0).resp.bits, Seq(
-    io.dma(0).resp.fire() -> io.dma(0).resp.bits,
-    io.dma(1).resp.fire() -> io.dma(1).resp.bits
-  ))  // TODO: how to do this without indexing dma(0) and dma(1)
-
+  val dma_resp = MuxCase(io.dma(0).resp.bits, Seq.tabulate(num_dma){
+    i => io.dma(i).resp.fire() -> io.dma(i).resp.bits
+  })
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad

@@ -385,7 +385,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   rob_completed_arb.io.in(0).bits := ex_controller.io.completed.bits
 
   //rob_completed_arb.io.in(1) <> load_controller.io.completed
-  rob_completed_arb.io.in(1) <> Mux(load_controller(0).io.completed.valid, load_controller(0).io.completed, load_controller(1).io.completed) //TODO: how to do this without indexing controller(0) or (1)
+  rob_completed_arb.io.in(1) <> MuxCase(load_controller(0).io.completed.valid, Seq.tabulate(num_data_controller){
+    i => load_controller(i).io.completed.valid -> load_controller(i).io.completed
+  })
   rob_completed_arb.io.in(2) <> store_controller.io.completed
 
   // mux with cisc frontend arbiter
