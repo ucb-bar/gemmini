@@ -400,21 +400,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   //-------------------------------------------------------------------------
   // risc
-  val rob_completed_arb = Module(new Arbiter(UInt(log2Up(rob_entries).W), 3))
+  val rob_completed_arb = Module(new Arbiter(UInt(log2Up(rob_entries).W), 2 + num_data_controller))
 
-  rob_completed_arb.io.in(0).valid := ex_controller.io.completed.valid
   rob_completed_arb.io.in(0).bits := ex_controller.io.completed.bits
-
   //rob_completed_arb.io.in(1) <> load_controller.io.completed
-  rob_completed_arb.io.in(1) <> MuxCase(load_controller(0).io.completed.valid, Seq.tabulate(num_data_controller){
-    i => load_controller(i).io.completed.valid -> load_controller(i).io.completed
-  })
-  rob_completed_arb.io.in(2) <> store_controller.io.completed
-
-  // mux with cisc frontend arbiter
   rob_completed_arb.io.in(0).valid := ex_controller.io.completed.valid // && !is_cisc_mode
-  rob_completed_arb.io.in(1).valid := load_controller.map(_.io.completed.valid).reduce(_||_)//load_controller_A.io.completed.valid || load_controller_B.io.completed.valid // && !is_cisc_mode
-  rob_completed_arb.io.in(2).valid := store_controller.io.completed.valid // && !is_cisc_mode
+  for(d <- 0 until num_data_controller){
+    rob_completed_arb.io.in(d+1) <> load_controller(d).io.completed
+    rob_completed_arb.io.in(d+1).valid := load_controller(d).io.completed.valid
+  }
+  rob_completed_arb.io.in(1+num_data_controller) <> store_controller.io.completed
+  rob_completed_arb.io.in(1+num_data_controller).valid := store_controller.io.completed.valid // && !is_cisc_mode
 
   rob.io.completed.valid := rob_completed_arb.io.out.valid
   rob.io.completed.bits := rob_completed_arb.io.out.bits
