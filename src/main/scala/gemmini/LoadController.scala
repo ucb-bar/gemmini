@@ -80,12 +80,19 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.busy := cmd.valid || cmd_tracker.io.busy
 
   // TODO: would this work fine? (want to make a dma request to a single DMA that is ready)
-  val req_dma = MuxCase(0.U, Seq.tabulate(num_dma){
-    i => io.dma(i).req.ready -> i.asUInt()
-  })
+  //val req_dma = MuxCase(0.U, Seq.tabulate(num_dma){
+  //  i => io.dma(i).req.ready -> i.asUInt()
+  //})
+
+  val req_dma = Seq.fill(num_dma)(false.B)
   for(d <- 0 until num_dma){
     io.dma(d).req.valid := false.B
   } //initialization
+  for(d <- 1 until num_dma){
+    req_dma(d) := io.dma(d).req.ready && !io.dma.take(d-1).map(_.req.ready).reduce(_||_)
+  }
+  req_dma(0) := io.dma(0).req.ready
+
 
   io.dma.zipWithIndex.foreach{case(d, i) =>
     d.req.bits.vaddr := vaddr + row_counter * stride
@@ -95,7 +102,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     d.req.bits.scale := scale
     d.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
     d.req.bits.status := mstatus
-    when(req_dma === i.asUInt()){
+    when(req_dma(i)){
       d.req.valid:= (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
         control_state === waiting_for_dma_req_ready ||
         (control_state === sending_rows && row_counter =/= 0.U)
