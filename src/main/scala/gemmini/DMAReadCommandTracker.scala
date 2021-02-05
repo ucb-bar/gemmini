@@ -39,6 +39,7 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
       // This was only spun off as its own class to resolve CloneType errors
       val bytes_read = UInt(log2Up(maxBytes+1).W)
       val cmd_id = cmd_id_t.cloneType
+      val ld_cont_id = UInt(2.W)
 
       override def cloneType: this.type = new RequestReturnedT(cmd_id_t.cloneType).asInstanceOf[this.type]
     }

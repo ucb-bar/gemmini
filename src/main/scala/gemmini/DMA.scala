@@ -26,6 +26,8 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val repeats = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
+  val ld_cont_id = UInt(2.W)
+
   override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
 }
 
@@ -42,6 +44,8 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
   val last = Bool()
   val bytes_read = UInt(8.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
+
+  val ld_cont_id = UInt(2.W)
 
   override def cloneType: StreamReadResponse.this.type = new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to, mvin_scale_t_bits).asInstanceOf[this.type]
 }
@@ -97,6 +101,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
+    io.resp.bits.ld_cont_id := RegEnable(xactTracker.io.peek.entry.ld_cont_id, beatPacker.io.req.fire())
   }
 }
 

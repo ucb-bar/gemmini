@@ -19,6 +19,8 @@ class XactTrackerEntry[U <: Data](maxShift: Int, spadWidth: Int, accWidth: Int,
   val bytes_to_read = UInt(log2Up(maxReqBytes+1).W)
   val cmd_id = UInt(log2Up(nCmds).W)
 
+  val ld_cont_id = UInt(2.W)
+
   override def cloneType: XactTrackerEntry.this.type = new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds).asInstanceOf[this.type]
 }
 
