@@ -23,10 +23,25 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val has_acc_bitwidth = Bool()
 
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
-  //for multiple load controlleer
-  val ld_cont_id = UInt(2.W)
 
   val status = new MStatus
+
+  def asStreamReadRequest(spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int): StreamReadRequest[U] =
+  {
+    val req = Wire(new StreamReadRequest[U](spad_rows, acc_rows, mvin_scale_t_bits))
+    req.vaddr := vaddr
+    req.spaddr := Mux(laddr.is_acc_addr, laddr.full_acc_addr(), laddr.full_sp_addr())
+    req.len := len
+    req.repeats := repeats
+    req.scale := scale
+    req.is_acc := laddr.is_acc_addr
+    req.accumulate := laddr.accumulate
+    req.has_acc_bitwidth := has_acc_bitwidth
+    req.status := status
+    req.cmd_id := cmd_id
+    req.ld_controller_id := 0.U
+    req
+  }
 
   override def cloneType: this.type = new ScratchpadMemReadRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
@@ -56,8 +71,6 @@ class ScratchpadMemWriteResponse extends Bundle {
 class ScratchpadMemReadResponse extends Bundle {
   val bytesRead = UInt(16.W) // TODO magic number here
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
-  //for multiple load controller
-  val ld_cont_id = UInt(2.W)
 }
 
 class ScratchpadReadMemIO[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
@@ -165,23 +178,28 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val id_node = TLIdentityNode()
   val xbar_node = TLXbar()
 
-//  val reader = LazyModule(new StreamReader(config, max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
-//    sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter))
-  val reader = Seq.fill(num_data_controller*num_dma)(LazyModule(new StreamReader(config, max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
-  sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter)))
-  val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes,
-    if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter))
+  val nReaders = config.num_dma_readers
+  val readers = Seq.fill(nReaders) {
+    LazyModule(new StreamReader(
+      config, max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
+      sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter
+    ))
+  }
+  val nWriters = config.num_dma_writers
+  val writers = Seq.fill(nWriters) {
+    LazyModule(new StreamWriter(
+      max_in_flight_reqs, dataBits, maxBytes,
+      if (acc_read_full_width) acc_w else spad_w,
+      aligned_to, inputType, block_cols, use_tlb_register_filter
+    ))
+  }
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node
   // id_node :=* writer.node
 
-  // TODO: is this right way to do?
-  for(d <- 0 until num_dma*num_data_controller){
-    xbar_node := reader(d).node
-  }
-  //xbar_node := reader.node
-  xbar_node := writer.node
+  readers.foreach(xbar_node := _.node) // TODO
+  writers.foreach(xbar_node := _.node)
   id_node := xbar_node
 
   lazy val module = new LazyModuleImp(this) with HasCoreParameters {
@@ -189,7 +207,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val io = IO(new Bundle {
       // DMA ports
       val dma = new Bundle {
-        val read = Vec(num_dma*num_data_controller, Flipped(new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)))
+        val read = Vec(config.num_load_controllers,
+          Flipped(new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits))
+        )
         val write = Flipped(new ScratchpadWriteMemIO(local_addr_t))
       }
 
@@ -207,7 +227,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       }
 
       // TLB ports
-      val tlb = Vec(1+num_dma*num_data_controller, new FrontendTLBIO)
+      val tlb = Vec(nWriters + nReaders, new FrontendTLBIO)
 
       // Misc. ports
       val busy = Output(Bool())
@@ -219,8 +239,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     write_dispatch_q.ready := false.B
 
     val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t), mem_pipeline+1, pipe=true))
-    //val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), mem_pipeline+1, pipe=true)) // TODO can't this just be a normal queue?
-    val read_issue_q = Seq.fill(num_dma*num_data_controller)(Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), mem_pipeline+1, pipe=true)))
+    val read_issue_qs = Seq.fill(config.num_load_controllers) {
+      Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), mem_pipeline+1, pipe=true))
+    }
 
     write_issue_q.io.enq.valid := false.B
     write_issue_q.io.enq.bits := write_dispatch_q.bits
@@ -234,150 +255,128 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.read_full_acc_row
     val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()
 
-    writer.module.io.req.valid := write_issue_q.io.deq.valid && (writeData.valid || writeData_is_all_zeros)
-    write_issue_q.io.deq.ready := writer.module.io.req.ready && (writeData.valid || writeData_is_all_zeros)
-    writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
-    writer.module.io.req.bits.len := Mux(writeData_is_full_width,
-      write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
-      write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
-    writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
-       writeData_is_all_zeros -> 0.U,
-       writeData_is_full_width -> fullAccWriteData
-    ))
-    writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
-    writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
-    writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
+    var issued_write = false.B
+    for (i <- 0 until nWriters) {
+      val is_valid_write = (writeData.valid || writeData_is_all_zeros)
+      writers(i).module.io.req.valid := write_issue_q.io.deq.valid && is_valid_write && !issued_write
+      writers(i).module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
+      writers(i).module.io.req.bits.len := Mux(writeData_is_full_width,
+        write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
+        write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
+      writers(i).module.io.req.bits.data := MuxCase(writeData.bits, Seq(
+        writeData_is_all_zeros -> 0.U,
+        writeData_is_full_width -> fullAccWriteData
+      ))
+      writers(i).module.io.req.bits.status := write_issue_q.io.deq.bits.status
+      writers(i).module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
+      writers(i).module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
 
-    // FpgaDebug(write_issue_q.io.deq.bits.laddr.data)
-    // FpgaDebug(write_issue_q.io.deq.bits.laddr.accumulate)
-    // FpgaDebug(write_issue_q.io.deq.bits.laddr.is_acc_addr)
+      issued_write = issued_write || writers(i).module.io.req.ready
+    }
+    write_issue_q.io.deq.ready := issued_write
 
     io.dma.write.resp.valid := false.B
     io.dma.write.resp.bits.cmd_id := write_dispatch_q.bits.cmd_id
 
-    //read_issue_q.io.enq <> io.dma.read.req
-    for(d <- 0 until num_data_controller*num_dma) {
-      read_issue_q(d).io.enq <> io.dma.read(d).req
-      reader(d).module.io.req.valid := read_issue_q(d).io.deq.valid
-      read_issue_q(d).io.deq.ready := reader(d).module.io.req.ready
-      reader(d).module.io.req.bits.vaddr := read_issue_q(d).io.deq.bits.vaddr
-      reader(d).module.io.req.bits.spaddr := Mux(read_issue_q(d).io.deq.bits.laddr.is_acc_addr,
-        read_issue_q(d).io.deq.bits.laddr.full_acc_addr(), read_issue_q(d).io.deq.bits.laddr.full_sp_addr())
-      reader(d).module.io.req.bits.len := read_issue_q(d).io.deq.bits.len
-      reader(d).module.io.req.bits.repeats := read_issue_q(d).io.deq.bits.repeats
-      reader(d).module.io.req.bits.scale := read_issue_q(d).io.deq.bits.scale
-      reader(d).module.io.req.bits.is_acc := read_issue_q(d).io.deq.bits.laddr.is_acc_addr
-      reader(d).module.io.req.bits.accumulate := read_issue_q(d).io.deq.bits.laddr.accumulate
-      reader(d).module.io.req.bits.has_acc_bitwidth := read_issue_q(d).io.deq.bits.has_acc_bitwidth
-      reader(d).module.io.req.bits.status := read_issue_q(d).io.deq.bits.status
-      reader(d).module.io.req.bits.cmd_id := read_issue_q(d).io.deq.bits.cmd_id
-      reader(d).module.io.req.bits.ld_cont_id := read_issue_q(d).io.deq.bits.ld_cont_id
+    for ((q, read) <- read_issue_qs zip io.dma.read) {
+      q.io.enq <> read.req
     }
 
-/*
-    reader.module.io.req.valid := read_issue_q.io.deq.valid
-    read_issue_q.io.deq.ready := reader.module.io.req.ready
-    reader.module.io.req.bits.vaddr := read_issue_q.io.deq.bits.vaddr
-    reader.module.io.req.bits.spaddr := Mux(read_issue_q.io.deq.bits.laddr.is_acc_addr,
-      read_issue_q.io.deq.bits.laddr.full_acc_addr(), read_issue_q.io.deq.bits.laddr.full_sp_addr())
-    reader.module.io.req.bits.len := read_issue_q.io.deq.bits.len
-    reader.module.io.req.bits.repeats := read_issue_q.io.deq.bits.repeats
-    reader.module.io.req.bits.scale := read_issue_q.io.deq.bits.scale
-    reader.module.io.req.bits.is_acc := read_issue_q.io.deq.bits.laddr.is_acc_addr
-    reader.module.io.req.bits.accumulate := read_issue_q.io.deq.bits.laddr.accumulate
-    reader.module.io.req.bits.has_acc_bitwidth := read_issue_q.io.deq.bits.has_acc_bitwidth
-    reader.module.io.req.bits.status := read_issue_q.io.deq.bits.status
-    reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
-*/
-    //TODO: how to implement multiple VSM? (1 per reader?)
-    val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(config.mvin_scale_args, config.inputType, config.meshColumns * config.tileColumns, chiselTypeOf(reader(0).module.io.resp.bits), is_acc = false)
-    val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out) else
-      VectorScalarMultiplier(config.mvin_scale_acc_args, config.accType, config.meshColumns * config.tileColumns, chiselTypeOf(reader(0).module.io.resp.bits), is_acc = true)
 
-    val req_vsm = VecInit(Seq.fill(num_dma*num_data_controller)(false.B))
-    req_vsm(0) := reader(0).module.io.resp.valid
-    for(d <- 1 until num_dma*num_data_controller){
-      req_vsm(d) := reader(d).module.io.resp.valid && !reader.take(d).map(_.module.io.resp.valid).reduce(_||_)
-    }
-    //val reader_turn = MuxCase(reader(0).module.io.resp, req_vsm.zipWithIndex.map{ case(v, i) =>
-    //  (v) -> reader(i).module.io.resp })
-    val reader_turn_bits = MuxCase(reader(0).module.io.resp.bits, req_vsm.zipWithIndex.map{ case(v, i) =>
-      (v) -> reader(i).module.io.resp.bits })
-    val reader_turn_valid = MuxCase(reader(0).module.io.resp.valid, req_vsm.zipWithIndex.map{ case(v, i) =>
-      (v) -> reader(i).module.io.resp.valid })
-    mvin_scale_in.valid := reader_turn_valid && (mvin_scale_shared.B || !reader_turn_bits.is_acc ||
-      (reader_turn_bits.is_acc && !reader_turn_bits.has_acc_bitwidth))
-
-    mvin_scale_in.bits.in := reader_turn_bits.data.asTypeOf(chiselTypeOf(mvin_scale_in.bits.in))
-    mvin_scale_in.bits.scale := reader_turn_bits.scale.asTypeOf(mvin_scale_t)
-    mvin_scale_in.bits.repeats := reader_turn_bits.rows
-    mvin_scale_in.bits.last := reader_turn_bits.last
-    mvin_scale_in.bits.tag := reader_turn_bits
-
-    mvin_scale_out.ready := false.B
-
-    if (!mvin_scale_shared) {
-      mvin_scale_acc_in.valid := reader_turn_valid &&
-        (reader_turn_bits.is_acc && reader_turn_bits.has_acc_bitwidth)
-      mvin_scale_acc_in.bits.in := reader_turn_bits.data.asTypeOf(chiselTypeOf(mvin_scale_acc_in.bits.in))
-      mvin_scale_acc_in.bits.scale := reader_turn_bits.scale.asTypeOf(mvin_scale_acc_t)
-      mvin_scale_acc_in.bits.repeats := reader_turn_bits.rows
-      mvin_scale_acc_in.bits.last := reader_turn_bits.last
-      mvin_scale_acc_in.bits.tag := reader_turn_bits
-
-      mvin_scale_acc_out.ready := false.B
-    }
-/*
-    mvin_scale_in.valid := reader.module.io.resp.valid && (mvin_scale_shared.B || !reader.module.io.resp.bits.is_acc ||
-      (reader.module.io.resp.bits.is_acc && !reader.module.io.resp.bits.has_acc_bitwidth))
-
-    mvin_scale_in.bits.in := reader.module.io.resp.bits.data.asTypeOf(chiselTypeOf(mvin_scale_in.bits.in))
-    mvin_scale_in.bits.scale := reader.module.io.resp.bits.scale.asTypeOf(mvin_scale_t)
-    mvin_scale_in.bits.repeats := reader.module.io.resp.bits.rows
-    mvin_scale_in.bits.last := reader.module.io.resp.bits.last
-    mvin_scale_in.bits.tag := reader.module.io.resp.bits
-
-    mvin_scale_out.ready := false.B
-
-    if (!mvin_scale_shared) {
-      mvin_scale_acc_in.valid := reader.module.io.resp.valid &&
-        (reader.module.io.resp.bits.is_acc && reader.module.io.resp.bits.has_acc_bitwidth)
-      mvin_scale_acc_in.bits.in := reader.module.io.resp.bits.data.asTypeOf(chiselTypeOf(mvin_scale_acc_in.bits.in))
-      mvin_scale_acc_in.bits.scale := reader.module.io.resp.bits.scale.asTypeOf(mvin_scale_acc_t)
-      mvin_scale_acc_in.bits.repeats := reader.module.io.resp.bits.rows
-      mvin_scale_acc_in.bits.last := reader.module.io.resp.bits.last
-      mvin_scale_acc_in.bits.tag := reader.module.io.resp.bits
-
-      mvin_scale_acc_out.ready := false.B
-    }
- */
-    for(d <- 0 until num_dma*num_data_controller) {
-      reader(d).module.io.resp.ready := Mux(reader(d).module.io.resp.bits.is_acc && reader(d).module.io.resp.bits.has_acc_bitwidth,
-        mvin_scale_acc_in.ready, mvin_scale_in.ready)
+    val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(
+      config.mvin_scale_args, config.inputType, config.meshColumns * config.tileColumns,
+      chiselTypeOf(readers(0).module.io.resp.bits), is_acc = false
+    )
+    val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) {
+      (mvin_scale_in, mvin_scale_out)
+    } else {
+      VectorScalarMultiplier(
+        config.mvin_scale_acc_args, config.accType, config.meshColumns * config.tileColumns,
+        chiselTypeOf(readers(0).module.io.resp.bits), is_acc = true
+      )
     }
 
-    val mvin_scale_finished = mvin_scale_out.fire() && mvin_scale_out.bits.last
-    val mvin_scale_acc_finished = mvin_scale_acc_out.fire() && mvin_scale_acc_out.bits.last
-    for(d <- 0 until num_dma*num_data_controller){
-      io.dma.read(d).resp.bits.cmd_id := Mux(mvin_scale_finished, mvin_scale_out.bits.tag.cmd_id, mvin_scale_acc_out.bits.tag.cmd_id)
-      io.dma.read(d).resp.bits.bytesRead := Mux(mvin_scale_finished, mvin_scale_out.bits.tag.bytes_read, mvin_scale_acc_out.bits.tag.bytes_read)
-      io.dma.read(d).resp.valid := false.B
-      when(d.asUInt() === Mux(mvin_scale_finished, mvin_scale_out.bits.tag.ld_cont_id, mvin_scale_acc_out.bits.tag.ld_cont_id)){
-        io.dma.read(d).resp.valid := mvin_scale_finished || mvin_scale_acc_finished
+    val readerRespArb = Module(new Arbiter(chiselTypeOf(readers(0).module.io.resp.bits), nReaders))
+
+    val reader_fired = Array.fill(nReaders) { false.B }
+
+    // Build the load-controller request to stream-reader crossbar
+    for (i <- 0 until nReaders) {
+      readerRespArb.io.in(i) <> readers(i).module.io.resp
+      readers(i).module.io.req.valid := false.B
+    }
+
+    for (c <- 0 until config.num_load_controllers) {
+      read_issue_qs(c).io.deq.ready := false.B
+      var q_fired = false.B
+      for (i <- 0 until nReaders) {
+        when (read_issue_qs(c).io.deq.valid && !q_fired && readers(i).module.io.req.ready && !reader_fired(i)) {
+          read_issue_qs(c).io.deq.ready := true.B
+          readers(i).module.io.req.valid := true.B
+          readers(i).module.io.req.bits  := read_issue_qs(c).io.deq.bits.asStreamReadRequest(
+            sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, config.mvin_scale_t_bits
+          )
+          readers(i).module.io.req.bits.ld_controller_id := c.U
+        }
+        val was_reader_fired_yet = reader_fired(i)
+        reader_fired(i) = (read_issue_qs(c).io.deq.valid && !q_fired && readers(i).module.io.req.ready) || reader_fired(i)
+        q_fired = (read_issue_qs(c).io.deq.valid && readers(i).module.io.req.ready && !was_reader_fired_yet) || q_fired
       }
     }
 
-    io.tlb(0) <> writer.module.io.tlb
-    for(d <- 0 until num_data_controller*num_dma){
-      io.tlb(1+d) <> reader(d).module.io.tlb
+    mvin_scale_in.valid := readerRespArb.io.out.valid && (mvin_scale_shared.B || !readerRespArb.io.out.bits.is_acc ||
+      (readerRespArb.io.out.bits.is_acc && !readerRespArb.io.out.bits.has_acc_bitwidth))
+
+    mvin_scale_in.bits.in := readerRespArb.io.out.bits.data.asTypeOf(chiselTypeOf(mvin_scale_in.bits.in))
+    mvin_scale_in.bits.scale := readerRespArb.io.out.bits.scale.asTypeOf(mvin_scale_t)
+    mvin_scale_in.bits.repeats := readerRespArb.io.out.bits.rows
+    mvin_scale_in.bits.last := readerRespArb.io.out.bits.last
+    mvin_scale_in.bits.tag := readerRespArb.io.out.bits
+
+    mvin_scale_out.ready := false.B
+
+    if (!mvin_scale_shared) {
+      mvin_scale_acc_in.valid := readerRespArb.io.out.valid &&
+        (readerRespArb.io.out.bits.is_acc && readerRespArb.io.out.bits.has_acc_bitwidth)
+      mvin_scale_acc_in.bits.in := readerRespArb.io.out.bits.data.asTypeOf(chiselTypeOf(mvin_scale_acc_in.bits.in))
+      mvin_scale_acc_in.bits.scale := readerRespArb.io.out.bits.scale.asTypeOf(mvin_scale_acc_t)
+      mvin_scale_acc_in.bits.repeats := readerRespArb.io.out.bits.rows
+      mvin_scale_acc_in.bits.last := readerRespArb.io.out.bits.last
+      mvin_scale_acc_in.bits.tag := readerRespArb.io.out.bits
+
+      mvin_scale_acc_out.ready := false.B
     }
 
-    writer.module.io.flush := io.flush
-    for(d <- 0 until num_data_controller*num_dma) {
-      reader(d).module.io.flush := io.flush
+    readerRespArb.io.out.ready := Mux(
+      readerRespArb.io.out.bits.is_acc && readerRespArb.io.out.bits.has_acc_bitwidth,
+      mvin_scale_acc_in.ready, mvin_scale_in.ready)
+
+    val mvin_scale_finished = mvin_scale_out.fire() && mvin_scale_out.bits.last
+    val mvin_scale_acc_finished = mvin_scale_acc_out.fire() && mvin_scale_acc_out.bits.last
+    for (c <- 0 until config.num_load_controllers) {
+      io.dma.read(c).resp.valid := (mvin_scale_finished || mvin_scale_acc_finished) && c.U === Mux(mvin_scale_finished,
+        mvin_scale_out.bits.tag.ld_controller_id,
+        mvin_scale_acc_out.bits.tag.ld_controller_id)
+      io.dma.read(c).resp.bits.cmd_id := Mux(mvin_scale_finished,
+        mvin_scale_out.bits.tag.cmd_id, mvin_scale_acc_out.bits.tag.cmd_id)
+      io.dma.read(c).resp.bits.bytesRead := Mux(mvin_scale_finished,
+        mvin_scale_out.bits.tag.bytes_read, mvin_scale_acc_out.bits.tag.bytes_read)
     }
 
-    io.busy := writer.module.io.busy || reader.map(_.module.io.busy).reduce(_||_) || write_issue_q.io.deq.valid
+    var tlbidx = 0
+    for (w <- writers) {
+      io.tlb(tlbidx) <> w.module.io.tlb
+      tlbidx += 1
+    }
+    for (r <- readers) {
+      io.tlb(tlbidx) <> r.module.io.tlb
+      tlbidx += 1
+    }
+
+    writers.foreach(_.module.io.flush := io.flush)
+    readers.foreach(_.module.io.flush := io.flush)
+
+    io.busy := writers.map(_.module.io.busy).reduce(_||_) || readers.map(_.module.io.busy).reduce(_||_) || write_issue_q.io.deq.valid
 
     {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to, config.sp_singleported)) }
@@ -423,7 +422,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }
 
         val ex_read_resp = io.srams.read(i).resp
-        val dma_resp_ready = writer.module.io.req.ready &&
+        val dma_resp_ready = write_issue_q.io.deq.ready &&
           !write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
           !write_issue_q.io.deq.bits.laddr.is_garbage()
 
@@ -513,7 +512,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }
 
         val ex_read_resp = io.acc.read(i).resp
-        val dma_resp_ready = writer.module.io.req.ready &&
+        val dma_resp_ready = write_issue_q.io.deq.ready &&
           write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.acc_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the accumulator bank's resp is valid, then that means that the write_issue_q's deq should also be valid
           !write_issue_q.io.deq.bits.laddr.is_garbage()
 

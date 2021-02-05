@@ -57,7 +57,6 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val max_col_dim = Mux(req.transpose, req.max_i, req.max_k)
   val max_blocks = Mux(max_col_dim <= max_block_len.U, max_col_dim, max_block_len.U)
-  // TODO: why do we have to use 1 when transpose
 
   val sp_addr_start = req.addr_start
 

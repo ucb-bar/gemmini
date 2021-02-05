@@ -137,7 +137,6 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.bytes_read := 1.U
   cmd_tracker.io.cmd_completed.ready := io.completed.ready
-  cmd_tracker.io.request_returned.bits.ld_cont_id := 0.U
 
   val cmd_id = RegEnableThru(cmd_tracker.io.alloc.bits.cmd_id, cmd_tracker.io.alloc.fire()) // TODO is this really better than a simple RegEnable?
   io.dma.req.bits.cmd_id := cmd_id

@@ -20,6 +20,9 @@ object DSEBaseConfig {
     ld_queue_length = 4,
     st_queue_length = 2,
     ex_queue_length = 8,
+    num_dma_readers = 1,
+    num_dma_writers = 1,
+    num_load_controllers = 1,
     rob_entries = 8,
     sp_banks = 4, // TODO support one-bank designs
     acc_banks = 1,
@@ -33,9 +36,6 @@ object DSEBaseConfig {
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 16,
     hasIm2col = false,
-    //for 2 ld_controller, 2 DMA
-    num_dma = 2,
-    num_data_controller = 2,
     inputType = SInt(8.W),
     outputType = SInt(19.W),
     accType = SInt(32.W),

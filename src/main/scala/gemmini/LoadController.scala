@@ -7,22 +7,18 @@ import Util._
 import freechips.rocketchip.config.Parameters
 
 // TODO deal with errors when reading scratchpad responses
-class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int, local_addr_t: LocalAddr, num_dma: Int)
+class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
                                (implicit p: Parameters) extends Module {
   import config._
 
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(rob_entries)))
 
-    //val dma = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
-    val dma = Vec(num_dma, new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits))
-    //for bundle, use Vec instead of Seq.fill
+    val dma = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
 
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
     val busy = Output(Bool())
-    //to differentiate between load controller
-    val ld_cont_id = Input(UInt(2.W))
   })
 
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -79,70 +75,39 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
   io.busy := cmd.valid || cmd_tracker.io.busy
 
-  // TODO: would this work fine? (want to make a dma request to a single DMA that is ready)
-  //val req_dma = MuxCase(0.U, Seq.tabulate(num_dma){
-  //  i => io.dma(i).req.ready -> i.asUInt()
-  //})
-
-  for(d <- 0 until num_dma){
-    io.dma(d).req.valid := false.B
-  } //initialization
-  val req_dma = VecInit(Seq.fill(num_dma)(false.B))
-  req_dma(0) := io.dma(0).req.ready
-  for(d <- 1 until num_dma){
-    req_dma(d) := io.dma(d).req.ready && !io.dma.take(d).map(_.req.ready).reduce(_||_)
-  }
-
-  io.dma.zipWithIndex.foreach{case(d, i) =>
-    d.req.bits.vaddr := vaddr + row_counter * stride
-    d.req.bits.laddr := localaddr_plus_row_counter
-    d.req.bits.len := cols
-    d.req.bits.repeats := Mux(stride === 0.U, rows - 1.U, 0.U)
-    d.req.bits.scale := scale
-    d.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
-    d.req.bits.status := mstatus
-    when(req_dma(i)){
-      d.req.valid:= (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
-        control_state === waiting_for_dma_req_ready ||
-        (control_state === sending_rows && row_counter =/= 0.U)
-    }
-  }
-
-  val dma_resp_fires = io.dma.map(_.resp.fire())
-  val dma_req_fires = io.dma.map(_.req.fire())
-  val dma_acc_bitwidth = io.dma.map(_.req.bits.has_acc_bitwidth)
-  // TODO: what if both dma's resp.fire() are 1?
-  val dma_resp = MuxCase(io.dma(0).resp.bits, Seq.tabulate(num_dma){
-    i => io.dma(i).resp.fire() -> io.dma(i).resp.bits
-  })
+  // DMA IO wiring
+  io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoLoad && cmd_tracker.io.alloc.ready) ||
+    control_state === waiting_for_dma_req_ready ||
+    (control_state === sending_rows && row_counter =/= 0.U)
+  io.dma.req.bits.vaddr := vaddr + row_counter * stride
+  io.dma.req.bits.laddr := localaddr_plus_row_counter
+  io.dma.req.bits.len := cols
+  io.dma.req.bits.repeats := Mux(stride === 0.U, rows - 1.U, 0.U)
+  io.dma.req.bits.scale := scale
+  io.dma.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
+  io.dma.req.bits.status := mstatus
 
   // Command tracker IO
-  cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad //TODO: no need to check load_controller ID here?
+  cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
   cmd_tracker.io.alloc.bits.bytes_to_read :=
-    Mux(dma_acc_bitwidth.reduce(_||_), cols * actual_rows_read * config.accType.getWidth.U,
+    Mux(io.dma.req.bits.has_acc_bitwidth, cols * actual_rows_read * config.accType.getWidth.U,
       cols * actual_rows_read * config.inputType.getWidth.U) / 8.U
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
-  cmd_tracker.io.request_returned.valid := dma_resp_fires.reduce(_||_) && (dma_resp.ld_cont_id === io.ld_cont_id) // to check if the dma response is for this load controller
-  cmd_tracker.io.request_returned.bits.cmd_id := dma_resp.cmd_id//Mux(io.dma_A.resp.fire(), io.dma_A.resp.bits.cmd_id, io.dma_B.resp.bits.cmd_id) // TODO use a bundle connect
-  cmd_tracker.io.request_returned.bits.ld_cont_id := dma_resp.ld_cont_id
-  cmd_tracker.io.request_returned.bits.bytes_read := dma_resp.bytesRead//Mux(io.dma_A.resp.fire(), io.dma_A.resp.bits.bytesRead, io.dma_B.resp.bits.bytesRead)
+  cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
+  cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
+  cmd_tracker.io.request_returned.bits.bytes_read := io.dma.resp.bits.bytesRead
   cmd_tracker.io.cmd_completed.ready := io.completed.ready
 
   val cmd_id = RegEnableThru(cmd_tracker.io.alloc.bits.cmd_id, cmd_tracker.io.alloc.fire()) // TODO is this really better than a simple RegEnable?
-  for(d <- 0 until num_dma){
-    io.dma(d).req.bits.cmd_id := cmd_id + d.asUInt() //load controller id + dma id
-    io.dma(d).req.bits.ld_cont_id := io.ld_cont_id
-  }
+  io.dma.req.bits.cmd_id := cmd_id
 
-  //io.dma.req.bits.cmd_id := cmd_id
   io.completed.valid := cmd_tracker.io.cmd_completed.valid
   io.completed.bits := cmd_tracker.io.cmd_completed.bits.tag.rob_id
 
   io.busy := cmd.valid || cmd_tracker.io.busy
 
   // Row counter
-  val dma_req_fire = dma_req_fires.reduce(_||_)
-  when (dma_req_fire) {
+  when (io.dma.req.fire()) {
     row_counter := wrappingAdd(row_counter, 1.U, actual_rows_read)
   }
 
@@ -159,19 +124,19 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
         }
 
         .elsewhen(DoLoad && cmd_tracker.io.alloc.fire()) {
-          control_state := Mux(dma_req_fire, sending_rows, waiting_for_dma_req_ready)
+          control_state := Mux(io.dma.req.fire(), sending_rows, waiting_for_dma_req_ready)
         }
       }
     }
 
     is (waiting_for_dma_req_ready) {
-      when (dma_req_fire) {
+      when (io.dma.req.fire()) {
         control_state := sending_rows
       }
     }
 
     is (sending_rows) {
-      val last_row = row_counter === 0.U || (row_counter === actual_rows_read-1.U && dma_req_fire)
+      val last_row = row_counter === 0.U || (row_counter === actual_rows_read-1.U && io.dma.req.fire())
 
       when (last_row) {
         control_state := waiting_for_command
