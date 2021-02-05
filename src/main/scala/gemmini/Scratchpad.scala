@@ -271,7 +271,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       writers(i).module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
       writers(i).module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
 
-      issued_write = issued_write || writers(i).module.io.req.ready
+      issued_write = issued_write || (writers(i).module.io.req.ready && write_issue_q.io.deq.valid && is_valid_write)
     }
     write_issue_q.io.deq.ready := issued_write
 
