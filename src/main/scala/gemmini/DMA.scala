@@ -249,6 +249,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.reserve.entry.lg_len_req := DontCare // TODO just remove this from the IO completely
     io.reserve.entry.bytes_to_read := read_bytes_read
     io.reserve.entry.cmd_id := req.cmd_id
+    io.reserve.entry.ld_cont_id := req.ld_cont_id
 
     io.reserve.entry.addr := req.spaddr + meshRows.U *
       Mux(req.has_acc_bitwidth,
