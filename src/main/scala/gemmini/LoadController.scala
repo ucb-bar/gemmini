@@ -84,15 +84,14 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   //  i => io.dma(i).req.ready -> i.asUInt()
   //})
 
-  val req_dma = Seq.fill(num_dma)(false.B)
   for(d <- 0 until num_dma){
     io.dma(d).req.valid := false.B
   } //initialization
-  for(d <- 1 until num_dma){
-    req_dma(d) := io.dma(d).req.ready && !io.dma.take(d-1).map(_.req.ready).reduce(_||_)
-  }
+  val req_dma = VecInit(Seq.fill(num_dma)(false.B))
   req_dma(0) := io.dma(0).req.ready
-
+  for(d <- 1 until num_dma){
+    req_dma(d) := io.dma(d).req.ready && !io.dma.take(d).map(_.req.ready).reduce(_||_)
+  }
 
   io.dma.zipWithIndex.foreach{case(d, i) =>
     d.req.bits.vaddr := vaddr + row_counter * stride
