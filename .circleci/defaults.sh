@@ -14,7 +14,7 @@
 #############
 
 # make parallelism
-CI_MAKE_NPROC=8
+CI_MAKE_NPROC=4
 LOCAL_MAKE_NPROC=$CI_MAKE_NPROC
 
 # verilator version
