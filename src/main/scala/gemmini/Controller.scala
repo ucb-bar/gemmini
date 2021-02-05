@@ -341,7 +341,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   for(d <- 0 until num_data_controller){
     load_controller(d).io.ld_cont_id := (d*num_dma).asUInt()
     for(dd <- 0 until num_dma){
-      spad.module.io.dma.read(d*num_dma+dd) := load_controller(d).io.dma(dd).req
+      spad.module.io.dma.read(d*num_dma+dd).req := load_controller(d).io.dma(dd).req
       load_controller(d).io.dma(dd).resp.valid := spad.module.io.dma.read(d*num_dma+dd).resp.valid
       load_controller(d).io.dma(dd).resp.bits := spad.module.io.dma.read(d*num_dma+dd).resp.bits
     }
