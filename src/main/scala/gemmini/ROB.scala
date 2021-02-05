@@ -233,7 +233,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     }
 
     new_entry.deps := (Cat(raws) | Cat(wars) | Cat(waws) | Cat(older_in_same_q) |
-      Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).toBools().reverse
+      Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).asBools().reverse
 
     raws_probe := Cat(raws)
     waws_probe := Cat(waws)
@@ -348,7 +348,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     printf(p"Last allocated: $last_allocated\n\n")
   }
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     entries.foreach(_.valid := false.B)
   }
 }

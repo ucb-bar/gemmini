@@ -18,7 +18,7 @@ Gemmini is implemented as a RoCC accelerator with non-standard RISC-V custom ins
 
 At the heart of the accelerator lies a systolic array which performs matrix multiplications. By default, the matrix multiplication support both _output-stationary_ and _weight-stationary_ dataflows, which programmers can pick between at runtime. However, the dataflow can also be hardened at elaboration time.
 
-The systolic array's inputs and outputs are stored in an explicity managed scratchpad, made up of banked SRAMs. A DMA engine facilitates the tranfer of data between main memory and the scratchpad.
+The systolic array's inputs and outputs are stored in an explicity managed scratchpad, made up of banked SRAMs. A DMA engine facilitates the transfer of data between main memory and the scratchpad.
 
 Because weight-stationary dataflows require an accumulator outside the systolic array, we add a final SRAM bank, equipped with adder units, which can be conceptually considered an extension of the scratchpad memory space. The systolic array can store results to any address in the accumulator, and can also read new inputs from any address in the accumulator. The DMA engine can also tranfer data directly between the accumulator and main memory, which is often necessary to load in biases.
 
@@ -75,7 +75,7 @@ The ``software`` directory of the generator includes the aforementioned library 
 The Gemmini generator generates a C header file based on the generator parameters. This header files gets compiled together with the matrix multiplication library to tune library performance. The generated header file can be found under ``software/gemmini-rocc-tests/include/gemmini_params.h``
 
 Gemmini can also be used to run ONNX-specified neural-networks through a port of Microsoft's ONNX-Runtime framework. The port is included as the [onnxruntime-riscv](https://github.com/pranav-prakash/onnxruntime-riscv) repository submoduled in the `software` directory.
-To start using ONNX-Runtime, run `git submodule update --init --recursive software/onnxruntime-riscv`, and read the documentation at [here](https://github.com/pranav-prakash/onnxruntime-riscv/blob/systolic/systolic_runner/docs).
+To start using ONNX-Runtime, run `git submodule update --init --recursive software/onnxruntime-riscv`, and read the documentation [here](https://github.com/pranav-prakash/onnxruntime-riscv/blob/systolic/systolic_runner/docs).
 
 ## Build and Run Gemmini Tests
 
@@ -317,3 +317,15 @@ This section describes an additional set of RoCC instructions that configure and
 ### `COMPUTE_CISC` runs a complete hardware tiling sequence with the configured A, B, C, D, M, N, K, RPT_BIAS values
 **Format:** `compute_cisc`
 - `funct` = 17
+
+# Citing Gemmini
+If Gemmini helps you in your academic research, you are encouraged to cite our paper. Here is an example bibtex:
+```
+@article{genc2019gemmini,
+  title={Gemmini: An Agile Systolic Array Generator Enabling Systematic Evaluations of Deep-Learning Architectures},
+  author={Genc, Hasan and Haj-Ali, Ameer and Iyer, Vighnesh and Amid, Alon and Mao, Howard and Wright, John and Schmidt, Colin and Zhao, Jerry and Ou, Albert and Banister, Max and Shao, Yakun Sophia and Nikolic, Borivoje and Stoica, Ion and Asanovic, Krste},
+  journal={arXiv preprint arXiv:1911.09925},
+  year={2019}
+}
+```
+

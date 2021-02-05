@@ -11,7 +11,6 @@ import freechips.rocketchip.util.InOrderArbiter
 
 import Util._
 
-
 class DecoupledTLBReq(val lgMaxSize: Int)(implicit p: Parameters) extends CoreBundle {
   val tlb_req = new TLBReq(lgMaxSize)
   val status = new MStatus
@@ -31,30 +30,22 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 
   val lgMaxSize = log2Ceil(maxSize)
   val io = new Bundle {
-    // val req = Flipped(Decoupled(new TLBReq(lgMaxSize)))
-    val req = Flipped(Decoupled(new DecoupledTLBReq(lgMaxSize)))
-    val resp = Valid(new TLBResp)
+    val req = Flipped(Valid(new DecoupledTLBReq(lgMaxSize)))
+    val resp = new TLBResp
     val ptw = new TLBPTWIO
 
     val exp = new TLBExceptionIO
   }
 
-  val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(entries)))
-  val req = RegEnableThru(io.req.bits, io.req.fire())
+  val interrupt = RegInit(false.B)
+  io.exp.interrupt := interrupt
 
-  val s_idle :: s_waiting_for_resp :: s_interrupt :: Nil = Enum(3)
-  val state = RegInit(s_idle)
-
-  io.req.ready := state === s_idle
-  tlb.io.req.valid := io.req.fire() || state === s_waiting_for_resp
-  tlb.io.req.bits := req.tlb_req
-
-  io.resp.valid := false.B
-  io.resp.bits := tlb.io.resp
-
+  val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(nSets=1, nWays=entries)))
+  tlb.io.req.valid := io.req.valid
+  tlb.io.req.bits := io.req.bits.tlb_req
+  io.resp := tlb.io.resp
   tlb.io.kill := false.B
 
-  io.exp.interrupt := state === s_interrupt
   tlb.io.sfence.valid := io.exp.flush()
   tlb.io.sfence.bits.rs1 := false.B
   tlb.io.sfence.bits.rs2 := false.B
@@ -62,31 +53,11 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   tlb.io.sfence.bits.asid := DontCare
 
   io.ptw <> tlb.io.ptw
-  tlb.io.ptw.status := req.status
-
-  when (io.req.fire() || state === s_waiting_for_resp) {
-    // We could actually check the response from the TLB instantaneously to get a response in the same cycle. However,
-    // our current arbiters don't play well with that scenario. To get the instantaneous response, simple erase the
-    // "state === s_idle" condition from the "elsewhen" below
-
-    val miss = tlb.io.resp.miss
-    val exception = Mux(req.tlb_req.cmd === M_XRD, tlb.io.resp.pf.ld || tlb.io.resp.ae.ld, tlb.io.resp.pf.st || tlb.io.resp.ae.st)
-
-    when (exception) {
-      state := s_interrupt
-    }.elsewhen (miss || state === s_idle) {
-      state := s_waiting_for_resp
-    }.otherwise {
-      io.resp.valid := true.B
-      state := s_idle
-    }
-  }
-
-  when (state === s_interrupt) {
-    when (tlb.io.sfence.fire()) {
-      io.resp.valid := io.exp.flush_skip
-      state := Mux(io.exp.flush_retry, s_waiting_for_resp, s_idle)
-    }
+  tlb.io.ptw.status := io.req.bits.status
+  val exception = io.req.valid && Mux(io.req.bits.tlb_req.cmd === M_XRD, tlb.io.resp.pf.ld || tlb.io.resp.ae.ld, tlb.io.resp.pf.st || tlb.io.resp.ae.st)
+  when (exception) { interrupt := true.B }
+  when (interrupt && tlb.io.sfence.fire()) {
+    interrupt := false.B
   }
 
   assert(!io.exp.flush_retry || !io.exp.flush_skip, "TLB: flushing with both retry and skip at same time")
@@ -95,8 +66,8 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
   val lgMaxSize = log2Ceil(coreDataBytes)
   // val req = Decoupled(new TLBReq(lgMaxSize))
-  val req = Decoupled(new DecoupledTLBReq(lgMaxSize))
-  val resp = Flipped(Valid(new TLBResp))
+  val req = Valid(new DecoupledTLBReq(lgMaxSize))
+  val resp = Flipped(new TLBResp)
 }
 
 class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
@@ -108,25 +79,43 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
   })
 
   val lgMaxSize = log2Ceil(coreDataBytes)
-  // val tlbArb = Module(new InOrderArbiter(new TLBReq(lgMaxSize), new TLBResp, nClients))
-  val tlbArb = Module(new InOrderArbiter(new DecoupledTLBReq(lgMaxSize), new TLBResp, nClients))
+  val tlbArb = Module(new RRArbiter(new DecoupledTLBReq(lgMaxSize), nClients))
   val tlb = Module(new DecoupledTLB(entries, maxSize))
-  tlb.io.req <> tlbArb.io.out_req
-
-  // tlbArb.io.out_resp <> tlb.io.resp
-  tlbArb.io.out_resp.valid := tlb.io.resp.valid
-  tlbArb.io.out_resp.bits := tlb.io.resp.bits
+  tlb.io.req.valid := tlbArb.io.out.valid
+  tlb.io.req.bits := tlbArb.io.out.bits
+  tlbArb.io.out.ready := true.B
 
   io.ptw <> tlb.io.ptw
   io.exp <> tlb.io.exp
 
-  tlbArb.io.in_req <> io.clients.map(_.req)
-  io.clients.zip(tlbArb.io.in_resp).foreach {
-    case (client, arb_resp) =>
-      // client.resp <> arb_resp
-      client.resp.valid := arb_resp.valid
-      client.resp.bits := arb_resp.bits
-      arb_resp.ready := true.B
+  io.clients.zip(tlbArb.io.in).foreach { case (client, req) =>
+    val last_translated_valid = RegInit(false.B)
+    val last_translated_vpn = RegInit(0.U(vaddrBits.W))
+    val last_translated_ppn = RegInit(0.U(paddrBits.W))
+
+    val l0_tlb_hit = last_translated_valid && ((client.req.bits.tlb_req.vaddr >> pgIdxBits) === (last_translated_vpn >> pgIdxBits))
+    val l0_tlb_paddr = Cat(last_translated_ppn >> pgIdxBits, client.req.bits.tlb_req.vaddr(pgIdxBits-1,0))
+
+
+    when (req.fire() && !tlb.io.resp.miss) {
+      last_translated_valid := true.B
+      last_translated_vpn := req.bits.tlb_req.vaddr
+      last_translated_ppn := tlb.io.resp.paddr
+    }
+    when (io.exp.flush()) {
+      last_translated_valid := false.B
+    }
+
+    req.valid := RegNext(client.req.valid && !l0_tlb_hit)
+    req.bits := RegNext(client.req.bits)
+
+    when (!req.fire()) {
+      client.resp := DontCare
+      client.resp.paddr := RegNext(l0_tlb_paddr)
+      client.resp.miss := !RegNext(l0_tlb_hit)
+    } .otherwise {
+      client.resp := tlb.io.resp
+    }
   }
 }
 
