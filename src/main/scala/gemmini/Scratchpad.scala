@@ -294,6 +294,36 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out) else
       VectorScalarMultiplier(config.mvin_scale_acc_args, config.accType, config.meshColumns * config.tileColumns, chiselTypeOf(reader(0).module.io.resp.bits), is_acc = true)
 
+    val req_vsm = VecInit(Seq.fill(num_dma*num_data_controller)(false.B))
+    req_vsm(0) := reader(0).module.io.resp.valid
+    for(d <- 1 until num_dma*num_data_controller){
+      req_vsm(d) := reader(d).module.io.resp.valid && !reader.take(d).map(_.module.io.resp.valid).reduce(_||_)
+    }
+    val reader_turn = MuxCase(reader(0).module.io.resp, req_vsm.zipWithIndex.map{ case(v, i) =>
+      (v) -> reader(i).module.io.resp })
+    mvin_scale_in.valid := reader_turn.valid && (mvin_scale_shared.B || !reader_turn.bits.is_acc ||
+      (reader_turn.bits.is_acc && !reader_turn.bits.has_acc_bitwidth))
+
+    mvin_scale_in.bits.in := reader_turn.bits.data.asTypeOf(chiselTypeOf(mvin_scale_in.bits.in))
+    mvin_scale_in.bits.scale := reader_turn.bits.scale.asTypeOf(mvin_scale_t)
+    mvin_scale_in.bits.repeats := reader_turn.bits.rows
+    mvin_scale_in.bits.last := reader_turn.bits.last
+    mvin_scale_in.bits.tag := reader_turn.bits
+
+    mvin_scale_out.ready := false.B
+
+    if (!mvin_scale_shared) {
+      mvin_scale_acc_in.valid := reader_turn.valid &&
+        (reader_turn.bits.is_acc && reader_turn.bits.has_acc_bitwidth)
+      mvin_scale_acc_in.bits.in := reader_turn.bits.data.asTypeOf(chiselTypeOf(mvin_scale_acc_in.bits.in))
+      mvin_scale_acc_in.bits.scale := reader_turn.bits.scale.asTypeOf(mvin_scale_acc_t)
+      mvin_scale_acc_in.bits.repeats := reader_turn.bits.rows
+      mvin_scale_acc_in.bits.last := reader_turn.bits.last
+      mvin_scale_acc_in.bits.tag := reader_turn.bits
+
+      mvin_scale_acc_out.ready := false.B
+    }
+/*
     mvin_scale_in.valid := reader.module.io.resp.valid && (mvin_scale_shared.B || !reader.module.io.resp.bits.is_acc ||
       (reader.module.io.resp.bits.is_acc && !reader.module.io.resp.bits.has_acc_bitwidth))
 
@@ -316,7 +346,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       mvin_scale_acc_out.ready := false.B
     }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+ */
     for(d <- 0 until num_dma*num_data_controller) {
       reader(d).module.io.resp.ready := Mux(reader(d).module.io.resp.bits.is_acc && reader(d).module.io.resp.bits.has_acc_bitwidth,
         mvin_scale_acc_in.ready, mvin_scale_in.ready)
