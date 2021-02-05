@@ -176,7 +176,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   // id_node :=* reader.node
   // id_node :=* writer.node
 
-  xbar_node := reader.node // TODO
+  // TODO: is this right way to do?
+  for(d <- 0 until num_dma*num_data_controller){
+    xbar_node := reader(d).node
+  }
+  //xbar_node := reader.node
   xbar_node := writer.node
   id_node := xbar_node
 
