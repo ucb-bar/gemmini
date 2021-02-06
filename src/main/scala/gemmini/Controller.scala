@@ -184,6 +184,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val raw_cmd = Queue(io.cmd)
 
   // TODO replace 4,12,2 with parameters based on ROB size
+  val loop_conv_unroller_busy = false.B
   /*val (unrolled_cmd_after_conv, loop_conv_unroller_busy) = LoopConv(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
     meshRows*tileRows, coreMaxAddrBits, rob_entries, 4, 12, 2, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes)
