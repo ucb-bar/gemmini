@@ -398,7 +398,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         val too_early = vaddr_offset >= end_of_beat.U
         val too_late = vaddr_offset +& bytesLeft <= start_of_beat.U
 
-        Mux(too_early || too_late, 0.U, beatBytes.U - (left_shift +& right_shift))
+        b := Mux(too_early || too_late, 0.U, beatBytes.U - (left_shift +& right_shift))
       }
 
       packet
