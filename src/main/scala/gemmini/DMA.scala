@@ -289,7 +289,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val data = UInt(dataWidth.W)
-  val len = UInt(16.W) // The number of bytes to write // TODO magic number
+  val len = UInt(log2Up(dataWidth/8+1).W) // The number of bytes to write
   val status = new MStatus
 
   // Pooling variables
@@ -352,7 +352,10 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val vaddr = UInt(vaddrBits.W)
       val is_full = Bool()
 
-      def bytes_written(dummy: Int = 0) = PopCount(mask.flatten)
+      val bytes_written = UInt(log2Up(dataBytes+1).W)
+      val bytes_written_per_beat = Vec(maxBeatsPerReq, UInt(log2Up(beatBytes+1).W))
+
+      // def bytes_written(dummy: Int = 0) = PopCount(mask.flatten)
       def total_beats(dummy: Int = 0) = Mux(size < beatBytes.U, 1.U, size / beatBytes.U)
     }
 
@@ -364,16 +367,12 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val write_packets = write_sizes.map { s =>
       val lg_s = log2Ceil(s)
       val vaddr_aligned_to_size = if (s == 1) vaddr else Cat(vaddr(vaddrBits-1, lg_s), 0.U(lg_s.W))
+      val vaddr_offset = if (s > 1) vaddr(lg_s - 1, 0) else 0.U
 
-      val mask = (0 until maxBytes).map { i =>
-        if (s > 1) {
-          val vaddr_offset = vaddr(lg_s - 1, 0)
+      val mask = (0 until maxBytes).map { i => i.U >= vaddr_offset && i.U < vaddr_offset +& bytesLeft && (i < s).B }
 
-          i.U >= vaddr_offset &&
-            i.U < vaddr_offset +& bytesLeft
-        } else {
-          true.B
-        } && (i < s).B
+      val bytes_written = {
+        Mux(vaddr_offset +& bytesLeft > s.U, s.U - vaddr_offset, bytesLeft)
       }
 
       val packet = Wire(new Packet())
@@ -383,10 +382,29 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       packet.vaddr := vaddr_aligned_to_size
       packet.is_full := mask.take(s).reduce(_ && _)
 
+      packet.bytes_written := bytes_written
+      packet.bytes_written_per_beat.zipWithIndex.foreach { case (b, i) =>
+        val start_of_beat = i * beatBytes
+        val end_of_beat = (i+1) * beatBytes
+
+        val left_shift = Mux(vaddr_offset >= start_of_beat.U && vaddr_offset < end_of_beat.U,
+          vaddr_offset - start_of_beat.U,
+          0.U)
+
+        val right_shift = Mux(vaddr_offset +& bytesLeft >= start_of_beat.U && vaddr_offset +& bytesLeft < end_of_beat.U,
+          end_of_beat.U - (vaddr_offset +& bytesLeft),
+          0.U)
+
+        val too_early = vaddr_offset >= end_of_beat.U
+        val too_late = vaddr_offset +& bytesLeft <= start_of_beat.U
+
+        Mux(too_early || too_late, 0.U, beatBytes.U - (left_shift +& right_shift))
+      }
+
       packet
     }
     val best_write_packet = write_packets.reduce { (acc, p) =>
-      Mux(p.bytes_written() > acc.bytes_written(), p, acc)
+      Mux(p.bytes_written > acc.bytes_written, p, acc)
     }
     val write_packet = RegEnableThru(best_write_packet, state === s_writing_new_block)
 
@@ -402,7 +420,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val write_mask = write_packet.mask(beatsSent)
     val write_shift = PriorityEncoder(write_mask)
 
-    val bytes_written_this_beat = PopCount(write_mask)
+    // val bytes_written_this_beat = PopCount(write_mask)
+    val bytes_written_this_beat = write_packet.bytes_written_per_beat(beatsSent)
 
     // Firing off TileLink write requests
     val putFull = edge.Put(
@@ -457,8 +476,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     retry_a.bits := translate_q.io.deq.bits
     assert(retry_a.ready)
 
-    tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss
-    tl.a.bits   := translate_q.io.deq.bits.tl_a
+    tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
+    tl.a.bits := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
 
     tl.d.ready := xactBusy.orR()
