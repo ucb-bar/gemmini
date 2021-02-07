@@ -236,7 +236,11 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     tl.a.bits   := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
 
-
+    val cycles = freechips.rocketchip.util.WideCounter(32)
+    when (tl.a.fire()) {
+      printf("GEMMINI_MEM %x %x %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size)
+    }
+    
     io.reserve.valid := state === s_req_new_block && untranslated_a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
     io.reserve.entry.is_acc := req.is_acc
@@ -464,6 +468,11 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits   := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
+
+    val cycles = freechips.rocketchip.util.WideCounter(32)
+    when (tl.a.fire()) {
+      printf("GEMMINI_MEM %x %x %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size)
+    }
 
     tl.d.ready := xactBusy.orR()
 
