@@ -292,7 +292,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val data = UInt(dataWidth.W)
-  val len = UInt(16.W) // The number of bytes to write // TODO magic number
+  val len = UInt(log2Up(dataWidth/8+1).W) // The number of bytes to write
   val status = new MStatus
 
   // Pooling variables
@@ -329,7 +329,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     val req = Reg(new StreamWriteRequest(dataWidth))
 
-    val bytesSent = Reg(UInt(log2Ceil(dataBytes).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
+    val bytesSent = Reg(UInt(log2Ceil(dataBytes+1).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
     val bytesLeft = req.len - bytesSent
 
     val xactBusy = RegInit(0.U(nXacts.W))
@@ -349,13 +349,15 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     // Select the size and mask of the TileLink request
     class Packet extends Bundle {
-      val size = UInt(log2Ceil(maxBytes).W)
-      val lg_size = UInt(log2Ceil(log2Ceil(maxBytes)).W)
+      val size = UInt(log2Ceil(maxBytes+1).W)
+      val lg_size = UInt(log2Ceil(log2Ceil(maxBytes+1)+1).W)
       val mask = Vec(maxBeatsPerReq, Vec(beatBytes, Bool()))
       val vaddr = UInt(vaddrBits.W)
       val is_full = Bool()
 
-      def bytes_written(dummy: Int = 0) = PopCount(mask.flatten)
+      val bytes_written = UInt(log2Up(dataBytes+1).W)
+      val bytes_written_per_beat = Vec(maxBeatsPerReq, UInt(log2Up(beatBytes+1).W))
+
       def total_beats(dummy: Int = 0) = Mux(size < beatBytes.U, 1.U, size / beatBytes.U)
     }
 
@@ -367,16 +369,12 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val write_packets = write_sizes.map { s =>
       val lg_s = log2Ceil(s)
       val vaddr_aligned_to_size = if (s == 1) vaddr else Cat(vaddr(vaddrBits-1, lg_s), 0.U(lg_s.W))
+      val vaddr_offset = if (s > 1) vaddr(lg_s - 1, 0) else 0.U
 
-      val mask = (0 until maxBytes).map { i =>
-        if (s > 1) {
-          val vaddr_offset = vaddr(lg_s - 1, 0)
+      val mask = (0 until maxBytes).map { i => i.U >= vaddr_offset && i.U < vaddr_offset +& bytesLeft && (i < s).B }
 
-          i.U >= vaddr_offset &&
-            i.U < vaddr_offset +& bytesLeft
-        } else {
-          true.B
-        } && (i < s).B
+      val bytes_written = {
+        Mux(vaddr_offset +& bytesLeft > s.U, s.U - vaddr_offset, bytesLeft)
       }
 
       val packet = Wire(new Packet())
@@ -386,10 +384,29 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       packet.vaddr := vaddr_aligned_to_size
       packet.is_full := mask.take(s).reduce(_ && _)
 
+      packet.bytes_written := bytes_written
+      packet.bytes_written_per_beat.zipWithIndex.foreach { case (b, i) =>
+        val start_of_beat = i * beatBytes
+        val end_of_beat = (i+1) * beatBytes
+
+        val left_shift = Mux(vaddr_offset >= start_of_beat.U && vaddr_offset < end_of_beat.U,
+          vaddr_offset - start_of_beat.U,
+          0.U)
+
+        val right_shift = Mux(vaddr_offset +& bytesLeft >= start_of_beat.U && vaddr_offset +& bytesLeft < end_of_beat.U,
+          end_of_beat.U - (vaddr_offset +& bytesLeft),
+          0.U)
+
+        val too_early = vaddr_offset >= end_of_beat.U
+        val too_late = vaddr_offset +& bytesLeft <= start_of_beat.U
+
+        b := Mux(too_early || too_late, 0.U, beatBytes.U - (left_shift +& right_shift))
+      }
+
       packet
     }
     val best_write_packet = write_packets.reduce { (acc, p) =>
-      Mux(p.bytes_written() > acc.bytes_written(), p, acc)
+      Mux(p.bytes_written > acc.bytes_written, p, acc)
     }
     val write_packet = RegEnableThru(best_write_packet, state === s_writing_new_block)
 
@@ -405,7 +422,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val write_mask = write_packet.mask(beatsSent)
     val write_shift = PriorityEncoder(write_mask)
 
-    val bytes_written_this_beat = PopCount(write_mask)
+    val bytes_written_this_beat = write_packet.bytes_written_per_beat(beatsSent)
 
     // Firing off TileLink write requests
     val putFull = edge.Put(
@@ -430,7 +447,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
-    xactBusy_fire := untranslated_a.fire()
+    xactBusy_fire := untranslated_a.fire() && state === s_writing_new_block
     untranslated_a.valid := (state === s_writing_new_block || state === s_writing_beats) && !xactBusy.andR()
     untranslated_a.bits.tl_a := Mux(write_full, putFull, putPartial)
     untranslated_a.bits.vaddr := write_vaddr
@@ -438,9 +455,13 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     // 0 goes to retries, 1 goes to state machine
     val retry_a = Wire(Decoupled(new TLBundleAWithInfo))
-    val tlb_arb = Module(new Arbiter(new TLBundleAWithInfo, 2))
+    val shadow_retry_a = Module(new Queue(new TLBundleAWithInfo, 1))
+    shadow_retry_a.io.enq.valid := false.B
+    shadow_retry_a.io.enq.bits := DontCare
+    val tlb_arb = Module(new Arbiter(new TLBundleAWithInfo, 3))
     tlb_arb.io.in(0) <> retry_a
-    tlb_arb.io.in(1) <> untranslated_a
+    tlb_arb.io.in(1) <> shadow_retry_a.io.deq
+    tlb_arb.io.in(2) <> untranslated_a
 
     val tlb_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
     tlb_q.io.enq <> tlb_arb.io.out
@@ -454,14 +475,19 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     val translate_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
     translate_q.io.enq <> tlb_q.io.deq
+    when (retry_a.valid) {
+      translate_q.io.enq.valid := false.B
+      shadow_retry_a.io.enq.valid := tlb_q.io.deq.valid
+      shadow_retry_a.io.enq.bits  := tlb_q.io.deq.bits
+    }
     translate_q.io.deq.ready := true.B
 
     retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready)
     retry_a.bits := translate_q.io.deq.bits
     assert(retry_a.ready)
 
-    tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss
-    tl.a.bits   := translate_q.io.deq.bits.tl_a
+    tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
+    tl.a.bits := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
 
     tl.d.ready := xactBusy.orR()
@@ -470,7 +496,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       when (state === s_writing_new_block) {
         beatsLeft := write_beats - 1.U
 
-        val next_vaddr = req.vaddr + bytes_written_this_beat
+        val next_vaddr = req.vaddr + write_packet.bytes_written
         req.vaddr := next_vaddr
 
         bytesSent := bytesSent + bytes_written_this_beat
@@ -488,9 +514,9 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         beatsLeft := beatsLeft - 1.U
         bytesSent := bytesSent + bytes_written_this_beat
 
-        when (beatsLeft === 0.U) {
-          val new_page = req.vaddr(pgIdxBits-1, 0) === 0.U
+        assert(beatsLeft > 0.U)
 
+        when (beatsLeft === 1.U) {
           when (bytes_written_this_beat >= bytesLeft) {
             // We're done with this request at this point
             state_machine_ready_for_req := true.B
