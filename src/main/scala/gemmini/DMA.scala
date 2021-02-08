@@ -289,8 +289,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val data = UInt(dataWidth.W)
-  // val len = UInt(log2Up(dataWidth/8+1).W) // The number of bytes to write
-  val len = UInt(16.W) // The number of bytes to write
+  val len = UInt(log2Up(dataWidth/8+1).W) // The number of bytes to write
   val status = new MStatus
 
   // Pooling variables
@@ -353,10 +352,9 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val vaddr = UInt(vaddrBits.W)
       val is_full = Bool()
 
-      // val bytes_written = UInt(log2Up(dataBytes+1).W)
-      // val bytes_written_per_beat = Vec(maxBeatsPerReq, UInt(log2Up(beatBytes+1).W))
+      val bytes_written = UInt(log2Up(dataBytes+1).W)
+      val bytes_written_per_beat = Vec(maxBeatsPerReq, UInt(log2Up(beatBytes+1).W))
 
-      def bytes_written(dummy: Int = 0) = PopCount(mask.flatten)
       def total_beats(dummy: Int = 0) = Mux(size < beatBytes.U, 1.U, size / beatBytes.U)
     }
 
@@ -383,8 +381,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       packet.vaddr := vaddr_aligned_to_size
       packet.is_full := mask.take(s).reduce(_ && _)
 
-      // packet.bytes_written := bytes_written
-      /*packet.bytes_written_per_beat.zipWithIndex.foreach { case (b, i) =>
+      packet.bytes_written := bytes_written
+      packet.bytes_written_per_beat.zipWithIndex.foreach { case (b, i) =>
         val start_of_beat = i * beatBytes
         val end_of_beat = (i+1) * beatBytes
 
@@ -400,15 +398,16 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         val too_late = vaddr_offset +& bytesLeft <= start_of_beat.U
 
         b := Mux(too_early || too_late, 0.U, beatBytes.U - (left_shift +& right_shift))
-      }*/
+      }
 
       packet
     }
     val best_write_packet = write_packets.reduce { (acc, p) =>
-      // Mux(p.bytes_written > acc.bytes_written, p, acc)
-      Mux(p.bytes_written() > acc.bytes_written(), p, acc)
+      Mux(p.bytes_written > acc.bytes_written, p, acc)
     }
     val write_packet = RegEnableThru(best_write_packet, state === s_writing_new_block)
+
+    dontTouch(write_packet)
 
     val write_size = write_packet.size
     val lg_write_size = write_packet.lg_size
@@ -422,8 +421,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val write_mask = write_packet.mask(beatsSent)
     val write_shift = PriorityEncoder(write_mask)
 
-    val bytes_written_this_beat = PopCount(write_mask)
-    // val bytes_written_this_beat = write_packet.bytes_written_per_beat(beatsSent)
+    // val bytes_written_this_beat = PopCount(write_mask)
+    val bytes_written_this_beat = write_packet.bytes_written_per_beat(beatsSent)
 
     // Firing off TileLink write requests
     val putFull = edge.Put(
@@ -499,7 +498,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       when (state === s_writing_new_block) {
         beatsLeft := write_beats - 1.U
 
-        val next_vaddr = req.vaddr + write_packet.bytes_written()
+        val next_vaddr = req.vaddr + write_packet.bytes_written
         req.vaddr := next_vaddr
 
         bytesSent := bytesSent + bytes_written_this_beat
