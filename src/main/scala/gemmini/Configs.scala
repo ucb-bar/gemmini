@@ -56,7 +56,7 @@ object GemminiConfigs {
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     dataflow = Dataflow.BOTH,
     acc_capacity = CapacityInKilobytes(64),
-    mem_pipeline = 1,
+    mem_pipeline = 4,
     hasIm2col = true, //declare im2col block
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
@@ -123,7 +123,7 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      0, Float(8, 24),
+      4, Float(8, 24),
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (elem_t)y);})"
     )),
