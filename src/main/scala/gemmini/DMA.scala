@@ -11,6 +11,7 @@ import freechips.rocketchip.tilelink.{TLBundleA}
 import testchipip.TLHelper
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
+import midas.targetutils.FpgaDebug
 
 import Util._
 
@@ -286,6 +287,12 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
       state := s_req_new_block
     }
+
+    FpgaDebug(state)
+    FpgaDebug(io.req.ready)
+    FpgaDebug(io.req.valid)
+    FpgaDebug(io.req.bits.len)
+    FpgaDebug(bytesRequested)
   }
 }
 
@@ -519,5 +526,12 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
       state := Mux(io.req.bits.store_en, s_writing_new_block, s_idle)
     }
+
+    FpgaDebug(state)
+    FpgaDebug(io.req.ready)
+    FpgaDebug(io.req.valid)
+    FpgaDebug(io.req.bits.len)
+    FpgaDebug(bytesSent)
+    FpgaDebug(xactBusy)
  }
 }

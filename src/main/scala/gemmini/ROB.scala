@@ -3,11 +3,10 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-
 import freechips.rocketchip.tile.RoCCCommand
-
 import GemminiISA._
 import Util._
+import midas.targetutils.FpgaDebug
 //import midas.targetutils.FpgaDebug
 
 // TODO unify this class with GemminiCmdWithDeps
@@ -317,8 +316,19 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   io.st_utilization := utilization_st_q
   io.ex_utilization := utilization_ex_q
 
+  FpgaDebug(io.ld_utilization)
+  FpgaDebug(io.st_utilization)
+  FpgaDebug(io.ex_utilization)
+
   val packed_deps = VecInit(entries.map(e => Cat(e.bits.deps)))
   dontTouch(packed_deps)
+
+  val valids = VecInit(entries.map(_.valid))
+  val functs = VecInit(entries.map(_.bits.cmd.inst.funct))
+
+  FpgaDebug(packed_deps)
+  FpgaDebug(valids)
+  FpgaDebug(functs)
 
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
