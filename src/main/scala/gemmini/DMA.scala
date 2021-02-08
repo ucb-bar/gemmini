@@ -499,7 +499,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       when (state === s_writing_new_block) {
         beatsLeft := write_beats - 1.U
 
-        val next_vaddr = req.vaddr + bytes_written_this_beat
+        val next_vaddr = req.vaddr + write_packet.bytes_written()
         req.vaddr := next_vaddr
 
         bytesSent := bytesSent + bytes_written_this_beat
