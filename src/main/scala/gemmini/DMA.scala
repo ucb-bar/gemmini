@@ -410,8 +410,6 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
     val write_packet = RegEnableThru(best_write_packet, state === s_writing_new_block)
 
-    dontTouch(write_packet)
-
     val write_size = write_packet.size
     val lg_write_size = write_packet.lg_size
     val write_beats = write_packet.total_beats()
@@ -424,7 +422,6 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val write_mask = write_packet.mask(beatsSent)
     val write_shift = PriorityEncoder(write_mask)
 
-    // val bytes_written_this_beat = PopCount(write_mask)
     val bytes_written_this_beat = write_packet.bytes_written_per_beat(beatsSent)
 
     // Firing off TileLink write requests
@@ -455,8 +452,6 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     untranslated_a.bits.tl_a := Mux(write_full, putFull, putPartial)
     untranslated_a.bits.vaddr := write_vaddr
     untranslated_a.bits.status := req.status
-
-    dontTouch(untranslated_a)
 
     // 0 goes to retries, 1 goes to state machine
     val retry_a = Wire(Decoupled(new TLBundleAWithInfo))
