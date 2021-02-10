@@ -106,8 +106,13 @@ class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Ve
   q.io.enq.bits.fromDMA := RegNext(io.read.req.bits.fromDMA)
   q.io.enq.valid := RegNext(io.read.req.fire())
 
-  val p = Pipeline(q.io.deq, mem_pipeline, Seq.fill(mem_pipeline)((x: PipelinedRdataAndActT) => x) :+ {
-    x: PipelinedRdataAndActT =>
+  class ScaleModule extends Module {
+    val io = IO(new Bundle {
+      val in = Flipped(Decoupled(new PipelinedRdataAndActT))
+      val out = Decoupled(new PipelinedRdataAndActT)
+    })
+    io.out <> Pipeline(io.in, mem_pipeline, Seq.fill(mem_pipeline)((x: PipelinedRdataAndActT) => x) :+ {
+      x: PipelinedRdataAndActT =>
       val activated_rdata = VecInit(x.data.map(v => VecInit(v.map { e =>
         // val e_scaled = e >> x.shift
         val e_scaled = scale_args.scale_func(e, x.scale)
@@ -123,7 +128,11 @@ class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Ve
       result.data := activated_rdata
 
       result
-  })
+    })
+  }
+  val scale_module = Module(new ScaleModule)
+  scale_module.io.in <> q.io.deq
+  val p = scale_module.io.out
 
   val q_will_be_empty = (q.io.count +& q.io.enq.fire()) - q.io.deq.fire() === 0.U
   io.read.req.ready := q_will_be_empty && (
