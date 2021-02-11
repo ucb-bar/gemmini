@@ -198,7 +198,18 @@ class DefaultGemminiConfig extends Config((site, here, up) => {
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
-
+// Default feature for initial Gemmini Chip tape-out experiments
+// ToDo: increase & decrease spad/mesh size, single ported SRAM, increase in flight requests
+class DefaultGemminiChipConfig extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64), dataflow = Dataflow.WS, sp_singleported=false, max_in_flight_reqs=16)))
+        gemmini
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
 /**
  * Mixin which configures a smaller host processor for the systolic array.
    This mixin **replaces** the default host rocket (assuming a single core config).
