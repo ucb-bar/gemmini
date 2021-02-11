@@ -377,7 +377,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   FpgaDebug(io.busy)
   FpgaDebug(raw_cmd.valid)
-  FpgaDebug(loop_conv_unroller_busy)
+  // FpgaDebug(loop_conv_unroller_busy)
   FpgaDebug(loop_matmul_unroller_busy)
   FpgaDebug(rob.io.busy)
   FpgaDebug(spad.module.io.busy)
