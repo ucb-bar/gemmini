@@ -204,7 +204,7 @@ class DefaultGemminiChipConfig extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
       (p: Parameters) => {
         implicit val q = p
-        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig.copy(sp_capacity=CpacityInKilobytes(128), acc_capacity=CapacityInKiloBytes(64), dataflow = Dataflow.WS, sp_singleported=false, max_in_flight_reqs=16)))
+        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64), dataflow = Dataflow.WS, sp_singleported=false, max_in_flight_reqs=16)))
         gemmini
     }
   )
