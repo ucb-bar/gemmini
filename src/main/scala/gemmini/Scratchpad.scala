@@ -7,6 +7,7 @@ import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar}
+import midas.targetutils.FpgaDebug
 
 import Util._
 
@@ -251,6 +252,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     zero_writer.io.resp.ready := false.B
 
+    FpgaDebug(zero_writer.io.req.valid)
+    FpgaDebug(zero_writer.io.req.ready)
+    FpgaDebug(zero_writer.io.req.bits.tag.laddr)
+    FpgaDebug(zero_writer.io.req.bits.tag.repeats)
+    FpgaDebug(zero_writer.io.req.bits.tag.cmd_id)
+
+    FpgaDebug(io.dma.read.resp)
+
     reader.module.io.req.valid := read_issue_q.io.deq.valid
     read_issue_q.io.deq.ready := reader.module.io.req.ready
     reader.module.io.req.bits.vaddr := read_issue_q.io.deq.bits.vaddr
@@ -278,6 +287,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     mvin_scale_in.bits.repeats := reader.module.io.resp.bits.repeats
     mvin_scale_in.bits.last := reader.module.io.resp.bits.last
     mvin_scale_in.bits.tag := reader.module.io.resp.bits
+
+    FpgaDebug(mvin_scale_in.bits.tag.bytes_read)
+    FpgaDebug(mvin_scale_in.bits.tag.cmd_id)
+    FpgaDebug(mvin_scale_in.bits.tag.addr)
+    FpgaDebug(mvin_scale_in.bits.tag.is_acc)
+    FpgaDebug(mvin_scale_in.valid)
+    FpgaDebug(mvin_scale_in.ready)
 
     mvin_scale_out.ready := false.B
 

@@ -76,7 +76,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args:
 
   FpgaDebug(io.resp.valid)
   FpgaDebug(io.resp.ready)
-  FpgaDebug(io.resp.bits.tag)
+  // FpgaDebug(io.resp.bits.tag)
   FpgaDebug(io.resp.bits.last)
   FpgaDebug(io.resp.bits.row)
 }
