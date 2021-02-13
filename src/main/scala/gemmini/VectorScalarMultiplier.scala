@@ -2,6 +2,7 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
+import midas.targetutils.FpgaDebug
 
 import Util._
 
@@ -67,6 +68,20 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args:
   when (reset.toBool()) {
     req.pop()
   }
+
+  FpgaDebug(io.req.valid)
+  FpgaDebug(io.req.ready)
+  FpgaDebug(io.req.bits.repeats)
+  FpgaDebug(io.req.bits.last)
+  FpgaDebug(io.req.bits.tag)
+
+  FpgaDebug(req)
+
+  FpgaDebug(io.resp.valid)
+  FpgaDebug(io.resp.ready)
+  FpgaDebug(io.resp.bits.tag)
+  FpgaDebug(io.resp.bits.last)
+  FpgaDebug(io.resp.bits.row)
 }
 
 object VectorScalarMultiplier {
