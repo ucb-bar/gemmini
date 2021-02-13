@@ -371,7 +371,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   rob_completed_arb.io.out.ready := true.B
 
   // Wire up global RoCC signals
-  io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || rob.io.busy || spad.module.io.busy
+  io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || rob.io.busy || spad.module.io.busy || unrolled_cmd.valid || loop_cmd.valid
   io.interrupt := tlb.io.exp.interrupt
 
   rob.io.solitary_preload := ex_controller.io.solitary_preload
