@@ -38,9 +38,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val ex = new ROBIssue(cmd_t, rob_entries)
     }
 
-    val ld_utilization = Output(UInt(log2Up(rob_entries).W))
-    val st_utilization = Output(UInt(log2Up(rob_entries).W))
-    val ex_utilization = Output(UInt(log2Up(rob_entries).W))
+    val ld_utilization = Output(UInt(log2Up(rob_entries+1).W))
+    val st_utilization = Output(UInt(log2Up(rob_entries+1).W))
+    val ex_utilization = Output(UInt(log2Up(rob_entries+1).W))
 
     val busy = Output(Bool())
 
@@ -345,6 +345,13 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < 10000.U, "pipeline stall")
+  FpgaDebug(cycles_since_issue)
+
+  val instructions_allocated = RegInit(0.U(32.W))
+  when (io.alloc.fire()) {
+    instructions_allocated := instructions_allocated + 1.U
+  }
+  FpgaDebug(instructions_allocated)
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {
