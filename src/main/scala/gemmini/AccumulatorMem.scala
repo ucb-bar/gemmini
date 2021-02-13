@@ -137,27 +137,30 @@ class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Ve
       val regs = Reg(Vec(nEntries, Valid(new PipelinedRdataAndActT)))
       val fired_masks = Reg(Vec(nEntries, Vec(width, Bool())))
       val completed_masks = Reg(Vec(nEntries, Vec(width, Bool())))
-
-      val outArb = Module(new RRArbiter(new PipelinedRdataAndActT, nEntries))
-      for (i <- 0 until nEntries) {
-        outArb.io.in(i).valid := regs(i).valid && completed_masks(i).reduce(_&&_)
-        outArb.io.in(i).bits  := regs(i).bits
-        when (outArb.io.in(i).fire()) { regs(i).valid := false.B }
-      }
-      io.out <> outArb.io.out
-
-      io.in.ready := !(regs.map(_.valid).reduce(_&&_)) || io.out.fire()
-      when (io.in.fire()) {
-        var allocated = false.B
+      val head_oh = RegInit(1.U(nEntries.W))
+      val tail_oh = RegInit(1.U(nEntries.W))
+      io.out.valid := Mux1H(head_oh.asBools, (regs zip completed_masks).map({case (r, c) => r.valid && c.reduce(_&&_)}))
+      io.out.bits  := Mux1H(head_oh.asBools, regs.map(_.bits))
+      when (io.out.fire()) {
         for (i <- 0 until nEntries) {
-          when (!allocated && (!regs(i).valid || outArb.io.in(i).fire())) {
+          when (head_oh(i)) {
+            regs(i).valid := false.B
+          }
+        }
+        head_oh := (head_oh << 1) | head_oh(nEntries-1)
+      }
+
+      io.in.ready := !Mux1H(tail_oh.asBools, regs.map(_.valid)) || (tail_oh === head_oh && io.out.fire())
+      when (io.in.fire()) {
+        for (i <- 0 until nEntries) {
+          when (tail_oh(i)) {
             regs(i).valid := true.B
             regs(i).bits  := io.in.bits
             fired_masks(i).foreach(_ := false.B)
             completed_masks(i).foreach(_ := false.B)
           }
-          allocated = allocated || !regs(i).valid || outArb.io.in(i).fire()
         }
+        tail_oh := (tail_oh << 1) | tail_oh(nEntries-1)
       }
 
 
