@@ -127,7 +127,7 @@ object GemminiConfigs {
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (elem_t)y);})"
     )),
-
+    num_acc_scale_units = 4,
     mvin_scale_acc_args = None,
 
     mvin_scale_shared = false,

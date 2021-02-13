@@ -39,6 +39,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              mvin_scale_acc_args: Option[ScaleArguments[T, U]],
                                                                              mvin_scale_shared: Boolean,
                                                                              acc_scale_args: ScaleArguments[T, V],
+                                                                             num_acc_scale_units: Int,
                                                                              hasIm2col: Boolean,
                                                                              pe_latency: Int,
                                                                              acc_read_full_width: Boolean,

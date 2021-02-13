@@ -50,7 +50,7 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   override def cloneType: this.type = new AccumulatorMemIO(n, t, rdata, scale_t).asInstanceOf[this.type]
 }
 
-class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], mem_pipeline: Int, scale_args: ScaleArguments[T, U], read_small_data: Boolean, read_full_data: Boolean)
+class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], mem_pipeline: Int, scale_args: ScaleArguments[T, U], read_small_data: Boolean, read_full_data: Boolean, num_scale_units: Int)
                                (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
   // to it, then we might not get the written data. We might need some kind of cooldown counter after addresses in the
@@ -111,24 +111,114 @@ class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Ve
       val in = Flipped(Decoupled(new PipelinedRdataAndActT))
       val out = Decoupled(new PipelinedRdataAndActT)
     })
-    io.out <> Pipeline(io.in, mem_pipeline, Seq.fill(mem_pipeline)((x: PipelinedRdataAndActT) => x) :+ {
-      x: PipelinedRdataAndActT =>
-      val activated_rdata = VecInit(x.data.map(v => VecInit(v.map { e =>
-        // val e_scaled = e >> x.shift
-        val e_scaled = scale_args.scale_func(e, x.scale)
+
+    if (num_scale_units == -1) {
+      io.out <> Pipeline(io.in, mem_pipeline, Seq.fill(mem_pipeline)((x: PipelinedRdataAndActT) => x) :+ {
+        x: PipelinedRdataAndActT =>
+        val activated_rdata = VecInit(x.data.map(v => VecInit(v.map { e =>
+          // val e_scaled = e >> x.shift
+          val e_scaled = scale_args.scale_func(e, x.scale)
+          val e_clipped = e_scaled.clippedToWidthOf(rdataType.head.head)
+          val e_act = MuxCase(e_clipped, Seq(
+            (x.act === Activation.RELU) -> e_clipped.relu,
+            (x.act === Activation.RELU6) -> e_clipped.relu6(x.relu6_shift)))
+
+          e_act
+        })))
+        val result = WireInit(x)
+        result.data := activated_rdata
+
+        result
+      })
+    } else {
+      val width = io.in.bits.data.size * io.in.bits.data(0).size
+      val nEntries = 3
+
+      val regs = Reg(Vec(nEntries, Valid(new PipelinedRdataAndActT)))
+      val fired_masks = Reg(Vec(nEntries, Vec(width, Bool())))
+      val completed_masks = Reg(Vec(nEntries, Vec(width, Bool())))
+
+      val outArb = Module(new RRArbiter(new PipelinedRdataAndActT, nEntries))
+      for (i <- 0 until nEntries) {
+        outArb.io.in(i).valid := regs(i).valid && completed_masks(i).reduce(_&&_)
+        outArb.io.in(i).bits  := regs(i).bits
+        when (outArb.io.in(i).fire()) { regs(i).valid := false.B }
+      }
+      io.out <> outArb.io.out
+
+      io.in.ready := !(regs.map(_.valid).reduce(_&&_)) || io.out.fire()
+      when (io.in.fire()) {
+        var allocated = false.B
+        for (i <- 0 until nEntries) {
+          when (!allocated && (!regs(i).valid || outArb.io.in(i).fire())) {
+            regs(i).valid := true.B
+            regs(i).bits  := io.in.bits
+            fired_masks(i).foreach(_ := false.B)
+            completed_masks(i).foreach(_ := false.B)
+          }
+          allocated = allocated || !regs(i).valid || outArb.io.in(i).fire()
+        }
+      }
+
+
+
+      class DataWithIndex extends Bundle {
+        val scale = io.in.bits.scale.cloneType
+        val act = io.in.bits.act.cloneType
+        val relu6_shift = io.in.bits.relu6_shift.cloneType
+        val data = io.in.bits.data(0)(0).cloneType
+        val id = UInt(2.W) // TODO hardcoded
+        val index = UInt()
+      }
+      val inputs = Seq.fill(width*nEntries) { Wire(Decoupled(new DataWithIndex)) }
+
+      for (i <- 0 until nEntries) {
+        for (w <- 0 until width) {
+          val input = inputs(i*width+w)
+          input.valid       := regs(i).valid && !fired_masks(i)(w)
+          input.bits.data   := regs(i).bits.data(w / io.in.bits.data(0).size)(w % io.in.bits.data(0).size)
+          input.bits.scale  := regs(i).bits.scale
+          input.bits.act    := regs(i).bits.act
+          input.bits.relu6_shift := regs(i).bits.relu6_shift
+          input.bits.id := i.U
+          input.bits.index := w.U
+          when (input.fire()) {
+            fired_masks(i)(w) := true.B
+          }
+        }
+      }
+      for (i <- 0 until num_scale_units) {
+        val arbIn = inputs.zipWithIndex.filter({ case (_, w) => w % num_scale_units == i }).map(_._1)
+        val arb = Module(new RRArbiter(new DataWithIndex, arbIn.length))
+        arb.io.in <> arbIn
+        arb.io.out.ready := true.B
+        val arbOut = arb.io.out
+        val e_scaled = scale_args.scale_func(arbOut.bits.data, arbOut.bits.scale)
         val e_clipped = e_scaled.clippedToWidthOf(rdataType.head.head)
         val e_act = MuxCase(e_clipped, Seq(
-          (x.act === Activation.RELU) -> e_clipped.relu,
-          (x.act === Activation.RELU6) -> e_clipped.relu6(x.relu6_shift)))
-
-        e_act
-      })))
-
-      val result = WireInit(x)
-      result.data := activated_rdata
-
-      result
-    })
+          (arbOut.bits.act === Activation.RELU) -> e_clipped.relu,
+          (arbOut.bits.act === Activation.RELU6) -> e_clipped.relu6(arbOut.bits.relu6_shift)
+        ))
+        val pipe_in = Wire(Valid(new DataWithIndex))
+        pipe_in.valid := arbOut.valid
+        pipe_in.bits  := arbOut.bits
+        pipe_in.bits.data := e_act
+        val pipe_out = Pipe(pipe_in, mem_pipeline)
+        for (j <- 0 until nEntries) {
+          for (w <- 0 until width) {
+            if ((j*width+w) % num_scale_units == i) {
+              when (pipe_out.fire() && pipe_out.bits.id === j.U && pipe_out.bits.index === w.U) {
+                regs(j).bits.data(w / io.in.bits.data(0).size)(w % io.in.bits.data(0).size) := pipe_out.bits.data
+                completed_masks(j)(w) := true.B
+              }
+            }
+          }
+        }
+      }
+      when (reset.asBool) {
+        regs.foreach(_.valid := false.B)
+      }
+    }
   }
   val scale_module = Module(new ScaleModule)
   scale_module.io.in <> q.io.deq

@@ -421,7 +421,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
       val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
 
-      val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(acc_bank_entries, acc_row_t, spad_row_t, mem_pipeline, acc_scale_args, acc_read_small_width, acc_read_full_width)) }
+      val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(
+        acc_bank_entries, acc_row_t, spad_row_t, mem_pipeline,
+        acc_scale_args, acc_read_small_width, acc_read_full_width,
+        num_acc_scale_units
+      )) }
       val bank_ios = VecInit(banks.map(_.io))
 
       // Getting the output of the bank that's about to be issued to the writer
