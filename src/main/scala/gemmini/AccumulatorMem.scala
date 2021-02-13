@@ -50,7 +50,7 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   override def cloneType: this.type = new AccumulatorMemIO(n, t, rdata, scale_t).asInstanceOf[this.type]
 }
 
-class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], mem_pipeline: Int, scale_args: ScaleArguments[T, U], read_small_data: Boolean, read_full_data: Boolean, num_scale_units: Int)
+class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Vec[Vec[T]], acc_scale_latency: Int, scale_args: ScaleArguments[T, U], read_small_data: Boolean, read_full_data: Boolean, num_scale_units: Int)
                                (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
   // to it, then we might not get the written data. We might need some kind of cooldown counter after addresses in the
@@ -113,7 +113,7 @@ class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Ve
     })
 
     if (num_scale_units == -1) {
-      io.out <> Pipeline(io.in, mem_pipeline, Seq.fill(mem_pipeline)((x: PipelinedRdataAndActT) => x) :+ {
+      io.out <> Pipeline(io.in, acc_scale_latency, Seq.fill(acc_scale_latency)((x: PipelinedRdataAndActT) => x) :+ {
         x: PipelinedRdataAndActT =>
         val activated_rdata = VecInit(x.data.map(v => VecInit(v.map { e =>
           // val e_scaled = e >> x.shift
@@ -203,7 +203,7 @@ class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Ve
         pipe_in.valid := arbOut.valid
         pipe_in.bits  := arbOut.bits
         pipe_in.bits.data := e_act
-        val pipe_out = Pipe(pipe_in, mem_pipeline)
+        val pipe_out = Pipe(pipe_in, acc_scale_latency)
         for (j <- 0 until nEntries) {
           for (w <- 0 until width) {
             if ((j*width+w) % num_scale_units == i) {

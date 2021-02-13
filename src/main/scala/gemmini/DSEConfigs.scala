@@ -53,6 +53,7 @@ object DSEBaseConfig {
         (t >> u).asSInt() + Mux(r, 1.S, 0.S)
       }, 0, UInt(8.W)),
     num_acc_scale_units = -1,
+    acc_scale_latency = 3,
     acc_read_full_width = true,
     acc_read_small_width = true,
     use_dedicated_tl_port = false,
