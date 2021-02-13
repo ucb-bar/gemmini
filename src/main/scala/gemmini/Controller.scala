@@ -386,8 +386,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   rob.io.solitary_preload := ex_controller.io.solitary_preload
 
-  FpgaDebug(rob.io.solitary_preload)
-
   assert(!io.interrupt, "Interrupt handlers have not been written yet")
 
   // Cycle counters

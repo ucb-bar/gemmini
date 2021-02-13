@@ -41,7 +41,8 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
 
   val req = Reg(UDValid(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds)))
 
-  FpgaDebug(io.req)
+  FpgaDebug(io.req.valid)
+  FpgaDebug(io.req.ready)
   FpgaDebug(req)
   FpgaDebug(io.in.valid)
   FpgaDebug(io.in.ready)

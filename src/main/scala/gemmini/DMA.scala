@@ -534,8 +534,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
 
     FpgaDebug(state)
-//    FpgaDebug(io.req.ready)
-//    FpgaDebug(io.req.valid)
+    FpgaDebug(io.req.ready)
+    FpgaDebug(io.req.valid)
 //    FpgaDebug(io.req.bits.len)
 //    FpgaDebug(bytesSent)
 //    FpgaDebug(xactBusy)

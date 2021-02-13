@@ -71,9 +71,6 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args:
 
   FpgaDebug(io.req.valid)
   FpgaDebug(io.req.ready)
-  FpgaDebug(io.req.bits.repeats)
-  FpgaDebug(io.req.bits.last)
-  FpgaDebug(io.req.bits.tag)
 
   FpgaDebug(req)
 
