@@ -186,8 +186,16 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       // Accumulator ports
       val acc = new Bundle {
-        val read = Flipped(Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType)), Vec(meshColumns, Vec(tileColumns, accType)), acc_scale_args.multiplicand_t)))
-        val write = Flipped(Vec(acc_banks, Decoupled(new AccumulatorWriteReq(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))))))
+        val read_req = Flipped(Vec(acc_banks, Decoupled(new AccumulatorReadReq(
+          acc_bank_entries, log2Up(accType.getWidth), acc_scale_args.multiplicand_t
+        ))))
+        val read_resp = Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
+          Vec(meshColumns, Vec(tileColumns, inputType)),
+          Vec(meshColumns, Vec(tileColumns, accType))
+        )))
+        val write = Flipped(Vec(acc_banks, Decoupled(new AccumulatorWriteReq(
+          acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))
+        ))))
       }
 
       // TLB ports
@@ -417,29 +425,61 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       }
     }
 
+    val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
+    val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
+
+    val acc_scale_unit = Module(new AccumulatorScale(
+      acc_row_t,
+      spad_row_t,
+      acc_scale_args.multiplicand_t,
+      log2Up(accType.getWidth),
+      num_acc_scale_units,
+      acc_scale_latency,
+      acc_read_small_width,
+      acc_read_full_width,
+      acc_scale_args
+    ))
+    val acc_scale_arb = Module(new RRArbiter(new AccumulatorReadResp(
+      acc_row_t,
+      acc_scale_args.multiplicand_t,
+      log2Up(accType.getWidth)
+    ), acc_banks))
+
+    acc_scale_unit.io.in <> acc_scale_arb.io.out
+    val dma_resp_ready = (
+      writer.module.io.req.ready &&
+      write_issue_q.io.deq.bits.laddr.is_acc_addr &&
+      !write_issue_q.io.deq.bits.laddr.is_garbage()
+    )
+    acc_scale_unit.io.out.ready := false.B
+    when (acc_scale_unit.io.out.bits.fromDMA && dma_resp_ready) {
+      acc_scale_unit.io.out.ready := true.B
+      writeData.valid := acc_scale_unit.io.out.valid
+      writeData.bits  := acc_scale_unit.io.out.bits.data.asUInt
+      fullAccWriteData := acc_scale_unit.io.out.bits.full_data.asUInt
+    }
+    for (i <- 0 until acc_banks) {
+      io.acc.read_resp(i).valid := false.B
+      io.acc.read_resp(i).bits  := acc_scale_unit.io.out.bits
+      when (!acc_scale_unit.io.out.bits.fromDMA && acc_scale_unit.io.out.bits.acc_bank_id === i.U) {
+        acc_scale_unit.io.out.ready := io.acc.read_resp(i).ready
+        io.acc.read_resp(i).valid := acc_scale_unit.io.out.valid
+      }
+    }
+
     {
-      val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
-      val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
 
       val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(
-        acc_bank_entries, acc_row_t, spad_row_t, acc_scale_latency,
-        acc_scale_args, acc_read_small_width, acc_read_full_width,
-        num_acc_scale_units
+        acc_bank_entries, acc_row_t, acc_scale_args
       )) }
       val bank_ios = VecInit(banks.map(_.io))
 
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.acc_bank())
 
-      when (write_issue_q.io.deq.bits.laddr.is_acc_addr) {
-        writeData.valid := bank_issued_io.read.resp.valid && bank_issued_io.read.resp.bits.fromDMA
-        writeData.bits := bank_issued_io.read.resp.bits.data.asUInt()
-        fullAccWriteData := bank_issued_io.read.resp.bits.full_data.asUInt()
-      }
-
       // Reading from the Accumulator banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
-        val ex_read_req = io.acc.read(i).req
+        val ex_read_req = io.acc.read_req(i)
         val exread = ex_read_req.valid
 
         // TODO we tie the write dispatch queue's, and write issue queue's, ready and valid signals together here
@@ -472,14 +512,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits := DontCare
         }
 
-        val ex_read_resp = io.acc.read(i).resp
-        val dma_resp_ready = writer.module.io.req.ready &&
-          write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.acc_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the accumulator bank's resp is valid, then that means that the write_issue_q's deq should also be valid
-          !write_issue_q.io.deq.bits.laddr.is_garbage()
-
-        bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_resp_ready, ex_read_resp.ready)
-        ex_read_resp.valid := bio.read.resp.valid // TODO should we AND this with fromDMA?
-        ex_read_resp.bits := bio.read.resp.bits
+        acc_scale_arb.io.in(i) <> bio.read.resp
+        acc_scale_arb.io.in(i).bits.acc_bank_id := i.U
       }
 
       // Writing to the accumulator banks

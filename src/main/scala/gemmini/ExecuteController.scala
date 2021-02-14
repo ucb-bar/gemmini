@@ -27,7 +27,15 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
 
     val acc = new Bundle {
-      val read = Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType)), Vec(meshColumns, Vec(tileColumns, accType)), acc_scale_args.multiplicand_t))
+      val read_req = Vec(acc_banks, Decoupled(new AccumulatorReadReq(
+          acc_bank_entries, log2Up(accType.getWidth), acc_scale_args.multiplicand_t
+      )))
+
+      val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
+        Vec(meshColumns, Vec(tileColumns, inputType)),
+        Vec(meshColumns, Vec(tileColumns, accType))
+      ))))
+
       // val write = Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))))
       val write = Vec(acc_banks, Decoupled(new AccumulatorWriteReq(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType)))))
     }
@@ -424,7 +432,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val read_d_from_acc = d_valid && d_read_from_acc && dataDBankAcc === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
 
     Seq((read_a_from_acc, a_ready), (read_b_from_acc, b_ready), (read_d_from_acc, d_ready)).foreach { case (rd, r) =>
-      when(rd && !io.acc.read(i).req.ready) {
+      when(rd && !io.acc.read_req(i).ready) {
         r := false.B
       }
     }
@@ -448,21 +456,21 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     */
 
     // TODO Remove the ability to read into Mesh from AccumulatorMem completely
-    io.acc.read(i).req.valid := false.B
-    io.acc.read(i).req.bits.scale := acc_scale
-    io.acc.read(i).req.bits.full := false.B
-    io.acc.read(i).req.bits.relu6_shift := relu6_shift
-    io.acc.read(i).req.bits.act := activation
-    io.acc.read(i).req.bits.fromDMA := false.B
-    io.acc.read(i).req.bits.addr := DontCare
+    io.acc.read_req(i).valid := false.B
+    io.acc.read_req(i).bits.scale := acc_scale
+    io.acc.read_req(i).bits.full := false.B
+    io.acc.read_req(i).bits.relu6_shift := relu6_shift
+    io.acc.read_req(i).bits.act := activation
+    io.acc.read_req(i).bits.fromDMA := false.B
+    io.acc.read_req(i).bits.addr := DontCare
 
     when(im2col_en === false.B){
-      io.acc.read(i).req.bits.addr := MuxCase(a_address.acc_row(),
+      io.acc.read_req(i).bits.addr := MuxCase(a_address.acc_row(),
         Seq(read_b_from_acc -> b_address.acc_row(),
           read_d_from_acc -> d_address.acc_row()))
     }
 
-    io.acc.read(i).resp.ready := true.B
+    io.acc.read_resp(i).ready := true.B
   }
 
   // Im2Col reads
