@@ -23,6 +23,8 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val block_stride = UInt(16.W) // TODO magic numbers
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
   val status = new MStatus
+  //for bank conflict monitoring
+  val monitor_conflict = Bool()
 
   override def cloneType: this.type = new ScratchpadMemReadRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }

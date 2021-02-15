@@ -42,6 +42,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
   val config_shrink = cmd.bits.cmd.rs1(2) // TODO magic numbers
   val config_block_stride = cmd.bits.cmd.rs1(31, 16) // TODO magic numbers
+  //check bank conflict
+  val monitor_conflict = (cmd.bits.cmd.inst.funct === LOAD2_CMD)
 
   val mstatus = cmd.bits.cmd.status
 
@@ -94,6 +96,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
   io.dma.req.bits.all_zeros := all_zeros
   io.dma.req.bits.status := mstatus
+  //for bank conflict monitor
+  io.dma.req.bits.monitor_conflict := monitor_conflict
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
