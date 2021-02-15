@@ -207,17 +207,34 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     })
 
     val write_dispatch_q = Queue(io.dma.write.req)
-
     write_dispatch_q.ready := false.B
-
+    // Write scale queue is necessary to maintain in-order requests to accumulator scale unit
+    // Writes from main SPAD just flow directly between scale_q and issue_q, while writes
+    // From acc are ordered
+    val write_scale_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t), mem_pipeline))
     val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t), mem_pipeline+1, pipe=true))
     val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), mem_pipeline+1, pipe=true)) // TODO can't this just be a normal queue?
 
+    write_scale_q.io.enq.valid := false.B
+    write_scale_q.io.enq.bits  := write_dispatch_q.bits
+    write_scale_q.io.deq.ready := false.B
+
     write_issue_q.io.enq.valid := false.B
-    write_issue_q.io.enq.bits := write_dispatch_q.bits
+    write_issue_q.io.enq.bits := write_scale_q.io.deq.bits
+
+
+    // Garbage can immediately fire between dispatch_q and scale_q
+    when (write_dispatch_q.bits.laddr.is_garbage()) {
+      write_scale_q.io.enq <> write_dispatch_q
+    }
+    // Non-acc or garbage can immediately fire between scale_q and issue_q
+    when (write_scale_q.io.deq.bits.laddr.is_garbage() || !write_scale_q.io.deq.bits.laddr.is_acc_addr) {
+      write_issue_q.io.enq <> write_scale_q.io.deq
+    }
+
 
     val writeData = Wire(Valid(UInt((spad_w max acc_w).W)))
-    writeData.valid := false.B
+    writeData.valid := write_issue_q.io.deq.bits.laddr.is_garbage()
     writeData.bits := DontCare
     val fullAccWriteData = Wire(UInt(acc_w.W))
     fullAccWriteData := DontCare
@@ -225,8 +242,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.read_full_acc_row
     val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()
 
-    writer.module.io.req.valid := write_issue_q.io.deq.valid && (writeData.valid || writeData_is_all_zeros)
-    write_issue_q.io.deq.ready := writer.module.io.req.ready && (writeData.valid || writeData_is_all_zeros)
+    writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid
+    write_issue_q.io.deq.ready := writer.module.io.req.ready && writeData.valid
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
     writer.module.io.req.bits.len := Mux(writeData_is_full_width,
       write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
@@ -241,6 +258,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     io.dma.write.resp.valid := false.B
     io.dma.write.resp.bits.cmd_id := write_dispatch_q.bits.cmd_id
+    when (write_dispatch_q.bits.laddr.is_garbage() && write_dispatch_q.fire()) {
+      io.dma.write.resp.valid := true.B
+    }
 
     read_issue_q.io.enq <> io.dma.read.req
 
@@ -329,7 +349,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.flush := io.flush
     reader.module.io.flush := io.flush
 
-    io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid
+    io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
 
     {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to, config.sp_singleported)) }
@@ -349,11 +369,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val exread = ex_read_req.valid
 
         // TODO we tie the write dispatch queue's, and write issue queue's, ready and valid signals together here
-        val dmawrite = write_dispatch_q.valid && write_issue_q.io.enq.ready &&
+        val dmawrite = write_dispatch_q.valid && write_scale_q.io.enq.ready &&
+          !write_dispatch_q.bits.laddr.is_garbage() &&
           !(bio.write.en && config.sp_singleported.B) &&
           !write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.sp_bank() === i.U
 
-        bio.read.req.valid := exread || (dmawrite && !write_dispatch_q.bits.laddr.is_garbage())
+        bio.read.req.valid := exread || dmawrite
         ex_read_req.ready := bio.read.req.ready
 
         // The ExecuteController gets priority when reading from SRAMs
@@ -364,9 +385,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.sp_row()
           bio.read.req.bits.fromDMA := true.B
 
-          when (bio.read.req.fire() || write_dispatch_q.bits.laddr.is_garbage()) {
+          when (bio.read.req.fire()) {
             write_dispatch_q.ready := true.B
-            write_issue_q.io.enq.valid := true.B
+            write_scale_q.io.enq.valid := true.B
 
             io.dma.write.resp.valid := true.B
           }
@@ -439,13 +460,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       acc_read_full_width,
       acc_scale_args
     ))
-    val acc_scale_arb = Module(new RRArbiter(new AccumulatorReadResp(
-      acc_row_t,
-      acc_scale_args.multiplicand_t,
-      log2Up(accType.getWidth)
-    ), acc_banks))
 
-    acc_scale_unit.io.in <> acc_scale_arb.io.out
+    acc_scale_unit.io.in.valid := false.B
+    acc_scale_unit.io.in.bits  := DontCare
     val dma_resp_ready = (
       writer.module.io.req.ready &&
       write_issue_q.io.deq.bits.laddr.is_acc_addr &&
@@ -483,10 +500,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val exread = ex_read_req.valid
 
         // TODO we tie the write dispatch queue's, and write issue queue's, ready and valid signals together here
-        val dmawrite = write_dispatch_q.valid && write_issue_q.io.enq.ready &&
+        val dmawrite = write_dispatch_q.valid && write_scale_q.io.enq.ready &&
+          !write_dispatch_q.bits.laddr.is_garbage() &&
           write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.acc_bank() === i.U
 
-        bio.read.req.valid := exread || (dmawrite && !write_dispatch_q.bits.laddr.is_garbage())
+        bio.read.req.valid := exread || dmawrite
         bio.read.req.bits.scale := ex_read_req.bits.scale
         bio.read.req.bits.relu6_shift := ex_read_req.bits.relu6_shift
         bio.read.req.bits.act := ex_read_req.bits.act
@@ -502,18 +520,33 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.full := write_dispatch_q.bits.laddr.read_full_acc_row
           bio.read.req.bits.fromDMA := true.B
 
-          when (bio.read.req.fire() || write_dispatch_q.bits.laddr.is_garbage()) {
+          when (bio.read.req.fire()) {
             write_dispatch_q.ready := true.B
-            write_issue_q.io.enq.valid := true.B
+            write_scale_q.io.enq.valid := true.B
 
             io.dma.write.resp.valid := true.B
           }
         }.otherwise {
           bio.read.req.bits := DontCare
         }
+        bio.read.resp.ready          := false.B
 
-        acc_scale_arb.io.in(i) <> bio.read.resp
-        acc_scale_arb.io.in(i).bits.acc_bank_id := i.U
+
+        when (write_scale_q.io.deq.valid &&
+              acc_scale_unit.io.in.ready &&
+              bio.read.resp.valid &&
+              write_issue_q.io.enq.ready &&
+              write_scale_q.io.deq.bits.laddr.is_acc_addr &&
+              write_scale_q.io.deq.bits.laddr.acc_bank() === i.U) {
+          write_scale_q.io.deq.ready   := true.B
+          acc_scale_unit.io.in.valid := true.B
+          bio.read.resp.ready          := true.B
+          write_issue_q.io.enq.valid   := true.B
+
+          acc_scale_unit.io.in.bits  := bio.read.resp.bits
+          acc_scale_unit.io.in.bits.acc_bank_id := i.U
+        }
+
       }
 
       // Writing to the accumulator banks
