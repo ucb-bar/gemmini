@@ -8,7 +8,7 @@ import Util._
 
 class ZeroWriterReq[Tag <: Data](laddr_t: LocalAddr, max_cols: Int, tag_t: Tag) extends Bundle {
   val laddr = laddr_t
-  val cols = UInt(log2Up(max_cols).W)
+  val cols = UInt(log2Up(max_cols+1).W)
   val block_stride = UInt(16.W) // TODO magic number
   val tag = tag_t
 

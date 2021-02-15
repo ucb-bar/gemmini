@@ -726,9 +726,9 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new RoCCCommand))
     val out = Decoupled(new RoCCCommand)
-    val ld_utilization = Input(UInt(log2Up(rob_size).W))
-    val st_utilization = Input(UInt(log2Up(rob_size).W))
-    val ex_utilization = Input(UInt(log2Up(rob_size).W))
+    val ld_utilization = Input(UInt(log2Up(rob_size+1).W))
+    val st_utilization = Input(UInt(log2Up(rob_size+1).W))
+    val ex_utilization = Input(UInt(log2Up(rob_size+1).W))
     val busy = Output(Bool())
   })
 
