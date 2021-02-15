@@ -12,6 +12,7 @@ cd gemmini-rocc-tests
 cp -r build/* ../overlay/root/
 cd $FSIMSW
 rm images/gemmini-tests-interactive*
+./marshal -v --workdir $RDIR clean gemmini-tests-interactive.json
 ./marshal -v --workdir $RDIR build gemmini-tests-interactive.json
 ./marshal -v --workdir $RDIR install gemmini-tests-interactive.json
 cd $RDIR
