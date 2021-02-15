@@ -9,7 +9,7 @@ import chisel3.util._
 import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
-import freechips.rocketchip.tilelink.{TLIdentityNode}
+import freechips.rocketchip.tilelink.TLIdentityNode
 import GemminiISA._
 import Util._
 

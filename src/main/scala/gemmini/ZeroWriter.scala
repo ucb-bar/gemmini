@@ -53,6 +53,9 @@ class ZeroWriter[T <: Data, U <: Data, V <: Data, Tag <: Data](config: GemminiAr
   FpgaDebug(req)
   FpgaDebug(io.resp.valid)
   FpgaDebug(io.resp.ready)
+  FpgaDebug(io.resp.bits.last)
+  FpgaDebug(io.resp.bits.laddr.data)
+  FpgaDebug(io.resp.bits.laddr.is_acc_addr)
   FpgaDebug(col_counter)
 
   when (io.resp.fire()) {

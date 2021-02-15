@@ -499,11 +499,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         // Order of precedence during writes is ExecuteController, and then mvin_scale, and then mvin_scale_acc, and
         // then zero_writer
 
+        // HASAN DEBUG: mvin_scale_out.valid === false.B
+        // HASAN DEBUG: zero_writer.io.resp.valid === true.B
+
         val exwrite = io.acc.write(i).valid
         io.acc.write(i).ready := true.B
         assert(!(exwrite && !bio.write.ready), "Execute controller write to AccumulatorMem was skipped")
 
-        val from_mvin_scale = mvin_scale_out.valid && mvin_scale_out.bits.tag.is_acc
+        val from_mvin_scale = mvin_scale_out.valid && mvin_scale_out.bits.tag.is_acc // HASAN DEBUG: false.B
         val from_mvin_scale_acc = mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.tag.is_acc
 
         val mvin_scale_laddr = mvin_scale_out.bits.tag.addr.asTypeOf(local_addr_t) + mvin_scale_out.bits.row
@@ -515,10 +518,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
         // We need to make sure that we don't try to return a dma read resp from both mvin_scale and mvin_scale_acc
         // at the same time. mvin_scale always gets priority in this cases
-        val spad_dmaread_last = mvin_scale_out.valid && mvin_scale_out.bits.last && !mvin_scale_out.bits.tag.is_acc
-        val spad_zerowrite_last = zero_writer.io.resp.valid && zero_writer.io.resp.bits.last &&
+        val spad_dmaread_last = mvin_scale_out.valid && mvin_scale_out.bits.last && !mvin_scale_out.bits.tag.is_acc // HASAN DEBUG: false.B
+        val spad_zerowrite_last = zero_writer.io.resp.valid && zero_writer.io.resp.bits.last && // HASAN DEBUG: Unknown, but assume true
           !zero_writer.io.resp.bits.laddr.is_acc_addr
-        val spad_last = spad_dmaread_last || spad_zerowrite_last
+        val spad_last = spad_dmaread_last // || spad_zerowrite_last
 
         val dmaread = (from_mvin_scale || from_mvin_scale_acc) &&
           dmaread_bank === i.U /* &&
