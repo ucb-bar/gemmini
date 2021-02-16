@@ -57,7 +57,6 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val max_col_dim = Mux(req.transpose, req.max_i, req.max_k)
   val max_blocks = Mux(max_col_dim <= max_block_len.U, max_col_dim, max_block_len.U)
-  // TODO: why do we have to use 1 when transpose
 
   val sp_addr_start = req.addr_start
 
@@ -78,20 +77,25 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   io.k := k
   io.idle := state === idle
 
-  io.cmd.valid := state =/= idle && !io.rob_overloaded
+  io.cmd.valid := state =/= idle && !io.rob_overloaded && (req.dram_addr =/= 0.U)
   io.cmd.bits := mvin_cmd
 
   io.loop_id := req.loop_id
 
-  when (io.cmd.fire()) {
+  when (req.dram_addr === 0.U) {
+    state := idle
+  }.elsewhen (io.cmd.fire()) {
     // The order here is k, j, i
-    val next_row_iterator = floorAdd(row_iterator, 1.U, max_row_iterator)
-    val next_col_iterator = floorAdd(col_iterator, max_blocks, max_col_iterator, next_row_iterator === 0.U)
+    val i_blocks = Mux(req.transpose, max_blocks, 1.U)
+    val k_blocks = Mux(req.transpose, 1.U, max_blocks)
 
-    i := Mux(req.transpose, next_col_iterator, next_row_iterator)
-    k := Mux(req.transpose, next_row_iterator, next_col_iterator)
+    val next_i = floorAdd(i, i_blocks, req.max_i)
+    val next_k = floorAdd(k, k_blocks, req.max_k, next_i === 0.U)
 
-    when (next_col_iterator === 0.U && next_row_iterator === 0.U) {
+    i := next_i
+    k := next_k
+
+    when (next_i === 0.U && next_k === 0.U) {
       state := idle
     }
   }
@@ -176,20 +180,25 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   io.j := j
   io.idle := state === idle
 
-  io.cmd.valid := state =/= idle && !io.rob_overloaded
+  io.cmd.valid := state =/= idle && !io.rob_overloaded && (req.dram_addr =/= 0.U)
   io.cmd.bits := mvin_cmd
 
   io.loop_id := req.loop_id
 
-  when (io.cmd.fire()) {
+  when (req.dram_addr === 0.U) {
+    state := idle
+  }.elsewhen (io.cmd.fire()) {
     // The order here is k, j, i
-    val next_col_iterator = floorAdd(col_iterator, max_blocks, max_col_iterator)
-    val next_row_iterator = floorAdd(row_iterator, 1.U, max_row_iterator, next_col_iterator === 0.U)
+    val j_blocks = Mux(req.transpose, 1.U, max_blocks)
+    val k_blocks = Mux(req.transpose, max_blocks, 1.U)
 
-    k := Mux(req.transpose, next_col_iterator, next_row_iterator)
-    j := Mux(req.transpose, next_row_iterator, next_col_iterator)
+    val next_j = floorAdd(j, j_blocks, req.max_j)
+    val next_k = floorAdd(k, k_blocks, req.max_k, next_j === 0.U)
 
-    when (next_row_iterator === 0.U && next_col_iterator === 0.U) {
+    j := next_j
+    k := next_k
+
+    when (next_j === 0.U && next_k === 0.U) {
       state := idle
     }
   }
@@ -230,7 +239,7 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   })
 
   object State extends ChiselEnum {
-    val idle, st = Value
+    val idle, ld = Value
   }
   import State._
   val state = RegInit(idle)
@@ -270,7 +279,7 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   when (req.dram_addr === 0.U) {
     state := idle
   }.elsewhen (io.cmd.fire()) {
-    // The order here is j, i
+    // The order here is k, j, i
     val next_i = floorAdd(i, 1.U, req.max_i)
     val next_j = floorAdd(j, max_blocks, req.max_j, next_i === 0.U)
 
@@ -284,7 +293,7 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   when (io.req.fire()) {
     req := io.req.bits
-    state := st
+    state := ld
     j := 0.U
     i := 0.U
   }
@@ -309,7 +318,6 @@ class LoopMatmulExecuteReq(val block_size: Int, val coreMaxAddrBits: Int, val it
 
 class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int, concurrent_loops: Int)
                        (implicit p: Parameters) extends Module {
-  val MAX_BLOCK_LEN = 4 // TODO get this from configs
   val GARBAGE_ADDR = (~0.U(32.W)).asUInt()
 
   val io = IO(new Bundle {
@@ -655,7 +663,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   val is_loop_cmd = is_loop_run_cmd || is_loop_config_cmd
 
   io.out.bits := Mux(loop_configured, unrolled_cmd.bits, cmd.bits)
-  io.out.bits.status := cmd.bits.status
+  io.out.bits.status := cmd.bits.status // TODO This is not guaranteed to be the correct fix! We must fix this
   io.out.valid := Mux(loop_configured, unrolled_cmd.valid, cmd.valid && !is_loop_config_cmd && !is_loop_run_cmd)
 
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)
@@ -780,8 +788,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   ex.io.req.bits.pad_k := loop_requesting_ex.pad_k
   ex.io.req.bits.pad_i := loop_requesting_ex.pad_i
   ex.io.req.bits.accumulate := loop_requesting_ex.ex_accumulate
-  ex.io.req.bits.a_addr_start := loop_requesting_ex.a_addr_start
-  ex.io.req.bits.b_addr_end := loop_requesting_ex.b_addr_end
+  ex.io.req.bits.a_addr_start := Mux(loop_requesting_ex.a_dram_addr === 0.U, 0.U, loop_requesting_ex.a_addr_start)
+  ex.io.req.bits.b_addr_end := Mux(loop_requesting_ex.b_dram_addr === 0.U, (max_addr/concurrent_loops).U, loop_requesting_ex.b_addr_end)
   ex.io.req.bits.a_tranpose := loop_requesting_ex.a_transpose
   ex.io.req.bits.b_tranpose := loop_requesting_ex.b_transpose
   ex.io.req.bits.c_addr_start := ex_c_addr_start

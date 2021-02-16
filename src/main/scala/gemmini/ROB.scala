@@ -243,7 +243,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
   }.elsewhen(io.busy) {
     cycles_since_issue := cycles_since_issue + 1.U
   }
-  assert(cycles_since_issue < 10000.U, "pipeline stall")
+  assert(cycles_since_issue < 100000.U, "pipeline stall")
 
 
   val cntr = Counter(10000000)

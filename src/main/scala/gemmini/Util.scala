@@ -34,7 +34,7 @@ object Util {
   def satAdd(u: UInt, v: UInt, max: UInt): UInt = {
     Mux(u +& v > max, max, u + v)
   }
-  
+
   def satAdd(u: UInt, v: UInt, max_plus_one: UInt, en: Bool = true.B): UInt = {
     val max = max_plus_one - 1.U
 
