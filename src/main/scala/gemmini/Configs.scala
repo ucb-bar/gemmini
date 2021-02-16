@@ -88,7 +88,7 @@ object GemminiConfigs {
 //        Mux(s >= 0.S, ((t >> u).asSInt() + Mux(r, 1.S, 0.S)).asSInt(), (t << (0.S-s).asUInt()).asSInt())
 //      },
 //      0, SInt(8.W), "0")),
-
+    num_mvin_scale_units = 4,
     mvin_scale_args = Some(ScaleArguments(
       (t: SInt, f: Float) => {
         val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)
