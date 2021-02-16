@@ -415,7 +415,7 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
         when(i.U < channel){
           im2col_data(i) := sram_req_output(i)
         }.otherwise{
-          im2col_data(i) := 0.S //when channel < 16, pad with 0
+          im2col_data(i) := 0.U.asTypeOf(inputType) //when channel < 16, pad with 0
         }
       }
     }

@@ -7,7 +7,7 @@ import chisel3.experimental.DataMirror
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
 import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters}
-import freechips.rocketchip.tilelink.{TLBundleA}
+import freechips.rocketchip.tilelink.TLBundleA
 import testchipip.TLHelper
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
@@ -221,7 +221,6 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.tlb.req.bits.tlb_req.cmd := M_XWR
     io.tlb.req.bits.status := tlb_q.io.deq.bits.status
 
-
     val translate_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
     translate_q.io.enq <> tlb_q.io.deq
     translate_q.io.deq.ready := true.B
@@ -230,10 +229,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     retry_a.bits := translate_q.io.deq.bits
     assert(retry_a.ready)
 
-    tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss
-    tl.a.bits   := translate_q.io.deq.bits.tl_a
+    tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
+    tl.a.bits := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
-
 
     io.reserve.valid := state === s_req_new_block && untranslated_a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
