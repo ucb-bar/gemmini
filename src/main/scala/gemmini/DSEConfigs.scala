@@ -36,6 +36,7 @@ object DSEBaseConfig {
     inputType = SInt(8.W),
     outputType = SInt(19.W),
     accType = SInt(32.W),
+    num_mvin_scale_units = -1,
     mvin_scale_args = None,
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
