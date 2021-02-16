@@ -53,25 +53,23 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val ldq :: stq :: exq :: Nil = Enum(3)
   val q_t = ldq.cloneType
 
-  class OpT extends Bundle {
-    val start = local_addr_t.cloneType
-    val end = local_addr_t.cloneType
-    val wraps_around = Bool()
-
-    def overlaps(other: OpT): Bool = {
-      (other.start <= start && (start <= other.end || other.wraps_around)) ||
-        (start <= other.start && (other.start <= end || wraps_around))
-    }
-  }
 
   class Entry extends Bundle {
     val q = q_t.cloneType
 
     val is_config = Bool()
 
-    val op1 = UDValid(new OpT)
-    val op2 = UDValid(new OpT)
-    val dst = UDValid(new OpT)
+    val op1 = UDValid(local_addr_t.cloneType)
+    val op2 = UDValid(local_addr_t.cloneType)
+    // val op3 = UDValid(local_addr_t.cloneType)
+
+    val dst = UDValid(new Bundle {
+      val start = local_addr_t.cloneType
+      val len = UInt(8.W) // TODO magic number
+
+      def end(dummy: Int = 0): LocalAddr = start + len * block_rows.U
+      def wraps_around(dummy: Int = 0): Bool = start.add_with_overflow(len * block_rows.U)._2
+    })
 
     val issued = Bool()
 
@@ -98,25 +96,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   io.alloc.ready := !full
 
   val last_allocated = Reg(UInt(log2Up(rob_entries).W))
-  val a_stride = Reg(UInt(16.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
-  val block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
   val new_entry_id = MuxCase((rob_entries-1).U, entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
   val alloc_fire = io.alloc.fire()
-
-  val raws_probe = WireInit(0.U(rob_entries.W))
-  val waws_probe = WireInit(0.U(rob_entries.W))
-  val wars_probe = WireInit(0.U(rob_entries.W))
-  val older_in_same_q_probe = WireInit(0.U(rob_entries.W))
-  val is_st_and_must_wait_for_prior_ex_config_probe = WireInit(0.U(rob_entries.W))
-  val is_ex_config_and_must_wait_for_prior_st_probe = WireInit(0.U(rob_entries.W))
-
-  val wars_op1_probe = WireInit(0.U(rob_entries.W))
-  val wars_op2_probe = WireInit(0.U(rob_entries.W))
-
-  dontTouch(new_entry)
 
   when (io.alloc.fire()) {
     val spAddrBits = 32
@@ -131,47 +115,17 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     new_entry.is_config := funct === CONFIG_CMD
 
     new_entry.op1.valid := funct === PRELOAD_CMD || funct_is_compute
-    new_entry.op1.bits.start := cmd.rs1.asTypeOf(local_addr_t)
-    when (funct === PRELOAD_CMD) {
-      val preload_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48)
-      new_entry.op1.bits.end := new_entry.op1.bits.start + preload_rows
-      new_entry.op1.bits.wraps_around := new_entry.op1.bits.start.add_with_overflow(preload_rows)._2
-    }.otherwise {
-      val compute_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48) * a_stride
-      new_entry.op1.bits.end := new_entry.op1.bits.start + compute_rows
-      new_entry.op1.bits.wraps_around := new_entry.op1.bits.start.add_with_overflow(compute_rows)._2
-    }
+    new_entry.op1.bits := cmd.rs1.asTypeOf(local_addr_t)
+
 
     new_entry.op2.valid := funct_is_compute || funct === STORE_CMD
-    new_entry.op2.bits.start := cmd.rs2.asTypeOf(local_addr_t)
-    when (funct_is_compute) {
-      val compute_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
-      new_entry.op2.bits.end := new_entry.op2.bits.start + compute_rows
-      new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(compute_rows)._2
-    }.otherwise {
-      val mvout_rows = cmd.rs2(48 + mvout_rows_bits - 1, 48)
-      new_entry.op2.bits.end := new_entry.op2.bits.start + mvout_rows
-      new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(mvout_rows)._2
-    }
+    new_entry.op2.bits := cmd.rs2.asTypeOf(local_addr_t)
 
+    val mvin_mvout_len = cmd.rs2(48, spAddrBits)
     new_entry.dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
     new_entry.dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
-    when (funct === PRELOAD_CMD) {
-      val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
-      new_entry.dst.bits.end := new_entry.dst.bits.start + preload_rows
-      new_entry.dst.bits.wraps_around := new_entry.dst.bits.start.add_with_overflow(preload_rows)._2
-    }.otherwise {
-      val id = MuxCase(0.U, Seq((new_entry.cmd.inst.funct === LOAD2_CMD) -> 1.U,
-        (new_entry.cmd.inst.funct === LOAD3_CMD) -> 2.U))
-      val block_stride = block_strides(id)
+    new_entry.dst.bits.len := Mux(funct === PRELOAD_CMD, 1.U, mvin_mvout_len / block_cols.U + (mvin_mvout_len % block_cols.U =/= 0.U))
 
-      val mvin_cols = cmd.rs2(spAddrBits + mvin_cols_bits - 1, spAddrBits)
-      val mvin_mats = mvin_cols / block_cols.U + (mvin_cols % block_cols.U =/= 0.U)
-      val mvin_rows = mvin_mats * block_stride
-
-      new_entry.dst.bits.end := new_entry.dst.bits.start + mvin_rows
-      new_entry.dst.bits.wraps_around := new_entry.dst.bits.start.add_with_overflow(mvin_rows)._2
-    }
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
@@ -183,41 +137,33 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       is_ex -> exq
     ))
 
-    assert(is_load || is_store || is_ex)
-
     // TODO we should checck whether op1 and op2 are valid here
     val raws = entries.map { e =>
       // We search for all entries which write to an address which we read from
       e.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
-        (new_entry.op1.valid && new_entry.op1.bits.overlaps(e.bits.dst.bits)) ||
-          (new_entry.op2.valid && new_entry.op2.bits.overlaps(e.bits.dst.bits)))
+        (new_entry.op1.valid && e.bits.dst.bits.start <= new_entry.op1.bits && (e.bits.dst.bits.end() > new_entry.op1.bits || e.bits.dst.bits.wraps_around())) ||
+          (new_entry.op2.valid && e.bits.dst.bits.start <= new_entry.op2.bits && (e.bits.dst.bits.end() > new_entry.op2.bits || e.bits.dst.bits.wraps_around()))) /* ||
+          (new_entry.op3.valid && e.bits.dst.bits.start <= new_entry.op3.bits && e.bits.dst.bits.end() > new_entry.op3.bits)) */
     }
 
     // TODO we should checck whether op1 and op2 are valid here
     val wars = entries.map { e =>
       // We search for all entries which read from an address that we write to
       e.valid && new_entry.dst.valid && e.bits.q =/= new_entry.q && (
-        (e.bits.op1.valid && e.bits.op1.bits.overlaps(new_entry.dst.bits)) ||
-          (e.bits.op2.valid && e.bits.op2.bits.overlaps(new_entry.dst.bits)))
+        (e.bits.op1.valid && new_entry.dst.bits.start <= e.bits.op1.bits && (new_entry.dst.bits.end() > e.bits.op1.bits || new_entry.dst.bits.wraps_around())) ||
+          (e.bits.op2.valid && new_entry.dst.bits.start <= e.bits.op2.bits && (new_entry.dst.bits.end() > e.bits.op2.bits || new_entry.dst.bits.wraps_around()))) /* ||
+          (e.bits.op3.valid && new_entry.dst.bits.start <= e.bits.op3.bits && new_entry.dst.bits.end() > e.bits.op3.bits)) */
     }
 
-    val wars_op1 = entries.map { e =>
-      // We search for all entries which read from an address that we write to
-      e.valid && new_entry.dst.valid && e.bits.q =/= new_entry.q && (
-        e.bits.op1.bits.overlaps(new_entry.dst.bits))
-    }
-
-    val wars_op2 = entries.map { e =>
-      // We search for all entries which read from an address that we write to
-      e.valid && new_entry.dst.valid && e.bits.q =/= new_entry.q && (
-        e.bits.op2.bits.overlaps(new_entry.dst.bits))
-    }
 
     // TODO we should checck whether op1 and op2 are valid here
     val waws = entries.map { e =>
+      def is_accumulative(laddr: LocalAddr): Bool = laddr.is_acc_addr && laddr.accumulate
       // We search for all entries which write to an address that we write to
       e.valid && new_entry.dst.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q &&
-        (new_entry.dst.bits.overlaps(e.bits.dst.bits) || e.bits.dst.bits.overlaps(new_entry.dst.bits))
+        !(is_accumulative(new_entry.dst.bits.start) && is_accumulative(e.bits.dst.bits.start)) &&
+        ((new_entry.dst.bits.start <= e.bits.dst.bits.start && (new_entry.dst.bits.end() > e.bits.dst.bits.start || new_entry.dst.bits.wraps_around())) ||
+          (e.bits.dst.bits.start <= new_entry.dst.bits.start && (e.bits.dst.bits.end() > new_entry.dst.bits.start || e.bits.dst.bits.wraps_around())))
     }
 
     val older_in_same_q = entries.map { e =>
@@ -235,24 +181,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     new_entry.deps := (Cat(raws) | Cat(wars) | Cat(waws) | Cat(older_in_same_q) |
       Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).asBools().reverse
 
-    raws_probe := Cat(raws)
-    waws_probe := Cat(waws)
-    wars_probe := Cat(wars)
-    wars_op1_probe := Cat(wars_op1)
-    wars_op2_probe := Cat(wars_op2)
-    older_in_same_q_probe := Cat(older_in_same_q)
-    is_st_and_must_wait_for_prior_ex_config_probe := Cat(is_st_and_must_wait_for_prior_ex_config)
-    is_ex_config_and_must_wait_for_prior_st_probe := Cat(is_ex_config_and_must_wait_for_prior_st)
-
-    dontTouch(raws_probe)
-    dontTouch(waws_probe)
-    dontTouch(wars_probe)
-    dontTouch(wars_op1_probe)
-    dontTouch(wars_op2_probe)
-    dontTouch(older_in_same_q_probe)
-    dontTouch(is_st_and_must_wait_for_prior_ex_config_probe)
-    dontTouch(is_ex_config_and_must_wait_for_prior_st_probe)
-
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
     entries(new_entry_id).valid := true.B
@@ -260,14 +188,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     last_allocated := new_entry_id
 
-    when (new_entry.is_config && new_entry.q === exq) {
-      a_stride := new_entry.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
-    }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
-      val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
-      val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers
-      block_strides(id) := block_stride
-    }
-  }
+
 
   // Issue commands which are ready to be issued
   Seq((ldq, io.issue.ld), (stq, io.issue.st), (exq, io.issue.ex)).foreach { case (q, io) =>
