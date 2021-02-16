@@ -2,7 +2,6 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import midas.targetutils.FpgaDebug
 
 import Util._
 
@@ -40,20 +39,6 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
   val accWidthBytes = accWidth/8
 
   val req = Reg(UDValid(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds)))
-
-  FpgaDebug(io.req.valid)
-  FpgaDebug(io.req.ready)
-  FpgaDebug(req)
-  FpgaDebug(io.in.valid)
-  FpgaDebug(io.in.ready)
-  FpgaDebug(io.out.valid)
-  FpgaDebug(io.out.ready)
-  FpgaDebug(io.out.bits.addr)
-  FpgaDebug(io.out.bits.is_acc)
-  FpgaDebug(io.out.bits.accumulate)
-  FpgaDebug(io.out.bits.has_acc_bitwidth)
-  FpgaDebug(io.out.bits.mask)
-  FpgaDebug(io.out.bits.last)
 
   val buflen = maxReqBytes max spadWidthBytes max accWidthBytes // in bytes
   val buffer = Reg(UInt((buflen*8).W))

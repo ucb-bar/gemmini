@@ -6,7 +6,6 @@ import chisel3.util._
 import freechips.rocketchip.tile.RoCCCommand
 import GemminiISA._
 import Util._
-import midas.targetutils.FpgaDebug
 
 // TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
@@ -322,11 +321,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val functs = VecInit(entries.map(_.bits.cmd.inst.funct))
   val issueds = VecInit(entries.map(_.bits.issued))
 
-  // FpgaDebug(packed_deps)
-  FpgaDebug(valids)
-  FpgaDebug(functs)
-  FpgaDebug(issueds)
-
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
   // assert(min_pop_count < 2.U)
@@ -341,13 +335,12 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < 10000.U, "pipeline stall")
-  FpgaDebug(cycles_since_issue)
 
   val instructions_allocated = RegInit(0.U(32.W))
   when (io.alloc.fire()) {
     instructions_allocated := instructions_allocated + 1.U
   }
-  FpgaDebug(instructions_allocated)
+  dontTouch(instructions_allocated)
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {

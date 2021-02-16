@@ -7,11 +7,10 @@ import chisel3.experimental.DataMirror
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
 import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters}
-import freechips.rocketchip.tilelink.{TLBundleA}
+import freechips.rocketchip.tilelink.TLBundleA
 import testchipip.TLHelper
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
-import midas.targetutils.FpgaDebug
 
 import Util._
 
@@ -99,12 +98,6 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
-
-    FpgaDebug(io.resp.valid)
-    FpgaDebug(io.resp.ready)
-    FpgaDebug(io.resp.bits.repeats)
-    FpgaDebug(io.resp.bits.cmd_id)
-    FpgaDebug(io.resp.bits.bytes_read)
   }
 }
 
@@ -291,12 +284,6 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
       state := s_req_new_block
     }
-
-    FpgaDebug(state)
-    FpgaDebug(io.req.ready)
-    FpgaDebug(io.req.valid)
-    FpgaDebug(io.req.bits.len)
-    FpgaDebug(bytesRequested)
   }
 }
 
@@ -530,12 +517,5 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
       state := Mux(io.req.bits.store_en, s_writing_new_block, s_idle)
     }
-
-    FpgaDebug(state)
-    FpgaDebug(io.req.ready)
-    FpgaDebug(io.req.valid)
-//    FpgaDebug(io.req.bits.len)
-//    FpgaDebug(bytesSent)
-//    FpgaDebug(xactBusy)
  }
 }

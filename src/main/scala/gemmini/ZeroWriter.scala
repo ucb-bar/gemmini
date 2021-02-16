@@ -2,7 +2,6 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import midas.targetutils.FpgaDebug
 
 import Util._
 
@@ -47,16 +46,6 @@ class ZeroWriter[T <: Data, U <: Data, V <: Data, Tag <: Data](config: GemminiAr
   io.resp.bits.mask.zipWithIndex.foreach { case (m, i) => m := col_counter + i.U < req.bits.cols }
   io.resp.bits.last := col_counter +& block_cols.U >= req.bits.cols
   io.resp.bits.tag := req.bits.tag
-
-  FpgaDebug(io.req.valid)
-  FpgaDebug(io.req.ready)
-  FpgaDebug(req)
-  FpgaDebug(io.resp.valid)
-  FpgaDebug(io.resp.ready)
-  FpgaDebug(io.resp.bits.last)
-  FpgaDebug(io.resp.bits.laddr.data)
-  FpgaDebug(io.resp.bits.laddr.is_acc_addr)
-  FpgaDebug(col_counter)
 
   when (io.resp.fire()) {
     val next_col_counter = floorAdd(col_counter, block_cols.U, req.bits.cols)

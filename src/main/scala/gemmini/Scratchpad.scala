@@ -7,7 +7,6 @@ import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar}
-import midas.targetutils.FpgaDebug
 
 import Util._
 
@@ -252,14 +251,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     zero_writer.io.resp.ready := false.B
 
-    FpgaDebug(zero_writer.io.req.valid)
-    FpgaDebug(zero_writer.io.req.ready)
-    FpgaDebug(zero_writer.io.req.bits.tag.laddr)
-    FpgaDebug(zero_writer.io.req.bits.tag.repeats)
-    FpgaDebug(zero_writer.io.req.bits.tag.cmd_id)
-
-    FpgaDebug(io.dma.read.resp)
-
     reader.module.io.req.valid := read_issue_q.io.deq.valid
     read_issue_q.io.deq.ready := reader.module.io.req.ready
     reader.module.io.req.bits.vaddr := read_issue_q.io.deq.bits.vaddr
@@ -287,13 +278,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     mvin_scale_in.bits.repeats := reader.module.io.resp.bits.repeats
     mvin_scale_in.bits.last := reader.module.io.resp.bits.last
     mvin_scale_in.bits.tag := reader.module.io.resp.bits
-
-    FpgaDebug(mvin_scale_in.bits.tag.bytes_read)
-    FpgaDebug(mvin_scale_in.bits.tag.cmd_id)
-    FpgaDebug(mvin_scale_in.bits.tag.addr)
-    FpgaDebug(mvin_scale_in.bits.tag.is_acc)
-    FpgaDebug(mvin_scale_in.valid)
-    FpgaDebug(mvin_scale_in.ready)
 
     mvin_scale_out.ready := false.B
 
@@ -499,14 +483,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         // Order of precedence during writes is ExecuteController, and then mvin_scale, and then mvin_scale_acc, and
         // then zero_writer
 
-        // HASAN DEBUG: mvin_scale_out.valid === false.B
-        // HASAN DEBUG: zero_writer.io.resp.valid === true.B
-
         val exwrite = io.acc.write(i).valid
         io.acc.write(i).ready := true.B
         assert(!(exwrite && !bio.write.ready), "Execute controller write to AccumulatorMem was skipped")
 
-        val from_mvin_scale = mvin_scale_out.valid && mvin_scale_out.bits.tag.is_acc // HASAN DEBUG: false.B
+        val from_mvin_scale = mvin_scale_out.valid && mvin_scale_out.bits.tag.is_acc
         val from_mvin_scale_acc = mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.tag.is_acc
 
         val mvin_scale_laddr = mvin_scale_out.bits.tag.addr.asTypeOf(local_addr_t) + mvin_scale_out.bits.row
@@ -518,10 +499,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
         // We need to make sure that we don't try to return a dma read resp from both mvin_scale and mvin_scale_acc
         // at the same time. mvin_scale always gets priority in this cases
-        val spad_dmaread_last = mvin_scale_out.valid && mvin_scale_out.bits.last && !mvin_scale_out.bits.tag.is_acc // HASAN DEBUG: false.B
-        val spad_zerowrite_last = zero_writer.io.resp.valid && zero_writer.io.resp.bits.last && // HASAN DEBUG: Unknown, but assume true
-          !zero_writer.io.resp.bits.laddr.is_acc_addr
-        val spad_last = spad_dmaread_last // || spad_zerowrite_last
+        val spad_last = mvin_scale_out.valid && mvin_scale_out.bits.last && !mvin_scale_out.bits.tag.is_acc
 
         val dmaread = (from_mvin_scale || from_mvin_scale_acc) &&
           dmaread_bank === i.U /* &&

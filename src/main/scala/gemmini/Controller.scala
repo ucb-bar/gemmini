@@ -13,8 +13,6 @@ import freechips.rocketchip.tilelink.TLIdentityNode
 import GemminiISA._
 import Util._
 
-import midas.targetutils.FpgaDebug
-
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
@@ -374,15 +372,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Wire up global RoCC signals
   io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || rob.io.busy || spad.module.io.busy
   io.interrupt := tlb.io.exp.interrupt
-
-  FpgaDebug(io.busy)
-  FpgaDebug(raw_cmd.valid)
-  // FpgaDebug(loop_conv_unroller_busy)
-  FpgaDebug(loop_matmul_unroller_busy)
-  FpgaDebug(rob.io.busy)
-  FpgaDebug(spad.module.io.busy)
-
-  FpgaDebug(io.interrupt)
 
   rob.io.solitary_preload := ex_controller.io.solitary_preload
 
