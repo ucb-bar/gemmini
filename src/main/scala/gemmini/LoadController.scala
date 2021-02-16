@@ -77,7 +77,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     (block_cols * config.accType.getWidth / 8)
   val maxBytesInMatRequest = block_rows * maxBytesInRowRequest
 
-  val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, maxBytesInMatRequest, deps_t))
+  val cmd_tracker = Module(new DMACommandTracker(nCmds, maxBytesInMatRequest, deps_t))
 
   io.busy := cmd.valid || cmd_tracker.io.busy
 

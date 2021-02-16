@@ -112,13 +112,15 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   // cisc-gemmini hardware-specific compile-time global constants
   //==========================================================================
 
+  val cisc_dim = (meshRows * tileRows) / 2
+
   val ITYPE_BITS       = inputType.getWidth
-  val ITYPE_BYTES      = (inputType.getWidth+7) / 8
+  val ITYPE_BYTES      = (inputType.getWidth+cisc_dim-1) / cisc_dim
   val LOG2_ITYPE_BYTES = if(ITYPE_BYTES <= 1) 0 else log2Up(ITYPE_BYTES)
 
   val OTYPE_BITS       = accType.getWidth
   val LOG2_OTYPE_BITS  = log2Up(OTYPE_BITS)
-  val OTYPE_BYTES      = (accType.getWidth+7) / 8
+  val OTYPE_BYTES      = (accType.getWidth+cisc_dim-1) / cisc_dim
   val LOG2_OTYPE_BYTES = if(OTYPE_BYTES <= 1) 0 else log2Up(OTYPE_BYTES)
 
   val SP_BANKS        = sp_banks
@@ -135,12 +137,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val LOG2_MNK_BYTES              = log2Up(MNK_BYTES)
   val MNK_BYTES_PER_TILE_ROW      = MNK_BYTES * DIM
   val LOG2_MNK_BYTES_PER_TILE_ROW = log2Up(MNK_BYTES_PER_TILE_ROW)
-  val TILE_IDX                    = MNK_BYTES / (DIM / 8)
+  val TILE_IDX                    = MNK_BYTES / (DIM / cisc_dim)
   val LOG2_TILE_IDX               = log2Up(TILE_IDX)
 
   //--------------------------------------------------------------------------
-  val I_TILE_BYTE_WIDTH = DIM * ((inputType.getWidth+7) / 8)
-  val O_TILE_BYTE_WIDTH = DIM * ((accType.getWidth+7) / 8)
+  val I_TILE_BYTE_WIDTH = DIM * ((inputType.getWidth+cisc_dim-1) / cisc_dim)
+  val O_TILE_BYTE_WIDTH = DIM * ((accType.getWidth+cisc_dim-1) / cisc_dim)
   val I_TILE_BYTE_WIDTH_LOG2 = log2Up(I_TILE_BYTE_WIDTH)
   val O_TILE_BYTE_WIDTH_LOG2 = log2Up(O_TILE_BYTE_WIDTH)
   require(pow(2,I_TILE_BYTE_WIDTH_LOG2) == I_TILE_BYTE_WIDTH,

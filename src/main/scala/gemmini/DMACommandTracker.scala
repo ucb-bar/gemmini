@@ -6,7 +6,7 @@ import chisel3.util._
 
 // This module is meant to go inside the Load controller, where it can track which commands are currently
 // in flight and which are completed
-class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => T) extends Module {
+class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => T) extends Module {
   def cmd_id_t = UInt((log2Ceil(nCmds) max 1).W)
 
   val io = IO(new Bundle {

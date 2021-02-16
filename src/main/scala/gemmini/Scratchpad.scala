@@ -406,7 +406,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }.elsewhen (zerowrite) {
           bio.write.addr := zero_writer.io.resp.bits.laddr.sp_row()
           bio.write.data := 0.U
-          bio.write.mask := zero_writer.io.resp.bits.mask
+          bio.write.mask := {
+            val n = inputType.getWidth / 8
+            val mask = zero_writer.io.resp.bits.mask
+            val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
+            expanded
+          }
 
           zero_writer.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
         }.otherwise {
@@ -547,7 +552,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }.elsewhen (zerowrite && bio.write.fire()) {
           bio.write.bits.data := 0.U.asTypeOf(acc_row_t)
           bio.write.bits.mask := {
-            val n = accType.getWidth / inputType.getWidth
+            val n = accType.getWidth / 8
             val mask = zero_writer.io.resp.bits.mask
             val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
             expanded

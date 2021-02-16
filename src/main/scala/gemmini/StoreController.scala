@@ -111,7 +111,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     ((config.sp_banks * config.sp_bank_entries) max
     (config.acc_banks * config.acc_bank_entries))
 
-  val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, cmd_tracker_max_rows, deps_t))
+  val cmd_tracker = Module(new DMACommandTracker(nCmds, cmd_tracker_max_rows, deps_t))
 
   // DMA IO wiring
   io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoStore && cmd_tracker.io.alloc.ready) ||
