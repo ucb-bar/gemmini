@@ -499,10 +499,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
         // We need to make sure that we don't try to return a dma read resp from both mvin_scale and mvin_scale_acc
         // at the same time. mvin_scale always gets priority in this cases
-        val spad_dmaread_last = mvin_scale_out.valid && mvin_scale_out.bits.last && !mvin_scale_out.bits.tag.is_acc
-        val spad_zerowrite_last = zero_writer.io.resp.valid && zero_writer.io.resp.bits.last &&
-          !zero_writer.io.resp.bits.laddr.is_acc_addr
-        val spad_last = spad_dmaread_last || spad_zerowrite_last
+        val spad_last = mvin_scale_out.valid && mvin_scale_out.bits.last && !mvin_scale_out.bits.tag.is_acc
 
         val dmaread = (from_mvin_scale || from_mvin_scale_acc) &&
           dmaread_bank === i.U /* &&

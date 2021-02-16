@@ -3,12 +3,9 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-
 import freechips.rocketchip.tile.RoCCCommand
-
 import GemminiISA._
 import Util._
-//import midas.targetutils.FpgaDebug
 
 // TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
@@ -40,9 +37,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val ex = new ROBIssue(cmd_t, rob_entries)
     }
 
-    val ld_utilization = Output(UInt(log2Up(rob_entries).W))
-    val st_utilization = Output(UInt(log2Up(rob_entries).W))
-    val ex_utilization = Output(UInt(log2Up(rob_entries).W))
+    val ld_utilization = Output(UInt(log2Up(rob_entries+1).W))
+    val st_utilization = Output(UInt(log2Up(rob_entries+1).W))
+    val ex_utilization = Output(UInt(log2Up(rob_entries+1).W))
 
     val busy = Output(Bool())
 
@@ -317,8 +314,12 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   io.st_utilization := utilization_st_q
   io.ex_utilization := utilization_ex_q
 
-  val packed_deps = VecInit(entries.map(e => Cat(e.bits.deps)))
+  val packed_deps = VecInit(entries.map(e => Cat(e.bits.deps.reverse)))
   dontTouch(packed_deps)
+
+  val valids = VecInit(entries.map(_.valid))
+  val functs = VecInit(entries.map(_.bits.cmd.inst.funct))
+  val issueds = VecInit(entries.map(_.bits.issued))
 
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
@@ -334,6 +335,12 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < 10000.U, "pipeline stall")
+
+  val instructions_allocated = RegInit(0.U(32.W))
+  when (io.alloc.fire()) {
+    instructions_allocated := instructions_allocated + 1.U
+  }
+  dontTouch(instructions_allocated)
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {
