@@ -35,6 +35,15 @@ object Util {
     Mux(u +& v > max, max, u + v)
   }
 
+  def satAdd(u: UInt, v: UInt, max_plus_one: UInt, en: Bool = true.B): UInt = {
+    val max = max_plus_one - 1.U
+
+    MuxCase(u + v, Seq(
+      (!en) -> u,
+      ((u +& v) > max) -> max
+    ))
+  }
+
   def floorAdd(u: UInt, n: UInt, max_plus_one: UInt, en: Bool = true.B): UInt = {
     val max = max_plus_one - 1.U
 

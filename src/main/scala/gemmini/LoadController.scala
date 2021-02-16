@@ -43,7 +43,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val config_shrink = cmd.bits.cmd.rs1(2) // TODO magic numbers
   val config_block_stride = cmd.bits.cmd.rs1(31, 16) // TODO magic numbers
   //check bank conflict
-  val monitor_conflict = (cmd.bits.cmd.inst.funct === LOAD2_CMD)
+  val monitor_conflict = (cmd.bits.cmd.inst.funct === LOAD2_CMD) && cmd.bits.cmd.rs2(63)
 
   val mstatus = cmd.bits.cmd.status
 

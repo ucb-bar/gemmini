@@ -27,6 +27,9 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val block_stride = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
+  //for bank conflict monitoring
+  val monitor_conflict = Bool()
+
   override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
 }
 
@@ -157,6 +160,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val shift = UInt(log2Up(maxBytes).W)
       //val paddr = UInt(paddrBits.W)
       val vaddr = UInt(vaddrBits.W)
+      //for bank conflict monitor
+      val monitor_conflict = Bool()
     }
 
     // TODO Can we filter out the larger read_sizes here if the systolic array is small, in the same way that we do so
@@ -175,6 +180,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       packet.bytes_read := minOf(s.U - vaddr_offset, bytesLeft)
       packet.shift := vaddr_offset
       packet.vaddr := vaddr_aligned_to_size
+      //for bank conflict monitoring
+      packet.monitor_conflict := req.monitor_conflict
 
       packet
     }
@@ -185,6 +192,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val read_lg_size = read_packet.lg_size
     val read_bytes_read = read_packet.bytes_read
     val read_shift = read_packet.shift
+    //for bank conflict monitoring
+    val read_monitor = read_packet.monitor_conflict
 
     // Firing off TileLink read requests and allocating space inside the reservation buffer for them
     val get = edge.Get(
@@ -197,6 +206,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val tl_a = DataMirror.internal.chiselTypeClone[TLBundleA](tl.a.bits)
       val vaddr = Output(UInt(vaddrBits.W))
       val status = Output(new MStatus)
+
+      //for bank conflict monitoring
+      val monitor_conflict = Output(Bool())
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -204,6 +216,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     untranslated_a.bits.tl_a := get
     untranslated_a.bits.vaddr := read_vaddr
     untranslated_a.bits.status := req.status
+    //for bank conflict monitoring
+    untranslated_a.bits.monitor_conflict := read_monitor
 
     // 0 goes to retries, 1 goes to state machine
     val retry_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -221,19 +235,40 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.tlb.req.bits.tlb_req.cmd := M_XWR
     io.tlb.req.bits.status := tlb_q.io.deq.bits.status
 
-
+    val conflict_detected = RegInit(false.B)
     val translate_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
     translate_q.io.enq <> tlb_q.io.deq
     translate_q.io.deq.ready := true.B
 
-    retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready)
+    retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready) && conflict_detected
     retry_a.bits := translate_q.io.deq.bits
     assert(retry_a.ready)
 
-    tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss
+    val tl_miss = tl.a.valid && !tl.a.ready
+    val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
+    val tl_miss_counter = RegInit(0.U(5.W))
+    tl_miss_counter := satAdd(tl_miss_counter, 1.U, 31.U, tl_counter_trigger)
+    when(tl_miss_counter > 25.U){ //reached limit
+      conflict_detected := true.B
+    }.elsewhen(!tl_counter_trigger){
+      tl_miss_counter := 0.U
+    }
+    val tl_miss_timer = RegInit(0.U(9.W))
+    tl_miss_timer := floorAdd(tl_miss_timer, 1.U, 1001.U, conflict_detected)
+    when(tl_miss_timer === 1000.U){ //resolve miss counter temporary
+      tl_miss_counter := 0.U //reset miss counter
+      conflict_detected := false.B
+    }
+    tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss && !conflict_detected
     tl.a.bits   := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
-
+    val cycles = freechips.rocketchip.util.WideCounter(32)
+    when(tl.a.fire()){
+      printf("GEMMINI_MEM %x %x %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size)
+    }
+    when(tl_miss){
+      printf("GEMMINI_BLOCK %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U)
+    }
 
     io.reserve.valid := state === s_req_new_block && untranslated_a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
@@ -489,6 +524,10 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
+    val cycles = freechips.rocketchip.util.WideCounter(32)
+    when(tl.a.fire()){
+      printf("GEMMINI_MEM %x %x %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size)
+    }
 
     tl.d.ready := xactBusy.orR()
 
