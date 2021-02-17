@@ -129,14 +129,14 @@ class CounterEventIO extends Bundle {
 }
 
 class CounterIO(nPerfCounter: Int, counterWidth: Int) extends Bundle {
-  val addrWidth = log2Ceil(nPerfCounter)
-
-  val reset = Input(Bool())
+  val counter_reset = Input(Bool())
   val snapshot = Input(Bool())
-  val addr = Input(UInt(addrWidth.W))
+  val snapshot_reset = Input(Bool())
+  val addr = Input(UInt(log2Ceil(nPerfCounter).W))
   val data = Output(UInt(counterWidth.W))
+  val config_address = Flipped(Valid(UInt(log2Ceil(CounterEvent.n))))
+
   val event_io = new CounterEventIO
-  val config_address = Valid(UInt(log2Ceil(CounterEvent.n)))
 }
 
 // A simple counter file. Every counter is incremented when the corresponding event signal is high on rising edge.
@@ -144,15 +144,24 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
 {
   val io = IO(new CounterIO(nPerfCounter, counterWidth))
 
-  val counters = Vec(nPerfCounter, RegInit(0.U(counterWidth.W), io.reset))
+  val counters = Vec(nPerfCounter, RegInit(0.U(counterWidth.W), io.counter_reset))
+  val counter_snapshot = Vec(nPerfCounter, RegInit(0.U(counterWidth.W), io.counter_reset))
   val counter_config = Vec(nPerfCounter, RegInit(0.U(CounterEvent.n)))
-  val snapshot_enable = RegInit(false.B, io.reset)
+  val snapshot_enable = RegInit(false.B, io.counter_reset)
 
-  // Snapshot: In case the access instruction get blocked, it is possible to take a snapshot when reading counter
-  // value by setting a bit in the instruction. All subsequent readings return the values from the snapshot until 
-  // it is cleared by a instruction with "clear" bit marked. 
-  // When the snapshot bit is set, the normal counter are still being incremented. 
-  // TODO implement this
+  // Snapshot: In case a sequence of access instructions get interrupted (i.e. preempted by OS), it is possible
+  // to take a snapshot when reading counter value by setting a bit in the instruction. All subsequent readings
+  // return the values from the snapshot until it is cleared by a instruction with "clear" bit marked. 
+  // When the snapshot bit is set, the normal counters are still being incremented. 
+  when (io.snapshot_reset) {
+    snapshot_enable := false.B
+  } .elsewhen (io.snapshot) {
+    snapshot_enable := true.B
+    // Move counter values to snapshot register
+    (counter_snapshot zip counters) map (_ => (s, c) => {
+      s := c
+    })
+  }
 
   // Connect read port
   io.data := counters(addr)
@@ -168,4 +177,46 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
       counter := counter + 1
     }
   })
+}
+
+class CounterController(nPerfCounter: Int, counterWidth: Int)(implicit p: Parameters) extends Module {
+  val io = IO(new Bundle() {
+    val in = Flipped(Decoupled(new RoCCCommand))
+    val out = Decoupled(new RoCCResponse)
+    val event_io = new CounterEventIO
+  })
+
+  val module = CounterFile(nPerfCounter: Int, counterWidth: Int)
+  module.event_io <> io.event_io
+  
+  val out_reg = Reg(io.out.bits.cloneType)
+  val out_valid_reg = RegInit(false.B)
+
+  // Decode access option
+  // rs1[2:0] = Counter index
+  // rs1[3] = Global counter value reset
+  // rs1[4] = Snapshot reset
+  // rs1[5] = Take snapshot
+  // rs1[6] = Change config
+  // rs1[12:7] = new counter address for counter with index specified in rs1[2:0]
+
+  io.in.ready := !out_valid_reg
+  module.io.addr := io.in.bits.rs1(2, 0)
+  module.io.counter_reset := io.in.bits.rs1(3) & io.in.fire()
+  module.io.snapshot_reset := io.in.bits.rs1(4) & io.in.fire()
+  module.io.snapshot := io.in.bits.rs1(5) & io.in.fire()
+  module.io.config_address.valid := io.in.bits.rs1(6) & io.in.fire()
+  module.io.config_address.bits := io.in.bits.rs1(12, 7)
+
+  when (io.out.fire()) {
+    out_valid_reg := false.B
+  } .elsewhen (io.in.fire()) {
+    out_valid_reg := true.B
+    out_reg.rd := io.in.bits.inst.rd
+    out_reg.data := 0.U
+    out_reg.data := module.io.data
+  }
+
+  io.out.valid := out_valid_reg
+  io.out.bits := out_reg
 }

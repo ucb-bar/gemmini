@@ -122,7 +122,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   val tagWidth = 32
 
-  val counters = new CounterFile(CounterAddr.n, outer.xLen)
+  // Counters
+  val counters = new CounterController(CounterAddr.n, outer.xLen)
+  io.resp <> counters.io.out  // Counter access command will be committed immediately
+  counter.io.in.valid := false.B
+  counter.io.in.bits := DontCare
 
   // TLB
   implicit val edge = outer.node.edges.out.head
@@ -406,6 +410,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val risc_funct = unrolled_cmd.bits.inst.funct
 
     val is_flush = risc_funct === FLUSH_CMD
+    val is_counter_op = risc_funct === COUNTER_OP
     /*
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_store = (funct === STORE_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
@@ -421,6 +426,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
       // compressed_cmd.ready := true.B // TODO should we wait for an acknowledgement from the TLB?
       unrolled_cmd.ready := true.B // TODO should we wait for an acknowledgement from the TLB?
+    }
+
+    .elsewhen (is_counter_op) {
+      // If this is a counter access/configuration command, execute immediately
+      counter.io.in <> unrolled_cmd
     }
 
     .otherwise {

@@ -6,7 +6,6 @@ import chisel3.util._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
-import org.w3c.dom.css.Counter
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
