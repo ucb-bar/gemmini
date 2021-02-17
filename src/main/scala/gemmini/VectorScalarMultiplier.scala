@@ -29,9 +29,9 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
   num_scale_units: Int
 ) extends Module {
 
-  val u = mvin_scale_args match {
-    case Some(ScaleArguments(_, _, multiplicand_t, _, _)) => multiplicand_t
-    case None => Bool() // TODO make this a 0-width UInt
+  val (u, always_identity) = mvin_scale_args match {
+    case Some(ScaleArguments(_, _, multiplicand_t, _, _)) => (multiplicand_t, false)
+    case None => (Bool(), true) // TODO make this a 0-width UInt
   }
 
   val io = IO(new Bundle {
@@ -111,8 +111,15 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
           out_regs(i).tag := in.bits.tag
           out_regs(i).last := in.bits.repeats === 0.U && in.bits.last
           out_regs(i).row := in.bits.repeats
-          fired_masks(i).foreach(_ := false.B)
-          completed_masks(i).foreach(_ := false.B)
+          out_regs(i).out := in.bits.in
+          val identity = (u match {
+            case u: UInt => Arithmetic.UIntArithmetic.cast(u).identity
+            case s: SInt => Arithmetic.SIntArithmetic.cast(s).identity
+            case f: Float => Arithmetic.FloatArithmetic.cast(f).identity
+            case b: Bool => 1.U(1.W)
+          })
+          fired_masks(i).foreach(_ := in.bits.scale.asUInt === identity.asUInt || always_identity.B)
+          completed_masks(i).foreach(_ := in.bits.scale.asUInt === identity.asUInt || always_identity.B)
         }
       }
       tail_oh := (tail_oh << 1) | tail_oh(nEntries-1)
