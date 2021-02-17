@@ -156,7 +156,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val USABLE_SP_TILES = (SP_ROWS / DIM) - 2
   val TOTAL_ACC_TILES = (ACC_ROWS / DIM)
   val SQRT_ACC_TILES = sqrt(TOTAL_ACC_TILES).toInt
-  assert(USABLE_SP_TILES >= TOTAL_ACC_TILES, 
+  assert(USABLE_SP_TILES >= TOTAL_ACC_TILES,
     s"SP_TILES($USABLE_SP_TILES) + 2 < ACC_TILES($TOTAL_ACC_TILES)")
 
   // prioritize sizes that cause the output-group to be further from square
