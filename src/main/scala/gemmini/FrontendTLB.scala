@@ -9,6 +9,8 @@ import freechips.rocketchip.tile.{CoreBundle, CoreModule}
 import freechips.rocketchip.tilelink.TLEdgeOut
 import freechips.rocketchip.util.InOrderArbiter
 
+import midas.targetutils.FpgaDebug
+
 import Util._
 
 class DecoupledTLBReq(val lgMaxSize: Int)(implicit p: Parameters) extends CoreBundle {
@@ -36,6 +38,8 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 
     val exp = new TLBExceptionIO
   }
+
+  FpgaDebug(io.resp)
 
   val interrupt = RegInit(false.B)
   io.exp.interrupt := interrupt

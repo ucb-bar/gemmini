@@ -14,6 +14,8 @@ import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
 import Util._
 
+import midas.targetutils.FpgaDebug
+
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W) // TODO use LocalAddr in DMA
@@ -284,6 +286,11 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
       state := s_req_new_block
     }
+
+    FpgaDebug(state)
+    FpgaDebug(req.len)
+    FpgaDebug(bytesRequested)
+    FpgaDebug(bytesLeft)
   }
 }
 
@@ -543,5 +550,10 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
       state := Mux(io.req.bits.store_en, s_writing_new_block, s_idle)
     }
+
+    FpgaDebug(state)
+    FpgaDebug(req.len)
+    FpgaDebug(bytesSent)
+    FpgaDebug(bytesLeft)
  }
 }

@@ -7,6 +7,8 @@ import freechips.rocketchip.tile.RoCCCommand
 import GemminiISA._
 import Util._
 
+import midas.targetutils.FpgaDebug
+
 // TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
   val valid = Output(Bool())
@@ -317,9 +319,15 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val packed_deps = VecInit(entries.map(e => Cat(e.bits.deps.reverse)))
   dontTouch(packed_deps)
 
+  FpgaDebug(packed_deps)
+
   val valids = VecInit(entries.map(_.valid))
   val functs = VecInit(entries.map(_.bits.cmd.inst.funct))
   val issueds = VecInit(entries.map(_.bits.issued))
+
+  FpgaDebug(valids)
+  FpgaDebug(functs)
+  FpgaDebug(issueds)
 
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
