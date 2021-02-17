@@ -114,7 +114,7 @@ object GemminiConfigs {
     mvin_scale_shared = false,
 
     num_acc_scale_units = 4,
-    acc_scale_latency = 3,
+    acc_scale_latency = 4,
     acc_scale_args = ScaleArguments(
       (t: SInt, f: Float) => {
         val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)

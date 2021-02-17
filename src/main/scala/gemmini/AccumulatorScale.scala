@@ -134,7 +134,12 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
       val arb = Module(new RRArbiter(new DataWithIndex, arbIn.length))
       arb.io.in <> arbIn
       arb.io.out.ready := true.B
-      val arbOut = arb.io.out
+      val arbOut = Reg(Valid(new DataWithIndex))
+      arbOut.valid := arb.io.out.valid
+      arbOut.bits  := arb.io.out.bits
+      when (reset.asBool) {
+        arbOut.valid := false.B
+      }
       val e_scaled = scale_args.scale_func(arbOut.bits.data, arbOut.bits.scale)
       val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
       val e_act = MuxCase(e_clipped, Seq(
