@@ -79,10 +79,12 @@ class AccumulatorMem[T <: Data, U <: Data](
   val acc_buf = ShiftRegister(io.write.bits.acc, 2)
   val mask_buf = ShiftRegister(io.write.bits.mask, 2)
   val w_buf_valid = ShiftRegister(io.write.fire(), 2)
-  val rdata = Wire(t)
-  rdata := DontCare
+  val acc_rdata = Wire(t)
+  acc_rdata := DontCare
+  val read_rdata = Wire(t)
+  read_rdata := DontCare
   val block_read_req = WireInit(false.B)
-  val w_sum = VecInit((RegNext(rdata) zip wdata_buf).map { case (rv, wv) =>
+  val w_sum = VecInit((RegNext(acc_rdata) zip wdata_buf).map { case (rv, wv) =>
     VecInit((rv zip wv).map(t => t._1 + t._2))
   })
 
@@ -92,7 +94,8 @@ class AccumulatorMem[T <: Data, U <: Data](
     mem.io.wen := w_buf_valid
     mem.io.wdata := Mux(acc_buf, w_sum, wdata_buf)
     mem.io.mask := mask_buf
-    rdata := mem.io.rdata
+    acc_rdata := mem.io.rdata
+    read_rdata := mem.io.rdata
     mem.io.raddr := Mux(io.write.fire() && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
     mem.io.ren := io.read.req.fire() || (io.write.fire() && io.write.bits.acc)
   } else {
@@ -163,8 +166,10 @@ class AccumulatorMem[T <: Data, U <: Data](
 
       }
       val bank_rdata = mem.read(raddr, ren && !wen).asTypeOf(t)
-      when (RegNext(ren)) {
-        rdata := bank_rdata
+      when (RegNext(ren && reads(0).valid && isThisBank(reads(0).bits))) {
+        acc_rdata := bank_rdata
+      } .elsewhen (RegNext(ren)) {
+        read_rdata := bank_rdata
       }
       when (wen) {
         mem.write(waddr, wdata, wmask)
@@ -189,7 +194,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   }
 
   val q = Module(new Queue(new AccumulatorReadResp(t, scale_args.multiplicand_t, log2Ceil(t.head.head.getWidth)),  1, true, true))
-  q.io.enq.bits.data := rdata
+  q.io.enq.bits.data := read_rdata
   q.io.enq.bits.scale := RegNext(io.read.req.bits.scale)
   q.io.enq.bits.relu6_shift := RegNext(io.read.req.bits.relu6_shift)
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
