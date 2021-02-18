@@ -1,10 +1,10 @@
 {
   "name" : "python-data-fed",
-  "workdir" : ".",
+  "workdir" : "..",
   "base" : "fedora-base.json",
   "rootfs-size" : "16384MiB",
   "overlay" : "overlay",
   "host-init" : "blis-host-init.sh",
-  "guest-init" : "python-guest-init.sh",
+  "guest-init" : "blas-workloads/python-guest-init.sh",
   "spike-args" : "--extension=gemmini"
 }

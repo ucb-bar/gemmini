@@ -1,11 +1,11 @@
 {
   "name" : "ilqgames-fed-test",
-  "workdir" : ".",
+  "workdir" : "..",
   "base" : "ilqgames-fed.json",
   "rootfs-size" : "8192MiB",
   "overlay" : "overlay",
   "host-init" : "blis-host-init.sh",
-  "guest-init" : "ilqgames-guest-init.sh",
+  "guest-init" : "blas-workloads/ilqgames-guest-init.sh",
   "spike-args" : "--extension=gemmini",
   "command": "/root/ilqgames/bin/n_player_intersection --noviz && poweroff"
 }

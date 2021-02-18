@@ -11,6 +11,7 @@ dnf install -y blas
 #sometimes the shared library symlinks need to be defined manually
 #ln -s /usr/lib64/libblas.so.3 /usr/lib64/libblas.so
 #link the system libblas shared object to libblis shared object 
+#cp /root/blis/lib/riscv64/libblis.so.3 /usr/lib64/ 
 cp /root/blis/lib/gemmini/libblis.so.3 /usr/lib64/ 
 ln -s /usr/lib64/libblis.so.3 /usr/lib64/libblis.so
 ln -s /usr/lib64/libblis.so.3 /usr/lib64/libblas.so
@@ -30,7 +31,7 @@ ln -s /usr/lib64/liblapack.so.3 /usr/lib64/liblapack.so
 #mkdir /root/lapack-rpm
 #cd /root/lapack-rpm
 #wget http://fedora.riscv.rocks/kojifiles/packages/lapack/3.9.0/5.fc33/src/lapack-3.9.0-5.fc33.src.rpm
-#rpmbuild -i lapack-3.9.0-5.fc33.src.rpm
+#rpm -i lapack-3.9.0-5.fc33.src.rpm
 #cp /root/lapack-3.9.0-ilaenv-blocksize.patch ~/rpmbuild/SOURCES/
 #cp /root/lapack-3.9.0-ilaenv-nb.patch ~/rpmbuild/SOURCES/
 #cp /root/lapack.spec ~/rpmbuild/SPECS/lapack.spec
@@ -41,7 +42,7 @@ ln -s /usr/lib64/liblapack.so.3 /usr/lib64/liblapack.so
 #cd ~
 #cp /root/rpmbuild/BUILD/lapack-3.9.0/liblapack.so.3.9.0 /usr/lib64/liblapack.so.3.9.0
 #cp /root/rpmbuild/BUILD/lapack-3.9.0/liblapacke.so.3.9.0 /usr/lib64/liblapacke.so.3.9.0
-#ln -s /usr/lib64/liblapack.so.3.9 /usr/lib64/liblapack.so
+#ln -s /usr/lib64/liblapack.so.3.9.0 /usr/lib64/liblapack.so
 
 #build
 python -m pip install --user numpy scipy 
@@ -119,9 +120,20 @@ echo "import sklearn.decomposition" >> test.py
 echo "t = timeit.timeit('sklearn.decomposition.PCA(n_components=2).fit(a)', number=5, globals=globals())" >> test.py
 echo "print(t)" >> test.py
 
-echo "print('compute K-means clustering using sklearn: sklearn.cluster.KMeans(n_clusters=5, random_state=0).fit(a).predict(a)')" >> test.py
+# my original attempt with sklearn kmean, using default fit().predict()
+#echo "print('compute K-means clustering using sklearn: sklearn.cluster.KMeans(n_clusters=5, random_state=0).fit(a).predict(a)')" >> test.py
+#echo "import sklearn.cluster" >> test.py
+#echo "t = timeit.timeit('sklearn.cluster.KMeans(n_clusters=5, random_state=0).fit(a).predict(a)', number=5, globals=globals())" >> test.py
+#echo "print(t)" >> test.py
+
+echo "print('compute K-means clustering using sklearn elkan algorithm: sklearn.cluster.KMeans(n_clusters=5, random_state=0).fit_predict(a)')" >> test.py
 echo "import sklearn.cluster" >> test.py
-echo "t = timeit.timeit('sklearn.cluster.KMeans(n_clusters=5, random_state=0).fit(a).predict(a)', number=5, globals=globals())" >> test.py
+echo "t = timeit.timeit('sklearn.cluster.KMeans(n_clusters=5, random_state=0).fit_predict(a)', number=5, globals=globals())" >> test.py
+echo "print(t)" >> test.py
+
+echo "print(\"compute K-means clustering using sklearn EM-style algorithm : sklearn.cluster.KMeans(n_clusters=5, random_state=0, algorithm='full').fit_predict(a)\")" >> test.py
+echo "import sklearn.cluster" >> test.py
+echo "t = timeit.timeit(\"sklearn.cluster.KMeans(n_clusters=5, random_state=0, algorithm='full').fit_predict(a)\", number=5, globals=globals())" >> test.py
 echo "print(t)" >> test.py
 
 echo "print('compute Ridge regression sklearn: sklearn.linear_model.Ridge(alpha=0.1).fit(a, y)')" >> test.py

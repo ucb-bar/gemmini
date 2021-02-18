@@ -1,10 +1,10 @@
 {
   "name" : "r-fed",
-  "workdir" : ".",
+  "workdir" : "..",
   "base" : "fedora-base.json",
   "rootfs-size" : "8192MiB",
   "overlay" : "overlay",
   "host-init" : "blis-host-init.sh",
-  "guest-init" : "r-guest-init.sh",
+  "guest-init" : "blas-workloads/r-guest-init.sh",
   "spike-args" : "--extension=gemmini"
 }
