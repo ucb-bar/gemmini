@@ -10,6 +10,7 @@ case class CapacityInKilobytes(kilobytes: Int) extends GemminiMemCapacity
 case class CapacityInMatrices(matrices: Int) extends GemminiMemCapacity
 
 case class ScaleArguments[T <: Data, U <: Data](scale_func: (T, U) => T, latency: Int, multiplicand_t: U,
+                                                num_scale_units: Int,
                                                 identity: String="0", c_str: String="ROUNDING_RIGHT_SHIFT(x, scale)")
 
 case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
@@ -39,11 +40,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              accType: T,
                                                                              mvin_scale_args: Option[ScaleArguments[T, U]],
                                                                              mvin_scale_acc_args: Option[ScaleArguments[T, U]],
-                                                                             num_mvin_scale_units: Int,
                                                                              mvin_scale_shared: Boolean,
                                                                              acc_scale_args: ScaleArguments[T, V],
-                                                                             num_acc_scale_units: Int,
-                                                                             acc_scale_latency: Int,
                                                                              hasIm2col: Boolean,
                                                                              pe_latency: Int,
                                                                              acc_read_full_width: Boolean,
@@ -71,12 +69,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries)
 
   val mvin_scale_t = mvin_scale_args match {
-    case Some(ScaleArguments(_, _, t, _, _)) => t
+    case Some(ScaleArguments(_, _, t, _, _, _)) => t
     case None => Bool() // TODO replace this with UInt(0.W)
   }
 
   val mvin_scale_acc_t = mvin_scale_acc_args match {
-    case Some(ScaleArguments(_, _, t, _, _)) => t
+    case Some(ScaleArguments(_, _, t, _, _, _)) => t
     case None => Bool() // TODO replace this with UInt(0.W)
   }
 
@@ -230,7 +228,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     // assert(Set(8, 16, 32, 64).contains(outputType.getWidth))
     assert(Set(8, 16, 32, 64).contains(accType.getWidth))
 
-    assert(acc_scale_args.latency == 0, "Accumulator's scale latency must be 0 cycles")
 
     val header = new StringBuilder()
     header ++= s"#ifndef $guard\n"
@@ -305,7 +302,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     header ++= s"#define row_align_acc(blocks) __attribute__((aligned(blocks*DIM*sizeof(acc_t))))\n\n"
 
     val mvin_scale_identity = mvin_scale_args match {
-      case Some(ScaleArguments(_, _, _, identity, _)) => identity
+      case Some(ScaleArguments(_, _, _, _, identity, _)) => identity
       case None => "0"
     }
     header ++= s"#define MVIN_SCALE_IDENTITY $mvin_scale_identity\n\n"

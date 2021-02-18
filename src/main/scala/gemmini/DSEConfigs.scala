@@ -38,7 +38,6 @@ object DSEBaseConfig {
     inputType = SInt(8.W),
     outputType = SInt(19.W),
     accType = SInt(32.W),
-    num_mvin_scale_units = -1,
     mvin_scale_args = None,
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
@@ -54,9 +53,7 @@ object DSEBaseConfig {
         val r = (point_five & (zeros | ones_digit)).asBool()
 
         (t >> u).asSInt() + Mux(r, 1.S, 0.S)
-      }, 0, UInt(8.W)),
-    num_acc_scale_units = -1,
-    acc_scale_latency = 3,
+      }, 0, UInt(8.W), -1),
     acc_read_full_width = true,
     acc_read_small_width = true,
     use_dedicated_tl_port = false,

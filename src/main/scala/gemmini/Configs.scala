@@ -71,7 +71,6 @@ object GemminiConfigs {
     outputType = SInt(20.W),
     accType = SInt(32.W),
 
-    num_mvin_scale_units = 4,
     mvin_scale_args = Some(ScaleArguments(
       (t: SInt, f: Float) => {
         val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)
@@ -106,15 +105,13 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      4, Float(8, 24),
+      5, Float(8, 24), 4,
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (elem_t)y);})"
     )),
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
 
-    num_acc_scale_units = 4,
-    acc_scale_latency = 4,
     acc_scale_args = ScaleArguments(
       (t: SInt, f: Float) => {
         val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)
@@ -149,7 +146,7 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      0, Float(8, 24),
+      4, Float(8, 24), 4,
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
     ),

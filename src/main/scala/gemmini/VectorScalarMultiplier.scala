@@ -25,13 +25,12 @@ class VectorScalarMultiplierResp[T <: Data, Tag <: Data](block_cols: Int, t: T, 
 }
 
 class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
-  mvin_scale_args: Option[ScaleArguments[T, U]], block_cols: Int, t: T, tag_t: Tag,
-  num_scale_units: Int
+  mvin_scale_args: Option[ScaleArguments[T, U]], block_cols: Int, t: T, tag_t: Tag
 ) extends Module {
 
-  val (u, always_identity) = mvin_scale_args match {
-    case Some(ScaleArguments(_, _, multiplicand_t, _, _)) => (multiplicand_t, false)
-    case None => (Bool(), true) // TODO make this a 0-width UInt
+  val (u, num_scale_units, always_identity) = mvin_scale_args match {
+    case Some(ScaleArguments(_, _, multiplicand_t, num_scale_units, _, _)) => (multiplicand_t, num_scale_units, false)
+    case None => (Bool(), -1, true) // TODO make this a 0-width UInt
   }
 
   val io = IO(new Bundle {
@@ -41,7 +40,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
 
   val width = block_cols
   val latency = mvin_scale_args match {
-    case Some(ScaleArguments(_, latency, _, _, _)) => latency
+    case Some(ScaleArguments(_, latency, _, _, _, _)) => latency
     case None => 0
   }
 
@@ -76,7 +75,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
     pipe.io.in.bits.last := in.bits.repeats === 0.U && in.bits.last
     pipe.io.in.bits.row := in.bits.repeats
     pipe.io.in.bits.out := (mvin_scale_args match {
-      case Some(ScaleArguments(mvin_scale_func, _, multiplicand_t, _, _)) =>
+      case Some(ScaleArguments(mvin_scale_func, _, multiplicand_t, _, _, _)) =>
         in.bits.in.map(x => mvin_scale_func(x, in.bits.scale.asTypeOf(multiplicand_t)))
       case None => in.bits.in
     })
@@ -150,11 +149,13 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
       val arb = Module(new RRArbiter(new DataWithIndex, arbIn.length))
       arb.io.in <> arbIn
       arb.io.out.ready := true.B
-      val arbOut = arb.io.out
+      val arbOut = Reg(Valid(new DataWithIndex))
+      arbOut.valid := arb.io.out.valid
+      arbOut.bits := arb.io.out.bits
       val e_scaled = mvin_scale_args match {
-        case Some(ScaleArguments(mvin_scale_func, _, multiplicand_t, _, _)) =>
-          mvin_scale_func(arb.io.out.bits.data, arb.io.out.bits.scale.asTypeOf(multiplicand_t))
-        case None => arb.io.out.bits.data
+        case Some(ScaleArguments(mvin_scale_func, _, multiplicand_t, _, _, _)) =>
+          mvin_scale_func(arbOut.bits.data, arbOut.bits.scale.asTypeOf(multiplicand_t))
+        case None => arbOut.bits.data
       }
 
       val pipe_in = Wire(Valid(new DataWithIndex))
@@ -188,12 +189,11 @@ object VectorScalarMultiplier {
   def apply[T <: Data, U <: Data, Tag <: Data](
     scale_args: Option[ScaleArguments[T, U]],
     t: T, cols: Int, tag_t: Tag,
-    num_multipliers: Int,
     is_acc: Boolean,
     is_mvin: Boolean=true
   ) = {
     assert(!is_acc || is_mvin)
-    val vsm = Module(new VectorScalarMultiplier(scale_args, cols, t, tag_t, num_multipliers))
+    val vsm = Module(new VectorScalarMultiplier(scale_args, cols, t, tag_t))
     (vsm.io.req, vsm.io.resp)
   }
 }

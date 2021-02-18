@@ -26,7 +26,6 @@ class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
 class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
   fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]],
   scale_t: U, shift_width: Int,
-  num_scale_units: Int, acc_scale_latency: Int,
   read_small_data: Boolean, read_full_data: Boolean,
   scale_args: ScaleArguments[T, U])(implicit ev: Arithmetic[T]) extends Module {
 
@@ -38,7 +37,8 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
   val out = Wire(Decoupled(new AccumulatorScaleResp[T](
     fullDataType, rDataType)(ev)))
 
-
+  val num_scale_units = scale_args.num_scale_units
+  val acc_scale_latency = scale_args.latency
 
   if (num_scale_units == -1) {
     val pipe_out = Pipeline(io.in, acc_scale_latency, Seq.fill(acc_scale_latency)((x: AccumulatorReadResp[T,U]) => x) :+ {

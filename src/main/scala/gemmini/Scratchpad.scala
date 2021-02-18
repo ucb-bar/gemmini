@@ -297,14 +297,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(
       config.mvin_scale_args,
       config.inputType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits),
-      num_mvin_scale_units,
       is_acc = false
     )
     val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out) else (
       VectorScalarMultiplier(
         config.mvin_scale_acc_args,
         config.accType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits),
-        num_mvin_scale_units,
         is_acc = true
       )
     )
@@ -470,8 +468,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       spad_row_t,
       acc_scale_args.multiplicand_t,
       log2Up(accType.getWidth),
-      num_acc_scale_units,
-      acc_scale_latency,
       acc_read_small_width,
       acc_read_full_width,
       acc_scale_args
