@@ -185,10 +185,15 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // val (compressed_cmd, compressor_busy) = InstCompressor(unrolled_cmd)
   // compressed_cmd.ready := false.B
-  val (unrolled_cmd, loop_unroller_busy) = LoopMatmul(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
+  val (loop_ld_cmd, loop_ld_unroller_busy) = LoopLoader(raw_cmd, meshRows*tileRows, coreMaxAddrBits, sp_banks * sp_bank_entries,
+    inputType.getWidth, dma_maxbytes)
+
+  val (unrolled_cmd, loop_unroller_busy) = LoopMatmul(loop_ld_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
     meshRows*tileRows, coreMaxAddrBits, rob_entries, 4, 12, 2, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes)
   unrolled_cmd.ready := false.B
+
+
 
   // val cmd_decompressor = Module(new InstDecompressor(rob_entries))
 
