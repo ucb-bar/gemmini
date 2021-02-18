@@ -21,7 +21,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   //queue for cmd
   val cmd = Queue(io.in)
   val is_ldloop = cmd.bits.inst.funct === LOOP_LD
-  val is_ldconfig = cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === Loop_LD_CONFIG_BOUNDS
+  val is_ldconfig = cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_LD_CONFIG_BOUNDS
   //ToDo: add these in software
 
   // config states
@@ -83,7 +83,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
         dram_base_addr := cmd.bits.rs1
         row_stride := cmd.bits.rs2 //Todo: add these in software
       }
-      is(Loop_LD_CONFIG_BOUNDS){
+      is(LOOP_LD_CONFIG_BOUNDS){
         // ToDo: add latency, skip A/B, transpose
         max_k := cmd.bits.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2)
         max_j := cmd.bits.rs2(iterator_bitwidth * 2 - 1, iterator_bitwidth)
