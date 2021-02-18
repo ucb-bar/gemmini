@@ -129,7 +129,11 @@ class AccumulatorMem[T <: Data, U <: Data](
       val w_q = Reg(Vec(nEntries, new W_Q_Entry(mask_len, mask_elem)))
       for (e <- w_q) {
         when (e.valid) {
-          assert(!(io.write.valid && io.write.bits.acc && isThisBank(io.write.bits.addr) && getBankIdx(io.write.bits.addr) === e.addr))
+          assert(!(
+            io.write.valid && io.write.bits.acc &&
+            isThisBank(io.write.bits.addr) && getBankIdx(io.write.bits.addr) === e.addr &&
+            ((io.write.bits.mask.asUInt & e.mask.asUInt) =/= 0.U)
+          ))
           when (io.read.req.valid && isThisBank(io.read.req.bits.addr) && getBankIdx(io.read.req.bits.addr) === e.addr) {
             reads(1).ready := false.B
           }
