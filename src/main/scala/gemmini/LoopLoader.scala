@@ -74,7 +74,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   io.out.bits := Mux(configured, load_cmd, cmd.bits)
   io.out.bits.status := cmd.bits.status
   io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldloop_cmd)
-  cmd.ready := Mux(is_ldloop_cmd, !configured, !io.out.ready)
+  cmd.ready := Mux(is_ldloop_cmd, !configured, !configured && io.out.ready)
 
   when(cmd.valid && is_ldconfig && state === idle){
     switch(cmd.bits.inst.funct){
@@ -83,6 +83,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
         row_stride := cmd.bits.rs2 //Todo: add these in software
       }
       is(Loop_LD_CONFIG_BOUNDS){
+        // ToDo: add latency, skip A/B, transpose
         max_k := cmd.bits.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2)
         max_j := cmd.bits.rs2(iterator_bitwidth * 2 - 1, iterator_bitwidth)
         max_i := cmd.bits.rs2(iterator_bitwidth-1, 0)
