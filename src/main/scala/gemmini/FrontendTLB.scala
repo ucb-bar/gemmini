@@ -40,6 +40,8 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   }
 
   FpgaDebug(io.resp)
+  FpgaDebug(io.req.valid)
+  FpgaDebug(io.req.bits.tlb_req)
 
   val interrupt = RegInit(false.B)
   io.exp.interrupt := interrupt

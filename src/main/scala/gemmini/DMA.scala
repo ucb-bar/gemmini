@@ -100,6 +100,16 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
+
+    FpgaDebug(io.resp.valid)
+    FpgaDebug(io.resp.ready)
+    FpgaDebug(io.resp.bits.is_acc)
+    FpgaDebug(io.resp.bits.accumulate)
+    FpgaDebug(io.resp.bits.has_acc_bitwidth)
+    FpgaDebug(io.resp.bits.repeats)
+    FpgaDebug(io.resp.bits.cmd_id)
+    FpgaDebug(io.resp.bits.bytes_read)
+    FpgaDebug(io.resp.bits.last)
   }
 }
 
@@ -287,6 +297,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       state := s_req_new_block
     }
 
+    FpgaDebug(io.req.valid)
+    FpgaDebug(io.req.ready)
     FpgaDebug(state)
     FpgaDebug(req.len)
     FpgaDebug(bytesRequested)
@@ -551,6 +563,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       state := Mux(io.req.bits.store_en, s_writing_new_block, s_idle)
     }
 
+    FpgaDebug(io.req.valid)
+    FpgaDebug(io.req.ready)
     FpgaDebug(state)
     FpgaDebug(req.len)
     FpgaDebug(bytesSent)

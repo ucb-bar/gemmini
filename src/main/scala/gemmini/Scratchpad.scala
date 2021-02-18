@@ -8,6 +8,8 @@ import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar}
 
+import midas.targetutils.FpgaDebug
+
 import Util._
 
 class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
@@ -197,6 +199,19 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val busy = Output(Bool())
       val flush = Input(Bool())
     })
+
+    FpgaDebug(io.dma.read.req.valid)
+    FpgaDebug(io.dma.read.req.ready)
+    FpgaDebug(io.dma.read.req.bits.vaddr)
+    FpgaDebug(io.dma.read.req.bits.laddr)
+    FpgaDebug(io.dma.read.req.bits.cols)
+    FpgaDebug(io.dma.read.req.bits.repeats)
+    FpgaDebug(io.dma.read.req.bits.scale)
+    FpgaDebug(io.dma.read.req.bits.has_acc_bitwidth)
+    FpgaDebug(io.dma.read.req.bits.all_zeros)
+    FpgaDebug(io.dma.read.req.bits.block_stride)
+    FpgaDebug(io.dma.read.req.bits.cmd_id)
+    FpgaDebug(io.dma.read.resp)
 
     val write_dispatch_q = Queue(io.dma.write.req)
 
