@@ -69,6 +69,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   load_cmd.rs1 := dram_addr
   load_cmd.rs2 := (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
   io.out.valid := cmd.valid
+  io.busy := cmd.valid || configured
 
   val is_ldloop_cmd = is_ldloop || is_ldconfig
   io.out.bits := Mux(configured, load_cmd, cmd.bits)
