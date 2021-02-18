@@ -38,8 +38,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   //val k = Reg(UInt(iterator_bitwidth.W))
   //val j = Reg(UInt(iterator_bitwidth.W))
-  val row_iterator =  Reg(UInt(iterator_bitwidth.W))//Mux(req.transpose, j, k)
-  val col_iterator =  Reg(UInt(iterator_bitwidth.W))//Mux(req.transpose, k, j)
+  val row_iterator =  Reg(UInt(iterator_bitwidth.W))//Mux(req.transpose, j, k) //k
+  val col_iterator =  Reg(UInt(iterator_bitwidth.W))//Mux(req.transpose, k, j) //j
   val max_row_iterator = Reg(UInt(iterator_bitwidth.W)) //Mux(req.transpose, max_j, max_k)
   val max_col_iterator = Reg(UInt(iterator_bitwidth.W)) //Mux(req.transpose, max_k, max_j)
 
@@ -104,13 +104,13 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     // The order here is k, j, i
     //val j_blocks = max_blocks// Mux(req.transpose, 1.U, max_blocks)
     //val k_blocks = 1.U //Mux(req.transpose, max_blocks, 1.U)
-    val row_blocks = max_blocks
-    val col_blocks = 1.U
+    val row_blocks = 1.U
+    val col_blocks = max_blocks
 
     //val next_j = floorAdd(j, j_blocks, max_j)
     //val next_k = floorAdd(k, k_blocks, max_k, next_j === 0.U)
-    val next_row = floorAdd(row_iterator, row_blocks, max_row_iterator)
     val next_col = floorAdd(col_iterator, col_blocks, max_col_iterator)
+    val next_row = floorAdd(row_iterator, row_blocks, max_row_iterator, next_col === 0.U)
 
     //j := next_j
     //k := next_k
