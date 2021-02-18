@@ -247,15 +247,15 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val tl_miss = tl.a.valid && !tl.a.ready
     val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
     val tl_miss_counter = RegInit(0.U(6.W))
-    tl_miss_counter := satAdd(tl_miss_counter, 1.U, 32.U, tl_counter_trigger)
-    when(tl_miss_counter > 30.U){ //reached limit
+    tl_miss_counter := satAdd(tl_miss_counter, 1.U, 42.U, tl_counter_trigger)
+    when(tl_miss_counter > 39.U){ //reached limit
       conflict_detected := true.B
     }.elsewhen(!tl_counter_trigger){
       tl_miss_counter := 0.U
     }
-    val tl_miss_timer = RegInit(0.U(9.W))
-    tl_miss_timer := floorAdd(tl_miss_timer, 1.U, 501.U, conflict_detected)
-    when(tl_miss_timer === 500.U){ //resolve miss counter temporary
+    val tl_miss_timer = RegInit(0.U(16.W))
+    tl_miss_timer := floorAdd(tl_miss_timer, 1.U, 5001.U, conflict_detected)
+    when(tl_miss_timer === 5000.U){ //resolve miss counter temporary
       tl_miss_counter := 0.U //reset miss counter
       conflict_detected := false.B
     }

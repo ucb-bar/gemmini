@@ -22,6 +22,17 @@ object GemminiISA {
 
   val LOAD3_CMD = 14.U
 
+  // TODO add orows and ocols to this as well
+  val LOOP_CONV_WS = 15.U // no_bias, no_pool
+  val LOOP_CONV_WS_CONFIG_1 = 16.U // batch_size, in_dim, in_channels, out_channels | out_dim, pool_out_dim, stride, padding
+  val LOOP_CONV_WS_CONFIG_2 = 17.U // kernel_dim, pool_size, pool_stride, pool_padding | batches, porows, pocols, pochs
+  val LOOP_CONV_WS_CONFIG_3 = 18.U // krows, kcols, kchs, lpad | rpad, upad, dpad, plpad
+  val LOOP_CONV_WS_CONFIG_4 = 19.U // prad, pupad, pdpad, orows | ocols
+  val LOOP_CONV_WS_CONFIG_5 = 20.U // *weights | *output
+  val LOOP_CONV_WS_CONFIG_6 = 21.U // *bias, *input
+
+  val LOOP_LD = 22.U
+
   // rs1[2:0] values
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U
