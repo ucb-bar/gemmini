@@ -87,6 +87,8 @@ class AccumulatorMem[T <: Data, U <: Data](
   val w_sum = VecInit((RegNext(acc_rdata) zip wdata_buf).map { case (rv, wv) =>
     VecInit((rv zip wv).map(t => t._1 + t._2))
   })
+  val counter = RegInit(0.U(32.W))
+  counter := counter + 1.U
 
   if (!acc_singleported) {
     val mem = TwoPortSyncMem(n, t, t.getWidth / 8) // TODO We assume byte-alignment here. Use aligned_to instead
@@ -156,8 +158,9 @@ class AccumulatorMem[T <: Data, U <: Data](
           }
         }
       }
+
       when (w_buf_valid && isThisBank(waddr_buf)) {
-        assert(!((w_q_tail.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_)))
+        assert(!RegNext(((w_q_tail.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_))))
         w_q_tail := w_q_tail << 1 | w_q_tail(nEntries-1)
         for (i <- 0 until nEntries) {
           when (w_q_tail(i)) {

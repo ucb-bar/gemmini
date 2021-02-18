@@ -594,8 +594,18 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val zerowrite = zero_writer.io.resp.valid && zero_writer.io.resp.bits.laddr.is_acc_addr &&
           zero_writer.io.resp.bits.laddr.acc_bank() === i.U &&
           !((mvin_scale_out.valid && mvin_scale_out.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
-
-        bio.write.valid := exwrite || ((dmaread || zerowrite) && !spad_last)
+        val consecutive_write_block = RegInit(false.B)
+        val consecutive_write_sub_bank = RegInit(0.U(log2Ceil(num_acc_sub_banks).W))
+        when (bio.write.fire() && bio.write.bits.acc &&
+          (bio.write.bits.addr(log2Ceil(num_acc_sub_banks)-1,0) === consecutive_write_sub_bank)) {
+          consecutive_write_block := true.B
+        } .elsewhen (bio.write.fire() && bio.write.bits.acc) {
+          consecutive_write_block := false.B
+          consecutive_write_sub_bank := bio.write.bits.addr(log2Ceil(num_acc_sub_banks)-1,0)
+        } .otherwise {
+          consecutive_write_block := false.B
+        }
+        bio.write.valid := false.B
 
         bio.write.bits.acc := MuxCase(zero_writer.io.resp.bits.laddr.accumulate,
           Seq(exwrite -> io.acc.write(i).bits.acc,
@@ -607,9 +617,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
             (from_mvin_scale || from_mvin_scale_acc) -> dmaread_row))
 
         when (exwrite) {
+          bio.write.valid := true.B
           bio.write.bits.data := io.acc.write(i).bits.data
           bio.write.bits.mask := io.acc.write(i).bits.mask
-        }.elsewhen (dmaread && bio.write.fire()) {
+        }.elsewhen (dmaread && !spad_last && !consecutive_write_block) {
+          bio.write.valid := true.B
           bio.write.bits.data := Mux(from_mvin_scale,
             VecInit(mvin_scale_out.bits.out.map(e => e.withWidthOf(accType))).asTypeOf(acc_row_t),
             mvin_scale_acc_out.bits.out.asTypeOf(acc_row_t))
@@ -624,11 +636,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
               mvin_scale_acc_out.bits.tag.mask)
 
           when(from_mvin_scale) {
-            mvin_scale_out.ready := true.B
+            mvin_scale_out.ready := bio.write.ready
           }.otherwise {
-            mvin_scale_acc_out.ready := true.B
+            mvin_scale_acc_out.ready := bio.write.ready
           }
-        }.elsewhen (zerowrite && bio.write.fire()) {
+        }.elsewhen (zerowrite && !spad_last && !consecutive_write_block) {
+          bio.write.valid := true.B
           bio.write.bits.data := 0.U.asTypeOf(acc_row_t)
           bio.write.bits.mask := {
             val n = accType.getWidth / 8
@@ -637,7 +650,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
             expanded
           }
 
-          zero_writer.io.resp.ready := true.B
+          zero_writer.io.resp.ready := bio.write.ready
         }.otherwise {
           bio.write.bits.data := DontCare
           bio.write.bits.mask := DontCare
