@@ -82,12 +82,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
   val acc_scale_t_bits = acc_scale_t.getWidth
 
-  // val max_in_flight_reqs = 16 // TODO calculate this somehow
-
-  val mvin_len_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
-  val mvin_rows_bits = 16 // log2Up(meshRows * tileRows + 1)
-  val mvout_len_bits = log2Up(meshColumns * tileColumns + 1)
+  val mvin_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
+  val mvout_cols_bits = log2Up(meshColumns * tileColumns + 1)
   val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
+
+  val load_states = 3
+  val block_stride_bits = 16
 
   //==========================================================================
   // sanity check mesh size
@@ -383,7 +384,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       header ++= s"#define ACC_READ_FULL_WIDTH\n"
     header ++= s"\n"
 
-    header ++= s"#endif // $guard"
+    header ++= s"#endif // $guard\n"
     header.toString()
   }
 
