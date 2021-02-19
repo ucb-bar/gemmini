@@ -218,7 +218,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.tlb.req.bits.tlb_req.vaddr := tlb_q.io.deq.bits.vaddr
     io.tlb.req.bits.tlb_req.passthrough := false.B
     io.tlb.req.bits.tlb_req.size := 0.U // send_size
-    io.tlb.req.bits.tlb_req.cmd := M_XWR
+    io.tlb.req.bits.tlb_req.cmd := M_XRD
     io.tlb.req.bits.status := tlb_q.io.deq.bits.status
 
     val translate_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
