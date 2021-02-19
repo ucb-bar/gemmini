@@ -38,8 +38,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   //val k = Reg(UInt(iterator_bitwidth.W))
   //val j = Reg(UInt(iterator_bitwidth.W))
-  val row_iterator =  Reg(UInt(iterator_bitwidth.W))//Mux(req.transpose, j, k) //k
-  val col_iterator =  Reg(UInt(iterator_bitwidth.W))//Mux(req.transpose, k, j) //j
+  val row_iterator =  RegInit(0.U(iterator_bitwidth.W))//Mux(req.transpose, j, k) //k
+  val col_iterator =  RegInit(0.U(iterator_bitwidth.W))//Mux(req.transpose, k, j) //j
   val max_row_iterator = Reg(UInt(iterator_bitwidth.W)) //Mux(req.transpose, max_j, max_k)
   val max_col_iterator = Reg(UInt(iterator_bitwidth.W)) //Mux(req.transpose, max_k, max_j)
 
