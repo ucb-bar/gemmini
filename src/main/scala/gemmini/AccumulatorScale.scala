@@ -23,6 +23,40 @@ class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
     shift_width, rDataType).asInstanceOf[this.type]
 }
 
+class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U, scale_args: ScaleArguments[T, U]) extends Bundle {
+  val shift_width = log2Ceil(t.getWidth)
+
+  val scale = u.cloneType
+  val act = UInt(2.W)
+  val relu6_shift = UInt(shift_width.W)
+  val data = t.cloneType
+  val full_data = t.cloneType
+  val id = UInt(2.W) // TODO hardcoded
+  val index = UInt()
+  override def cloneType: this.type = new AccScaleDataWithIndex(t, u, scale_args: ScaleArguments[T, U]).asInstanceOf[this.type]
+}
+
+class AccScalePipe[T <: Data : Arithmetic, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_args: ScaleArguments[T, U])(implicit ev: Arithmetic[T]) extends Module {
+  val u = scale_args.multiplicand_t
+  val io = IO(new Bundle {
+    val in = Input(Valid(new AccScaleDataWithIndex(t, u, scale_args)(ev)))
+    val out = Output(Valid(new AccScaleDataWithIndex(t, u, scale_args)(ev)))
+  })
+  import ev._
+  val latency = scale_args.latency
+  val out = WireInit(io.in)
+
+  val e_scaled = scale_args.scale_func(io.in.bits.data, io.in.bits.scale)
+  val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
+  val e_act = MuxCase(e_clipped, Seq(
+    (io.in.bits.act === Activation.RELU) -> e_clipped.relu,
+    (io.in.bits.act === Activation.RELU6) -> e_clipped.relu6(io.in.bits.relu6_shift)))
+
+  out.bits.data := e_act
+  io.out := Pipe(out, latency)
+}
+
+
 class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
   fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]],
   scale_t: U, shift_width: Int,
@@ -33,7 +67,7 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
   val io = IO(new AccumulatorScaleIO[T,U](
     fullDataType, scale_t, shift_width, rDataType
   )(ev))
-
+  val t = io.in.bits.data(0)(0).cloneType
   val out = Wire(Decoupled(new AccumulatorScaleResp[T](
     fullDataType, rDataType)(ev)))
 
@@ -101,17 +135,7 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
       tail_oh := (tail_oh << 1) | tail_oh(nEntries-1)
     }
 
-
-    class DataWithIndex extends Bundle {
-      val scale = io.in.bits.scale.cloneType
-      val act = io.in.bits.act.cloneType
-      val relu6_shift = io.in.bits.relu6_shift.cloneType
-      val data = io.in.bits.data(0)(0).cloneType
-      val full_data = io.in.bits.data(0)(0).cloneType
-      val id = UInt(2.W) // TODO hardcoded
-      val index = UInt()
-    }
-    val inputs = Seq.fill(width*nEntries) { Wire(Decoupled(new DataWithIndex)) }
+    val inputs = Seq.fill(width*nEntries) { Wire(Decoupled(new AccScaleDataWithIndex(t, scale_t, scale_args)(ev))) }
 
     for (i <- 0 until nEntries) {
       for (w <- 0 until width) {
@@ -131,26 +155,19 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
     }
     for (i <- 0 until num_scale_units) {
       val arbIn = inputs.zipWithIndex.filter({ case (_, w) => w % num_scale_units == i }).map(_._1)
-      val arb = Module(new RRArbiter(new DataWithIndex, arbIn.length))
+      val arb = Module(new RRArbiter(new AccScaleDataWithIndex(t, scale_t, scale_args)(ev), arbIn.length))
       arb.io.in <> arbIn
       arb.io.out.ready := true.B
-      val arbOut = Reg(Valid(new DataWithIndex))
+      val arbOut = Reg(Valid(new AccScaleDataWithIndex(t, scale_t, scale_args)(ev)))
       arbOut.valid := arb.io.out.valid
       arbOut.bits  := arb.io.out.bits
       when (reset.asBool) {
         arbOut.valid := false.B
       }
-      val e_scaled = scale_args.scale_func(arbOut.bits.data, arbOut.bits.scale)
-      val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
-      val e_act = MuxCase(e_clipped, Seq(
-        (arbOut.bits.act === Activation.RELU) -> e_clipped.relu,
-        (arbOut.bits.act === Activation.RELU6) -> e_clipped.relu6(arbOut.bits.relu6_shift)
-      ))
-      val pipe_in = Wire(Valid(new DataWithIndex))
-      pipe_in.valid := arbOut.valid
-      pipe_in.bits  := arbOut.bits
-      pipe_in.bits.data := e_act
-      val pipe_out = Pipe(pipe_in, acc_scale_latency)
+      val pipe = Module(new AccScalePipe(t, rDataType, scale_args)(ev, ev))
+      pipe.io.in := arbOut
+      val pipe_out = pipe.io.out
+
       for (j <- 0 until nEntries) {
         for (w <- 0 until width) {
           if ((j*width+w) % num_scale_units == i) {

@@ -24,6 +24,26 @@ class VectorScalarMultiplierResp[T <: Data, Tag <: Data](block_cols: Int, t: T, 
   override def cloneType: VectorScalarMultiplierResp.this.type = new VectorScalarMultiplierResp(block_cols, t, tag_t).asInstanceOf[this.type]
 }
 
+class DataWithIndex[T <: Data, U <: Data](t: T, u: U) extends Bundle {
+  val data = t.cloneType
+  val scale = u.cloneType
+  val id = UInt(2.W) // TODO hardcoded
+  val index = UInt()
+  override def cloneType: DataWithIndex.this.type = new DataWithIndex(t, u).asInstanceOf[this.type]
+}
+
+class ScalePipe[T <: Data, U <: Data](t: T, mvin_scale_args: ScaleArguments[T, U]) extends Module {
+  val u = mvin_scale_args.multiplicand_t
+  val io = IO(new Bundle {
+    val in = Input(Valid(new DataWithIndex(t, u)))
+    val out = Output(Valid(new DataWithIndex(t, u)))
+  })
+  val latency = mvin_scale_args.latency
+  val out = WireInit(io.in)
+  out.bits.data := mvin_scale_args.scale_func(io.in.bits.data, io.in.bits.scale.asTypeOf(u))
+  io.out := Pipe(out, latency)
+}
+
 class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
   mvin_scale_args: Option[ScaleArguments[T, U]], block_cols: Int, t: T, tag_t: Tag
 ) extends Module {
@@ -124,13 +144,9 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
       tail_oh := (tail_oh << 1) | tail_oh(nEntries-1)
     }
 
-    class DataWithIndex extends Bundle {
-      val data = in.bits.in(0).cloneType
-      val scale = u.cloneType
-      val id = UInt(2.W) // TODO hardcoded
-      val index = UInt()
-    }
-    val inputs = Seq.fill(width*nEntries) { Wire(Decoupled(new DataWithIndex)) }
+
+
+    val inputs = Seq.fill(width*nEntries) { Wire(Decoupled(new DataWithIndex(t, u))) }
     for (i <- 0 until nEntries) {
       for (w <- 0 until width) {
         val input = inputs(i*width+w)
@@ -146,23 +162,20 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
     }
     for (i <- 0 until num_scale_units) {
       val arbIn = inputs.zipWithIndex.filter({ case (_, w) => w % num_scale_units == i }).map(_._1)
-      val arb = Module(new RRArbiter(new DataWithIndex, arbIn.length))
+      val arb = Module(new RRArbiter(new DataWithIndex(t, u), arbIn.length))
       arb.io.in <> arbIn
       arb.io.out.ready := true.B
-      val arbOut = Reg(Valid(new DataWithIndex))
+      val arbOut = Reg(Valid(new DataWithIndex(t, u)))
       arbOut.valid := arb.io.out.valid
       arbOut.bits := arb.io.out.bits
-      val e_scaled = mvin_scale_args match {
-        case Some(ScaleArguments(mvin_scale_func, _, multiplicand_t, _, _, _)) =>
-          mvin_scale_func(arbOut.bits.data, arbOut.bits.scale.asTypeOf(multiplicand_t))
-        case None => arbOut.bits.data
+      when (reset.asBool) {
+        arbOut.valid := false.B
       }
 
-      val pipe_in = Wire(Valid(new DataWithIndex))
-      pipe_in.valid := arbOut.valid
-      pipe_in.bits  := arbOut.bits
-      pipe_in.bits.data := e_scaled
-      val pipe_out = Pipe(pipe_in, latency)
+
+      val pipe = Module(new ScalePipe(t, mvin_scale_args.get))
+      pipe.io.in := arbOut
+      val pipe_out = pipe.io.out
       for (j <- 0 until nEntries) {
         for (w <- 0 until width) {
           if ((j*width+w) % num_scale_units == i) {
