@@ -788,8 +788,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   ex.io.req.bits.pad_k := loop_requesting_ex.pad_k
   ex.io.req.bits.pad_i := loop_requesting_ex.pad_i
   ex.io.req.bits.accumulate := loop_requesting_ex.ex_accumulate
-  ex.io.req.bits.a_addr_start := Mux(loop_requesting_ex.a_dram_addr === 0.U, 0.U, loop_requesting_ex.a_addr_start)
-  ex.io.req.bits.b_addr_end := Mux(loop_requesting_ex.b_dram_addr === 0.U, (max_addr/concurrent_loops).U, loop_requesting_ex.b_addr_end)
+  ex.io.req.bits.a_addr_start := loop_requesting_ex.a_addr_start //Mux(loop_requesting_ex.a_dram_addr === 0.U, 0.U, loop_requesting_ex.a_addr_start)
+  ex.io.req.bits.b_addr_end := loop_requesting_ex.b_addr_end //Mux(loop_requesting_ex.b_dram_addr === 0.U, (max_addr/concurrent_loops).U, loop_requesting_ex.b_addr_end)
   ex.io.req.bits.a_tranpose := loop_requesting_ex.a_transpose
   ex.io.req.bits.b_tranpose := loop_requesting_ex.b_transpose
   ex.io.req.bits.c_addr_start := ex_c_addr_start

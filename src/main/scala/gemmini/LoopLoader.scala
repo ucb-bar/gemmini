@@ -25,6 +25,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   //val is_ldloop = cmd.bits.inst.funct === LOOP_LD
   val is_ldconfig = cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_LD_CONFIG_BOUNDS
 
+  val loop_tag = RegInit(false.B)
   // config states
   //val max_k = RegInit(0.U(iterator_bitwidth.W))
   //val max_j = RegInit(0.U(iterator_bitwidth.W))
@@ -52,8 +53,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val max_blocks = max_block_len.asUInt()
   val AB = RegInit(false.B) //false if B, true if A
   //ToDo: rotate starting address like LoopMatmul.scala
-  val A_sp_addr_start = RegInit(0.U(log2Up(max_addr).W))
-  val B_sp_addr_end = RegInit((max_addr/2).U(log2Up(max_addr).W))
+  val A_sp_addr_start = Mux(loop_tag, (max_addr/2).U ,0.U)//RegInit(0.U(log2Up(max_addr).W))
+  val B_sp_addr_end = Mux(loop_tag, (max_addr - block_size).U, (max_addr/2 - block_size).U)//RegInit((max_addr/2).U(log2Up(max_addr).W))
   val sp_addr_start = Mux(AB, A_sp_addr_start, B_sp_addr_end - max_row_iterator * max_col_iterator * block_size.U) // Todo: need mux with 0 (skip A)
   val dram_addr = dram_base_addr + (row_iterator * row_stride + col_iterator) * block_size.U * (input_w/8).U
   val sp_addr = sp_addr_start + (row_iterator * max_col_iterator + col_iterator) * block_size.U
@@ -127,6 +128,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     when (next_row === 0.U && next_col === 0.U) { //finished loading
       state := idle
       configured := false.B
+      loop_tag := ~loop_tag
     }
   }
 
