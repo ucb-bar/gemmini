@@ -100,7 +100,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   fixed_loop_cmd.inst.funct := LOOP_WS_CONFIG_ADDRS_AB
   fixed_loop_cmd.rs1 := Mux(AB, 0.U, cmd.bits.rs1)
   fixed_loop_cmd.rs2 := Mux(AB, cmd.bits.rs2, 0.U)
-  
+
   io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr, fixed_loop_cmd, cmd.bits))
   io.out.bits.status := cmd.bits.status
   io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
