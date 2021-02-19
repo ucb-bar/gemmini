@@ -146,7 +146,7 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      4, Float(8, 24), 4,
+      5, Float(8, 24), 4,
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
     ),
