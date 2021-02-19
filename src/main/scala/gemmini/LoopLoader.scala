@@ -100,7 +100,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   when(lock_tag && is_loop_ws_addr){
     loop_ws_state := ld
-    cmd_copy := cmd
+    cmd_copy := cmd.bits
   }
   when(loop_ws_state === ld){
     when(AB === true.B) {
