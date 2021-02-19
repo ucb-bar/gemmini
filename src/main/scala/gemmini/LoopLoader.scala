@@ -113,7 +113,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     }
   }
   io.out.bits := Mux(configured, load_cmd, Mux(loop_ws_state === ld, cmd_copy, cmd.bits))
-  io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig && (!is_loop_ws_addr))
+  io.out.valid := Mux(configured, state =/= idle, (cmd.valid && !is_ldconfig) || (loop_ws_state === ld))
   cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready && (loop_ws_state === idle))
 //  io.out.bits := Mux(configured, load_cmd, cmd.bits)
 //  io.out.bits.status := cmd.bits.status
