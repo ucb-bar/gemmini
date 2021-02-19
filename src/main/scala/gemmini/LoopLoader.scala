@@ -95,14 +95,16 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   // fix loop_ws command
   val loop_ws_state = RegInit(idle)
   val is_loop_ws_addr = cmd.bits.inst.funct === LOOP_WS_CONFIG_ADDRS_AB
-  when(lock_tag && is_loop_ws_addr){
-    //loop_ws_state := ld
-    when(AB === true.B) {
-      cmd.bits.rs1 := 0.U
-    }.otherwise{
-      cmd.bits.rs2 := 0.U
-    }
-  }
+  val fixed_loop_cmd = Wire(new RoCCCommand())
+  fixed_loop_cmd := DontCare
+  fixed_loop_cmd.inst.funct := LOOP_WS_CONFIG_ADDRS_AB
+  fixed_loop_cmd.rs1 := Mux(AB, 0.U, cmd.bits.rs1)
+  fixed_loop_cmd.rs2 := Mux(AB, cmd.bits.rs2, 0.U)
+  
+  io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr, fixed_loop_cmd, cmd.bits))
+  io.out.bits.status := cmd.bits.status
+  io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
+  cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
 /*
   val cmd_copy = RegInit(cmd.bits)
 
@@ -125,10 +127,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready && (loop_ws_state === idle))
 
  */
-    io.out.bits := Mux(configured, load_cmd, cmd.bits)
-    io.out.bits.status := cmd.bits.status
-    io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
-    cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
+
   //  io.out.bits := Mux(configured, load_cmd, cmd.bits)
 //  io.out.bits.status := cmd.bits.status
 //  io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
