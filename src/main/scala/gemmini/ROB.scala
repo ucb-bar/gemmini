@@ -63,6 +63,12 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     }
   }
 
+  val instructions_allocated = RegInit(0.U(32.W))
+  when (io.alloc.fire()) {
+    instructions_allocated := instructions_allocated + 1.U
+  }
+  dontTouch(instructions_allocated)
+
   class Entry extends Bundle {
     val q = q_t.cloneType
 
@@ -80,6 +86,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     val deps = Vec(rob_entries, Bool())
     def ready(dummy: Int = 0): Bool = !deps.reduce(_ || _)
+
+    // Debugging signals
+    val allocated_at = UInt(instructions_allocated.getWidth.W)
   }
 
   val entries = Reg(Vec(rob_entries, UDValid(new Entry)))
@@ -115,7 +124,29 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val wars_op1_probe = WireInit(0.U(rob_entries.W))
   val wars_op2_probe = WireInit(0.U(rob_entries.W))
 
+  dontTouch(raws_probe)
+  dontTouch(waws_probe)
+  dontTouch(wars_probe)
+  dontTouch(wars_op1_probe)
+  dontTouch(wars_op2_probe)
+  dontTouch(older_in_same_q_probe)
+  dontTouch(is_st_and_must_wait_for_prior_ex_config_probe)
+  dontTouch(is_ex_config_and_must_wait_for_prior_st_probe)
+
+  FpgaDebug(raws_probe)
+  FpgaDebug(waws_probe)
+  FpgaDebug(wars_probe)
+  FpgaDebug(older_in_same_q_probe)
+  FpgaDebug(is_st_and_must_wait_for_prior_ex_config_probe)
+  FpgaDebug(is_ex_config_and_must_wait_for_prior_st_probe)
+
+  FpgaDebug(wars_op1_probe)
+  FpgaDebug(wars_op2_probe)
+
   dontTouch(new_entry)
+
+  FpgaDebug(new_entry)
+  FpgaDebug(io.alloc)
 
   when (io.alloc.fire()) {
     val spAddrBits = 32
@@ -243,14 +274,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     is_st_and_must_wait_for_prior_ex_config_probe := Cat(is_st_and_must_wait_for_prior_ex_config)
     is_ex_config_and_must_wait_for_prior_st_probe := Cat(is_ex_config_and_must_wait_for_prior_st)
 
-    dontTouch(raws_probe)
-    dontTouch(waws_probe)
-    dontTouch(wars_probe)
-    dontTouch(wars_op1_probe)
-    dontTouch(wars_op2_probe)
-    dontTouch(older_in_same_q_probe)
-    dontTouch(is_st_and_must_wait_for_prior_ex_config_probe)
-    dontTouch(is_ex_config_and_must_wait_for_prior_st_probe)
+    new_entry.allocated_at := instructions_allocated
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
@@ -344,11 +368,15 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   }
   assert(cycles_since_issue < 10000.U, "pipeline stall")
 
-  val instructions_allocated = RegInit(0.U(32.W))
-  when (io.alloc.fire()) {
-    instructions_allocated := instructions_allocated + 1.U
-  }
-  dontTouch(instructions_allocated)
+  FpgaDebug(cycles_since_issue)
+  FpgaDebug(instructions_allocated)
+
+  FpgaDebug(io.issue.ld.ready)
+  FpgaDebug(io.issue.ld.valid)
+  FpgaDebug(io.issue.st.ready)
+  FpgaDebug(io.issue.st.valid)
+  FpgaDebug(io.issue.ex.ready)
+  FpgaDebug(io.issue.ex.valid)
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {
