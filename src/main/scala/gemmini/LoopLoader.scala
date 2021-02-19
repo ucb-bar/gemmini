@@ -92,11 +92,31 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   io.alert_cycle := alert_cycle
   io.latency := latency
 
-  //val is_ldloop_cmd = is_ldloop || is_ldconfig
-  io.out.bits := Mux(configured, load_cmd, cmd.bits)
-  io.out.bits.status := cmd.bits.status
-  io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
-  cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
+  // fix loop_ws command
+  val loop_ws_state = RegInit(idle)
+  val is_loop_ws_addr = cmd.bits.inst.funct === LOOP_WS_CONFIG_ADDRS_AB
+  val cmd_copy = RegInit(cmd)
+  when(lock_tag && is_loop_ws_addr){
+    loop_ws_state := ld
+    cmd_copy := cmd
+  }
+  when(loop_ws_state === ld){
+    when(AB === true.B) {
+      cmd_copy.bits.rs1 := 0.U
+    }.otherwise{
+      cmd_copy.bits.rs2 := 0.U
+    }
+    when(io.out.ready) {
+      loop_ws_state := idle
+    }
+  }
+  io.out.bits := Mux(configured, load_cmd, Mux(loop_ws_state === ld, cmd_copy.bits, cmd.bits))
+  io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig && (loop_ws_state === idle))
+  cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready && (loop_ws_state === idle))
+//  io.out.bits := Mux(configured, load_cmd, cmd.bits)
+//  io.out.bits.status := cmd.bits.status
+//  io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
+//  cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
 
   when(cmd.valid && is_ldconfig && state === idle){
     switch(cmd.bits.inst.funct){
