@@ -53,7 +53,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val max_blocks = max_block_len.asUInt()
   val AB = RegInit(false.B) //false if B, true if A
   //ToDo: rotate starting address like LoopMatmul.scala
-  val A_sp_addr_start = Mux(loop_tag, (max_addr/2).U ,0.U)//RegInit(0.U(log2Up(max_addr).W))
+  val A_sp_addr_start = Mux(loop_tag, (max_addr/2).U, 0.U)//RegInit(0.U(log2Up(max_addr).W))
   val B_sp_addr_end = Mux(loop_tag, (max_addr - block_size).U, (max_addr/2 - block_size).U)//RegInit((max_addr/2).U(log2Up(max_addr).W))
   val sp_addr_start = Mux(AB, A_sp_addr_start, B_sp_addr_end - max_row_iterator * max_col_iterator * block_size.U) // Todo: need mux with 0 (skip A)
   val dram_addr = dram_base_addr + (row_iterator * row_stride + col_iterator) * block_size.U * (input_w/8).U
@@ -69,7 +69,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val state = RegInit(idle)
   val configured = RegInit(false.B)
 
-  val conflict_monitor = (alert_cycle === 0.U) || (latency === 0.U)
+  val conflict_monitor = !((alert_cycle === 0.U) || (latency === 0.U))
 
   //ToDo: either load A or B (for now just do with B)
   val load_cmd = Wire(new RoCCCommand())
