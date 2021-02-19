@@ -26,6 +26,17 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val is_ldconfig = cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_LD_CONFIG_BOUNDS
 
   val loop_tag = RegInit(false.B)
+  val lock_tag = RegInit(false.B)
+  when(cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS){
+    lock_tag := true.B
+  } // no need to force flip once seen LOOP_LD
+  when(cmd.bits.inst.funct === LOOP_WS){
+    when(lock_tag){
+      lock_tag := false.B
+    }.otherwise{
+      loop_tag := ~loop_tag //force to flip to sync with loop matmul afterwards
+    }
+  }
   // config states
   //val max_k = RegInit(0.U(iterator_bitwidth.W))
   //val max_j = RegInit(0.U(iterator_bitwidth.W))
