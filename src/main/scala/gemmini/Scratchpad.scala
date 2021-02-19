@@ -204,6 +204,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // Misc. ports
       val busy = Output(Bool())
       val flush = Input(Bool())
+
+      // for detecting conflicts
+      val latency_in = Input(UInt(16.W))
+      val alert_cycles_in = Input(UInt(6.W))
+      val latency_out = Output(UInt(16.W))
+      val alert_cycles_out = Output(UInt(6.W))
     })
 
     val write_dispatch_q = Queue(io.dma.write.req)
@@ -305,6 +311,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     writer.module.io.flush := io.flush
     reader.module.io.flush := io.flush
+
+    //for monitoring conflicts
+    io.latency_out := io.latency_in
+    io.alert_cycles_out := io.alert_cycles_in
+    reader.module.io.latency := io.latency_out
+    reader.module.io.alert_cycles := io.alert_cycles_out
 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid
 

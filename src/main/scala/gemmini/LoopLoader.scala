@@ -17,10 +17,12 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     val in = Flipped(Decoupled(new RoCCCommand))
     val out = Decoupled(new RoCCCommand)
     val busy = Output(Bool())
+    val latency = Output(UInt(iterator_bitwidth.W))
+    val alert_cycle = Output(UInt(6.W))
   })
   //queue for cmd
   val cmd = Queue(io.in)
-  val is_ldloop = cmd.bits.inst.funct === LOOP_LD
+  //val is_ldloop = cmd.bits.inst.funct === LOOP_LD
   val is_ldconfig = cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_LD_CONFIG_BOUNDS
 
   // config states
@@ -32,7 +34,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   //val pad_j = RegInit(0.U(iterator_bitwidth.W))
   //val pad_i = RegInit(0.U(iterator_bitwidth.W))
 
-  val latency = RegInit(0.U(iterator_bitwidth.W))
+  val latency = RegInit(0.U(iterator_bitwidth.W)) //how many cycles to push
+  val alert_cycle = RegInit(0.U(6.W)) //raise flag after how much cycles?
   val dram_base_addr = RegInit(0.U(coreMaxAddrBits.W))
   val row_stride = RegInit(0.U(coreMaxAddrBits.W))
 
@@ -65,24 +68,28 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val state = RegInit(idle)
   val configured = RegInit(false.B)
 
+  val conflict_monitor = (alert_cycle === 0.U) || (latency === 0.U)
+
   //ToDo: either load A or B (for now just do with B)
   val load_cmd = Wire(new RoCCCommand())
   load_cmd := DontCare
   load_cmd.inst.funct := Mux(AB, LOAD_CMD, LOAD2_CMD)
   load_cmd.rs1 := dram_addr
-  load_cmd.rs2 := (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
-  io.out.valid := cmd.valid
+  load_cmd.rs2 :=  (conflict_monitor << 63).asUInt() | (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
   io.busy := cmd.valid || configured
+  io.alert_cycle := alert_cycle
+  io.latency := latency
 
-  val is_ldloop_cmd = is_ldloop || is_ldconfig
+  //val is_ldloop_cmd = is_ldloop || is_ldconfig
   io.out.bits := Mux(configured, load_cmd, cmd.bits)
   io.out.bits.status := cmd.bits.status
-  io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldloop_cmd)
-  cmd.ready := Mux(is_ldloop_cmd, !configured, !configured && io.out.ready)
+  io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
+  cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
 
   when(cmd.valid && is_ldconfig && state === idle){
     switch(cmd.bits.inst.funct){
       is(LOOP_LD_CONFIG_BOUNDS){
+        alert_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 5, iterator_bitwidth * 3)
         latency := cmd.bits.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2) //ToDo: give this to DMA
         max_col_iterator := cmd.bits.rs2(iterator_bitwidth * 2 - 1, iterator_bitwidth)
         max_row_iterator := cmd.bits.rs2(iterator_bitwidth-1, 0)
@@ -128,9 +135,9 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
 object LoopLoader{
   def apply(in: DecoupledIO[RoCCCommand], block_size: Int, coreMaxAddrBits: Int, max_addr: Int, input_w: Int, dma_max_bytes: Int)
-           (implicit p: Parameters): Tuple2[DecoupledIO[RoCCCommand], Bool] = {
+           (implicit p: Parameters): Tuple4[DecoupledIO[RoCCCommand], Bool, UInt, UInt] = {
     val lld = Module(new LoopLoader(block_size, coreMaxAddrBits, max_addr, input_w, dma_max_bytes))
     lld.io.in <> in
-    (lld.io.out, lld.io.busy)
+    (lld.io.out, lld.io.busy, lld.io.latency, lld.io.alert_cycle)
   }
 }

@@ -63,7 +63,18 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
       val flush = Input(Bool())
+
+      //for monitoring conflicts, latency
+      val latency_in = Input(UInt(16.W))
+      val alert_cycles_in = Input(UInt(6.W))
+      val latency_out = Output(UInt(16.W))
+      val alert_cycles_out = Output(UInt(6.W))
     })
+
+    io.latency_out := io.latency_in
+    io.alert_cycles_out := io.alert_cycles_in
+    core.module.io.latency := io.latency_out
+    core.module.io.alert_cycles := io.alert_cycles_out
 
     val nCmds = (nXacts / meshRows) + 1
 
@@ -137,6 +148,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits, maxBytes))
       val tlb = new FrontendTLBIO
       val flush = Input(Bool())
+
+      //for monitoring conflicts, latency
+      val latency = Input(UInt(16.W))
+      val alert_cycles = Input(UInt(6.W))
     })
 
     val s_idle :: s_req_new_block :: Nil = Enum(2)
@@ -247,15 +262,17 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val tl_miss = tl.a.valid && !tl.a.ready
     val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
     val tl_miss_counter = RegInit(0.U(6.W))
-    tl_miss_counter := satAdd(tl_miss_counter, 1.U, 42.U, tl_counter_trigger)
-    when(tl_miss_counter > 39.U){ //reached limit
+    //tl_miss_counter := satAdd(tl_miss_counter, 1.U, 42.U, tl_counter_trigger)
+    tl_miss_counter := satAdd(tl_miss_counter, 1.U, io.alert_cycles + 2.U, tl_counter_trigger)
+    when(tl_miss_counter >= io.alert_cycles){ //reached limit
       conflict_detected := true.B
     }.elsewhen(!tl_counter_trigger){
       tl_miss_counter := 0.U
     }
     val tl_miss_timer = RegInit(0.U(16.W))
-    tl_miss_timer := floorAdd(tl_miss_timer, 1.U, 5001.U, conflict_detected)
-    when(tl_miss_timer === 5000.U){ //resolve miss counter temporary
+    //tl_miss_timer := floorAdd(tl_miss_timer, 1.U, 5001.U, conflict_detected)
+    tl_miss_timer := floorAdd(tl_miss_timer, 1.U, io.latency + 1.U, conflict_detected)
+    when(tl_miss_timer === io.latency){ //resolve miss counter temporary
       tl_miss_counter := 0.U //reset miss counter
       conflict_detected := false.B
     }
