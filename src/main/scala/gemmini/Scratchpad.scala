@@ -315,8 +315,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     //for monitoring conflicts
     io.latency_out := io.latency_in
     io.alert_cycles_out := io.alert_cycles_in
-    reader.module.io.latency := io.latency_out
-    reader.module.io.alert_cycles := io.alert_cycles_out
+    reader.module.io.latency_in := io.latency_out
+    reader.module.io.alert_cycles_in := io.alert_cycles_out
 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid
 
