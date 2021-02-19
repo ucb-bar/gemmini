@@ -39,7 +39,7 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
     val exp = new TLBExceptionIO
   }
 
-  FpgaDebug(io.resp)
+  FpgaDebug(io.resp.miss)
   FpgaDebug(io.req.valid)
   FpgaDebug(io.req.bits.tlb_req)
 

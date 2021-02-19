@@ -769,7 +769,9 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   arb.io.in(4) <> ld_input.io.cmd
   val unrolled_cmd = arb.io.out
 
-  FpgaDebug(arb.io)
+  FpgaDebug(arb.io.out.valid)
+  FpgaDebug(arb.io.out.ready)
+  FpgaDebug(arb.io.out.bits.inst)
 
   // Wire up unrolled command output
   val is_loop_run_cmd = cmd.bits.inst.funct === LOOP_CONV_WS

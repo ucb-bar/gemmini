@@ -146,7 +146,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   dontTouch(new_entry)
 
   FpgaDebug(new_entry)
-  FpgaDebug(io.alloc)
+  FpgaDebug(io.alloc.valid)
+  FpgaDebug(io.alloc.ready)
+  FpgaDebug(io.alloc.bits.inst)
+  FpgaDebug(io.alloc.bits.rs1)
+  FpgaDebug(io.alloc.bits.rs2)
 
   when (io.alloc.fire()) {
     val spAddrBits = 32

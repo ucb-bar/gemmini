@@ -206,8 +206,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     FpgaDebug(io.dma.read.req.bits.laddr)
     FpgaDebug(io.dma.read.req.bits.cols)
     FpgaDebug(io.dma.read.req.bits.repeats)
-    FpgaDebug(io.dma.read.req.bits.scale)
-    FpgaDebug(io.dma.read.req.bits.has_acc_bitwidth)
     FpgaDebug(io.dma.read.req.bits.all_zeros)
     FpgaDebug(io.dma.read.req.bits.block_stride)
     FpgaDebug(io.dma.read.req.bits.cmd_id)
