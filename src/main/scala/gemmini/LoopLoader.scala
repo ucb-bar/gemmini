@@ -95,7 +95,11 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   // fix loop_ws command
   val loop_ws_state = RegInit(idle)
   val is_loop_ws_addr = cmd.bits.inst.funct === LOOP_WS_CONFIG_ADDRS_AB
-  val cmd_copy = RegInit(cmd)
+  //val cmd_copy = RegInit(cmd)
+  val cmd_copy = Reg(cmd.cloneType)
+  when(reset.toBool){
+    cmd_copy := cmd
+  }
   when(lock_tag && is_loop_ws_addr){
     loop_ws_state := ld
     cmd_copy := cmd
