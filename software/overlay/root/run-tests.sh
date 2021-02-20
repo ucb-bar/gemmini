@@ -1,48 +1,49 @@
 #!/usr/bin/env bash
 
-echo "*****************TEST RESULTS*************" > test_output.txt
+cat /proc/cpuinfo
+
+echo "*****************TEST RESULTS*************"
 echo "=========tiled_matmul========="
-echo "=========tiled_matmul_os-linux=========" >> test_output.txt
-/root/bareMetalC/tiled_matmul_os-linux >> test_output.txt
-echo "=========tiled_matmul_ws-linux=========" >> test_output.txt
-/root/bareMetalC/tiled_matmul_ws-linux >> test_output.txt
+echo "=========tiled_matmul_os-linux========="
+/root/bareMetalC/tiled_matmul_os-linux
+echo "=========tiled_matmul_ws-linux========="
+/root/bareMetalC/tiled_matmul_ws-linux
 
 echo "========mobilenet========="
-echo "========mobilenet OS=========" >> test_output.txt
-/root/imagenet/mobilenet-linux os matmul >> test_output.txt
-echo "========mobilenet WS=========" >> test_output.txt
-/root/imagenet/mobilenet-linux ws matmul >> test_output.txt
-echo "========mobilenet conv WS=========" >> test_output.txt
-/root/imagenet/mobilenet-linux ws conv >> test_output.txt
+echo "========mobilenet OS========="
+/root/imagenet/mobilenet-linux os matmul
+echo "========mobilenet WS========="
+/root/imagenet/mobilenet-linux ws matmul
+echo "========mobilenet conv WS========="
+/root/imagenet/mobilenet-linux ws conv
 
 echo "========ResNet50========="
-echo "========ResNet50 OS=========" >> test_output.txt
-/root/imagenet/resnet50-linux os matmul >> test_output.txt
-echo "========ResNet50 WS=========" >> test_output.txt
-/root/imagenet/resnet50-linux ws matmul >> test_output.txt
-echo "========ResNet50 conv WS=========" >> test_output.txt
-/root/imagenet/resnet50-linux ws conv >> test_output.txt
+echo "========ResNet50 OS========="
+/root/imagenet/resnet50-linux os matmul
+echo "========ResNet50 WS========="
+/root/imagenet/resnet50-linux ws matmul
+echo "========ResNet50 conv WS========="
+/root/imagenet/resnet50-linux ws conv
 
 echo "========MLP 1========="
-echo "========MLP 1 OS=========" >> test_output.txt
-/root/mlps/mlp1-linux os >> test_output.txt
-echo "========MLP 1 WS=========" >> test_output.txt
-/root/mlps/mlp1-linux ws >> test_output.txt
+echo "========MLP 1 OS========="
+/root/mlps/mlp1-linux os
+echo "========MLP 1 WS========="
+/root/mlps/mlp1-linux ws
 echo "========MLP 2========="
-echo "========MLP 2 OS=========" >> test_output.txt
-/root/mlps/mlp2-linux os >> test_output.txt
-echo "========MLP 2 WS=========" >> test_output.txt
-/root/mlps/mlp2-linux ws >> test_output.txt
+echo "========MLP 2 OS========="
+/root/mlps/mlp2-linux os
+echo "========MLP 2 WS========="
+/root/mlps/mlp2-linux ws
 echo "========MLP 3========="
-echo "========MLP 3 OS=========" >> test_output.txt
-/root/mlps/mlp3-linux os >> test_output.txt
-echo "========MLP 3 WS=========" >> test_output.txt
-/root/mlps/mlp3-linux ws >> test_output.txt
+echo "========MLP 3 OS========="
+/root/mlps/mlp3-linux os
+echo "========MLP 3 WS========="
+/root/mlps/mlp3-linux ws
 echo "========MLP 4========="
-echo "========MLP 4 OS=========" >> test_output.txt
-/root/mlps/mlp4-linux os >> test_output.txt
-echo "========MLP 4 WS=========" >> test_output.txt
-/root/mlps/mlp4-linux ws >> test_output.txt
+echo "========MLP 4 OS========="
+/root/mlps/mlp4-linux os
+echo "========MLP 4 WS========="
+/root/mlps/mlp4-linux ws
 
-cat test_output.txt
 poweroff -f
