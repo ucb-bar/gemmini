@@ -303,10 +303,12 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         m_state := s_reset
         pause_count := 0.U
       }.elsewhen(m_state === s_monitor_start){ // no detection during time window
-        when(pause_count === 2.U){
+        when(pause_count === 2.U){ // pause monitoring
           pause_detect := true.B // on 3rd time
-        } // pause monitoring
-        pause_count := pause_count + 1.U
+        }.otherwise{
+          pause_count := pause_count + 1.U
+          m_state := s_reset
+        }
       }
       pause_monitor_start := 0.U
     } //ToDo: how to restart monitoring after pausing
