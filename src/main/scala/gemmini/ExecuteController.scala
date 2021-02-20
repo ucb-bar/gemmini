@@ -912,9 +912,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     cmd.valid(0) && DoPreloads(0) && cmd.valid(1) && raw_hazard_pre)
   io.counter.connectEventSignal(CounterEvent.EXE_OVERLAP_HAZ_CYCLE, 
     cmd.valid(0) && DoPreloads(1) && cmd.valid(1) && DoComputes(0) && cmd.valid(2) && raw_hazard_mulpre)
-  io.counter.connectEventSignal(CounterEvent.A_GARBAGE_CYCLE, cntl.a_garbage)
-  io.counter.connectEventSignal(CounterEvent.B_GARBAGE_CYCLE, cntl.b_garbage)
-  io.counter.connectEventSignal(CounterEvent.D_GARBAGE_CYCLE, cntl.d_garbage)
+  io.counter.connectEventSignal(CounterEvent.A_GARBAGE_CYCLES, cntl.a_garbage)
+  io.counter.connectEventSignal(CounterEvent.B_GARBAGE_CYCLES, cntl.b_garbage)
+  io.counter.connectEventSignal(CounterEvent.D_GARBAGE_CYCLES, cntl.d_garbage)
   io.counter.connectEventSignal(CounterEvent.ACC_A_WAIT_CYCLE, 
     !(!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) && cntl.a_read_from_acc && !cntl.im2colling)
   io.counter.connectEventSignal(CounterEvent.ACC_B_WAIT_CYCLE, 

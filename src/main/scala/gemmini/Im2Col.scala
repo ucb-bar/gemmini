@@ -451,7 +451,7 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
   }
 
   // Performance counter
-  counter.io.connectEventSignal(CounterEvent.IM2COL_ACTIVE_CYCLES, im2col_state === preparing_im2col)
-  counter.io.connectEventSignal(CounterEvent.IM2COL_MEM_CYCLES, im2col_state === doing_im2col)
-  counter.io.connectEventSignal(CounterEvent.IM2COL_TRANSPOSER_WAIT_CYCLE, im2col_state === waiting_for_im2col && sram_read_req)
+  io.counter.connectEventSignal(CounterEvent.IM2COL_ACTIVE_CYCLES, im2col_state === preparing_im2col)
+  io.counter.connectEventSignal(CounterEvent.IM2COL_MEM_CYCLES, im2col_state === doing_im2col)
+  io.counter.connectEventSignal(CounterEvent.IM2COL_TRANSPOSER_WAIT_CYCLE, im2col_state === waiting_for_im2col && sram_read_req)
 }

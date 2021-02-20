@@ -98,7 +98,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
 
-    io.counter := core.io.counter
+    io.counter := core.module.io.counter
   }
 }
 
@@ -273,23 +273,24 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(vpn_already_translated, s_req_new_block, s_translate_req)
     }
-  }
 
-  // Performance counter
-  io.counter.connectEventSignal(CounterEvent.RDMA_ACTIVE_CYCLE, state =/= s_idle)
-  val bytes_read = RegInit(0.U(p(XLen).W), io.counter.external_reset)
-  io.counter.connectExternalCounter(CounterExternal.RDMA_BYTE_REC, bytes_read)
-  when (tl.d.fire()) {
-    bytes_read := bytes_read + 1.U << tl.d.bits.size
+
+    // Performance counter
+    io.counter.connectEventSignal(CounterEvent.RDMA_ACTIVE_CYCLE, state =/= s_idle)
+    val bytes_read = RegInit(0.U(32.W), io.counter.external_reset)
+    io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, bytes_read)
+    when (tl.d.fire()) {
+      bytes_read := bytes_read + 1.U << tl.d.bits.size
+    }
+    val tlb_req_onflight = RegInit(false.B)
+    when (io.tlb.req.valid) {
+      tlb_req_onflight := true.B
+    } .elsewhen (!io.tlb.resp.bits.miss) {
+      tlb_req_onflight := false.B
+    }
+    io.counter.connectEventSignal(CounterEvent.RDMA_TLB_WAIT_CYCLES, tlb_req_onflight)
+    io.counter.connectEventSignal(CounterEvent.RDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
   }
-  val tlb_req_onflight = RegInit(false.B)
-  when (io.tlb.req.valid) {
-    tlb_req_onflight := true.B
-  } .elsewhen (!io.tlb.resp.bits.miss) {
-    tlb_req_onflight := false.B
-  }
-  io.counter.connectEventSignal(CounterEvent.RDMA_TLB_WAIT_CYCLES, tlb_req_onflight)
-  io.counter.connectEventSignal(CounterEvent.RDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
 }
 
 class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends CoreBundle {
@@ -514,21 +515,21 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
       state := Mux(io.req.bits.store_en, Mux(vpn_already_translated, s_writing_new_block, s_translate_req), s_idle)
     }
-  }
 
-  // Performance counter
-  io.counter.connectEventSignal(CounterEvent.WDMA_ACTIVE_CYCLE, state =/= s_idle)
-  val bytes_sent = RegInit(0.U(p(XLen).W), io.counter.external_reset)
-  io.counter.connectExternalCounter(CounterExternal.WDMA_BYTES_SENT, bytes_sent)
-  when (tl.d.fire()) {
-    bytes_sent := bytes_sent + 1.U << tl.d.bits.size
+    // Performance counter
+    io.counter.connectEventSignal(CounterEvent.WDMA_ACTIVE_CYCLE, state =/= s_idle)
+    val bytes_sent = RegInit(0.U(32.W), io.counter.external_reset)
+    io.counter.connectExternalCounter(CounterExternal.WDMA_BYTES_SENT, bytes_sent)
+    when (tl.d.fire()) {
+      bytes_sent := bytes_sent + 1.U << tl.d.bits.size
+    }
+    val tlb_req_onflight = RegInit(false.B)
+    when (io.tlb.req.valid) {
+      tlb_req_onflight := true.B
+    } .elsewhen (!io.tlb.resp.bits.miss) {
+      tlb_req_onflight := false.B
+    }
+    io.counter.connectEventSignal(CounterEvent.WDMA_TLB_WAIT_CYCLES, tlb_req_onflight)
+    io.counter.connectEventSignal(CounterEvent.WDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
   }
-  val tlb_req_onflight = RegInit(false.B)
-  when (io.tlb.req.valid) {
-    tlb_req_onflight := true.B
-  } .elsewhen (!io.tlb.resp.bits.miss) {
-    tlb_req_onflight := false.B
-  }
-  io.counter.connectEventSignal(CounterEvent.WDMA_TLB_WAIT_CYCLES, tlb_req_onflight)
-  io.counter.connectEventSignal(CounterEvent.WDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
 }

@@ -123,10 +123,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val tagWidth = 32
 
   // Counters
-  val counters = new CounterController(CounterAddr.n, outer.xLen)
+  val counters = new CounterController(CounterEvent.n, outer.xLen)
   io.resp <> counters.io.out  // Counter access command will be committed immediately
-  counter.io.in.valid := false.B
-  counter.io.in.bits := DontCare
+  counters.io.in.valid := false.B
+  counters.io.in.bits := DontCare
 
   // TLB
   implicit val edge = outer.node.edges.out.head
@@ -430,7 +430,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     .elsewhen (is_counter_op) {
       // If this is a counter access/configuration command, execute immediately
-      counter.io.in <> unrolled_cmd
+      counters.io.in <> unrolled_cmd
     }
 
     .otherwise {
