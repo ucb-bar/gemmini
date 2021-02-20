@@ -19,12 +19,14 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     val busy = Output(Bool())
     val latency = Output(UInt(iterator_bitwidth.W))
     val alert_cycle = Output(UInt(6.W))
+    val pause_monitor = Input(Bool())
   })
   //queue for cmd
   val cmd = Queue(io.in)
   //val is_ldloop = cmd.bits.inst.funct === LOOP_LD
   val is_ldconfig = cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_LD_CONFIG_BOUNDS
 
+  val pause_req = RegInit(false.B)
   val loop_tag = RegInit(false.B)
   val lock_tag = RegInit(false.B)
   when(cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS){
@@ -101,39 +103,13 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   fixed_loop_cmd.rs1 := Mux(AB, 0.U, cmd.bits.rs1)
   fixed_loop_cmd.rs2 := Mux(AB, cmd.bits.rs2, 0.U)
 
-  io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr, fixed_loop_cmd, cmd.bits))
+  io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr && !pause_req, fixed_loop_cmd, cmd.bits))
   io.out.bits.status := cmd.bits.status
   io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
   cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
-/*
-  val cmd_copy = RegInit(cmd.bits)
 
-  when(lock_tag && is_loop_ws_addr){
-    loop_ws_state := ld
-    cmd_copy := cmd.bits
-  }
-  when(loop_ws_state === ld){
-    when(AB === true.B) {
-      cmd_copy.rs1 := 0.U
-    }.otherwise{
-      cmd_copy.rs2 := 0.U
-    }
-    when(io.out.ready) {
-      loop_ws_state := idle
-    }
-  }
-  io.out.bits := Mux(configured, load_cmd, Mux(loop_ws_state === ld, cmd_copy, cmd.bits))
-  io.out.valid := Mux(configured, state =/= idle, (cmd.valid && !is_ldconfig && !(lock_tag && is_loop_ws_addr)) || (loop_ws_state === ld))
-  cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready && (loop_ws_state === idle))
 
- */
-
-  //  io.out.bits := Mux(configured, load_cmd, cmd.bits)
-//  io.out.bits.status := cmd.bits.status
-//  io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
-//  cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
-
-  when(cmd.valid && is_ldconfig && state === idle){
+  when(cmd.valid && is_ldconfig && state === idle && !pause_req){
     switch(cmd.bits.inst.funct){
       is(LOOP_LD_CONFIG_BOUNDS){
         alert_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 5, iterator_bitwidth * 3)
@@ -175,6 +151,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       state := idle
       configured := false.B
       loop_tag := ~loop_tag
+      pause_req := io.pause_monitor // for safety, receive pause request signal here
     }
   }
 
@@ -182,10 +159,11 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 }
 
 object LoopLoader{
-  def apply(in: DecoupledIO[RoCCCommand], block_size: Int, coreMaxAddrBits: Int, max_addr: Int, input_w: Int, dma_max_bytes: Int)
+  def apply(in: DecoupledIO[RoCCCommand], pause_monitor: Bool, block_size: Int, coreMaxAddrBits: Int, max_addr: Int, input_w: Int, dma_max_bytes: Int)
            (implicit p: Parameters): Tuple4[DecoupledIO[RoCCCommand], Bool, UInt, UInt] = {
     val lld = Module(new LoopLoader(block_size, coreMaxAddrBits, max_addr, input_w, dma_max_bytes))
     lld.io.in <> in
+    lld.io.pause_monitor <> pause_monitor
     (lld.io.out, lld.io.busy, lld.io.latency, lld.io.alert_cycle)
   }
 }

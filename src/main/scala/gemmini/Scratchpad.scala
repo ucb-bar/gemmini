@@ -210,6 +210,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val alert_cycles_in = Input(UInt(6.W))
       val latency_out = Output(UInt(16.W))
       val alert_cycles_out = Output(UInt(6.W))
+
+      //for pausing monitoring
+      val pause_out = Output(Bool())
     })
 
     val write_dispatch_q = Queue(io.dma.write.req)
@@ -315,6 +318,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     //for monitoring conflicts
     io.latency_out := io.latency_in
     io.alert_cycles_out := io.alert_cycles_in
+    io.pause_out := reader.module.io.pause_out
     reader.module.io.latency_in := io.latency_out
     reader.module.io.alert_cycles_in := io.alert_cycles_out
 

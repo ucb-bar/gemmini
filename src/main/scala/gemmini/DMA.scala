@@ -7,11 +7,10 @@ import chisel3.experimental.DataMirror
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
 import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters}
-import freechips.rocketchip.tilelink.{TLBundleA}
+import freechips.rocketchip.tilelink.TLBundleA
 import testchipip.TLHelper
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
-
 import Util._
 
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
@@ -69,12 +68,17 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
       val alert_cycles_in = Input(UInt(6.W))
       val latency_out = Output(UInt(16.W))
       val alert_cycles_out = Output(UInt(6.W))
+
+      //for pausing monitoring
+      val pause_out = Output(Bool())
     })
 
     io.latency_out := io.latency_in
     io.alert_cycles_out := io.alert_cycles_in
     core.module.io.latency := io.latency_out
     core.module.io.alert_cycles := io.alert_cycles_out
+    io.pause_out := core.module.io.pause
+
 
     val nCmds = (nXacts / meshRows) + 1
 
@@ -152,6 +156,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       //for monitoring conflicts, latency
       val latency = Input(UInt(16.W))
       val alert_cycles = Input(UInt(6.W))
+      val pause = Output(Bool())
     })
 
     val s_idle :: s_req_new_block :: Nil = Enum(2)
@@ -259,6 +264,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     retry_a.bits := translate_q.io.deq.bits
     assert(retry_a.ready)
 
+    val (s_reset :: s_monitor_start :: s_conflict_detected :: Nil) = Enum(3)
+    val m_state = RegInit(s_reset)
+
     val tl_miss = tl.a.valid && !tl.a.ready
     val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
     val tl_miss_counter = RegInit(0.U(6.W))
@@ -269,6 +277,24 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     }.elsewhen(!tl_counter_trigger){
       tl_miss_counter := 0.U
     }
+    val pause_detect = RegInit(false.B)
+    io.pause := pause_detect
+    when(translate_q.io.deq.bits.monitor_conflict){
+      when(m_state === s_reset) {
+        m_state := s_monitor_start
+      }.elsewhen(m_state === s_monitor_start){
+        when(tl_miss_counter === io.alert_cycles){
+          m_state := s_conflict_detected
+        }
+      }
+    }.otherwise{
+      when(m_state === s_conflict_detected){
+        m_state := s_reset
+      }.elsewhen(m_state === s_monitor_start){ // no detection during time window
+        pause_detect := true.B // pause monitoring
+      }
+    } //ToDo: how to restart monitoring after pausing
+
     val tl_miss_timer = RegInit(0.U(16.W))
     //tl_miss_timer := floorAdd(tl_miss_timer, 1.U, 5001.U, conflict_detected)
     tl_miss_timer := floorAdd(tl_miss_timer, 1.U, io.latency + 1.U, conflict_detected)
