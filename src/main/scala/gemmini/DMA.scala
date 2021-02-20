@@ -278,14 +278,19 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       tl_miss_counter := 0.U
     }
     val pause_detect = RegInit(false.B)
+    val pause_monitor_start = RegInit(0.U(6.W))
     io.pause := pause_detect
     when(translate_q.io.deq.bits.monitor_conflict){
       when(m_state === s_reset) {
-        m_state := s_monitor_start
+        pause_monitor_start := pause_monitor_start + 1.U
+        when(pause_monitor_start > io.alert_cycles){ // to avoid toggles
+          m_state := s_monitor_start
+        }
       }.elsewhen(m_state === s_monitor_start){
-        when(tl_miss_counter === io.alert_cycles){
+        when(tl_miss_counter >= io.alert_cycles){
           m_state := s_conflict_detected
         }
+        pause_monitor_start := 0.U
       }
     }.otherwise{
       when(m_state === s_conflict_detected){
@@ -293,6 +298,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       }.elsewhen(m_state === s_monitor_start){ // no detection during time window
         pause_detect := true.B // pause monitoring
       }
+      pause_monitor_start := 0.U
     } //ToDo: how to restart monitoring after pausing
 
     val tl_miss_timer = RegInit(0.U(16.W))
