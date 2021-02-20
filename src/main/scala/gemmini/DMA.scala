@@ -302,9 +302,11 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       when(m_state === s_conflict_detected){
         m_state := s_reset
         pause_count := 0.U
+        pause_detect := false.B
       }.elsewhen(m_state === s_monitor_start){ // no detection during time window
         when(pause_count === 2.U){ // pause monitoring
           pause_detect := true.B // on 3rd time
+          m_state := s_reset
         }.otherwise{
           pause_count := pause_count + 1.U
           m_state := s_reset

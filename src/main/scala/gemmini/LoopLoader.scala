@@ -103,13 +103,17 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   fixed_loop_cmd.rs1 := Mux(AB, 0.U, cmd.bits.rs1)
   fixed_loop_cmd.rs2 := Mux(AB, cmd.bits.rs2, 0.U)
 
-  io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr && !pause_req, fixed_loop_cmd, cmd.bits))
+  val unlock_monitor = RegInit(0.U(3.W))
+  unlock_monitor := floorAdd(unlock_monitor, 1.U, 4.U, configured && pause_req && is_loop_ws_addr & lock_tag)
+  val unlock = unlock_monitor === 3.U // ToDo: change this number
+
+  io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock), fixed_loop_cmd, cmd.bits))
   io.out.bits.status := cmd.bits.status
   io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
   cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
 
 
-  when(cmd.valid && is_ldconfig && state === idle && !pause_req){
+  when(cmd.valid && is_ldconfig && state === idle && (!pause_req || unlock)){
     switch(cmd.bits.inst.funct){
       is(LOOP_LD_CONFIG_BOUNDS){
         alert_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 5, iterator_bitwidth * 3)
