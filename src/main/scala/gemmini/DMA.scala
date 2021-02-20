@@ -255,35 +255,41 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.tlb.req.bits.tlb_req.cmd := M_XWR
     io.tlb.req.bits.status := tlb_q.io.deq.bits.status
 
-    val conflict_detected = RegInit(false.B)
     val translate_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
     translate_q.io.enq <> tlb_q.io.deq
     translate_q.io.deq.ready := true.B
 
+    //retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready )
+    //retry_a.bits := translate_q.io.deq.bits
+    //assert(retry_a.ready)
+
+//////////////////////////////////////////////////////////
+    val conflict_detected = RegInit(false.B)
     retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready || conflict_detected)
     retry_a.bits := translate_q.io.deq.bits
     assert(retry_a.ready)
 
-    val (s_reset :: s_monitor_start :: s_conflict_detected :: Nil) = Enum(3)
-    val m_state = RegInit(s_reset)
 
     val tl_miss = tl.a.valid && !tl.a.ready
     val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
     val tl_miss_counter = RegInit(0.U(6.W))
-    //tl_miss_counter := satAdd(tl_miss_counter, 1.U, 42.U, tl_counter_trigger)
     tl_miss_counter := satAdd(tl_miss_counter, 1.U, io.alert_cycles + 2.U, tl_counter_trigger)
     when(tl_miss_counter >= io.alert_cycles){ //reached limit
       conflict_detected := true.B
     }.elsewhen(!tl_counter_trigger){
       tl_miss_counter := 0.U
     }
+    // pause monitoring detecting logic
+    val (s_reset :: s_monitor_start :: s_conflict_detected  :: Nil) = Enum(3)
+    val m_state = RegInit(s_reset)
     val pause_detect = RegInit(false.B)
+    val pause_count = RegInit(0.U(2.W)) //Todo: parameterize it?
     val pause_monitor_start = RegInit(0.U(6.W))
     io.pause := pause_detect
     when(translate_q.io.deq.bits.monitor_conflict){
       when(m_state === s_reset) {
         pause_monitor_start := pause_monitor_start + 1.U
-        when(pause_monitor_start > io.alert_cycles){ // to avoid toggles
+        when(pause_monitor_start > io.alert_cycles){ // to avoid false detection
           m_state := s_monitor_start
         }
       }.elsewhen(m_state === s_monitor_start){
@@ -295,14 +301,17 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     }.otherwise{
       when(m_state === s_conflict_detected){
         m_state := s_reset
+        pause_count := 0.U
       }.elsewhen(m_state === s_monitor_start){ // no detection during time window
-        pause_detect := true.B // pause monitoring
+        when(pause_count === 2.U){
+          pause_detect := true.B // on 3rd time
+        } // pause monitoring
+        pause_count := pause_count + 1.U
       }
       pause_monitor_start := 0.U
     } //ToDo: how to restart monitoring after pausing
 
     val tl_miss_timer = RegInit(0.U(16.W))
-    //tl_miss_timer := floorAdd(tl_miss_timer, 1.U, 5001.U, conflict_detected)
     tl_miss_timer := floorAdd(tl_miss_timer, 1.U, io.latency + 1.U, conflict_detected)
     when(tl_miss_timer === io.latency){ //resolve miss counter temporary
       tl_miss_counter := 0.U //reset miss counter
@@ -319,6 +328,11 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     when(tl_miss){
       printf("GEMMINI_BLOCK %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U)
     }
+////////////////////////////////////
+
+    //tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss
+    //tl.a.bits   := translate_q.io.deq.bits.tl_a
+    //tl.a.bits.address := io.tlb.resp.paddr
 
     io.reserve.valid := state === s_req_new_block && untranslated_a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
