@@ -104,8 +104,11 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   fixed_loop_cmd.rs2 := Mux(AB, cmd.bits.rs2, 0.U)
 
   val unlock_monitor = RegInit(0.U(3.W))
-  unlock_monitor := floorAdd(unlock_monitor, 1.U, 4.U, pause_req && is_loop_ws_addr & lock_tag && cmd.fire())
-  val unlock = unlock_monitor === 3.U // ToDo: change this number
+  unlock_monitor := floorAdd(unlock_monitor, 1.U, 5.U, pause_req && is_loop_ws_addr & lock_tag && cmd.fire())
+  when(!pause_req){
+    unlock_monitor := 0.U
+  }
+  val unlock = unlock_monitor === 4.U // ToDo: change this number
 
   io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock), fixed_loop_cmd, cmd.bits))
   io.out.bits.status := cmd.bits.status
