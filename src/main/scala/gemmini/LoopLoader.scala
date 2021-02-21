@@ -108,13 +108,16 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   when(!pause_req){
     unlock_monitor := 0.U
   }
+  when(!configured){
+    pause_req := io.pause_monitor
+  }
+
   val unlock = unlock_monitor === 4.U // ToDo: change this number
 
   io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock), fixed_loop_cmd, cmd.bits))
   io.out.bits.status := cmd.bits.status
   io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
   cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
-
 
   when(cmd.valid && is_ldconfig && state === idle && (!pause_req || unlock)){
     switch(cmd.bits.inst.funct){
@@ -157,10 +160,9 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       state := idle
       configured := false.B
       loop_tag := ~loop_tag
-      pause_req := io.pause_monitor // for safety, receive pause request signal here
+      //pause_req := io.pause_monitor // for safety, receive pause request signal here
     }
   }
-
 
 }
 
