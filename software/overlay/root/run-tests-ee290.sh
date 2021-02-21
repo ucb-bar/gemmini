@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 
-cat /proc/cpuinfo
+#cat /proc/cpuinfo
 
 echo "*****************TEST RESULTS*************"
-echo "=========very_large_matmul========="
-/root/ee290/very_large_matmul-linux
-echo "=========CIFAR DNN========="
-/root/ee290/cifar_quant-linux
+#echo "=========very_large_matmul========="
+#/root/ee290/very_large_matmul-linux
+#echo "=========CIFAR DNN========="
+#/root/ee290/cifar_quant-linux
 echo "========Multi-Level Perceptron 1========="
 /root/mlps/mlp1-linux
 echo "========Multi-Level Perceptron 2========="
