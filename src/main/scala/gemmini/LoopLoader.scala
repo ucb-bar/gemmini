@@ -40,21 +40,11 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     }
   }
   // config states
-  //val max_k = RegInit(0.U(iterator_bitwidth.W))
-  //val max_j = RegInit(0.U(iterator_bitwidth.W))
-  //val max_i = RegInit(0.U(iterator_bitwidth.W))
-
-  //val pad_k = RegInit(0.U(iterator_bitwidth.W))
-  //val pad_j = RegInit(0.U(iterator_bitwidth.W))
-  //val pad_i = RegInit(0.U(iterator_bitwidth.W))
-
   val latency = RegInit(0.U(iterator_bitwidth.W)) //how many cycles to push
   val alert_cycle = RegInit(0.U(6.W)) //raise flag after how much cycles?
   val dram_base_addr = RegInit(0.U(coreMaxAddrBits.W))
   val row_stride = RegInit(0.U(coreMaxAddrBits.W))
 
-  //val k = Reg(UInt(iterator_bitwidth.W))
-  //val j = Reg(UInt(iterator_bitwidth.W))
   val row_iterator =  RegInit(0.U(iterator_bitwidth.W))//Mux(req.transpose, j, k) //k
   val col_iterator =  RegInit(0.U(iterator_bitwidth.W))//Mux(req.transpose, k, j) //j
   val max_row_iterator = Reg(UInt(iterator_bitwidth.W)) //Mux(req.transpose, max_j, max_k)
@@ -115,7 +105,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   val unlock = unlock_monitor === unlock_cycle - 1.U // ToDo: change this number
 
-  io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock), fixed_loop_cmd, cmd.bits))
+  io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock) && conflict_monitor, fixed_loop_cmd, cmd.bits))
   io.out.bits.status := cmd.bits.status
   io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
   cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
@@ -136,25 +126,20 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       is(LOOP_LD_CONFIG_ADDRS){
         dram_base_addr := cmd.bits.rs1
         row_stride := cmd.bits.rs2
-        configured := true.B
-        state := ld
+        when (conflict_monitor){ // if latency == 0, don't unroll
+          configured := true.B
+          state := ld
+        }
       }
     }
   }
   when(io.out.fire() && state === ld){
-    // The order here is k, j, i
-    //val j_blocks = max_blocks// Mux(req.transpose, 1.U, max_blocks)
-    //val k_blocks = 1.U //Mux(req.transpose, max_blocks, 1.U)
     val row_blocks = 1.U
     val col_blocks = max_blocks
-
-    //val next_j = floorAdd(j, j_blocks, max_j)
-    //val next_k = floorAdd(k, k_blocks, max_k, next_j === 0.U)
+    
     val next_col = floorAdd(col_iterator, col_blocks, max_col_iterator)
     val next_row = floorAdd(row_iterator, row_blocks, max_row_iterator, next_col === 0.U)
 
-    //j := next_j
-    //k := next_k
     row_iterator := next_row
     col_iterator := next_col
 
@@ -162,7 +147,6 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       state := idle
       configured := false.B
       loop_tag := ~loop_tag
-      //pause_req := io.pause_monitor // for safety, receive pause request signal here
     }
   }
 
