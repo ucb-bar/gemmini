@@ -103,8 +103,9 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   fixed_loop_cmd.rs1 := Mux(AB, 0.U, cmd.bits.rs1)
   fixed_loop_cmd.rs2 := Mux(AB, cmd.bits.rs2, 0.U)
 
-  val unlock_monitor = RegInit(0.U(3.W))
-  unlock_monitor := floorAdd(unlock_monitor, 1.U, 5.U, pause_req && is_loop_ws_addr & lock_tag && cmd.fire())
+  val unlock_monitor = RegInit(0.U(4.W))
+  val unlock_cycle = RegInit(3.U(4.W))
+  unlock_monitor := floorAdd(unlock_monitor, 1.U, unlock_cycle, pause_req && is_loop_ws_addr & lock_tag && cmd.fire())
   when(!pause_req){
     unlock_monitor := 0.U
   }
@@ -112,7 +113,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     pause_req := io.pause_monitor
   }
 
-  val unlock = unlock_monitor === 4.U // ToDo: change this number
+  val unlock = unlock_monitor === unlock_cycle // ToDo: change this number
 
   io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock), fixed_loop_cmd, cmd.bits))
   io.out.bits.status := cmd.bits.status
@@ -124,6 +125,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       is(LOOP_LD_CONFIG_BOUNDS){
         alert_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 5, iterator_bitwidth * 3)
         latency := cmd.bits.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2) //ToDo: give this to DMA
+        unlock_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 9, iterator_bitwidth * 3 + 6)
         max_col_iterator := cmd.bits.rs2(iterator_bitwidth * 2 - 1, iterator_bitwidth)
         max_row_iterator := cmd.bits.rs2(iterator_bitwidth-1, 0)
 
