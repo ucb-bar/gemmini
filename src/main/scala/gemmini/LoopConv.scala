@@ -1016,7 +1016,6 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   }
 
   FpgaDebug(loops)
-  FpgaDebug(io.out)
 }
 
 object LoopConv {
