@@ -904,6 +904,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
 
   // Performance counter
+  CounterEventIO.init(io.counter)
+  io.counter.connectEventSignal(CounterEvent.EXE_ACTIVE_CYCLE, control_state === compute)
   io.counter.connectEventSignal(CounterEvent.EXE_FLUSH_CYCLE, 
     control_state === flushing || control_state === flush)
   io.counter.connectEventSignal(CounterEvent.EXE_CONTROL_Q_BLOCK_CYCLE, 

@@ -98,7 +98,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
 
-    io.counter := core.module.io.counter
+    io.counter.collect(core.module.io.counter)
   }
 }
 
@@ -276,10 +276,13 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
 
     // Performance counter
+    CounterEventIO.init(io.counter)
     io.counter.connectEventSignal(CounterEvent.RDMA_ACTIVE_CYCLE, state =/= s_idle)
-    val bytes_read = RegInit(0.U(32.W), io.counter.external_reset)
+    val bytes_read = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
     io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, bytes_read)
-    when (tl.d.fire()) {
+    when (io.counter.external_reset) {
+      bytes_read := 0.U
+    } .elsewhen (tl.d.fire()) {
       bytes_read := bytes_read + 1.U << tl.d.bits.size
     }
     val tlb_req_onflight = RegInit(false.B)
@@ -517,10 +520,13 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
 
     // Performance counter
+    CounterEventIO.init(io.counter)
     io.counter.connectEventSignal(CounterEvent.WDMA_ACTIVE_CYCLE, state =/= s_idle)
-    val bytes_sent = RegInit(0.U(32.W), io.counter.external_reset)
+    val bytes_sent = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
     io.counter.connectExternalCounter(CounterExternal.WDMA_BYTES_SENT, bytes_sent)
-    when (tl.d.fire()) {
+    when (io.counter.external_reset) {
+      bytes_sent := 0.U
+    } .elsewhen (tl.d.fire()) {
       bytes_sent := bytes_sent + 1.U << tl.d.bits.size
     }
     val tlb_req_onflight = RegInit(false.B)

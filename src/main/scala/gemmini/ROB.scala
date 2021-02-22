@@ -265,6 +265,7 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
     entries.foreach(_.valid := false.B)
   }
 
+  CounterEventIO.init(io.counter)
   io.counter.connectExternalCounter(CounterExternal.ROB_LD_COUNT, utilization_ld_q)
   io.counter.connectExternalCounter(CounterExternal.ROB_ST_COUNT, utilization_st_q)
   io.counter.connectExternalCounter(CounterExternal.ROB_EX_COUNT, utilization_ex_q)

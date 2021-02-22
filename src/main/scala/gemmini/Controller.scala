@@ -123,10 +123,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val tagWidth = 32
 
   // Counters
-  val counters = new CounterController(CounterEvent.n, outer.xLen)
+  val counters = Module(new CounterController(CounterEvent.n, outer.xLen))
   io.resp <> counters.io.out  // Counter access command will be committed immediately
+  counters.io.event_io.external_values(0) := 0.U
+  counters.io.event_io.event_signal(0) := false.B
   counters.io.in.valid := false.B
   counters.io.in.bits := DontCare
+  counters.io.event_io.collect(spad.module.io.counter)
 
   // TLB
   implicit val edge = outer.node.edges.out.head
@@ -134,7 +137,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
   tlb.io.exp.flush_skip := false.B
   tlb.io.exp.flush_retry := false.B
-
+  counters.io.event_io.collect(tlb.io.counter)
 
   io.ptw.head <> tlb.io.ptw
   /*io.ptw.head.req <> tlb.io.ptw.req
@@ -187,6 +190,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // Incoming commands and ROB
   val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, meshRows*tileRows, meshColumns*tileColumns))
+  counters.io.event_io.collect(rob.io.counter)
 
   val raw_cmd = Queue(io.cmd)
 

@@ -76,6 +76,7 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
     }
   }
 
+  CounterEventIO.init(io.counter)
   io.counter.connectEventSignal(CounterEvent.TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES, state =/= idle)
 }
 

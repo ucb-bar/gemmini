@@ -93,6 +93,7 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 
   assert(!io.exp.flush_retry || !io.exp.flush_skip, "TLB: flushing with both retry and skip at same time")
 
+  CounterEventIO.init(io.counter)
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_HIT_REQ, RegNext(io.req.fire()) && !tlb.io.resp.miss)
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_TOTAL_REQ, io.req.fire())
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_MISS_CYCLE, tlb.io.resp.miss)
@@ -136,7 +137,7 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
       arb_resp.ready := true.B
   }
 
-  io.counter := tlb.io.counter
+  io.counter.collect(tlb.io.counter)
 }
 
 /*class TLBArb (nClients: Int, lgMaxSize: Int)(implicit p: Parameters) extends CoreModule {

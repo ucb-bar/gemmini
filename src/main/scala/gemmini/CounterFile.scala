@@ -27,49 +27,50 @@ object CounterEvent {
 
   val STORE_DMA_WAIT_CYCLE = 11
   val STORE_ACTIVE_CYCLE = 12
-  val STORE_SCRATCHPAD_WAIT_CYCLE = 13
+  val STORE_POOLING_CYCLE = 13
+  val STORE_SCRATCHPAD_WAIT_CYCLE = 14
 
-  val DMA_TLB_MISS_CYCLE = 14
-  val DMA_TLB_HIT_REQ = 15
-  val DMA_TLB_TOTAL_REQ = 106
+  val DMA_TLB_MISS_CYCLE = 15
+  val DMA_TLB_HIT_REQ = 16
+  val DMA_TLB_TOTAL_REQ = 17
 
-  val RDMA_ACTIVE_CYCLE = 17
-  val RDMA_TLB_WAIT_CYCLES = 18
-  val RDMA_TL_WAIT_CYCLES = 13
+  val RDMA_ACTIVE_CYCLE = 18
+  val RDMA_TLB_WAIT_CYCLES = 19
+  val RDMA_TL_WAIT_CYCLES = 20
 
-  val WDMA_ACTIVE_CYCLE = 13
-  val WDMA_TLB_WAIT_CYCLES = 14
-  val WDMA_TL_WAIT_CYCLES = 19
+  val WDMA_ACTIVE_CYCLE = 21
+  val WDMA_TLB_WAIT_CYCLES = 22
+  val WDMA_TL_WAIT_CYCLES = 23
 
-  val EXE_ACTIVE_CYCLE = 20
-  val EXE_FLUSH_CYCLE = 21
-  val EXE_CONTROL_Q_BLOCK_CYCLE = 22
-  val EXE_PRELOAD_HAZ_CYCLE = 23
-  val EXE_OVERLAP_HAZ_CYCLE = 24
+  val EXE_ACTIVE_CYCLE = 24
+  val EXE_FLUSH_CYCLE = 25
+  val EXE_CONTROL_Q_BLOCK_CYCLE = 26
+  val EXE_PRELOAD_HAZ_CYCLE = 27
+  val EXE_OVERLAP_HAZ_CYCLE = 28
 
-  val SCRATCHPAD_A_WAIT_CYCLE = 25
-  val SCRATCHPAD_B_WAIT_CYCLE = 26
-  val SCRATCHPAD_D_WAIT_CYCLE = 27
+  val SCRATCHPAD_A_WAIT_CYCLE = 29
+  val SCRATCHPAD_B_WAIT_CYCLE = 30
+  val SCRATCHPAD_D_WAIT_CYCLE = 31
 
-  val ACC_A_WAIT_CYCLE = 28
-  val ACC_B_WAIT_CYCLE = 29
-  val ACC_D_WAIT_CYCLE = 30
+  val ACC_A_WAIT_CYCLE = 32
+  val ACC_B_WAIT_CYCLE = 33
+  val ACC_D_WAIT_CYCLE = 34
 
-  val A_GARBAGE_CYCLES = 31
-  val B_GARBAGE_CYCLES = 32
-  val D_GARBAGE_CYCLES = 33
+  val A_GARBAGE_CYCLES = 35
+  val B_GARBAGE_CYCLES = 36
+  val D_GARBAGE_CYCLES = 37
 
-  val IM2COL_MEM_CYCLES = 34
-  val IM2COL_ACTIVE_CYCLES = 35
-  val IM2COL_TRANSPOSER_WAIT_CYCLE = 36
+  val IM2COL_MEM_CYCLES = 38
+  val IM2COL_ACTIVE_CYCLES = 39
+  val IM2COL_TRANSPOSER_WAIT_CYCLE = 40
 
-  val ROB_FULL_CYCLES = 37
-  val ROB_ACTIVE_CYCLES = 38
+  val ROB_FULL_CYCLES = 41
+  val ROB_ACTIVE_CYCLES = 42
 
-  val LOOP_MATMUL_ACTIVE_CYCLES = 39
-  val TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES = 40
+  val LOOP_MATMUL_ACTIVE_CYCLES = 43
+  val TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES = 44
 
-  val n = 41
+  val n = 45
 }
 
 object CounterExternal {
@@ -83,12 +84,14 @@ object CounterExternal {
   val WDMA_BYTES_SENT = 5
 
   val n = 6
+
+  val EXTERNAL_WIDTH = 32
 }
 
 class CounterEventIO extends Bundle {
-  val event_signal = Input(Vec(CounterEvent.n, Bool()))
-  val external_values = Input(Vec(CounterExternal.n, UInt()))
-  val external_reset = Output(Bool())
+  val event_signal = Output(Vec(CounterEvent.n, Bool()))
+  val external_values = Output(Vec(CounterExternal.n, UInt(CounterExternal.EXTERNAL_WIDTH.W)))
+  val external_reset = Input(Bool())
 
   // Connect Event Signal
   private var connected = Array.fill(CounterEvent.n)(false)
@@ -107,7 +110,7 @@ class CounterEventIO extends Bundle {
   // Collect IO from submodule
   def collect(io: CounterEventIO) = {
     io.external_reset := external_reset
-    for (i <- 0 to CounterEvent.n)
+    for (i <- 0 until CounterEvent.n)
       if (io.connected(i)) {
         if (connected(i))
           throw new IllegalStateException("Port " + i + " is already connected in another IO")
@@ -116,7 +119,7 @@ class CounterEventIO extends Bundle {
           event_signal(i) := io.event_signal(i)
         }
       }
-    for (i <- 0 to CounterExternal.n)
+    for (i <- 0 until CounterExternal.n)
       if (io.connected_external(i)) {
         if (connected_external(i))
           throw new IllegalStateException("External counter " + i + " is already connected in another IO")
@@ -128,6 +131,13 @@ class CounterEventIO extends Bundle {
   }
 }
 
+object CounterEventIO {
+  def init(io: CounterEventIO) = {
+    io.event_signal := 0.U.asTypeOf(io.event_signal.cloneType)
+    io.external_values := 0.U.asTypeOf(io.external_values.cloneType)
+  }
+}
+
 class CounterIO(nPerfCounter: Int, counterWidth: Int) extends Bundle {
   val counter_reset = Input(Bool())
   val snapshot = Input(Bool())
@@ -136,7 +146,7 @@ class CounterIO(nPerfCounter: Int, counterWidth: Int) extends Bundle {
   val data = Output(UInt(counterWidth.W))
   val config_address = Flipped(Valid(UInt(log2Ceil(CounterEvent.n).W)))
 
-  val event_io = new CounterEventIO
+  val event_io = Flipped(new CounterEventIO)
 }
 
 // A simple counter file. Every counter is incremented when the corresponding event signal is high on rising edge.
@@ -144,38 +154,53 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
 {
   val io = IO(new CounterIO(nPerfCounter, counterWidth))
 
-  val counters = Vec(nPerfCounter, RegInit(0.U(counterWidth.W), io.counter_reset))
-  val counter_snapshot = Vec(nPerfCounter, RegInit(0.U(counterWidth.W), io.counter_reset))
-  val counter_config = Vec(nPerfCounter, RegInit(0.U(CounterEvent.n)))
-  val snapshot_enable = RegInit(false.B, io.counter_reset)
+  val config_width = log2Ceil(scala.math.max(CounterEvent.n, CounterExternal.n)) + 1;
+  val counter_config = VecInit.tabulate(nPerfCounter)(_ => RegInit(0.U(config_width.W)))
 
-  // Snapshot: In case a sequence of access instructions get interrupted (i.e. preempted by OS), it is possible
-  // to take a snapshot when reading counter value by setting a bit in the instruction. All subsequent readings
-  // return the values from the snapshot until it is cleared by a instruction with "clear" bit marked. 
-  // When the snapshot bit is set, the normal counters are still being incremented. 
-  when (io.snapshot_reset) {
-    snapshot_enable := false.B
-  } .elsewhen (io.snapshot) {
-    snapshot_enable := true.B
-    // Move counter values to snapshot register
-    (counter_snapshot zip counters) map { case (s, c) => {
-      s := c
-    }}
-  }
+  io.event_io.external_reset := io.counter_reset
+  withReset(reset.asBool || io.counter_reset) {
+    val counter_snapshot = RegInit(VecInit.tabulate(nPerfCounter)(_ => 0.U(counterWidth.W)))
+    val counters = RegInit(VecInit.tabulate(nPerfCounter)(_ => 0.U(counterWidth.W)))
+    val snapshot_enable = RegInit(false.B)
 
-  // Connect read port
-  io.data := counters(io.addr)
+    // Function to take correct counter value.
+    // If the highest bit of the config register is 1, it's an external counter; otherwise, take it from
+    // local counter
+    val take_value = (config: UInt, counter: UInt) => {
+      // Set the width
+      val external = Wire(UInt(counterWidth.W))
+      external := io.event_io.external_values(io.addr)
+      Mux(config(config_width - 1), external, counter)
+    }
+    // Snapshot: In case a sequence of access instructions get interrupted (i.e. preempted by OS), it is possible
+    // to take a snapshot when reading counter value by setting a bit in the instruction. All subsequent readings
+    // return the values from the snapshot until it is cleared by a instruction with "clear" bit marked. 
+    // When the snapshot bit is set, the normal counters are still being incremented. 
+    when (io.snapshot_reset) {
+      snapshot_enable := false.B
+    } .elsewhen (io.snapshot) {
+      snapshot_enable := true.B
+      // Move counter values to snapshot register
+      (counter_snapshot zip (counters zip counter_config)) map { case (snapshot, (counter, config)) => {
+        snapshot := take_value(counter, config)
+      }}
+    }
 
-  // Write configuration reg
-  when (io.config_address.valid) {
-    counter_config(io.addr) := io.config_address.bits
-  }
+    // Connect read port
+    io.data := Mux(snapshot_enable, counter_snapshot(io.addr), take_value(counters(io.addr), counter_config(io.addr)))
 
-  // Update signal
-  (counters zip counter_config) map { case (counter, config) => {
-    when (io.event_io.event_signal(config)) {
-      counter := counter + 1.U
-    }}
+    // Write configuration reg
+    when (io.config_address.valid) {
+      counter_config(io.addr) := io.config_address.bits
+      counters(io.addr) := 0.U
+    }
+
+    // Update signal
+    (counters zip counter_config) map { case (counter, config) => {
+      when (io.event_io.event_signal(config)) {
+        counter := counter + 1.U
+      }}
+    }
   }
 }
 
@@ -183,10 +208,10 @@ class CounterController(nPerfCounter: Int, counterWidth: Int)(implicit p: Parame
   val io = IO(new Bundle() {
     val in = Flipped(Decoupled(new RoCCCommand))
     val out = Decoupled(new RoCCResponse)
-    val event_io = new CounterEventIO
+    val event_io = Flipped(new CounterEventIO)
   })
 
-  val module = new CounterFile(nPerfCounter: Int, counterWidth: Int)
+  val module = Module(new CounterFile(nPerfCounter: Int, counterWidth: Int))
   module.io.event_io <> io.event_io
   
   val out_reg = Reg(io.out.bits.cloneType)
@@ -198,7 +223,8 @@ class CounterController(nPerfCounter: Int, counterWidth: Int)(implicit p: Parame
   // rs1[4] = Snapshot reset
   // rs1[5] = Take snapshot
   // rs1[6] = Change config
-  // rs1[12:7] = new counter address for counter with index specified in rs1[2:0]
+  // rs1[7] = Read external counters
+  // rs1[13:8] = new counter address for counter with index specified in rs1[2:0]
 
   io.in.ready := !out_valid_reg
   module.io.addr := io.in.bits.rs1(2, 0)
@@ -206,7 +232,7 @@ class CounterController(nPerfCounter: Int, counterWidth: Int)(implicit p: Parame
   module.io.snapshot_reset := io.in.bits.rs1(4) & io.in.fire()
   module.io.snapshot := io.in.bits.rs1(5) & io.in.fire()
   module.io.config_address.valid := io.in.bits.rs1(6) & io.in.fire()
-  module.io.config_address.bits := io.in.bits.rs1(12, 7)
+  module.io.config_address.bits := io.in.bits.rs1(13, 8)
 
   when (io.out.fire()) {
     out_valid_reg := false.B
