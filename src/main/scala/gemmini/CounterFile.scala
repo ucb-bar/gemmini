@@ -223,8 +223,7 @@ class CounterController(nPerfCounter: Int, counterWidth: Int)(implicit p: Parame
   // rs1[4] = Snapshot reset
   // rs1[5] = Take snapshot
   // rs1[6] = Change config
-  // rs1[7] = Read external counters
-  // rs1[13:8] = new counter address for counter with index specified in rs1[2:0]
+  // rs1[12:7] = new counter address for counter with index specified in rs1[2:0]
 
   io.in.ready := !out_valid_reg
   module.io.addr := io.in.bits.rs1(2, 0)
@@ -232,7 +231,7 @@ class CounterController(nPerfCounter: Int, counterWidth: Int)(implicit p: Parame
   module.io.snapshot_reset := io.in.bits.rs1(4) & io.in.fire()
   module.io.snapshot := io.in.bits.rs1(5) & io.in.fire()
   module.io.config_address.valid := io.in.bits.rs1(6) & io.in.fire()
-  module.io.config_address.bits := io.in.bits.rs1(13, 8)
+  module.io.config_address.bits := io.in.bits.rs1(12, 7)
 
   when (io.out.fire()) {
     out_valid_reg := false.B
