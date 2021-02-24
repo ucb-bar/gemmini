@@ -136,7 +136,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   when(io.out.fire() && state === ld){
     val row_blocks = 1.U
     val col_blocks = max_blocks
-    
+
     val next_col = floorAdd(col_iterator, col_blocks, max_col_iterator)
     val next_row = floorAdd(row_iterator, row_blocks, max_row_iterator, next_col === 0.U)
 

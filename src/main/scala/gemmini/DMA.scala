@@ -12,6 +12,9 @@ import testchipip.TLHelper
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
 import Util._
+import midas.targetutils.SynthesizePrintf
+import midas.targetutils.PerfCounter
+
 
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
@@ -325,14 +328,20 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     tl.a.bits   := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
 
-    val cycles = freechips.rocketchip.util.WideCounter(32)
+    //val cycles = freechips.rocketchip.util.WideCounter(32)
     when(tl.a.fire()){
-      printf("GEMMINI_MEM %x %x %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size)
+      //printf("GEMMINI_MEM %x %x %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size)
+      printf(midas.targetutils.SynthesizePrintf("GEMMINI_MEM: %x %x %x\n", p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size))
     }
     when(tl_miss){
-      printf("GEMMINI_BLOCK %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U)
+      //printf("GEMMINI_BLOCK %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U)
+      printf(midas.targetutils.SynthesizePrintf("GEMMINI_BLOCK: %x %x \n", p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address))
+
     }
-////////////////////////////////////
+    PerfCounter(tl_miss, "reader_blocked_on_tilelink_port", "how many cycles was the reader ready to make a TL request but TL wasn't ready")
+    PerfCounter(tl.a.fire(), "reader_tl_req_cnt", "number of tilelink requests made in reader")
+
+    ////////////////////////////////////
 
     //tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss
     //tl.a.bits   := translate_q.io.deq.bits.tl_a
@@ -564,6 +573,15 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits   := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
+
+    when (tl.a.fire()) {
+      //      printf("GEMMINI_MEM %x %x %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size)
+      printf(midas.targetutils.SynthesizePrintf("GEMMINI_MEM: %x %x %x\n", p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size))
+    }
+
+    PerfCounter(tl.a.valid && !tl.a.ready, "writer_blocked_on_tilelink_port", "how many cycles was the writer ready to make a TL request but TL wasn't ready")
+    PerfCounter(tl.a.fire(), "writer_tl_req_cnt", "number of tilelink requests made in writer")
+
 
     tl.d.ready := xactBusy.orR()
 
