@@ -430,12 +430,12 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   FpgaDebug(cycles_since_issue)
   FpgaDebug(instructions_allocated)
 
-  FpgaDebug(io.issue.ld.ready)
-  FpgaDebug(io.issue.ld.valid)
-  FpgaDebug(io.issue.st.ready)
-  FpgaDebug(io.issue.st.valid)
-  FpgaDebug(io.issue.ex.ready)
-  FpgaDebug(io.issue.ex.valid)
+//  FpgaDebug(io.issue.ld.ready)
+//  FpgaDebug(io.issue.ld.valid)
+//  FpgaDebug(io.issue.st.ready)
+//  FpgaDebug(io.issue.st.valid)
+//  FpgaDebug(io.issue.ex.ready)
+//  FpgaDebug(io.issue.ex.valid)
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {

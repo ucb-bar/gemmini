@@ -8,6 +8,8 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 
+import midas.targetutils.FpgaDebug
+
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
 class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
@@ -232,4 +234,11 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   }
   // assert(pool_cycles_counter <= 1000.U)
   dontTouch(pool_cycles_counter)
+
+  FpgaDebug(control_state)
+  FpgaDebug(pooling_is_enabled)
+  FpgaDebug(porow_counter)
+  FpgaDebug(pocol_counter)
+  FpgaDebug(wrow_counter)
+  FpgaDebug(wcol_counter)
 }

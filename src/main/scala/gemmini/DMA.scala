@@ -300,9 +300,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     FpgaDebug(io.req.valid)
     FpgaDebug(io.req.ready)
     FpgaDebug(state)
-    FpgaDebug(req.len)
-    FpgaDebug(bytesRequested)
-    FpgaDebug(bytesLeft)
+//    FpgaDebug(req.len)
+//    FpgaDebug(bytesRequested)
+//    FpgaDebug(bytesLeft)
   }
 }
 
