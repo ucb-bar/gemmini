@@ -25,6 +25,8 @@ class Tile[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T, df: 
 
     val in_valid = Input(Vec(columns, Bool()))
     val out_valid = Output(Vec(columns, Bool()))
+    
+    val bad_dataflow = Output(Bool())
   })
 
   val tile = Seq.fill(rows, columns)(Module(new PE(inputType, outputType, accType, df, pe_latency)))
@@ -83,6 +85,7 @@ class Tile[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T, df: 
     io.out_control(c) := tile(rows-1)(c).io.out_control
     io.out_valid(c) := tile(rows-1)(c).io.out_valid
   }
+  io.bad_dataflow := tile.map(_.map(_.io.bad_dataflow).reduce(_||_)).reduce(_||_)
 
   // Drive the Tile's right IO
   for (r <- 0 until rows) {
