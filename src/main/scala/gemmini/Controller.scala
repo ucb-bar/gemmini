@@ -179,21 +179,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   */
 
   // Incoming commands and ROB
-  val rob = Module(new ROB(outer.config, new RoCCCommand))
+  val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, meshRows*tileRows, meshColumns*tileColumns))
 
   val raw_cmd = Queue(io.cmd)
-
-  // TODO replace 4,12,2 with parameters based on ROB size
-  val loop_conv_unroller_busy = false.B
-  /*val (unrolled_cmd_after_conv, loop_conv_unroller_busy) = LoopConv(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
-    meshRows*tileRows, coreMaxAddrBits, rob_entries, 4, 12, 2, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
-    inputType.getWidth, accType.getWidth, dma_maxbytes)
-  unrolled_cmd_after_conv.ready := false.B*/
 
   // val (compressed_cmd, compressor_busy) = InstCompressor(unrolled_cmd)
   // compressed_cmd.ready := false.B
 
-  // val (unrolled_cmd, loop_matmul_unroller_busy) = LoopMatmul(unrolled_cmd_after_conv, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
   val (loop_cmd, loop_matmul_unroller_busy) = LoopMatmul(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
     meshRows*tileRows, coreMaxAddrBits, rob_entries, 4, 12, 2, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes)
