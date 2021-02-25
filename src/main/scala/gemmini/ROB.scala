@@ -32,9 +32,9 @@ class ROB(cmd_t: RoCCCommand, nEntries: Int, local_addr_t: LocalAddr, block_rows
       val ex = new ROBIssue(cmd_t, nEntries)
     }
 
-    val ld_utilization = Output(UInt(log2Up(rob_entries+1).W))
-    val st_utilization = Output(UInt(log2Up(rob_entries+1).W))
-    val ex_utilization = Output(UInt(log2Up(rob_entries+1).W))
+    val ld_utilization = Output(UInt(log2Up(nEntries+1).W))
+    val st_utilization = Output(UInt(log2Up(nEntries+1).W))
+    val ex_utilization = Output(UInt(log2Up(nEntries+1).W))
 
     val busy = Output(Bool())
 
