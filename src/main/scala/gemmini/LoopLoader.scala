@@ -19,6 +19,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     val busy = Output(Bool())
     val latency = Output(UInt(iterator_bitwidth.W))
     val alert_cycle = Output(UInt(6.W))
+    val pause_turn = Output(UInt(3.W))
     val pause_monitor = Input(Bool())
   })
   //queue for cmd
@@ -42,6 +43,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   // config states
   val latency = RegInit(0.U(iterator_bitwidth.W)) //how many cycles to push
   val alert_cycle = RegInit(0.U(6.W)) //raise flag after how much cycles?
+  val pause_turn = RegInit(1.U(3.W)) // how many turns to wait to pause monitoring TL ports
   val dram_base_addr = RegInit(0.U(coreMaxAddrBits.W))
   val row_stride = RegInit(0.U(coreMaxAddrBits.W))
 
@@ -83,6 +85,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   io.busy := cmd.valid || configured
   io.alert_cycle := alert_cycle
   io.latency := latency
+  io.pause_turn := pause_turn
 
   // fix loop_ws command
   val loop_ws_state = RegInit(idle)
@@ -113,6 +116,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   when(cmd.valid && is_ldconfig && state === idle && (!pause_req || unlock)){
     switch(cmd.bits.inst.funct){
       is(LOOP_LD_CONFIG_BOUNDS){
+        pause_turn := cmd.bits.rs2(iterator_bitwidth * 3 + 12, iterator_bitwidth * 3 + 10)
         alert_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 5, iterator_bitwidth * 3)
         latency := cmd.bits.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2) //ToDo: give this to DMA
         unlock_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 9, iterator_bitwidth * 3 + 6)
@@ -154,10 +158,10 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
 object LoopLoader{
   def apply(in: DecoupledIO[RoCCCommand], pause_monitor: Bool, block_size: Int, coreMaxAddrBits: Int, max_addr: Int, input_w: Int, dma_max_bytes: Int)
-           (implicit p: Parameters): Tuple4[DecoupledIO[RoCCCommand], Bool, UInt, UInt] = {
+           (implicit p: Parameters): Tuple5[DecoupledIO[RoCCCommand], Bool, UInt, UInt, UInt] = {
     val lld = Module(new LoopLoader(block_size, coreMaxAddrBits, max_addr, input_w, dma_max_bytes))
     lld.io.in <> in
     lld.io.pause_monitor <> pause_monitor
-    (lld.io.out, lld.io.busy, lld.io.latency, lld.io.alert_cycle)
+    (lld.io.out, lld.io.busy, lld.io.latency, lld.io.alert_cycle, lld.io.pause_turn)
   }
 }

@@ -188,11 +188,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // val (compressed_cmd, compressor_busy) = InstCompressor(unrolled_cmd)
   // compressed_cmd.ready := false.B
   val pause_monitor = spad.module.io.pause_out
-  val (loop_ld_cmd, loop_ld_unroller_busy, loop_ld_latency, loop_ld_alert) = LoopLoader(raw_cmd, pause_monitor, meshRows*tileRows, coreMaxAddrBits, sp_banks * sp_bank_entries,
+  val (loop_ld_cmd, loop_ld_unroller_busy, loop_ld_latency, loop_ld_alert, loop_ld_pause_turn) = LoopLoader(raw_cmd, pause_monitor, meshRows*tileRows, coreMaxAddrBits, sp_banks * sp_bank_entries,
     inputType.getWidth, dma_maxbytes)
   loop_ld_cmd.ready := false.B
   spad.module.io.latency_in := loop_ld_latency
   spad.module.io.alert_cycles_in := loop_ld_alert
+  spad.module.io.pause_turn_in := loop_ld_pause_turn
 
   val (unrolled_cmd, loop_unroller_busy) = LoopMatmul(loop_ld_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
     meshRows*tileRows, coreMaxAddrBits, rob_entries, 4, 12, 2, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,

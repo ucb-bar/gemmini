@@ -71,6 +71,8 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
       val alert_cycles_in = Input(UInt(6.W))
       val latency_out = Output(UInt(16.W))
       val alert_cycles_out = Output(UInt(6.W))
+      val pause_turn_in = Input(UInt(3.W))
+      val pause_turn_out = Output(UInt(3.W))
 
       //for pausing monitoring
       val pause_out = Output(Bool())
@@ -78,10 +80,11 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
 
     io.latency_out := io.latency_in
     io.alert_cycles_out := io.alert_cycles_in
+    io.pause_turn_out := io.pause_turn_in
     core.module.io.latency := io.latency_out
     core.module.io.alert_cycles := io.alert_cycles_out
     io.pause_out := core.module.io.pause
-
+    core.module.io.pause_turn := io.pause_turn_out
 
     val nCmds = (nXacts / meshRows) + 1
 
@@ -159,6 +162,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       //for monitoring conflicts, latency
       val latency = Input(UInt(16.W))
       val alert_cycles = Input(UInt(6.W))
+      val pause_turn = Input(UInt(3.W))
       val pause = Output(Bool())
     })
 
@@ -307,8 +311,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         pause_count := 0.U
         pause_detect := false.B
       }.elsewhen(m_state === s_monitor_start){ // no detection during time window
-        when(pause_count === 2.U){ // pause monitoring
-          pause_detect := true.B // on 3rd time
+        when(pause_count === io.pause_turn){ // pause monitoring
+          pause_detect := true.B // on 3rd time (ToDo: parameterize this?)
           m_state := s_reset
         }.otherwise{
           pause_count := pause_count + 1.U
