@@ -14,7 +14,7 @@ import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet}
 object GemminiFPConfigs {
   import Arithmetic.FloatArithmetic._
   val defaultFPConfig = GemminiArrayConfig[Float, Float, Float](
-    opcodes = OpcodeSet.custom2,
+    opcodes = OpcodeSet.custom3,
     tileRows = 1,
     tileColumns = 1,
     meshRows = 4,
