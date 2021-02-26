@@ -280,8 +280,12 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val tl_miss = tl.a.valid && !tl.a.ready
     val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
     val tl_miss_counter = RegInit(0.U(6.W))
-    tl_miss_counter := satAdd(tl_miss_counter, 1.U, io.alert_cycles + 2.U, tl_counter_trigger)
-    when(tl_miss_counter >= io.alert_cycles){ //reached limit
+    val alert_cycles = RegInit(io.alert_cycles)
+    val pause_turn = RegInit(io.pause_turn)
+    val latency = RegInit(io.latency)
+
+    tl_miss_counter := satAdd(tl_miss_counter, 1.U, alert_cycles + 2.U, tl_counter_trigger)
+    when(tl_miss_counter >= alert_cycles){ //reached limit
       conflict_detected := true.B
     }.elsewhen(!tl_counter_trigger){
       tl_miss_counter := 0.U
@@ -296,11 +300,14 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     when(translate_q.io.deq.bits.monitor_conflict){
       when(m_state === s_reset) {
         pause_monitor_start := pause_monitor_start + 1.U
-        when(pause_monitor_start > io.alert_cycles){ // to avoid false detection
+        when(pause_monitor_start > 5.U){ // to avoid false detection
           m_state := s_monitor_start
         }
+        alert_cycles := io.alert_cycles
+        latency := io.latency
+        pause_turn := io.pause_turn
       }.elsewhen(m_state === s_monitor_start){
-        when(tl_miss_counter >= io.alert_cycles){
+        when(tl_miss_counter >= alert_cycles){
           m_state := s_conflict_detected
         }
         pause_monitor_start := 0.U
@@ -311,7 +318,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         pause_count := 0.U
         pause_detect := false.B
       }.elsewhen(m_state === s_monitor_start){ // no detection during time window
-        when(pause_count === io.pause_turn){ // pause monitoring
+        when(pause_count === pause_turn){ // pause monitoring
           pause_detect := true.B // on 3rd time (ToDo: parameterize this?)
           m_state := s_reset
         }.otherwise{
@@ -323,8 +330,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     } //ToDo: how to restart monitoring after pausing
 
     val tl_miss_timer = RegInit(0.U(16.W))
-    tl_miss_timer := floorAdd(tl_miss_timer, 1.U, io.latency + 1.U, conflict_detected)
-    when(tl_miss_timer === io.latency){ //resolve miss counter temporary
+    tl_miss_timer := floorAdd(tl_miss_timer, 1.U, latency + 1.U, conflict_detected)
+    when(tl_miss_timer === latency){ //resolve miss counter temporary
       tl_miss_counter := 0.U //reset miss counter
       conflict_detected := false.B
     }
