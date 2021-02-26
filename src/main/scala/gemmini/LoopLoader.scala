@@ -133,6 +133,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
         when (conflict_monitor){ // if latency == 0, don't unroll
           configured := true.B
           state := ld
+        }.otherwise{
+          loop_tag := ~loop_tag
         }
       }
     }
