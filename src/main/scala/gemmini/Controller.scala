@@ -94,10 +94,10 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
   override def cloneType: LocalAddr.this.type = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries).asInstanceOf[this.type]
 }
 
-class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](opcodes: OpcodeSet, val config: GemminiArrayConfig[T, U, V])
+class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiArrayConfig[T, U, V])
                                      (implicit p: Parameters)
   extends LazyRoCC (
-    opcodes = OpcodeSet.custom3,
+    opcodes = config.opcodes,
     nPTWPorts = 1) {
 
   Files.write(Paths.get(config.headerFilePath), config.generateHeader().getBytes(StandardCharsets.UTF_8))

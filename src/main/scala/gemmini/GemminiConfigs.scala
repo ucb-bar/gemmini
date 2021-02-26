@@ -4,6 +4,7 @@ package gemmini
 import scala.math.{pow,sqrt}
 import chisel3._
 import chisel3.util._
+import freechips.rocketchip.tile._
 
 sealed abstract trait GemminiMemCapacity
 case class CapacityInKilobytes(kilobytes: Int) extends GemminiMemCapacity
@@ -13,6 +14,7 @@ case class ScaleArguments[T <: Data, U <: Data](scale_func: (T, U) => T, latency
                                                 identity: String="0", c_str: String="ROUNDING_RIGHT_SHIFT(x, scale)")
 
 case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+                                                                             opcodes: OpcodeSet,
                                                                              tileRows: Int,
                                                                              tileColumns: Int,
                                                                              meshRows: Int,
@@ -233,6 +235,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
     header ++= s"#include <stdint.h>\n"
     header ++= s"#include <limits.h>\n\n"
+
+    val opcodeid = Seq(
+      OpcodeSet.custom0, OpcodeSet.custom1, OpcodeSet.custom2, OpcodeSet.custom3
+    ).indexWhere(o => o.opcodes(0).litValue == opcodes.opcodes(0).litValue)
+    println(opcodeid, opcodes.opcodes)
+    require (opcodeid != -1 && opcodes.opcodes.size == 1)
+    header ++= s"#define XCUSTOM_ACC $opcodeid\n"
 
     header ++= s"#define DIM ${tileColumns*meshColumns}\n"
     header ++= s"#define ADDR_LEN 32\n"
