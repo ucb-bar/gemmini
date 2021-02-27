@@ -58,7 +58,6 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val max_col_dim = Mux(req.transpose, req.max_i, req.max_k)
   val max_blocks = Mux(max_col_dim <= max_block_len.U, max_col_dim, max_block_len.U)
-  // TODO: why do we have to use 1 when transpose
 
   val sp_addr_start = req.addr_start
 
@@ -86,13 +85,13 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   when (io.cmd.fire()) {
     // The order here is k, j, i
-    val next_row_iterator = floorAdd(row_iterator, 1.U, max_row_iterator)
-    val next_col_iterator = floorAdd(col_iterator, max_blocks, max_col_iterator, next_row_iterator === 0.U)
+    val next_i = floorAdd(i, 1.U, req.max_i)
+    val next_k = floorAdd(k, max_blocks, req.max_k, next_i === 0.U)
 
-    i := Mux(req.transpose, next_col_iterator, next_row_iterator)
-    k := Mux(req.transpose, next_row_iterator, next_col_iterator)
+    i := next_i
+    k := next_k
 
-    when (next_col_iterator === 0.U && next_row_iterator === 0.U) {
+    when (next_i === 0.U && next_k === 0.U) {
       state := idle
     }
   }
@@ -184,13 +183,13 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   when (io.cmd.fire()) {
     // The order here is k, j, i
-    val next_col_iterator = floorAdd(col_iterator, max_blocks, max_col_iterator)
-    val next_row_iterator = floorAdd(row_iterator, 1.U, max_row_iterator, next_col_iterator === 0.U)
+    val next_j = floorAdd(j, max_blocks, req.max_j)
+    val next_k = floorAdd(k, 1.U, req.max_k, next_j === 0.U)
 
-    k := Mux(req.transpose, next_col_iterator, next_row_iterator)
-    j := Mux(req.transpose, next_row_iterator, next_col_iterator)
+    k := next_k
+    j := next_j
 
-    when (next_row_iterator === 0.U && next_col_iterator === 0.U) {
+    when (next_j === 0.U && next_k === 0.U) {
       state := idle
     }
   }
@@ -271,9 +270,9 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   when (req.dram_addr === 0.U) {
     state := idle
   }.elsewhen (io.cmd.fire()) {
-    // The order here is j, i
-    val next_i = floorAdd(i, 1.U, req.max_i)
-    val next_j = floorAdd(j, max_blocks, req.max_j, next_i === 0.U)
+    // The order here is k, j, i
+    val next_i = floorAdd(i, max_blocks, req.max_i)
+    val next_j = floorAdd(j, 1.U, req.max_j, next_i === 0.U)
 
     i := next_i
     j := next_j
@@ -597,8 +596,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
-  val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
-  val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
+  val max_block_len = (dma_max_bytes / (block_size * input_w * 8)) max 1
+  val max_block_len_acc = (dma_max_bytes / (block_size * acc_w * 8)) max 1
 
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new RoCCCommand))
