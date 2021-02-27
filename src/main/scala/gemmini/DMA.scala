@@ -300,7 +300,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     when(translate_q.io.deq.bits.monitor_conflict){
       when(m_state === s_reset) {
         pause_monitor_start := pause_monitor_start + 1.U
-        when(pause_monitor_start > 5.U){ // to avoid false detection
+        when(pause_monitor_start > 6.U){ // to avoid false detection
           m_state := s_monitor_start
         }
         alert_cycles := io.alert_cycles
@@ -321,6 +321,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         when(pause_count === pause_turn){ // pause monitoring
           pause_detect := true.B // on 3rd time (ToDo: parameterize this?)
           m_state := s_reset
+          pause_count := 0.U // reset pause counter
         }.otherwise{
           pause_count := pause_count + 1.U
           m_state := s_reset

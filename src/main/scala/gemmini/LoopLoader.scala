@@ -102,7 +102,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   when(!pause_req){
     unlock_monitor := 0.U
   }
-  when(!configured){
+  //when(!configured){
+  when(cmd.bits.inst.funct === LOOP_LD_CONFIG_BOUNDS && cmd.valid){
     pause_req := io.pause_monitor
   }
 
@@ -113,7 +114,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
   cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
 
-  when(cmd.valid && is_ldconfig && state === idle && (!pause_req || unlock)){
+//  when(cmd.valid && is_ldconfig && state === idle && (!pause_req || unlock)){
+  when(cmd.valid && is_ldconfig && state === idle){
     switch(cmd.bits.inst.funct){
       is(LOOP_LD_CONFIG_BOUNDS){
         pause_turn := cmd.bits.rs2(iterator_bitwidth * 3 + 12, iterator_bitwidth * 3 + 10)
@@ -128,13 +130,15 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
         row_pad := cmd.bits.rs1(iterator_bitwidth-1, 0)
       }
       is(LOOP_LD_CONFIG_ADDRS){
-        dram_base_addr := cmd.bits.rs1
-        row_stride := cmd.bits.rs2
-        when (conflict_monitor){ // if latency == 0, don't unroll
-          configured := true.B
-          state := ld
-        }.otherwise{
-          loop_tag := ~loop_tag
+        when(!pause_req || unlock) {
+          dram_base_addr := cmd.bits.rs1
+          row_stride := cmd.bits.rs2
+          when(conflict_monitor) { // if latency == 0, don't unroll
+            configured := true.B
+            state := ld
+          }.otherwise {
+            loop_tag := ~loop_tag
+          }
         }
       }
     }
