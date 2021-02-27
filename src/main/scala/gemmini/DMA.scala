@@ -483,7 +483,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val tlb_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
     tlb_q.io.enq <> tlb_arb.io.out
 
-    io.tlb.req.valid := tlb_q.io.deq.valid
+    io.tlb.req.valid := tlb_q.io.deq.fire()
     io.tlb.req.bits.tlb_req.vaddr := tlb_q.io.deq.bits.vaddr
     io.tlb.req.bits.tlb_req.passthrough := false.B
     io.tlb.req.bits.tlb_req.size := 0.U // send_size
@@ -497,15 +497,15 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       shadow_retry_a.io.enq.valid := tlb_q.io.deq.valid
       shadow_retry_a.io.enq.bits  := tlb_q.io.deq.bits
     }
-    translate_q.io.deq.ready := true.B
+    translate_q.io.deq.ready := tl.a.ready || io.tlb.resp.miss
 
-    retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready)
+    retry_a.valid := translate_q.io.deq.valid && io.tlb.resp.miss
     retry_a.bits := translate_q.io.deq.bits
-    assert(retry_a.ready)
+    assert(!(retry_a.valid && !retry_a.ready))
 
     tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits := translate_q.io.deq.bits.tl_a
-    tl.a.bits.address := io.tlb.resp.paddr
+    tl.a.bits.address := RegEnableThru(io.tlb.resp.paddr, RegNext(io.tlb.req.fire()))
 
     tl.d.ready := xactBusy.orR()
 
