@@ -58,8 +58,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val wraps_around = Bool()
 
     def overlaps(other: OpT): Bool = {
-      ((other.start <= start && (start <= other.end || other.wraps_around)) ||
-        (start <= other.start && (other.start <= end || wraps_around))) &&
+      ((other.start <= start && (start < other.end || other.wraps_around)) ||
+        (start <= other.start && (other.start < end || wraps_around))) &&
         !(start.is_garbage() || other.start.is_garbage()) // TODO the "is_garbage" check might not really be necessary
     }
   }
@@ -436,6 +436,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 //  FpgaDebug(io.issue.st.valid)
 //  FpgaDebug(io.issue.ex.ready)
 //  FpgaDebug(io.issue.ex.valid)
+
+  for (e <- entries) {
+    dontTouch(e.bits.allocated_at)
+  }
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {
