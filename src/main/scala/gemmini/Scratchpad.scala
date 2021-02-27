@@ -27,6 +27,8 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val status = new MStatus
   //for bank conflict monitoring
   val monitor_conflict = Bool()
+  val monitor_conflict_start = Bool()
+  val monitor_conflict_end = Bool()
 
   override def cloneType: this.type = new ScratchpadMemReadRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
@@ -274,6 +276,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
     //for bank conflict monitoring
     reader.module.io.req.bits.monitor_conflict := read_issue_q.io.deq.bits.monitor_conflict
+    reader.module.io.req.bits.monitor_conflict_end := read_issue_q.io.deq.bits.monitor_conflict_end
+    reader.module.io.req.bits.monitor_conflict_start := read_issue_q.io.deq.bits.monitor_conflict_start
 
     val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(config.mvin_scale_args, config.inputType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits), is_acc = false)
     val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out) else

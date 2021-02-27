@@ -30,6 +30,8 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
 
   //for bank conflict monitoring
   val monitor_conflict = Bool()
+  val monitor_conflict_start = Bool()
+  val monitor_conflict_end = Bool()
 
   override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
 }
@@ -188,6 +190,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val vaddr = UInt(vaddrBits.W)
       //for bank conflict monitoring
       val monitor_conflict = Bool()
+      val monitor_conflict_start = Bool()
+      val monitor_conflict_end = Bool()
     }
 
     // TODO Can we filter out the larger read_sizes here if the systolic array is small, in the same way that we do so
@@ -209,6 +213,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
       //for bank conflict monitoring
       packet.monitor_conflict := req.monitor_conflict
+      packet.monitor_conflict_start := req.monitor_conflict_start
+      packet.monitor_conflict_end := req.monitor_conflict_end
 
       packet
     }
@@ -221,6 +227,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val read_shift = read_packet.shift
     //for bank conflict monitoring
     val read_monitor = read_packet.monitor_conflict
+    val read_monitor_start = read_packet.monitor_conflict_start
+    val read_monitor_end = read_packet.monitor_conflict_end
 
     // Firing off TileLink read requests and allocating space inside the reservation buffer for them
     val get = edge.Get(
@@ -236,6 +244,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
       //for bank conflict monitoring
       val monitor_conflict = Output(Bool())
+      val monitor_conflict_start = Output(Bool())
+      val monitor_conflict_end = Output(Bool())
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -245,6 +255,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     untranslated_a.bits.status := req.status
     //for bank conflict monitoring
     untranslated_a.bits.monitor_conflict := read_monitor
+    untranslated_a.bits.monitor_conflict_start := read_monitor_start
+    untranslated_a.bits.monitor_conflict_end := read_monitor_end
 
     // 0 goes to retries, 1 goes to state machine
     val retry_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -295,39 +307,39 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val m_state = RegInit(s_reset)
     val pause_detect = RegInit(false.B)
     val pause_count = RegInit(0.U(2.W)) //Todo: parameterize it?
-    val pause_monitor_start = RegInit(0.U(6.W))
+    //val pause_monitor_start = RegInit(0.U(6.W))
     io.pause := pause_detect
-    when(translate_q.io.deq.bits.monitor_conflict){
+    when(translate_q.io.deq.bits.monitor_conflict && !translate_q.io.deq.bits.monitor_conflict_end){
       when(m_state === s_reset) {
-        pause_monitor_start := pause_monitor_start + 1.U
-        when(pause_monitor_start > 6.U){ // to avoid false detection
+        when(translate_q.io.deq.bits.monitor_conflict_start){ // to avoid false detection
           m_state := s_monitor_start
+          //pause_monitor_start := pause_monitor_start + 1.U
+          alert_cycles := io.alert_cycles
+          latency := io.latency
+          pause_turn := io.pause_turn
         }
-        alert_cycles := io.alert_cycles
-        latency := io.latency
-        pause_turn := io.pause_turn
       }.elsewhen(m_state === s_monitor_start){
         when(tl_miss_counter >= alert_cycles){
           m_state := s_conflict_detected
         }
-        pause_monitor_start := 0.U
+        //pause_monitor_start := 0.U
       }
-    }.otherwise{
-      when(m_state === s_conflict_detected){
-        m_state := s_reset
-        pause_count := 0.U
-        pause_detect := false.B
-      }.elsewhen(m_state === s_monitor_start){ // no detection during time window
-        when(pause_count === pause_turn){ // pause monitoring
-          pause_detect := true.B // on 3rd time (ToDo: parameterize this?)
+    }.elsewhen(translate_q.io.deq.bits.monitor_conflict_end) {
+        when(m_state === s_conflict_detected) {
           m_state := s_reset
-          pause_count := 0.U // reset pause counter
-        }.otherwise{
-          pause_count := pause_count + 1.U
-          m_state := s_reset
+          pause_count := 0.U
+          pause_detect := false.B
+        }.elsewhen(m_state === s_monitor_start) { // no detection during time window
+          when(pause_count === pause_turn) { // pause monitoring
+            pause_detect := true.B // on 3rd time (ToDo: parameterize this?)
+            m_state := s_reset
+            pause_count := 0.U // reset pause counter
+          }.otherwise {
+            pause_count := pause_count + 1.U
+            m_state := s_reset
+          }
         }
-      }
-      pause_monitor_start := 0.U
+      //pause_monitor_start := 0.U
     } //ToDo: how to restart monitoring after pausing
 
     val tl_miss_timer = RegInit(0.U(16.W))

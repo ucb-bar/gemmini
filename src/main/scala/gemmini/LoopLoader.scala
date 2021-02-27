@@ -75,13 +75,15 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val configured = RegInit(false.B)
 
   val conflict_monitor = !((alert_cycle === 0.U) || (latency === 0.U))
+  val conflict_monitor_start = conflict_monitor && (row_iterator === 0.U && col_iterator === 0.U)
+  val conflict_monitor_end = conflict_monitor && (row_iterator === max_row_iterator - 1.U && col_iterator === max_col_iterator - 1.U)
 
   //ToDo: either load A or B (for now just do with B)
   val load_cmd = Wire(new RoCCCommand())
   load_cmd := DontCare
   load_cmd.inst.funct := Mux(AB, LOAD_CMD, LOAD2_CMD)
   load_cmd.rs1 := dram_addr
-  load_cmd.rs2 :=  (conflict_monitor << 63).asUInt() | (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
+  load_cmd.rs2 :=  (conflict_monitor << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
   io.busy := cmd.valid || configured
   io.alert_cycle := alert_cycle
   io.latency := latency
