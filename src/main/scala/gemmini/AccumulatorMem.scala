@@ -44,17 +44,23 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
   override def cloneType: this.type = new AccumulatorWriteReq(n, t).asInstanceOf[this.type]
 }
 
-class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U) extends Bundle {
+
+class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U,
+  num_acc_sub_banks: Int, use_shared_ext_mem: Boolean
+) extends Bundle {
   val read = Flipped(new AccumulatorReadIO(n, log2Ceil(t.head.head.getWidth), t, scale_t))
   // val write = Flipped(new AccumulatorWriteIO(n, t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
 
-  override def cloneType: this.type = new AccumulatorMemIO(n, t, scale_t).asInstanceOf[this.type]
+  val ext_mem = if (use_shared_ext_mem) Some(Vec(num_acc_sub_banks, new ExtMemIO)) else None
+
+  override def cloneType: this.type = new AccumulatorMemIO(n, t, scale_t, num_acc_sub_banks, use_shared_ext_mem).asInstanceOf[this.type]
 }
 
 class AccumulatorMem[T <: Data, U <: Data](
   n: Int, t: Vec[Vec[T]], scale_args: ScaleArguments[T, U],
-  acc_singleported: Boolean, num_acc_sub_banks: Int
+  acc_singleported: Boolean, num_acc_sub_banks: Int,
+  use_shared_ext_mem: Boolean
 )
   (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
@@ -69,7 +75,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   import ev._
 
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t, scale_args.multiplicand_t))
+  val io = IO(new AccumulatorMemIO(n, t, scale_args.multiplicand_t, num_acc_sub_banks, use_shared_ext_mem))
 
 
   // For any write operation, we spend 2 cycles reading the existing address out, buffering it in a register, and then
@@ -90,8 +96,11 @@ class AccumulatorMem[T <: Data, U <: Data](
   val counter = RegInit(0.U(32.W))
   counter := counter + 1.U
 
+  val mask_len = t.getWidth / 8
+  val mask_elem = UInt((t.getWidth / mask_len).W)
   if (!acc_singleported) {
-    val mem = TwoPortSyncMem(n, t, t.getWidth / 8) // TODO We assume byte-alignment here. Use aligned_to instead
+    require(!use_shared_ext_mem)
+    val mem = TwoPortSyncMem(n, t, mask_len) // TODO We assume byte-alignment here. Use aligned_to instead
     mem.io.waddr := waddr_buf
     mem.io.wen := w_buf_valid
     mem.io.wdata := Mux(acc_buf, w_sum, wdata_buf)
@@ -101,8 +110,6 @@ class AccumulatorMem[T <: Data, U <: Data](
     mem.io.raddr := Mux(io.write.fire() && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
     mem.io.ren := io.read.req.fire() || (io.write.fire() && io.write.bits.acc)
   } else {
-    val mask_len = t.getWidth / 8
-    val mask_elem = UInt((t.getWidth / mask_len).W)
     val reads = Wire(Vec(2, Decoupled(UInt())))
     reads(0).valid := io.write.valid && io.write.bits.acc
     reads(0).bits  := io.write.bits.addr
@@ -114,7 +121,29 @@ class AccumulatorMem[T <: Data, U <: Data](
     for (i <- 0 until num_acc_sub_banks) {
       def isThisBank(addr: UInt) = addr(log2Ceil(num_acc_sub_banks)-1,0) === i.U
       def getBankIdx(addr: UInt) = addr >> log2Ceil(num_acc_sub_banks)
-      val mem = SyncReadMem(n / num_acc_sub_banks, Vec(mask_len, mask_elem))
+      val (read, write) = if (use_shared_ext_mem) {
+        def read(addr: UInt, ren: Bool): Data = {
+          io.ext_mem.get(i).read_en := ren
+          io.ext_mem.get(i).read_addr := addr
+          io.ext_mem.get(i).read_data
+        }
+        io.ext_mem.get(i).write_en := false.B
+        io.ext_mem.get(i).write_addr := DontCare
+        io.ext_mem.get(i).write_data := DontCare
+        io.ext_mem.get(i).write_mask := DontCare
+        def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = {
+          io.ext_mem.get(i).write_en := true.B
+          io.ext_mem.get(i).write_addr := addr
+          io.ext_mem.get(i).write_data := wdata.asUInt
+          io.ext_mem.get(i).write_mask := wmask.asUInt
+        }
+        (read _, write _)
+      } else {
+        val mem = SyncReadMem(n / num_acc_sub_banks, Vec(mask_len, mask_elem))
+        def read(addr: UInt, ren: Bool): Data = mem.read(addr, ren)
+        def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = mem.write(addr, wdata, wmask)
+        (read _, write _)
+      }
 
       val ren = WireInit(false.B)
       val raddr = WireInit(getBankIdx(reads(0).bits))
@@ -172,14 +201,14 @@ class AccumulatorMem[T <: Data, U <: Data](
         }
 
       }
-      val bank_rdata = mem.read(raddr, ren && !wen).asTypeOf(t)
+      val bank_rdata = read(raddr, ren && !wen).asTypeOf(t)
       when (RegNext(ren && reads(0).valid && isThisBank(reads(0).bits))) {
         acc_rdata := bank_rdata
       } .elsewhen (RegNext(ren)) {
         read_rdata := bank_rdata
       }
       when (wen) {
-        mem.write(waddr, wdata, wmask)
+        write(waddr, wdata, wmask)
       }
       // Three requestors, 1 slot
       // Priority is incoming reads for RMW > writes from RMW > incoming reads

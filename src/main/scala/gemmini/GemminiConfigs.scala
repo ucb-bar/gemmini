@@ -47,7 +47,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              acc_read_full_width: Boolean,
                                                                              acc_read_small_width: Boolean,
                                                                              use_dedicated_tl_port: Boolean,
-                                                                             // enable_a_transpose: Boolean,
+                                                                             use_shared_ext_mem: Boolean,
+                                                                            // enable_a_transpose: Boolean,
                                                                              // enable_b_transpose: Boolean,
 
                                                                              tlb_size: Int,
@@ -194,7 +195,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
           (dt.expWidth, dt.sigWidth) match {
             case (8, 24) => (scala.Float.MinValue.toString, scala.Float.MaxValue.toString)
             case (11, 53) => (scala.Double.MinValue.toString, scala.Double.MaxValue.toString)
-            case _ => throw new IllegalArgumentException(s"Only single- and double-precision IEEE754 floating point types are currently supported")
+            case (e, s) => (((Range(-1,-(s),-1).map(-Math.pow(2, _)).foldLeft(-1.0)(_ + _)) * Math.pow(2, Math.pow(2, e - 1) - 1)).toString, ((Range(-1,-(s),-1).map(Math.pow(2, _)).foldLeft(1.0)(_ + _)) * Math.pow(2, Math.pow(2, e - 1) - 1)).toString)
+            //case _ => throw new IllegalArgumentException(s"Only single- and double-precision IEEE754 floating point types are currently supported")
           }
         case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
       }
@@ -208,7 +210,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
           (dt.expWidth, dt.sigWidth) match {
             case (8, 24) => "float"
             case (11, 53) => "double"
-            case _ => throw new IllegalArgumentException(s"Only single- and double-precision IEEE754 floating point types are currently supported")
+            case (e, s) => s"uint" + (Math.pow(2, Math.ceil(Math.log(e + s)/Math.log(2.0)))).toInt.toString + s"_t"
           }
         case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
       }

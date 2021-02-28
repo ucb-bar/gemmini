@@ -9,6 +9,7 @@ import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet, XLen}
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.system._
+import freechips.rocketchip.diplomacy._
 import gemmini.Arithmetic.SIntArithmetic
 import hardfloat._
 
@@ -66,7 +67,7 @@ object GemminiConfigs {
     use_tlb_register_filter = true,
     max_in_flight_reqs = 16,
     use_dedicated_tl_port = false,
-
+    use_shared_ext_mem = false,
     inputType = SInt(8.W),
     outputType = SInt(20.W),
     accType = SInt(32.W),
@@ -190,6 +191,67 @@ class DefaultGemminiChipConfig extends Config((site, here, up) => {
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
+
+class DualGemminiConfig extends Config((site, here, up) => {
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+  case BuildRoCC => {
+    var int_gemmini: Gemmini[_,_,_] = null
+    var fp_gemmini: Gemmini[_,_,_] = null
+    val int_fn = (p: Parameters) => {
+      implicit val q = p
+      int_gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig.copy(
+        sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32),
+        use_shared_ext_mem = true
+      )))
+      int_gemmini
+    }
+    val fp_fn = (p: Parameters) => {
+      implicit val q = p
+      fp_gemmini = LazyModule(new Gemmini(OpcodeSet.custom2, GemminiFPConfigs.BF16DefaultConfig.copy(
+        sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32),
+        meshColumns = 8, meshRows = 8,
+        acc_singleported = true, acc_banks = 2, num_acc_sub_banks = 2,
+        use_shared_ext_mem = true
+      )))
+      InModuleBody {
+        require(int_gemmini.config.sp_banks == fp_gemmini.config.sp_banks)
+        require(int_gemmini.config.acc_banks == fp_gemmini.config.acc_banks)
+        require(int_gemmini.config.num_acc_sub_banks == fp_gemmini.config.num_acc_sub_banks)
+        require(int_gemmini.config.sp_singleported && fp_gemmini.config.sp_singleported)
+        require(int_gemmini.config.acc_singleported && fp_gemmini.config.acc_singleported)
+
+        require(int_gemmini.config.sp_bank_entries == fp_gemmini.config.sp_bank_entries)
+        require(int_gemmini.spad.module.spad_mems(0).mask_len == fp_gemmini.spad.module.spad_mems(0).mask_len)
+        require(int_gemmini.spad.module.spad_mems(0).mask_elem.getWidth == fp_gemmini.spad.module.spad_mems(0).mask_elem.getWidth)
+
+        println(int_gemmini.config.acc_bank_entries, fp_gemmini.config.acc_bank_entries)
+        println(int_gemmini.spad.module.acc_mems(0).mask_len, fp_gemmini.spad.module.acc_mems(0).mask_len)
+        println(int_gemmini.spad.module.acc_mems(0).mask_elem.getWidth, fp_gemmini.spad.module.acc_mems(0).mask_elem.getWidth)
+
+        require(int_gemmini.config.acc_bank_entries == fp_gemmini.config.acc_bank_entries / 2)
+        require(int_gemmini.config.num_acc_sub_banks == fp_gemmini.config.num_acc_sub_banks)
+        require(int_gemmini.spad.module.acc_mems(0).mask_len == fp_gemmini.spad.module.acc_mems(0).mask_len * 2)
+        require(int_gemmini.spad.module.acc_mems(0).mask_elem.getWidth == fp_gemmini.spad.module.acc_mems(0).mask_elem.getWidth)
+
+        val spad_mask_len = int_gemmini.spad.module.spad_mems(0).mask_len
+        val spad_data_len = int_gemmini.spad.module.spad_mems(0).mask_elem.getWidth
+        val acc_mask_len = int_gemmini.spad.module.acc_mems(0).mask_len
+        val acc_data_len = int_gemmini.spad.module.acc_mems(0).mask_elem.getWidth
+
+        val shared_mem = Module(new SharedExtMem(
+          int_gemmini.config.sp_banks, int_gemmini.config.acc_banks, int_gemmini.config.num_acc_sub_banks,
+          int_gemmini.config.sp_bank_entries, spad_mask_len, spad_data_len,
+          int_gemmini.config.acc_bank_entries / int_gemmini.config.num_acc_sub_banks, acc_mask_len, acc_data_len
+        ))
+        shared_mem.io.in(0) <> int_gemmini.module.ext_mem_io.get
+        shared_mem.io.in(1) <> fp_gemmini.module.ext_mem_io.get
+      }
+      fp_gemmini
+    }
+    up(BuildRoCC) ++ Seq(int_fn, fp_fn)
+  }
+})
+
 /**
  * Mixin which configures a smaller host processor for the systolic array.
    This mixin **replaces** the default host rocket (assuming a single core config).

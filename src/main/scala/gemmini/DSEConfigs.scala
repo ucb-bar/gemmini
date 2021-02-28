@@ -57,6 +57,7 @@ object DSEBaseConfig {
     acc_read_full_width = true,
     acc_read_small_width = true,
     use_dedicated_tl_port = false,
+    use_shared_ext_mem = true,
     pe_latency = 0,
 
     tlb_size = 4,

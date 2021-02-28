@@ -45,6 +45,7 @@ object GemminiFPConfigs {
     use_tlb_register_filter = true,
     max_in_flight_reqs = 16,
     use_dedicated_tl_port = false,
+    use_shared_ext_mem = true,
 
     inputType = Float(8, 24),
     outputType = Float(8, 24),

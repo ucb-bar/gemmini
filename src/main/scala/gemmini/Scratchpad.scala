@@ -90,7 +90,9 @@ class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundl
   val data = Output(UInt(w.W))
 }
 
-class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_ported: Boolean) extends Module {
+
+
+class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean) extends Module {
   // This is essentially a pipelined SRAM with the ability to stall pipeline stages
 
   require(w % aligned_to == 0 || w < aligned_to)
@@ -100,27 +102,50 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_
   val io = IO(new Bundle {
     val read = Flipped(new ScratchpadReadIO(n, w))
     val write = Flipped(new ScratchpadWriteIO(n, w, mask_len))
+    val ext_mem = if (use_shared_ext_mem) Some(new ExtMemIO) else None
   })
 
-  val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
+  val (read, write) = if (use_shared_ext_mem) {
+    def read(addr: UInt, ren: Bool): Data = {
+      io.ext_mem.get.read_en := ren
+      io.ext_mem.get.read_addr := addr
+      io.ext_mem.get.read_data
+    }
+    io.ext_mem.get.write_en := false.B
+    io.ext_mem.get.write_addr := DontCare
+    io.ext_mem.get.write_data := DontCare
+    io.ext_mem.get.write_mask := DontCare
+    def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = {
+      io.ext_mem.get.write_en := true.B
+      io.ext_mem.get.write_addr := addr
+      io.ext_mem.get.write_data := wdata.asUInt
+      io.ext_mem.get.write_mask := wmask.asUInt
+    }
+    (read _, write _)
+  } else {
+    val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
+    def read(addr: UInt, ren: Bool): Data = mem.read(addr, ren)
+    def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = mem.write(addr, wdata, wmask)
+    (read _, write _)
+  }
 
   // When the scratchpad is single-ported, the writes take precedence
   val singleport_busy_with_write = single_ported.B && io.write.en
 
   when (io.write.en) {
     if (aligned_to >= w)
-      mem.write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)))
+      write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), VecInit((~(0.U(mask_len.W))).asBools))
     else
-      mem.write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), io.write.mask)
+      write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), io.write.mask)
   }
 
   val raddr = io.read.req.bits.addr
   val ren = io.read.req.fire()
   val rdata = if (single_ported) {
     assert(!(ren && io.write.en))
-    mem.read(raddr, ren && !io.write.en).asUInt()
+    read(raddr, ren && !io.write.en).asUInt()
   } else {
-    mem.read(raddr, ren).asUInt()
+    read(raddr, ren).asUInt()
   }
 
   val fromDMA = io.read.req.bits.fromDMA
@@ -138,6 +163,7 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_
   val rdata_p = Pipeline(q.io.deq, mem_pipeline)
   io.read.resp <> rdata_p
 }
+
 
 class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V])
     (implicit p: Parameters, ev: Arithmetic[T]) extends LazyModule {
@@ -196,6 +222,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val write = Flipped(Vec(acc_banks, Decoupled(new AccumulatorWriteReq(
           acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))
         ))))
+      }
+
+      val ext_mem = if (use_shared_ext_mem) {
+        Some(new ExtSpadMemIO(sp_banks, acc_banks, num_acc_sub_banks))
+      } else {
+        None
       }
 
       // TLB ports
@@ -360,10 +392,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
 
-    {
-      val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to, config.sp_singleported)) }
+    val spad_mems = {
+      val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(
+        sp_bank_entries, spad_w, mem_pipeline,
+        aligned_to, config.sp_singleported,
+        use_shared_ext_mem
+      )) }
       val bank_ios = VecInit(banks.map(_.io))
-
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.sp_bank())
 
@@ -374,6 +409,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       // Reading from the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
+        if (use_shared_ext_mem) {
+          io.ext_mem.get.spad(i) <> bio.ext_mem.get
+        }
+
         val ex_read_req = io.srams.read(i).req
         val exread = ex_read_req.valid
 
@@ -458,6 +497,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.mask := DontCare
         }
       }
+      banks
     }
 
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
@@ -496,11 +536,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       }
     }
 
-    {
-
+    val acc_mems = {
       val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(
         acc_bank_entries, acc_row_t, acc_scale_args,
-        acc_singleported, num_acc_sub_banks
+        acc_singleported, num_acc_sub_banks,
+        use_shared_ext_mem
       )) }
       val bank_ios = VecInit(banks.map(_.io))
 
@@ -509,6 +549,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       // Reading from the Accumulator banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
+        if (use_shared_ext_mem) {
+          io.ext_mem.get.acc(i) <> bio.ext_mem.get
+        }
         val ex_read_req = io.acc.read_req(i)
         val exread = ex_read_req.valid
 
@@ -656,6 +699,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.bits.mask := DontCare
         }
       }
+      banks
     }
   }
 }
