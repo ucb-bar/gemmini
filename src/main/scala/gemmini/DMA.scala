@@ -310,6 +310,7 @@ class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends Cor
   val vaddr = UInt(coreMaxAddrBits.W)
   val data = UInt(dataWidth.W)
   val len = UInt(log2Up(dataWidth/8+1).W) // The number of bytes to write
+  val block = UInt(8.W) // TODO magic number
   val status = new MStatus
 
   // Pooling variables
@@ -331,6 +332,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val beatBytes = beatBits / 8
     val lgBeatBytes = log2Ceil(beatBytes)
     val maxBeatsPerReq = maxBytes / beatBytes
+    val inputTypeRowBytes = block_cols * inputType.getWidth / 8
+    val maxBlocks = maxBytes / inputTypeRowBytes
 
     require(beatBytes > 0)
 
@@ -345,6 +348,11 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val state = RegInit(s_idle)
 
     val req = Reg(new StreamWriteRequest(dataWidth))
+
+    // TODO use the same register to hold data_blocks and data_single_block, so that this Mux here is not necessary
+    val data_blocks = Reg(Vec(maxBlocks, UInt((inputTypeRowBytes * 8).W)))
+    val data_single_block = Reg(UInt(dataWidth.W)) // For data that's just one-block-wide
+    val data = Mux(req.block === 0.U, data_single_block, data_blocks.asUInt())
 
     val bytesSent = Reg(UInt(log2Ceil(dataBytes+1).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
     val bytesLeft = req.len - bytesSent
@@ -446,14 +454,14 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       fromSource = RegEnableThru(xactId, state === s_writing_new_block),
       toAddress = 0.U,
       lgSize = lg_write_size,
-      data = (req.data >> (bytesSent * 8.U)).asUInt()
+      data = (data >> (bytesSent * 8.U)).asUInt()
     )._2
 
     val putPartial = edge.Put(
       fromSource = RegEnableThru(xactId, state === s_writing_new_block),
       toAddress = 0.U,
       lgSize = lg_write_size,
-      data = ((req.data >> (bytesSent * 8.U)) << (write_shift * 8.U)).asUInt(),
+      data = ((data >> (bytesSent * 8.U)) << (write_shift * 8.U)).asUInt(),
       mask = write_mask.asUInt()
     )._2
 
@@ -550,17 +558,23 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val pooled = {
         val cols = dataWidth / inputType.getWidth
         val v1 = io.req.bits.data.asTypeOf(Vec(cols, inputType))
-        val v2 = req.data.asTypeOf(Vec(cols, inputType))
+        val v2 = data_single_block.asTypeOf(Vec(cols, inputType))
         val m = v1.zip(v2)
         VecInit(m.zipWithIndex.map{case ((x, y), i) => if (i < block_cols) maxOf(x, y) else y}).asUInt()
       }
 
       req := io.req.bits
-      req.data := Mux(io.req.bits.pool_en, pooled, io.req.bits.data)
+      req.len := io.req.bits.block * inputTypeRowBytes.U + io.req.bits.len
+
+      data_single_block := Mux(io.req.bits.pool_en, pooled, io.req.bits.data)
+      data_blocks(io.req.bits.block) := io.req.bits.data
 
       bytesSent := 0.U
 
       state := Mux(io.req.bits.store_en, s_writing_new_block, s_idle)
+
+      assert(io.req.bits.len <= (block_cols * inputType.getWidth / 8).U || io.req.bits.block === 0.U, "DMA can't write multiple blocks to main memory when writing full accumulator output")
+      assert(!io.req.bits.pool_en || io.req.bits.block === 0.U, "Can't pool with block-mvout")
     }
 
     FpgaDebug(io.req.valid)

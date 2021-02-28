@@ -108,9 +108,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
   val last_allocated = Reg(UInt(log2Up(rob_entries).W))
   val a_stride = Reg(UInt(16.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
-  val block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
+  val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
+  val st_block_stride = block_rows.U
 
-  FpgaDebug(block_strides)
+  FpgaDebug(ld_block_strides)
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
@@ -221,9 +222,16 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       new_entry.op2.bits.end := new_entry.op2.bits.start + compute_rows
       new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(compute_rows)._2
     }.otherwise {
+      val block_stride = st_block_stride
+
+      val mvout_cols = cmd.rs2(32 + mvout_cols_bits - 1, 32)
       val mvout_rows = cmd.rs2(48 + mvout_rows_bits - 1, 48)
-      new_entry.op2.bits.end := new_entry.op2.bits.start + mvout_rows
-      new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(mvout_rows)._2
+
+      val mvout_mats = mvout_cols / block_cols.U + (mvout_cols % block_cols.U =/= 0.U)
+      val total_mvout_rows = ((mvout_mats - 1.U) * block_stride) + mvout_rows
+
+      new_entry.op2.bits.end := new_entry.op2.bits.start + total_mvout_rows
+      new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(total_mvout_rows)._2
     }
 
     new_entry.dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
@@ -235,7 +243,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     }.otherwise {
       val id = MuxCase(0.U, Seq((new_entry.cmd.inst.funct === LOAD2_CMD) -> 1.U,
         (new_entry.cmd.inst.funct === LOAD3_CMD) -> 2.U))
-      val block_stride = block_strides(id)
+      val block_stride = ld_block_strides(id)
 
       val mvin_cols = cmd.rs2(spAddrBits + mvin_cols_bits - 1, spAddrBits)
       val mvin_rows = cmd.rs2(spAddrBits + mvin_cols_bits + mvin_rows_bits - 1, spAddrBits + mvin_cols_bits)
@@ -347,7 +355,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
       val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
       val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers
-      block_strides(id) := block_stride
+      ld_block_strides(id) := block_stride
     }
   }
 
