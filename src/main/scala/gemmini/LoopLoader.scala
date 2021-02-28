@@ -76,7 +76,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   val conflict_monitor = !((alert_cycle === 0.U) || (latency === 0.U))
   val conflict_monitor_start = conflict_monitor && (row_iterator === 0.U && col_iterator === 0.U)
-  val conflict_monitor_end = conflict_monitor && (row_iterator === max_row_iterator - 1.U && col_iterator === max_col_iterator - 1.U)
+  val conflict_monitor_end = conflict_monitor && (row_iterator === max_row_iterator - 1.U && col_iterator >= max_col_iterator - max_blocks)
 
   //ToDo: either load A or B (for now just do with B)
   val load_cmd = Wire(new RoCCCommand())
