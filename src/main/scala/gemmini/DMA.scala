@@ -301,13 +301,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     } .elsewhen (tl.d.fire()) {
       bytes_read := bytes_read + 1.U << tl.d.bits.size
     }
-    val tlb_req_onflight = RegInit(false.B)
-    when (io.tlb.req.valid) {
-      tlb_req_onflight := true.B
-    } .elsewhen (!io.tlb.resp.bits.miss) {
-      tlb_req_onflight := false.B
-    }
-    io.counter.connectEventSignal(CounterEvent.RDMA_TLB_WAIT_CYCLES, tlb_req_onflight)
+    io.counter.connectEventSignal(CounterEvent.RDMA_TLB_WAIT_CYCLES, io.tlb.resp.miss)
     io.counter.connectEventSignal(CounterEvent.RDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
   }
 }
@@ -580,13 +574,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     } .elsewhen (tl.d.fire()) {
       bytes_sent := bytes_sent + 1.U << tl.d.bits.size
     }
-    val tlb_req_onflight = RegInit(false.B)
-    when (io.tlb.req.valid) {
-      tlb_req_onflight := true.B
-    } .elsewhen (!io.tlb.resp.bits.miss) {
-      tlb_req_onflight := false.B
-    }
-    io.counter.connectEventSignal(CounterEvent.WDMA_TLB_WAIT_CYCLES, tlb_req_onflight)
+    io.counter.connectEventSignal(CounterEvent.WDMA_TLB_WAIT_CYCLES, io.tlb.resp.miss)
     io.counter.connectEventSignal(CounterEvent.WDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
   }
 }
