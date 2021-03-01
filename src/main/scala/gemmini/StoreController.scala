@@ -71,7 +71,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val cmd = Queue(io.cmd, st_queue_length)
   val vaddr = cmd.bits.cmd.rs1
   val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
-  val cols = cmd.bits.cmd.rs2(32 + mvout_len_bits - 1, 32) // TODO magic numbers
+  val cols = cmd.bits.cmd.rs2(32 + mvout_cols_bits - 1, 32) // TODO magic numbers
   val rows = cmd.bits.cmd.rs2(48 + mvout_rows_bits - 1, 48) // TODO magic numbers
   val config_stride = cmd.bits.cmd.rs2
   val config_pool_stride = cmd.bits.cmd.rs1(5, 4) // TODO magic numbers
@@ -113,7 +113,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     ((config.sp_banks * config.sp_bank_entries) max
     (config.acc_banks * config.acc_bank_entries))
 
-  val cmd_tracker = Module(new DMAReadCommandTracker(nCmds, cmd_tracker_max_rows, deps_t))
+  val cmd_tracker = Module(new DMACommandTracker(nCmds, cmd_tracker_max_rows, deps_t))
 
   // DMA IO wiring
   io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoStore && cmd_tracker.io.alloc.ready) ||

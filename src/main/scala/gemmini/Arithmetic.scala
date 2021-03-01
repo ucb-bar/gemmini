@@ -271,7 +271,25 @@ object Arithmetic {
         */
       }
 
-      override def >(t: Float): Bool = true.B // TODO
+      override def >(t: Float): Bool = {
+        // Recode all operands
+        val t_rec = recFNFromFN(t.expWidth, t.sigWidth, t.bits)
+        val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
+
+        // Resize t to self's width
+        val t_resizer = Module(new RecFNToRecFN(t.expWidth, t.sigWidth, self.expWidth, self.sigWidth))
+        t_resizer.io.in := t_rec
+        t_resizer.io.roundingMode := consts.round_near_even
+        t_resizer.io.detectTininess := consts.tininess_afterRounding
+        val t_rec_resized = t_resizer.io.out
+
+        val comparator = Module(new CompareRecFN(self.expWidth, self.sigWidth))
+        comparator.io.a := self_rec
+        comparator.io.b := t_rec_resized
+        comparator.io.signaling := false.B
+
+        comparator.io.gt
+      }
 
       override def withWidthOf(t: Float): Float = {
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)

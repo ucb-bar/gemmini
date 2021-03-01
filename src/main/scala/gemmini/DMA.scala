@@ -2,10 +2,12 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
+import chisel3.experimental.DataMirror
 
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
 import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters}
+import freechips.rocketchip.tilelink.TLBundleA
 import testchipip.TLHelper
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
@@ -22,6 +24,7 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val status = new MStatus
   val len = UInt(16.W) // TODO magic number
   val repeats = UInt(16.W) // TODO magic number
+  val block_stride = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
   override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
@@ -36,7 +39,7 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
   val accumulate = Bool()
   val has_acc_bitwidth = Bool()
   val scale = UInt(mvin_scale_t_bits.W)
-  val rows = UInt(16.W) // TODO magic number
+  val repeats = UInt(16.W) // TODO magic number
   val last = Bool()
   val bytes_read = UInt(8.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
@@ -93,7 +96,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.accumulate := beatPacker.io.out.bits.accumulate
     io.resp.bits.has_acc_bitwidth := beatPacker.io.out.bits.has_acc_bitwidth
     io.resp.bits.scale := RegEnable(xactTracker.io.peek.entry.scale, beatPacker.io.req.fire())
-    io.resp.bits.rows := RegEnable(xactTracker.io.peek.entry.rows, beatPacker.io.req.fire())
+    io.resp.bits.repeats := RegEnable(xactTracker.io.peek.entry.repeats, beatPacker.io.req.fire())
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
@@ -139,12 +142,11 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val counter = new CounterEventIO()
     })
 
-    val s_idle :: s_translate_req :: s_translate_resp :: s_req_new_block :: Nil = Enum(4)
+    val s_idle :: s_req_new_block :: Nil = Enum(2)
     val state = RegInit(s_idle)
 
     val req = Reg(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits))
-
-    val vpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
+    val vaddr = req.vaddr
 
     val bytesRequested = Reg(UInt(log2Ceil(spadWidthBytes max accWidthBytes max maxBytes).W)) // TODO this only needs to count up to (dataBytes/aligned_to), right?
     val bytesLeft = Mux(req.has_acc_bitwidth, req.len * (config.accType.getWidth / 8).U, req.len * (config.inputType.getWidth / 8).U) - bytesRequested
@@ -152,35 +154,14 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val state_machine_ready_for_req = WireInit(state === s_idle)
     io.req.ready := state_machine_ready_for_req
 
-    // Address translation
-    io.tlb.req.valid := state === s_translate_req
-    io.tlb.req.bits.tlb_req.vaddr := Cat(vpn, 0.U(pgIdxBits.W))
-    io.tlb.req.bits.tlb_req.passthrough := false.B
-    io.tlb.req.bits.tlb_req.size := 0.U
-    io.tlb.req.bits.tlb_req.cmd := M_XRD
-    io.tlb.req.bits.status := req.status
-
-    val ppn = RegEnable(io.tlb.resp.bits.paddr(paddrBits-1, pgIdxBits),
-      io.tlb.resp.fire())
-    val paddr = Cat(ppn, req.vaddr(pgIdxBits-1, 0))
-
-    val last_vpn_translated = RegEnable(vpn, io.tlb.resp.fire())
-    val last_vpn_translated_valid = withReset(reset.toBool() || io.flush) { RegInit(false.B) }
-
-    when (io.tlb.resp.fire()) {
-      last_vpn_translated_valid := true.B
-      state := s_req_new_block
-    }.elsewhen (io.tlb.req.fire()) {
-      state := s_translate_resp
-    }
-
     // Select the size and mask of the TileLink request
     class Packet extends Bundle {
       val size = UInt(log2Up(maxBytes+1).W)
       val lg_size = UInt(log2Ceil(log2Ceil(maxBytes+1)).W)
       val bytes_read = UInt(log2Up(maxBytes+1).W)
       val shift = UInt(log2Up(maxBytes).W)
-      val paddr = UInt(paddrBits.W)
+      //val paddr = UInt(paddrBits.W)
+      val vaddr = UInt(vaddrBits.W)
     }
 
     // TODO Can we filter out the larger read_sizes here if the systolic array is small, in the same way that we do so
@@ -190,22 +171,22 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       filter(s => s % beatBytes == 0)
     val read_packets = read_sizes.map { s =>
       val lg_s = log2Ceil(s)
-      val paddr_aligned_to_size = if (s == 1) paddr else Cat(paddr(paddrBits-1, lg_s), 0.U(lg_s.W))
-      val paddr_offset = if (s > 1) paddr(lg_s-1, 0) else 0.U
+      val vaddr_aligned_to_size = if (s == 1) vaddr else Cat(vaddr(vaddrBits-1, lg_s), 0.U(lg_s.W))
+      val vaddr_offset = if (s > 1) vaddr(lg_s-1, 0) else 0.U
 
       val packet = Wire(new Packet())
       packet.size := s.U
       packet.lg_size := lg_s.U
-      packet.bytes_read := minOf(s.U - paddr_offset, bytesLeft)
-      packet.shift := paddr_offset
-      packet.paddr := paddr_aligned_to_size
+      packet.bytes_read := minOf(s.U - vaddr_offset, bytesLeft)
+      packet.shift := vaddr_offset
+      packet.vaddr := vaddr_aligned_to_size
 
       packet
     }
     val read_packet = read_packets.reduce { (acc, p) =>
       Mux(p.bytes_read > acc.bytes_read, p, acc)
     }
-    val read_paddr = read_packet.paddr
+    val read_vaddr = read_packet.vaddr
     val read_lg_size = read_packet.lg_size
     val read_bytes_read = read_packet.bytes_read
     val read_shift = read_packet.shift
@@ -213,32 +194,71 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     // Firing off TileLink read requests and allocating space inside the reservation buffer for them
     val get = edge.Get(
       fromSource = io.reserve.xactid,
-      toAddress = read_paddr,
+      toAddress = 0.U, //read_paddr,
       lgSize = read_lg_size
     )._2
 
-    tl.a.valid := state === s_req_new_block && io.reserve.ready
-    tl.a.bits := get
+    class TLBundleAWithInfo extends Bundle {
+      val tl_a = DataMirror.internal.chiselTypeClone[TLBundleA](tl.a.bits)
+      val vaddr = Output(UInt(vaddrBits.W))
+      val status = Output(new MStatus)
+    }
 
-    io.reserve.valid := state === s_req_new_block && tl.a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
+    val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
+    untranslated_a.valid := state === s_req_new_block && io.reserve.ready
+    untranslated_a.bits.tl_a := get
+    untranslated_a.bits.vaddr := read_vaddr
+    untranslated_a.bits.status := req.status
+
+    // 0 goes to retries, 1 goes to state machine
+    val retry_a = Wire(Decoupled(new TLBundleAWithInfo))
+    val tlb_arb = Module(new Arbiter(new TLBundleAWithInfo, 2))
+    tlb_arb.io.in(0) <> retry_a
+    tlb_arb.io.in(1) <> untranslated_a
+
+    val tlb_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
+    tlb_q.io.enq <> tlb_arb.io.out
+
+    io.tlb.req.valid := tlb_q.io.deq.valid
+    io.tlb.req.bits.tlb_req.vaddr := tlb_q.io.deq.bits.vaddr
+    io.tlb.req.bits.tlb_req.passthrough := false.B
+    io.tlb.req.bits.tlb_req.size := 0.U // send_size
+    io.tlb.req.bits.tlb_req.cmd := M_XRD
+    io.tlb.req.bits.status := tlb_q.io.deq.bits.status
+
+    val translate_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
+    translate_q.io.enq <> tlb_q.io.deq
+    translate_q.io.deq.ready := true.B
+
+    retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready)
+    retry_a.bits := translate_q.io.deq.bits
+    assert(retry_a.ready)
+
+    tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
+    tl.a.bits := translate_q.io.deq.bits.tl_a
+    tl.a.bits.address := io.tlb.resp.paddr
+
+    io.reserve.valid := state === s_req_new_block && untranslated_a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
     io.reserve.entry.is_acc := req.is_acc
     io.reserve.entry.accumulate := req.accumulate
     io.reserve.entry.has_acc_bitwidth := req.has_acc_bitwidth
     io.reserve.entry.scale := req.scale
-    io.reserve.entry.rows := req.repeats
+    io.reserve.entry.repeats := req.repeats
+    io.reserve.entry.block_stride := req.block_stride
     io.reserve.entry.lg_len_req := DontCare // TODO just remove this from the IO completely
     io.reserve.entry.bytes_to_read := read_bytes_read
     io.reserve.entry.cmd_id := req.cmd_id
 
-    io.reserve.entry.addr := req.spaddr + meshRows.U *
+    io.reserve.entry.addr := req.spaddr + req.block_stride *
       Mux(req.has_acc_bitwidth,
         // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
         // "if" condition and the "else" clause
         if (bytesRequested.getWidth >= log2Up(accWidthBytes+1)) bytesRequested / accWidthBytes.U else 0.U,
         if (bytesRequested.getWidth >= log2Up(spadWidthBytes+1)) bytesRequested / spadWidthBytes.U else 0.U)
     io.reserve.entry.spad_row_offset := Mux(req.has_acc_bitwidth, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
-    when (tl.a.fire()) {
+
+    when (untranslated_a.fire()) {
       val next_vaddr = req.vaddr + read_bytes_read // send_size
       val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
       req.vaddr := next_vaddr
@@ -250,8 +270,6 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         // We're done with this request at this point
         state_machine_ready_for_req := true.B
         state := s_idle
-      }.elsewhen (new_page) {
-        state := s_translate_req
       }
     }
 
@@ -269,9 +287,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       req := io.req.bits
       bytesRequested := 0.U
 
-      val vpn_already_translated = use_tlb_register_filter.B && last_vpn_translated_valid &&
-        last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
-      state := Mux(vpn_already_translated, s_req_new_block, s_translate_req)
+      state := s_req_new_block
     }
 
 
@@ -285,13 +301,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     } .elsewhen (tl.d.fire()) {
       bytes_read := bytes_read + 1.U << tl.d.bits.size
     }
-    val tlb_req_onflight = RegInit(false.B)
-    when (io.tlb.req.valid) {
-      tlb_req_onflight := true.B
-    } .elsewhen (!io.tlb.resp.bits.miss) {
-      tlb_req_onflight := false.B
-    }
-    io.counter.connectEventSignal(CounterEvent.RDMA_TLB_WAIT_CYCLES, tlb_req_onflight)
+    io.counter.connectEventSignal(CounterEvent.RDMA_TLB_WAIT_CYCLES, io.tlb.resp.miss)
     io.counter.connectEventSignal(CounterEvent.RDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
   }
 }
@@ -299,7 +309,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val data = UInt(dataWidth.W)
-  val len = UInt(16.W) // The number of bytes to write // TODO magic number
+  val len = UInt(log2Up(dataWidth/8+1).W) // The number of bytes to write
   val status = new MStatus
 
   // Pooling variables
@@ -332,23 +342,20 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val counter = new CounterEventIO()
     })
 
-    val (s_idle :: s_translate_req :: s_translate_resp ::
-      s_writing_new_block :: s_writing_beats :: Nil) = Enum(5)
+    val (s_idle :: s_writing_new_block :: s_writing_beats :: Nil) = Enum(3)
     val state = RegInit(s_idle)
 
     val req = Reg(new StreamWriteRequest(dataWidth))
 
-    val vpn = req.vaddr(coreMaxAddrBits-1, pgIdxBits)
-
-    val bytesSent = Reg(UInt(log2Ceil(dataBytes).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
-    // val bytesLeft = dataBytes.U - bytesSent
+    val bytesSent = Reg(UInt(log2Ceil(dataBytes+1).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
     val bytesLeft = req.len - bytesSent
 
     val xactBusy = RegInit(0.U(nXacts.W))
     val xactOnehot = PriorityEncoderOH(~xactBusy)
     val xactId = OHToUInt(xactOnehot)
 
-    val xactBusy_add = Mux(tl.a.fire(), (1.U << xactId).asUInt(), 0.U)
+    val xactBusy_fire = WireInit(false.B)
+    val xactBusy_add = Mux(xactBusy_fire, (1.U << xactId).asUInt(), 0.U)
     val xactBusy_remove = ~Mux(tl.d.fire(), (1.U << tl.d.bits.source).asUInt(), 0.U)
     xactBusy := (xactBusy | xactBusy_add) & xactBusy_remove.asUInt()
 
@@ -356,37 +363,19 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     io.req.ready := state_machine_ready_for_req
     io.busy := xactBusy.orR || (state =/= s_idle)
 
-    // Address translation
-    io.tlb.req.valid := state === s_translate_req
-    io.tlb.req.bits.tlb_req.vaddr := Cat(vpn, 0.U(pgIdxBits.W))
-    io.tlb.req.bits.tlb_req.passthrough := false.B
-    io.tlb.req.bits.tlb_req.size := 0.U // send_size
-    io.tlb.req.bits.tlb_req.cmd := M_XWR
-    io.tlb.req.bits.status := req.status
-
-    val ppn = RegEnable(io.tlb.resp.bits.paddr(paddrBits-1, pgIdxBits),
-      io.tlb.resp.fire())
-    val paddr = Cat(ppn, req.vaddr(pgIdxBits-1, 0))
-
-    val last_vpn_translated = RegEnable(vpn, io.tlb.resp.fire())
-    val last_vpn_translated_valid = withReset(reset.toBool() || io.flush) { RegInit(false.B) }
-
-    when (io.tlb.resp.fire()) {
-      last_vpn_translated_valid := true.B
-      state := s_writing_new_block
-    }.elsewhen (io.tlb.req.fire()) {
-      state := s_translate_resp
-    }
+    val vaddr = req.vaddr
 
     // Select the size and mask of the TileLink request
     class Packet extends Bundle {
-      val size = UInt(log2Ceil(maxBytes).W)
-      val lg_size = UInt(log2Ceil(log2Ceil(maxBytes)).W)
+      val size = UInt(log2Ceil(maxBytes+1).W)
+      val lg_size = UInt(log2Ceil(log2Ceil(maxBytes+1)+1).W)
       val mask = Vec(maxBeatsPerReq, Vec(beatBytes, Bool()))
-      val paddr = UInt(paddrBits.W)
+      val vaddr = UInt(vaddrBits.W)
       val is_full = Bool()
 
-      def bytes_written(dummy: Int = 0) = PopCount(mask.flatten)
+      val bytes_written = UInt(log2Up(dataBytes+1).W)
+      val bytes_written_per_beat = Vec(maxBeatsPerReq, UInt(log2Up(beatBytes+1).W))
+
       def total_beats(dummy: Int = 0) = Mux(size < beatBytes.U, 1.U, size / beatBytes.U)
     }
 
@@ -397,37 +386,52 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       filter(s => s <= dataBytes*2 || s == smallest_write_size)
     val write_packets = write_sizes.map { s =>
       val lg_s = log2Ceil(s)
-      val paddr_aligned_to_size = if (s == 1) paddr else Cat(paddr(paddrBits-1, lg_s), 0.U(lg_s.W))
+      val vaddr_aligned_to_size = if (s == 1) vaddr else Cat(vaddr(vaddrBits-1, lg_s), 0.U(lg_s.W))
+      val vaddr_offset = if (s > 1) vaddr(lg_s - 1, 0) else 0.U
 
-      val mask = (0 until maxBytes).map { i =>
-        if (s > 1) {
-          val paddr_offset = paddr(lg_s - 1, 0)
+      val mask = (0 until maxBytes).map { i => i.U >= vaddr_offset && i.U < vaddr_offset +& bytesLeft && (i < s).B }
 
-          i.U >= paddr_offset &&
-            i.U < paddr_offset +& bytesLeft
-        } else {
-          true.B
-        } && (i < s).B
+      val bytes_written = {
+        Mux(vaddr_offset +& bytesLeft > s.U, s.U - vaddr_offset, bytesLeft)
       }
 
       val packet = Wire(new Packet())
       packet.size := s.U
       packet.lg_size := lg_s.U
       packet.mask := VecInit(mask.grouped(beatBytes).map(v => VecInit(v)).toSeq)
-      packet.paddr := paddr_aligned_to_size
+      packet.vaddr := vaddr_aligned_to_size
       packet.is_full := mask.take(s).reduce(_ && _)
+
+      packet.bytes_written := bytes_written
+      packet.bytes_written_per_beat.zipWithIndex.foreach { case (b, i) =>
+        val start_of_beat = i * beatBytes
+        val end_of_beat = (i+1) * beatBytes
+
+        val left_shift = Mux(vaddr_offset >= start_of_beat.U && vaddr_offset < end_of_beat.U,
+          vaddr_offset - start_of_beat.U,
+          0.U)
+
+        val right_shift = Mux(vaddr_offset +& bytesLeft >= start_of_beat.U && vaddr_offset +& bytesLeft < end_of_beat.U,
+          end_of_beat.U - (vaddr_offset +& bytesLeft),
+          0.U)
+
+        val too_early = vaddr_offset >= end_of_beat.U
+        val too_late = vaddr_offset +& bytesLeft <= start_of_beat.U
+
+        b := Mux(too_early || too_late, 0.U, beatBytes.U - (left_shift +& right_shift))
+      }
 
       packet
     }
     val best_write_packet = write_packets.reduce { (acc, p) =>
-      Mux(p.bytes_written() > acc.bytes_written(), p, acc)
+      Mux(p.bytes_written > acc.bytes_written, p, acc)
     }
     val write_packet = RegEnableThru(best_write_packet, state === s_writing_new_block)
 
     val write_size = write_packet.size
     val lg_write_size = write_packet.lg_size
     val write_beats = write_packet.total_beats()
-    val write_paddr = write_packet.paddr
+    val write_vaddr = write_packet.vaddr
     val write_full = write_packet.is_full
 
     val beatsLeft = Reg(UInt(log2Up(maxBytes/aligned_to).W))
@@ -436,34 +440,81 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val write_mask = write_packet.mask(beatsSent)
     val write_shift = PriorityEncoder(write_mask)
 
-    val bytes_written_this_beat = PopCount(write_mask)
+    val bytes_written_this_beat = write_packet.bytes_written_per_beat(beatsSent)
 
     // Firing off TileLink write requests
     val putFull = edge.Put(
       fromSource = RegEnableThru(xactId, state === s_writing_new_block),
-      toAddress = write_paddr,
+      toAddress = 0.U,
       lgSize = lg_write_size,
       data = (req.data >> (bytesSent * 8.U)).asUInt()
     )._2
 
     val putPartial = edge.Put(
       fromSource = RegEnableThru(xactId, state === s_writing_new_block),
-      toAddress = write_paddr,
+      toAddress = 0.U,
       lgSize = lg_write_size,
       data = ((req.data >> (bytesSent * 8.U)) << (write_shift * 8.U)).asUInt(),
       mask = write_mask.asUInt()
     )._2
 
-    tl.a.valid := (state === s_writing_new_block || state === s_writing_beats) && !xactBusy.andR()
-    tl.a.bits := Mux(write_full, putFull, putPartial)
+    class TLBundleAWithInfo extends Bundle {
+      val tl_a = DataMirror.internal.chiselTypeClone[TLBundleA](tl.a.bits)
+      val vaddr = Output(UInt(vaddrBits.W))
+      val status = Output(new MStatus)
+    }
+
+    val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
+    xactBusy_fire := untranslated_a.fire() && state === s_writing_new_block
+    untranslated_a.valid := (state === s_writing_new_block || state === s_writing_beats) && !xactBusy.andR()
+    untranslated_a.bits.tl_a := Mux(write_full, putFull, putPartial)
+    untranslated_a.bits.vaddr := write_vaddr
+    untranslated_a.bits.status := req.status
+
+    // 0 goes to retries, 1 goes to state machine
+    val retry_a = Wire(Decoupled(new TLBundleAWithInfo))
+    val shadow_retry_a = Module(new Queue(new TLBundleAWithInfo, 1))
+    shadow_retry_a.io.enq.valid := false.B
+    shadow_retry_a.io.enq.bits := DontCare
+    val tlb_arb = Module(new Arbiter(new TLBundleAWithInfo, 3))
+    tlb_arb.io.in(0) <> retry_a
+    tlb_arb.io.in(1) <> shadow_retry_a.io.deq
+    tlb_arb.io.in(2) <> untranslated_a
+
+    val tlb_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
+    tlb_q.io.enq <> tlb_arb.io.out
+
+    io.tlb.req.valid := tlb_q.io.deq.valid
+    io.tlb.req.bits.tlb_req.vaddr := tlb_q.io.deq.bits.vaddr
+    io.tlb.req.bits.tlb_req.passthrough := false.B
+    io.tlb.req.bits.tlb_req.size := 0.U // send_size
+    io.tlb.req.bits.tlb_req.cmd := M_XWR
+    io.tlb.req.bits.status := tlb_q.io.deq.bits.status
+
+    val translate_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
+    translate_q.io.enq <> tlb_q.io.deq
+    when (retry_a.valid) {
+      translate_q.io.enq.valid := false.B
+      shadow_retry_a.io.enq.valid := tlb_q.io.deq.valid
+      shadow_retry_a.io.enq.bits  := tlb_q.io.deq.bits
+    }
+    translate_q.io.deq.ready := true.B
+
+    retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready)
+    retry_a.bits := translate_q.io.deq.bits
+    assert(retry_a.ready)
+
+    tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
+    tl.a.bits := translate_q.io.deq.bits.tl_a
+    tl.a.bits.address := io.tlb.resp.paddr
+
     tl.d.ready := xactBusy.orR()
 
-    when (tl.a.fire()) {
+    when (untranslated_a.fire()) {
       when (state === s_writing_new_block) {
         beatsLeft := write_beats - 1.U
 
-        val next_vaddr = req.vaddr + bytes_written_this_beat
-        val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
+        val next_vaddr = req.vaddr + write_packet.bytes_written
         req.vaddr := next_vaddr
 
         bytesSent := bytesSent + bytes_written_this_beat
@@ -473,8 +524,6 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
             // We're done with this request at this point
             state_machine_ready_for_req := true.B
             state := s_idle
-          }.elsewhen (new_page) {
-            state := s_translate_req
           }
         }.otherwise {
           state := s_writing_beats
@@ -483,15 +532,13 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         beatsLeft := beatsLeft - 1.U
         bytesSent := bytesSent + bytes_written_this_beat
 
-        when (beatsLeft === 0.U) {
-          val new_page = req.vaddr(pgIdxBits-1, 0) === 0.U
+        assert(beatsLeft > 0.U)
 
+        when (beatsLeft === 1.U) {
           when (bytes_written_this_beat >= bytesLeft) {
             // We're done with this request at this point
             state_machine_ready_for_req := true.B
             state := s_idle
-          }.elsewhen(new_page) {
-            state := s_translate_req
           }.otherwise {
             state := s_writing_new_block
           }
@@ -514,9 +561,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
       bytesSent := 0.U
 
-      val vpn_already_translated = use_tlb_register_filter.B && last_vpn_translated_valid &&
-        last_vpn_translated === io.req.bits.vaddr(coreMaxAddrBits-1, pgIdxBits)
-      state := Mux(io.req.bits.store_en, Mux(vpn_already_translated, s_writing_new_block, s_translate_req), s_idle)
+      state := Mux(io.req.bits.store_en, s_writing_new_block, s_idle)
     }
 
     // Performance counter
@@ -529,13 +574,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     } .elsewhen (tl.d.fire()) {
       bytes_sent := bytes_sent + 1.U << tl.d.bits.size
     }
-    val tlb_req_onflight = RegInit(false.B)
-    when (io.tlb.req.valid) {
-      tlb_req_onflight := true.B
-    } .elsewhen (!io.tlb.resp.bits.miss) {
-      tlb_req_onflight := false.B
-    }
-    io.counter.connectEventSignal(CounterEvent.WDMA_TLB_WAIT_CYCLES, tlb_req_onflight)
+    io.counter.connectEventSignal(CounterEvent.WDMA_TLB_WAIT_CYCLES, io.tlb.resp.miss)
     io.counter.connectEventSignal(CounterEvent.WDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
   }
 }

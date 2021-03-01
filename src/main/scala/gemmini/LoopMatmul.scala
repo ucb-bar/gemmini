@@ -84,8 +84,11 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   when (io.cmd.fire()) {
     // The order here is k, j, i
-    val next_i = floorAdd(i, 1.U, req.max_i)
-    val next_k = floorAdd(k, max_blocks, req.max_k, next_i === 0.U)
+    val i_blocks = Mux(req.transpose, max_blocks, 1.U)
+    val k_blocks = Mux(req.transpose, 1.U, max_blocks)
+
+    val next_i = floorAdd(i, i_blocks, req.max_i)
+    val next_k = floorAdd(k, k_blocks, req.max_k, next_i === 0.U)
 
     i := next_i
     k := next_k
@@ -182,11 +185,14 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   when (io.cmd.fire()) {
     // The order here is k, j, i
-    val next_j = floorAdd(j, max_blocks, req.max_j)
-    val next_k = floorAdd(k, 1.U, req.max_k, next_j === 0.U)
+    val j_blocks = Mux(req.transpose, 1.U, max_blocks)
+    val k_blocks = Mux(req.transpose, max_blocks, 1.U)
 
-    k := next_k
+    val next_j = floorAdd(j, j_blocks, req.max_j)
+    val next_k = floorAdd(k, k_blocks, req.max_k, next_j === 0.U)
+
     j := next_j
+    k := next_k
 
     when (next_j === 0.U && next_k === 0.U) {
       state := idle
@@ -229,7 +235,7 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   })
 
   object State extends ChiselEnum {
-    val idle, st = Value
+    val idle, ld = Value
   }
   import State._
   val state = RegInit(idle)
@@ -270,8 +276,8 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     state := idle
   }.elsewhen (io.cmd.fire()) {
     // The order here is k, j, i
-    val next_i = floorAdd(i, max_blocks, req.max_i)
-    val next_j = floorAdd(j, 1.U, req.max_j, next_i === 0.U)
+    val next_i = floorAdd(i, 1.U, req.max_i)
+    val next_j = floorAdd(j, max_blocks, req.max_j, next_i === 0.U)
 
     i := next_i
     j := next_j
@@ -283,7 +289,7 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   when (io.req.fire()) {
     req := io.req.bits
-    state := st
+    state := ld
     j := 0.U
     i := 0.U
   }
@@ -308,7 +314,6 @@ class LoopMatmulExecuteReq(val block_size: Int, val coreMaxAddrBits: Int, val it
 
 class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int, concurrent_loops: Int)
                        (implicit p: Parameters) extends Module {
-  val MAX_BLOCK_LEN = 4 // TODO get this from configs
   val GARBAGE_ADDR = (~0.U(32.W)).asUInt()
 
   val io = IO(new Bundle {
@@ -595,15 +600,15 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
-  val max_block_len = (dma_max_bytes / (block_size * input_w * 8)) max 1
-  val max_block_len_acc = (dma_max_bytes / (block_size * acc_w * 8)) max 1
+  val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
+  val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
 
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new RoCCCommand))
     val out = Decoupled(new RoCCCommand)
-    val ld_utilization = Input(UInt(log2Up(rob_size).W))
-    val st_utilization = Input(UInt(log2Up(rob_size).W))
-    val ex_utilization = Input(UInt(log2Up(rob_size).W))
+    val ld_utilization = Input(UInt(log2Up(rob_size+1).W))
+    val st_utilization = Input(UInt(log2Up(rob_size+1).W))
+    val ex_utilization = Input(UInt(log2Up(rob_size+1).W))
     val busy = Output(Bool())
   })
 
@@ -654,7 +659,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   val is_loop_cmd = is_loop_run_cmd || is_loop_config_cmd
 
   io.out.bits := Mux(loop_configured, unrolled_cmd.bits, cmd.bits)
-  io.out.bits.status := cmd.bits.status
+  io.out.bits.status := cmd.bits.status // TODO This is not guaranteed to be the correct fix! We must fix this
   io.out.valid := Mux(loop_configured, unrolled_cmd.valid, cmd.valid && !is_loop_config_cmd && !is_loop_run_cmd)
 
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)

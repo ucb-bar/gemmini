@@ -9,7 +9,7 @@ import chisel3.util._
 import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
-import freechips.rocketchip.tilelink.{TLIdentityNode}
+import freechips.rocketchip.tilelink.TLIdentityNode
 import GemminiISA._
 import Util._
 
@@ -189,18 +189,28 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   */
 
   // Incoming commands and ROB
-  val rob = Module(new ROB(new RoCCCommand, rob_entries, local_addr_t, meshRows*tileRows, meshColumns*tileColumns))
+  val rob = Module(new ROB(outer.config, new RoCCCommand))
   counters.io.event_io.collect(rob.io.counter)
 
   val raw_cmd = Queue(io.cmd)
 
-  // val (compressed_cmd, compressor_busy) = InstCompressor(unrolled_cmd)
-  // compressed_cmd.ready := false.B
-  val (unrolled_cmd, loop_unroller_busy) = LoopMatmul(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
+  // TODO replace 4,12,2 with parameters based on ROB size
+  val loop_conv_unroller_busy = false.B
+  /*val (unrolled_cmd_after_conv, loop_conv_unroller_busy) = LoopConv(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
     meshRows*tileRows, coreMaxAddrBits, rob_entries, 4, 12, 2, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes)
+  unrolled_cmd_after_conv.ready := false.B*/
+
+  // val (compressed_cmd, compressor_busy) = InstCompressor(unrolled_cmd)
+  // compressed_cmd.ready := false.B
+
+  // val (unrolled_cmd, loop_matmul_unroller_busy) = LoopMatmul(unrolled_cmd_after_conv, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
+  val (loop_cmd, loop_matmul_unroller_busy) = LoopMatmul(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
+    meshRows*tileRows, coreMaxAddrBits, rob_entries, 4, 12, 2, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
+    inputType.getWidth, accType.getWidth, dma_maxbytes)
+  val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
-  counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_unroller_busy)
+  counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
 
   // val cmd_decompressor = Module(new InstDecompressor(rob_entries))
 
@@ -378,7 +388,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   rob_completed_arb.io.out.ready := true.B
 
   // Wire up global RoCC signals
-  io.busy := raw_cmd.valid || loop_unroller_busy || rob.io.busy || spad.module.io.busy
+  io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || rob.io.busy || spad.module.io.busy || unrolled_cmd.valid || loop_cmd.valid
   io.interrupt := tlb.io.exp.interrupt
 
   rob.io.solitary_preload := ex_controller.io.solitary_preload
