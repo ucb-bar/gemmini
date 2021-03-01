@@ -42,12 +42,18 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args:
 
   val req = Reg(UDValid(chiselTypeOf(io.req.bits)))
 
-  io.req.ready := !req.valid || (req.bits.repeats === 0.U && io.resp.fire())
-  io.resp.valid := req.valid
-  io.resp.bits.tag := req.bits.tag
-  io.resp.bits.last := req.bits.repeats === 0.U && req.bits.last
-  io.resp.bits.row := req.bits.repeats
-  io.resp.bits.out := (mvin_scale_args match {
+  val latency = mvin_scale_args match {
+    case Some(ScaleArguments(_, latency, _, _, _)) => latency
+    case None => 0
+  }
+  val resp = Wire(Decoupled(new VectorScalarMultiplierResp(block_cols, t, tag_t)))
+
+  io.req.ready := !req.valid || (req.bits.repeats === 0.U && resp.fire())
+  resp.valid := req.valid
+  resp.bits.tag := req.bits.tag
+  resp.bits.last := req.bits.repeats === 0.U && req.bits.last
+  resp.bits.row := req.bits.repeats
+  resp.bits.out := (mvin_scale_args match {
     case Some(ScaleArguments(mvin_scale_func, _, multiplicand_t, _, _)) =>
       req.bits.in.map(x => mvin_scale_func(x, req.bits.scale.asTypeOf(multiplicand_t)))
 
@@ -56,7 +62,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args:
 
   when (io.req.fire()) {
     req.push(io.req.bits)
-  }.elsewhen(io.resp.fire()) {
+  }.elsewhen(resp.fire()) {
     when (req.bits.repeats === 0.U) {
       req.pop()
     }.otherwise {
@@ -67,6 +73,10 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](mvin_scale_args:
   when (reset.toBool()) {
     req.pop()
   }
+  (mvin_scale_args match {
+    case Some(ScaleArguments(_, latency, _, _, _)) => io.resp <> Pipeline(resp, latency)
+    case None => io.resp <> resp
+  })
 }
 
 object VectorScalarMultiplier {
@@ -77,10 +87,7 @@ object VectorScalarMultiplier {
     val vsm = Module(new VectorScalarMultiplier(scale_args, cols, t, tag_t))
 
     val in = vsm.io.req
-    val out = scale_args match {
-      case Some(ScaleArguments(_, latency, _, _, _)) => Pipeline(vsm.io.resp, latency)
-      case None => vsm.io.resp
-    }
+    val out = vsm.io.resp
 
     (in, out)
   }

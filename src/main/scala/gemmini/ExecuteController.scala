@@ -326,7 +326,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
 
   val a_fire = a_valid && a_ready
-  dontTouch(a_fire)
   val b_fire = b_valid && b_ready
   val d_fire = d_valid && d_ready
 
@@ -373,9 +372,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // The last line in this (long) Boolean is just to make sure that we don't think we're done as soon as we begin firing
   // TODO change when square requirement lifted
-  val about_to_fire_all_rows = ((a_fire_counter === (block_size-1).U && a_valid) || a_fire_counter === 0.U) &&
-    ((b_fire_counter === (block_size-1).U && b_valid) || b_fire_counter === 0.U) &&
-    ((d_fire_counter === (block_size-1).U && d_valid) || d_fire_counter === 0.U) &&
+  val about_to_fire_all_rows = ((a_fire_counter === (block_size-1).U && a_fire) || a_fire_counter === 0.U) &&
+    ((b_fire_counter === (block_size-1).U && b_fire) || b_fire_counter === 0.U) &&
+    ((d_fire_counter === (block_size-1).U && d_fire) || d_fire_counter === 0.U) &&
     (a_fire_counter =/= 0.U || b_fire_counter =/= 0.U || d_fire_counter =/= 0.U) &&
     cntl_ready
 
@@ -516,7 +515,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
             in_shift := rs2s(0)(31, 0) // TODO magic number
             acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
             relu6_shift := rs2s(0)(xLen - 1, 32) // TODO magic number
-            a_addr_stride := rs1s(0)(31, 16) // TODO magic number
+            a_addr_stride := rs1s(0)(31, 16) // TODO magic number // TODO this needs to be kept in sync with ROB.scala
             a_transpose := rs1s(0)(8)
             bd_transpose := rs1s(0)(9)
 
