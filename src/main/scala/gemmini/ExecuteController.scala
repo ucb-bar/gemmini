@@ -416,7 +416,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           read_d -> d_address.sp_row()))
     }
 
-    io.srams.read(i).resp.ready := true.B
+    io.srams.read(i).resp.ready := false.B
   }
 
   // Accumulator read
@@ -464,7 +464,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           read_d_from_acc -> d_address.acc_row()))
     }
 
-    io.acc.read(i).resp.ready := true.B
+    io.acc.read(i).resp.ready := false.B
   }
 
   // Im2Col reads
@@ -786,6 +786,33 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, inputType.zero)})
   val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)})
   val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)})
+
+  // Pop responses off the scratchpad io ports
+  when (mesh_cntl_signals_q.io.deq.fire()) {
+    when (cntl.a_fire && mesh.io.a.fire() && !cntl.a_garbage && cntl.a_unpadded_cols > 0.U && !cntl.im2colling) {
+      when (cntl.a_read_from_acc) {
+        io.acc.read(cntl.a_bank_acc).resp.ready := !io.acc.read(cntl.a_bank_acc).resp.bits.fromDMA
+      }.otherwise {
+        io.srams.read(cntl.a_bank).resp.ready := !io.srams.read(cntl.a_bank).resp.bits.fromDMA
+      }
+    }
+
+    when (cntl.b_fire && mesh.io.b.fire() && !cntl.b_garbage && !cntl.accumulate_zeros && cntl.b_unpadded_cols > 0.U) {
+      when (cntl.b_read_from_acc) {
+        io.acc.read(cntl.b_bank_acc).resp.ready := !io.acc.read(cntl.b_bank_acc).resp.bits.fromDMA
+      }.otherwise {
+        io.srams.read(cntl.b_bank).resp.ready := !io.srams.read(cntl.b_bank).resp.bits.fromDMA
+      }
+    }
+
+    when (cntl.d_fire && mesh.io.d.fire() && !cntl.d_garbage && !cntl.preload_zeros && cntl.d_unpadded_cols > 0.U) {
+      when (cntl.d_read_from_acc) {
+        io.acc.read(cntl.d_bank_acc).resp.ready := !io.acc.read(cntl.d_bank_acc).resp.bits.fromDMA
+      }.otherwise {
+        io.srams.read(cntl.d_bank).resp.ready := !io.srams.read(cntl.d_bank).resp.bits.fromDMA
+      }
+    }
+  }
 
   when (cntl_valid) {
     // Default inputs
