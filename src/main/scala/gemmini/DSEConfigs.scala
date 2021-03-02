@@ -24,6 +24,7 @@ object DSEBaseConfig {
     sp_banks = 4, // TODO support one-bank designs
     acc_banks = 1,
     acc_singleported = false,
+    acc_latency = 2,
     num_acc_sub_banks = -1,
     sp_capacity = CapacityInKilobytes(64),
     sp_singleported = false,

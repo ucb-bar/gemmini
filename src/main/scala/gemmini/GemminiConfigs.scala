@@ -27,6 +27,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              sp_capacity: GemminiMemCapacity,
                                                                              acc_banks: Int,
                                                                              acc_singleported: Boolean,
+                                                                             acc_latency: Int,
                                                                              num_acc_sub_banks: Int,
                                                                              acc_capacity: GemminiMemCapacity,
                                                                              shifter_banks: Int,

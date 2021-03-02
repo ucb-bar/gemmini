@@ -53,6 +53,7 @@ object GemminiConfigs {
     sp_singleported = true,
     acc_banks = 2,
     acc_singleported = true,
+    acc_latency = 2,
     num_acc_sub_banks = 2,
     sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks

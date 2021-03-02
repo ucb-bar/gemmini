@@ -30,6 +30,7 @@ object GemminiFPConfigs {
     sp_banks = 4,
     sp_singleported = true,
     acc_banks = 1,
+    acc_latency = 2,
     acc_singleported = false,
     num_acc_sub_banks = -1,
     sp_capacity = CapacityInKilobytes(256),
