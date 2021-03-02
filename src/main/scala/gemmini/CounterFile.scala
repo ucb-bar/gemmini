@@ -155,7 +155,7 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
   val io = IO(new CounterIO(nPerfCounter, counterWidth))
 
   val config_width = log2Ceil(scala.math.max(CounterEvent.n, CounterExternal.n)) + 1;
-  val counter_config = VecInit.tabulate(nPerfCounter)(_ => RegInit(0.U(config_width.W)))
+  val counter_config = RegInit(VecInit.tabulate(nPerfCounter)(_ => 0.U(config_width.W)))
 
   io.event_io.external_reset := io.counter_reset
   withReset(reset.asBool || io.counter_reset) {
@@ -166,7 +166,7 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
     // Function to take correct counter value.
     // If the highest bit of the config register is 1, it's an external counter; otherwise, take it from
     // local counter
-    val take_value = (config: UInt, counter: UInt) => {
+    val take_value = (counter: UInt, config: UInt) => {
       // Set the width
       val external = Wire(UInt(counterWidth.W))
       external := io.event_io.external_values(io.addr)
