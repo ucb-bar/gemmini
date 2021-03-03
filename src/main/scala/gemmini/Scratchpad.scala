@@ -595,15 +595,17 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           zero_writer.io.resp.bits.laddr.acc_bank() === i.U &&
           !((mvin_scale_out.valid && mvin_scale_out.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
         val consecutive_write_block = RegInit(false.B)
-        val consecutive_write_sub_bank = RegInit(0.U(log2Ceil(num_acc_sub_banks).W))
-        when (bio.write.fire() && bio.write.bits.acc &&
-          (bio.write.bits.addr(log2Ceil(num_acc_sub_banks)-1,0) === consecutive_write_sub_bank)) {
-          consecutive_write_block := true.B
-        } .elsewhen (bio.write.fire() && bio.write.bits.acc) {
-          consecutive_write_block := false.B
-          consecutive_write_sub_bank := bio.write.bits.addr(log2Ceil(num_acc_sub_banks)-1,0)
-        } .otherwise {
-          consecutive_write_block := false.B
+        if (acc_singleported) {
+          val consecutive_write_sub_bank = RegInit(0.U((1 max log2Ceil(num_acc_sub_banks)).W))
+          when (bio.write.fire() && bio.write.bits.acc &&
+            (bio.write.bits.addr(log2Ceil(num_acc_sub_banks)-1,0) === consecutive_write_sub_bank)) {
+            consecutive_write_block := true.B
+          } .elsewhen (bio.write.fire() && bio.write.bits.acc) {
+            consecutive_write_block := false.B
+            consecutive_write_sub_bank := bio.write.bits.addr(log2Ceil(num_acc_sub_banks)-1,0)
+          } .otherwise {
+            consecutive_write_block := false.B
+          }
         }
         bio.write.valid := false.B
 
