@@ -103,6 +103,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
 
     FpgaDebug(io.resp.valid)
     FpgaDebug(io.resp.ready)
+    /*
     FpgaDebug(io.resp.bits.is_acc)
     FpgaDebug(io.resp.bits.accumulate)
     FpgaDebug(io.resp.bits.has_acc_bitwidth)
@@ -110,6 +111,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     FpgaDebug(io.resp.bits.cmd_id)
     FpgaDebug(io.resp.bits.bytes_read)
     FpgaDebug(io.resp.bits.last)
+    */
   }
 }
 
@@ -580,8 +582,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     FpgaDebug(io.req.valid)
     FpgaDebug(io.req.ready)
     FpgaDebug(state)
-    FpgaDebug(req.len)
-    FpgaDebug(bytesSent)
-    FpgaDebug(bytesLeft)
+    // FpgaDebug(req.len)
+    // FpgaDebug(bytesSent)
+    // FpgaDebug(bytesLeft)
  }
 }

@@ -404,7 +404,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       }
     }
 
-    io.srams.read(i).req.valid := read_a || read_b || read_d
+    io.srams.read(i).req.valid := (read_a || read_b || read_d) && cntl_ready
     io.srams.read(i).req.bits.fromDMA := false.B
     io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
       Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
@@ -953,6 +953,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   FpgaDebug(srams_read_resp_valids)
   FpgaDebug(srams_read_resp_readies)
 
+  /*
   FpgaDebug(cmd.valid)
   FpgaDebug(cmd.bits(0).cmd.rs1)
   FpgaDebug(cmd.bits(0).cmd.rs2)
@@ -960,4 +961,5 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   FpgaDebug(cmd.bits(1).cmd.rs2)
   FpgaDebug(cmd.bits(0).cmd.inst.funct)
   FpgaDebug(cmd.bits(1).cmd.inst.funct)
+  */
 }

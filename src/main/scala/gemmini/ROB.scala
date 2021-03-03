@@ -111,7 +111,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
   val st_block_stride = block_rows.U
 
-  FpgaDebug(ld_block_strides)
+  // FpgaDebug(ld_block_strides)
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
@@ -131,6 +131,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val raws_op1_probe = WireInit(0.U(rob_entries.W))
   val raws_op2_probe = WireInit(0.U(rob_entries.W))
 
+  /*
   dontTouch(raws_probe)
   dontTouch(waws_probe)
   dontTouch(wars_probe)
@@ -190,6 +191,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   FpgaDebug(io.alloc.bits.rs2)
 
   FpgaDebug(a_stride)
+  */
 
   when (io.alloc.fire()) {
     val spAddrBits = 32
