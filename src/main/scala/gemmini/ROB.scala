@@ -131,7 +131,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val raws_op1_probe = WireInit(0.U(rob_entries.W))
   val raws_op2_probe = WireInit(0.U(rob_entries.W))
 
-  /*
   dontTouch(raws_probe)
   dontTouch(waws_probe)
   dontTouch(wars_probe)
@@ -143,18 +142,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   dontTouch(is_st_and_must_wait_for_prior_ex_config_probe)
   dontTouch(is_ex_config_and_must_wait_for_prior_st_probe)
 
-  FpgaDebug(raws_probe)
-  FpgaDebug(waws_probe)
-  FpgaDebug(wars_probe)
-  FpgaDebug(older_in_same_q_probe)
+  /*
   FpgaDebug(is_st_and_must_wait_for_prior_ex_config_probe)
   FpgaDebug(is_ex_config_and_must_wait_for_prior_st_probe)
-
-  FpgaDebug(wars_op1_probe)
-  FpgaDebug(wars_op2_probe)
-
-  FpgaDebug(raws_op1_probe)
-  FpgaDebug(raws_op2_probe)
 
   FpgaDebug(new_entry.q)
   FpgaDebug(new_entry.is_config)
@@ -184,14 +174,25 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   FpgaDebug(new_entry.dst.bits.wraps_around)
   FpgaDebug(new_entry.complete_on_issue)
 
+  FpgaDebug(a_stride)
+  */
+
   FpgaDebug(io.alloc.valid)
   FpgaDebug(io.alloc.ready)
   FpgaDebug(io.alloc.bits.inst.funct)
   FpgaDebug(io.alloc.bits.rs1)
   FpgaDebug(io.alloc.bits.rs2)
 
-  FpgaDebug(a_stride)
-  */
+  // FpgaDebug(raws_probe)
+  FpgaDebug(waws_probe)
+  // FpgaDebug(wars_probe)
+  // FpgaDebug(older_in_same_q_probe)
+
+  FpgaDebug(raws_op1_probe)
+  FpgaDebug(raws_op2_probe)
+
+  FpgaDebug(wars_op1_probe)
+  FpgaDebug(wars_op2_probe)
 
   when (io.alloc.fire()) {
     val spAddrBits = 32

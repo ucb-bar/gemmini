@@ -7,6 +7,7 @@ import freechips.rocketchip.tile.RoCCCommand
 import freechips.rocketchip.config.Parameters
 import GemminiISA._
 import Util._
+import midas.targetutils.FpgaDebug
 
 // LdA
 
@@ -890,6 +891,23 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
       l.a_addr_start := (i * (max_addr / concurrent_loops)).U
       l.b_addr_end := ((i+1) * (max_addr / concurrent_loops) - block_size).U
     }
+  }
+
+  for (loop <- loops) {
+    FpgaDebug(loop.configured)
+    FpgaDebug(loop.running)
+    
+    FpgaDebug(loop.ldd_started)
+    FpgaDebug(loop.lda_started)
+    FpgaDebug(loop.ldb_started)
+    FpgaDebug(loop.ex_started)
+    FpgaDebug(loop.st_started)
+
+    FpgaDebug(loop.ldd_completed)
+    FpgaDebug(loop.lda_completed)
+    FpgaDebug(loop.ldb_completed)
+    FpgaDebug(loop.ex_completed)
+    FpgaDebug(loop.st_completed)
   }
 }
 

@@ -133,7 +133,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   //val row_turn_counter = RegInit(row_turn)
   im2col_en := Mux(weight_stride === 0.U, false.B, true.B)
 
-
   // SRAM addresses of matmul operands
   val a_address_rs1 = rs1s(a_address_place).asTypeOf(local_addr_t)
   val b_address_rs2 = rs2s(b_address_place).asTypeOf(local_addr_t)
@@ -496,7 +495,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.im2col.resp.ready := mesh.io.a.ready
   }
 
-
   // FSM logic
   switch (control_state) {
     is(waiting_for_cmd) {
@@ -814,6 +812,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
   }
 
+  for (acc_r <- io.acc.read) {
+    acc_r.resp.ready := true.B
+  }
+
   when (cntl_valid) {
     // Default inputs
     mesh.io.a.valid := cntl.a_fire && dataA_valid
@@ -865,6 +867,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val w_mask = (0 until block_size).map(_.U < w_matrix_cols) // This is an element-wise mask, rather than a byte-wise mask
 
   // Write to normal scratchpad
+  /*
   for(i <- 0 until sp_banks) {
     val activated_wdata = VecInit(mesh.io.out.bits.map(v => VecInit(v.map { e =>
       val e_clipped = e.clippedToWidthOf(inputType)
@@ -881,6 +884,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     // io.srams.write(i).mask := VecInit(Seq.fill(io.srams.write(0).mask.length)(true.B))
     io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(inputType.getWidth / (aligned_to * 8))(b))
   }
+  */
 
   // Write to accumulator
   for (i <- 0 until acc_banks) {
@@ -891,7 +895,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.acc.write(i).bits.mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
 
     assert(!(io.acc.write(i).valid && !io.acc.write(i).ready), "Execute controller write to AccumulatorMem was skipped")
+
+    FpgaDebug(io.acc.write(i).valid)
+    FpgaDebug(io.acc.write(i).bits.addr)
   }
+
+  FpgaDebug(mesh.io.tag_out.rob_id)
 
   // Handle dependencies and turn off outputs for garbage addresses
   val mesh_completed_rob_id_fire = WireInit(false.B)

@@ -1013,8 +1013,6 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
       l.b_addr_end := ((i+1) * (max_addr / concurrent_loops) - block_size).U
     }
   }
-
-  FpgaDebug(loops)
 }
 
 object LoopConv {

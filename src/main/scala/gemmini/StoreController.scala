@@ -251,9 +251,13 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   dontTouch(pool_cycles_counter)
 
   FpgaDebug(control_state)
-  FpgaDebug(pooling_is_enabled)
+  // FpgaDebug(pooling_is_enabled)
 //  FpgaDebug(porow_counter)
 //  FpgaDebug(pocol_counter)
 //  FpgaDebug(wrow_counter)
 //  FpgaDebug(wcol_counter)
+  FpgaDebug(io.dma.resp.valid)
+  FpgaDebug(io.dma.resp.bits.cmd_id)
+  FpgaDebug(row_counter)
+  FpgaDebug(block_counter)
 }
