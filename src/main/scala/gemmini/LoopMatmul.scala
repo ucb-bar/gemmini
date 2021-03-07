@@ -888,9 +888,13 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
 
 object LoopMatmul {
   def apply(in: DecoupledIO[RoCCCommand], ld_utilization: UInt, st_utilization: UInt, ex_utilization: UInt,
-            block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
+            block_size: Int, coreMaxAddrBits: Int, rob_size: Int,
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int)
            (implicit p: Parameters): Tuple2[DecoupledIO[RoCCCommand], Bool] = {
+
+    val max_lds = rob_size * 1 / 4
+    val max_exs = rob_size * 3 / 4
+    val max_sts = rob_size * 1 / 8
     val mod = Module(new LoopMatmul(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes))
     mod.io.in <> in
