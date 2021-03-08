@@ -23,7 +23,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val srams = new Bundle {
       val read = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
-      val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1))
+      val write = Vec(sp_banks, Valid(new ScratchpadWriteBundle(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1)))
     }
 
     val acc = new Bundle {
@@ -846,11 +846,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       e_act
     })))
 
-    io.srams.write(i).en := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
-    io.srams.write(i).addr := w_row
-    io.srams.write(i).data := activated_wdata.asUInt()
+    io.srams.write(i).valid := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
+    io.srams.write(i).bits.addr := w_row
+    io.srams.write(i).bits.data := activated_wdata.asUInt()
     // io.srams.write(i).mask := VecInit(Seq.fill(io.srams.write(0).mask.length)(true.B))
-    io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(inputType.getWidth / (aligned_to * 8))(b))
+    io.srams.write(i).bits.mask := w_mask.flatMap(b => Seq.fill(inputType.getWidth / (aligned_to * 8))(b))
   }
 
   // Write to accumulator
