@@ -48,7 +48,11 @@ object GemminiConfigs {
     ld_queue_length = 8,
     st_queue_length = 2,
     ex_queue_length = 8,
-    rob_entries = 16,
+
+    rob_full_entries = 12,
+    rob_read_only_entries = 4,
+    rob_write_only_entries = 4,
+
     sp_banks = 4,
     sp_singleported = true,
     acc_banks = 2,

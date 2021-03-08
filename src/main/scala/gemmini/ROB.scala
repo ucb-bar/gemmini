@@ -80,7 +80,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     def ready(dummy: Int = 0): Bool = !deps.reduce(_ || _)
   }
 
-  val entries = Reg(Vec(rob_entries, UDValid(new Entry)))
+  val full_entries = Reg(Vec(rob_full_entries, UDValid(new Entry)))
+  val read_only_entries = Reg(Vec(rob_read_only_entries, UDValid(new Entry)))
+  val write_only_entries = Reg(Vec(rob_write_only_entries, UDValid(new Entry)))
+
+  val entries = full_entries ++ read_only_entries ++ write_only_entries
 
   val empty = !entries.map(_.valid).reduce(_ || _)
   val full = entries.map(_.valid).reduce(_ && _)
@@ -91,16 +95,19 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val solitary_preload = utilization === 1.U && entries.map(e => e.valid && e.bits.cmd.inst.funct === PRELOAD_CMD).reduce(_ || _)
   io.busy := !empty && !(solitary_preload && io.solitary_preload)
 
-  // Read in commands to the buffer
-  io.alloc.ready := !full
 
-  val last_allocated = Reg(UInt(log2Up(rob_entries).W))
   val a_stride = Reg(UInt(16.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
   val block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
-  val new_entry_id = MuxCase((rob_entries-1).U, entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+  val new_full_allocs = Wire(Vec(rob_full_entries, Bool()))
+  new_full_allocs.foreach(_ := false.B)
+  val new_read_only_allocs = Wire(Vec(rob_read_only_entries, Bool()))
+  new_read_only_allocs.foreach(_ := false.B)
+  val new_write_only_allocs = Wire(Vec(rob_write_only_entries, Bool()))
+  new_write_only_allocs.foreach(_ := false.B)
+  val new_entry_oh = new_full_allocs ++ new_read_only_allocs ++ new_write_only_allocs
   val alloc_fire = io.alloc.fire()
 
   val raws_probe = WireInit(0.U(rob_entries.W))
@@ -114,8 +121,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val wars_op2_probe = WireInit(0.U(rob_entries.W))
 
   dontTouch(new_entry)
-
-  when (io.alloc.fire()) {
+  io.alloc.ready := false.B
+  when (io.alloc.valid) {
     val spAddrBits = 32
     val cmd = io.alloc.bits
     val funct = cmd.inst.funct
@@ -252,45 +259,71 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
-    entries(new_entry_id).valid := true.B
-    entries(new_entry_id).bits := new_entry
+    val is_read_only = !new_entry.dst.valid
+    val is_write_only = !new_entry.op1.valid && !new_entry.op2.valid
+    val full_alloc_id = MuxCase((rob_full_entries-1).U, full_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+    val read_only_alloc_id = MuxCase((rob_read_only_entries-1).U, read_only_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+    val write_only_alloc_id = MuxCase((rob_write_only_entries-1).U, write_only_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
 
-    last_allocated := new_entry_id
+    when (is_read_only && !read_only_entries(read_only_alloc_id).valid) {
+      io.alloc.ready := true.B
+      read_only_entries(read_only_alloc_id).valid := true.B
+      read_only_entries(read_only_alloc_id).bits := new_entry
+      read_only_entries(read_only_alloc_id).bits.dst.valid := false.B
+      new_read_only_allocs(read_only_alloc_id) := true.B
+    } .elsewhen (is_write_only && !write_only_entries(write_only_alloc_id).valid) {
+      io.alloc.ready := true.B
+      write_only_entries(write_only_alloc_id).valid := true.B
+      write_only_entries(write_only_alloc_id).bits := new_entry
+      write_only_entries(write_only_alloc_id).bits.op1.valid := false.B
+      write_only_entries(write_only_alloc_id).bits.op2.valid := false.B
+      new_write_only_allocs(write_only_alloc_id) := true.B
+    } .elsewhen (!full_entries(full_alloc_id).valid) {
+      io.alloc.ready := true.B
+      full_entries(full_alloc_id).valid := true.B
+      full_entries(full_alloc_id).bits := new_entry
+      new_full_allocs(full_alloc_id) := true.B
+    }
 
-    when (new_entry.is_config && new_entry.q === exq) {
-      a_stride := new_entry.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
-    }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
-      val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
-      val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers
-      block_strides(id) := block_stride
+    when (io.alloc.fire()) {
+      when (new_entry.is_config && new_entry.q === exq) {
+        a_stride := new_entry.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
+      }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
+        val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
+        val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers
+        block_strides(id) := block_stride
+      }
     }
   }
 
   // Issue commands which are ready to be issued
   Seq((ldq, io.issue.ld), (stq, io.issue.st), (exq, io.issue.ex)).foreach { case (q, io) =>
-    val issue_id = MuxCase((rob_entries-1).U, entries.zipWithIndex.map { case (e, i) =>
-      (e.valid && e.bits.ready() && !e.bits.issued && e.bits.q === q) -> i.U
-    })
+    val issue_valids = entries.map(e => e.valid && e.bits.ready() && !e.bits.issued && e.bits.q === q)
+    val issue_sel = PriorityEncoderOH(issue_valids)
+    val issue_id = OHToUInt(issue_sel)
+    val issue_entry = Mux1H(issue_sel, entries)
 
-    io.valid := entries.map(e => e.valid && e.bits.ready() && !e.bits.issued && e.bits.q === q).reduce(_ || _)
-    io.cmd := entries(issue_id).bits.cmd
-    io.rob_id := issue_id
+    io.valid := issue_valids.reduce(_||_)
+    io.cmd := issue_entry.bits.cmd
+    io.rob_id := OHToUInt(issue_sel)
 
     when (io.fire()) {
-      entries(issue_id).bits.issued := true.B
-
       // Clear out all the dependency bits for instructions which depend on the same queue
       entries.zipWithIndex.foreach { case (e, i) =>
-        val is_same_q = Mux(alloc_fire && new_entry_id === i.U,
-          new_entry.q === entries(issue_id).bits.q,
-          e.bits.q === entries(issue_id).bits.q)
+        val is_same_q = Mux(alloc_fire && new_entry_oh(i),
+          new_entry.q === issue_entry.bits.q,
+          e.bits.q === issue_entry.bits.q)
 
-        when (is_same_q || entries(issue_id).bits.complete_on_issue) {
+        when (is_same_q || issue_entry.bits.complete_on_issue) {
           e.bits.deps(issue_id) := false.B
         }
       }
-
-      entries(issue_id).valid := !entries(issue_id).bits.complete_on_issue
+      for ((e, i) <- entries.zipWithIndex) {
+        when (issue_sel(i)) {
+          e.bits.issued := true.B
+          e.valid := !e.bits.complete_on_issue
+        }
+      }
     }
   }
 
@@ -298,8 +331,12 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   when (io.completed.fire()) {
     entries.foreach(_.bits.deps(io.completed.bits) := false.B)
 
-    entries(io.completed.bits).valid := false.B
-    assert(entries(io.completed.bits).valid)
+    for ((e, i) <- entries.zipWithIndex) {
+      when (i.U === io.completed.bits) {
+        e.valid := false.B
+        assert(e.valid)
+      }
+    }
   }
 
   // val utilization = PopCount(entries.map(e => e.valid))
@@ -352,7 +389,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     printf(p"Utilization st q: $utilization_st_q\n")
     printf(p"Utilization ex q: $utilization_ex_q\n")
     printf(p"Packed deps: $packed_deps\n")
-    printf(p"Last allocated: $last_allocated\n\n")
   }
 
   when (reset.asBool()) {

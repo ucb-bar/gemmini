@@ -20,7 +20,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              ld_queue_length: Int,
                                                                              st_queue_length: Int,
                                                                              ex_queue_length: Int,
-                                                                             rob_entries: Int,
+                                                                             rob_full_entries: Int,
+                                                                             rob_read_only_entries: Int,
+                                                                             rob_write_only_entries: Int,
                                                                              sp_banks: Int, // TODO support one-bank designs
                                                                              sp_singleported: Boolean,
                                                                              sp_capacity: GemminiMemCapacity,
@@ -105,6 +107,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   //==========================================================================
   // cisc-gemmini miscellaneous constants (some redundant with above)
   //==========================================================================
+  val rob_entries      = rob_full_entries + rob_read_only_entries + rob_write_only_entries
   val ROB_ENTRIES      = rob_entries
   val LOG2_ROB_ENTRIES = log2Up(rob_entries)
 
