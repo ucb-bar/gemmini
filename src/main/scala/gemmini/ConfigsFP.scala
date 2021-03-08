@@ -14,6 +14,7 @@ import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet}
 object GemminiFPConfigs {
   import Arithmetic.FloatArithmetic._
   val defaultFPConfig = GemminiArrayConfig[Float, Float, Float](
+    opcodes = OpcodeSet.custom3,
     tileRows = 1,
     tileColumns = 1,
     meshRows = 4,
@@ -101,7 +102,7 @@ class GemminiFP32DefaultConfig extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiFPConfigs.FP32DefaultConfig))
+        LazyModule(new Gemmini(GemminiFPConfigs.FP32DefaultConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -114,7 +115,7 @@ class GemminiFP16DefaultConfig extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiFPConfigs.FP16DefaultConfig))
+        LazyModule(new Gemmini(GemminiFPConfigs.FP16DefaultConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -126,7 +127,7 @@ class GemminiBF16DefaultConfig extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiFPConfigs.BF16DefaultConfig))
+        LazyModule(new Gemmini(GemminiFPConfigs.BF16DefaultConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -138,7 +139,7 @@ class GemminiBF16Default8Config extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiFPConfigs.BF16Default8Config))
+        LazyModule(new Gemmini(GemminiFPConfigs.BF16Default8Config))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
