@@ -2,6 +2,7 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
+import midas.targetutils.FpgaDebug
 
 import midas.targetutils.FpgaDebug
 
@@ -67,7 +68,7 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
   val cmds = Reg(Vec(nCmds, new Entry))
   val cmd_valids = cmds.map(_.valid)
 
-  // FpgaDebug(cmds)
+  FpgaDebug(cmds)
 
   val next_empty_alloc = MuxCase(0.U, cmd_valids.zipWithIndex.map { case (v, i) => (!v) -> i.U })
 

@@ -171,7 +171,7 @@ object GemminiConfigs {
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
     ),
 
-    acc_read_full_width = true,
+    acc_read_full_width = false,
     acc_read_small_width = true,
     use_dedicated_tl_port = false,
     pe_latency = 0,

@@ -224,6 +224,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     write_dispatch_q.ready := false.B
 
+    FpgaDebug(write_dispatch_q.valid)
+    FpgaDebug(write_dispatch_q.ready)
+    FpgaDebug(write_dispatch_q.bits.laddr.data)
+    FpgaDebug(write_dispatch_q.bits.laddr.is_acc_addr)
+    FpgaDebug(write_dispatch_q.bits.laddr.accumulate)
+    FpgaDebug(write_dispatch_q.bits.laddr.read_full_acc_row)
+    FpgaDebug(write_dispatch_q.bits.cmd_id)
+
     val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t), mem_pipeline+1, pipe=true))
     val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), mem_pipeline+1, pipe=true)) // TODO can't this just be a normal queue?
 

@@ -694,6 +694,9 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   stC.io.ex_j := ex.io.j
   stC.io.ex_i := ex.io.i
 
+  val loops_configured = RegInit(0.U(16.W))
+  FpgaDebug(loops_configured)
+
   // Create config registers
   when(cmd.valid && is_loop_cmd && !loop_being_configured.configured) {
 
@@ -736,6 +739,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
         loop_being_configured.b_transpose := cmd.bits.rs2(1)
 
         loop_being_configured.configured := true.B
+
+        loops_configured := loops_configured + 1.U
       }
     }
   }
