@@ -308,10 +308,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
   }
 }
 
-class StreamWriteRequest(val dataWidth: Int)(implicit p: Parameters) extends CoreBundle {
+class StreamWriteRequest(val dataWidth: Int, val maxBytes: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val data = UInt(dataWidth.W)
-  val len = UInt(log2Up(dataWidth/8+1).W) // The number of bytes to write
+  val len = UInt(log2Up((dataWidth/8 max maxBytes)+1).W) // The number of bytes to write
   val block = UInt(8.W) // TODO magic number
   val status = new MStatus
 
@@ -340,7 +340,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     require(beatBytes > 0)
 
     val io = IO(new Bundle {
-      val req = Flipped(Decoupled(new StreamWriteRequest(dataWidth)))
+      val req = Flipped(Decoupled(new StreamWriteRequest(dataWidth, maxBytes)))
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
       val flush = Input(Bool())
@@ -349,14 +349,14 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val (s_idle :: s_writing_new_block :: s_writing_beats :: Nil) = Enum(3)
     val state = RegInit(s_idle)
 
-    val req = Reg(new StreamWriteRequest(dataWidth))
+    val req = Reg(new StreamWriteRequest(dataWidth, maxBytes))
 
     // TODO use the same register to hold data_blocks and data_single_block, so that this Mux here is not necessary
     val data_blocks = Reg(Vec(maxBlocks, UInt((inputTypeRowBytes * 8).W)))
     val data_single_block = Reg(UInt(dataWidth.W)) // For data that's just one-block-wide
     val data = Mux(req.block === 0.U, data_single_block, data_blocks.asUInt())
 
-    val bytesSent = Reg(UInt(log2Ceil(dataBytes+1).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
+    val bytesSent = Reg(UInt(log2Ceil((dataBytes max maxBytes)+1).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
     val bytesLeft = req.len - bytesSent
 
     val xactBusy = RegInit(0.U(nXacts.W))

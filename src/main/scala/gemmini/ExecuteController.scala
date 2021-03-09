@@ -751,7 +751,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh_cntl_signals_q.io.enq.bits.im2colling := im2col_wire && im2col_en //im2col_wire
 
   val readData = VecInit(io.srams.read.map(_.resp.bits.data))
-  val accReadData = VecInit(io.acc.read.map(_.resp.bits.data.asUInt()))
+  val accReadData = if (ex_read_from_acc) VecInit(io.acc.read.map(_.resp.bits.data.asUInt())) else readData
   val im2ColData = io.im2col.resp.bits.a_im2col.asUInt()
 
   val readValid = VecInit(io.srams.read.map(bank => ex_read_from_spad.B && bank.resp.valid && !bank.resp.bits.fromDMA))
