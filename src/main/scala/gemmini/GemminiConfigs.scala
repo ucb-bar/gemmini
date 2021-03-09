@@ -51,6 +51,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              use_tlb_register_filter: Boolean,
                                                                              max_in_flight_reqs: Int,
 
+                                                                             ex_read_from_spad: Boolean,
+                                                                             ex_read_from_acc: Boolean,
+                                                                             ex_write_to_spad: Boolean,
+                                                                             ex_write_to_acc: Boolean,
+
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth

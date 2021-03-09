@@ -63,10 +63,12 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
 
     val sum = data +& other
 
-    val result = WireInit(this)
-    result.data := sum(data.getWidth-1, 0)
+    val overflow = Mux(is_acc_addr, sum(accAddrBits), sum(spAddrBits))
 
-    (result, sum(data.getWidth))
+    val result = WireInit(this)
+    result.data := sum(maxAddrBits - 1, 0)
+
+    (result, overflow)
   }
 
   def make_this_garbage(dummy: Int = 0): Unit = {

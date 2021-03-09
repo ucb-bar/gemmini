@@ -171,10 +171,15 @@ object GemminiConfigs {
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
     ),
 
-    acc_read_full_width = false,
+    acc_read_full_width = true,
     acc_read_small_width = true,
     use_dedicated_tl_port = false,
     pe_latency = 0,
+
+    ex_read_from_spad = true,
+    ex_read_from_acc = true,
+    ex_write_to_spad = true,
+    ex_write_to_acc = true,
 
     tlb_size = 4,
     use_tlb_register_filter = true,
@@ -214,6 +219,29 @@ class DefaultGemminiChipConfig extends Config((site, here, up) => {
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
+
+// Default feature for initial Gemmini Chip tape-out experiments
+// ToDo: increase & decrease spad/mesh size, single ported SRAM, increase in flight requests
+class DefaultGemminiHighPerfConfig extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig.copy(
+        dataflow = Dataflow.WS,
+
+        acc_read_full_width = false,
+
+        ex_read_from_acc = false,
+        ex_write_to_acc = false,
+
+        max_in_flight_reqs = 64,
+      )))
+      gemmini
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
+
 /**
  * Mixin which configures a smaller host processor for the systolic array.
    This mixin **replaces** the default host rocket (assuming a single core config).

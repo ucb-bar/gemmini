@@ -58,6 +58,11 @@ object GemminiFPConfigs {
     acc_read_small_width = true,
 
     pe_latency = 1,
+
+    ex_read_from_spad = true,
+    ex_read_from_acc = true,
+    ex_write_to_spad = true,
+    ex_write_to_acc = true,
   )
   
   //FP32 Single Precision Configuration
