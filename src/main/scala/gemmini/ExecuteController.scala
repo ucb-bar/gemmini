@@ -541,7 +541,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
         }
           // Preload
-          .elsewhen(DoPreloads(0) && (raw_hazards_are_impossible.B || (cmd.valid(1) && !raw_hazard_pre))) {
+          .elsewhen(DoPreloads(0) && cmd.valid(1) && (raw_hazards_are_impossible.B || !raw_hazard_pre)) {
             perform_single_preload := true.B
             performing_single_preload := true.B
 

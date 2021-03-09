@@ -232,7 +232,7 @@ class DefaultGemminiHighPerfConfig extends Config((site, here, up) => {
         acc_read_full_width = false,
 
         ex_read_from_acc = false,
-        ex_write_to_acc = false,
+        ex_write_to_spad = false,
 
         max_in_flight_reqs = 64,
       )))
