@@ -198,7 +198,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val max_lds = rob_entries * 1 / 4
   val max_exs = rob_entries * 3 / 4
   val max_sts = rob_entries * 1 / 8
-  val (loop_cmd, loop_matmul_unroller_busy) = LoopMatmul(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
+  val (loop_cmd, loop_matmul_unroller_busy, prefetch) = LoopMatmul(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
     meshRows*tileRows, coreMaxAddrBits, rob_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes)
   val unrolled_cmd = Queue(loop_cmd)
@@ -302,6 +302,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ex_controller.io.srams.write <> spad.module.io.srams.write
   ex_controller.io.acc.read <> spad.module.io.acc.read
   ex_controller.io.acc.write <> spad.module.io.acc.write
+
+  spad.module.io.prefetch <> prefetch
+  prefetch.ready := spad.module.io.prefetch.ready
 
   // Im2Col unit
   val im2col = Module(new Im2Col(outer.config))

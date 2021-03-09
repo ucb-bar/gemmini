@@ -28,6 +28,7 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new LoopMatmulLdAReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, concurrent_loops)))
     val cmd = Decoupled(Output(new RoCCCommand))
+    val prefetch = Output(Valid(new RoCCCommand))
     val i = Output(UInt(iterator_bitwidth.W))
     val k = Output(UInt(iterator_bitwidth.W))
     val idle = Output(Bool())
@@ -72,17 +73,31 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   mvin_cmd.rs1 := dram_addr
   mvin_cmd.rs2 := (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
 
-  io.req.ready := state === idle
-  io.i := i
-  io.k := k
-  io.idle := state === idle
+  class CmdQEntry extends Bundle {
+    val cmd = new RoCCCommand
+    val i = UInt()
+    val k = UInt()
+  }
+  val cmd_q = Module(new Queue(new CmdQEntry, 8))
+  cmd_q.io.enq.valid := state =/= idle && !io.rob_overloaded
+  cmd_q.io.enq.bits.cmd := mvin_cmd
+  cmd_q.io.enq.bits.i := i
+  cmd_q.io.enq.bits.k := k
 
-  io.cmd.valid := state =/= idle && !io.rob_overloaded
-  io.cmd.bits := mvin_cmd
+  io.cmd.valid := cmd_q.io.deq.valid
+  cmd_q.io.deq.ready := io.cmd.ready
+  io.cmd.bits := cmd_q.io.deq.bits.cmd
 
+  io.prefetch.valid := cmd_q.io.enq.fire()
+  io.prefetch.bits := cmd_q.io.enq.bits.cmd
+
+  io.req.ready := state === idle && !cmd_q.io.deq.valid
+  io.i := Mux(cmd_q.io.deq.valid, cmd_q.io.deq.bits.i, 0.U)
+  io.k := Mux(cmd_q.io.deq.valid, cmd_q.io.deq.bits.k, 0.U)
   io.loop_id := req.loop_id
+  io.idle := state === idle && !cmd_q.io.deq.valid
 
-  when (io.cmd.fire()) {
+  when (cmd_q.io.enq.fire()) {
     // The order here is k, j, i
     val i_blocks = Mux(req.transpose, max_blocks, 1.U)
     val k_blocks = Mux(req.transpose, 1.U, max_blocks)
@@ -126,6 +141,7 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new LoopMatmulLdBReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, concurrent_loops)))
     val cmd = Decoupled(Output(new RoCCCommand))
+    val prefetch = Output(Valid(new RoCCCommand))
 
     val k = Output(UInt(iterator_bitwidth.W))
     val j = Output(UInt(iterator_bitwidth.W))
@@ -173,17 +189,31 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   mvin_cmd.rs1 := dram_addr
   mvin_cmd.rs2 := (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
 
-  io.req.ready := state === idle
-  io.k := k
-  io.j := j
-  io.idle := state === idle
+  class CmdQEntry extends Bundle {
+    val cmd = new RoCCCommand
+    val k = UInt()
+    val j = UInt()
+  }
+  val cmd_q = Module(new Queue(new CmdQEntry, 8))
+  cmd_q.io.enq.valid := state =/= idle && !io.rob_overloaded
+  cmd_q.io.enq.bits.cmd := mvin_cmd
+  cmd_q.io.enq.bits.k := k
+  cmd_q.io.enq.bits.j := j
 
-  io.cmd.valid := state =/= idle && !io.rob_overloaded
-  io.cmd.bits := mvin_cmd
+  io.cmd.valid := cmd_q.io.deq.valid
+  cmd_q.io.deq.ready := io.cmd.ready
+  io.cmd.bits := cmd_q.io.deq.bits.cmd
 
+  io.prefetch.valid := cmd_q.io.enq.fire()
+  io.prefetch.bits := cmd_q.io.enq.bits.cmd
+
+  io.req.ready := state === idle && !cmd_q.io.deq.valid
+  io.k := Mux(cmd_q.io.deq.valid, cmd_q.io.deq.bits.k, 0.U)
+  io.j := Mux(cmd_q.io.deq.valid, cmd_q.io.deq.bits.j, 0.U)
   io.loop_id := req.loop_id
+  io.idle := state === idle && !cmd_q.io.deq.valid
 
-  when (io.cmd.fire()) {
+  when (cmd_q.io.enq.fire()) {
     // The order here is k, j, i
     val j_blocks = Mux(req.transpose, 1.U, max_blocks)
     val k_blocks = Mux(req.transpose, max_blocks, 1.U)
@@ -606,6 +636,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new RoCCCommand))
     val out = Decoupled(new RoCCCommand)
+    val prefetch = Decoupled(new RoCCCommand)
     val ld_utilization = Input(UInt(log2Up(rob_size+1).W))
     val st_utilization = Input(UInt(log2Up(rob_size+1).W))
     val ex_utilization = Input(UInt(log2Up(rob_size+1).W))
@@ -644,6 +675,23 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   val ab_loads_on_same_loop = ldA.io.loop_id === ldB.io.loop_id
   ldab_arb.io.forceA := !ab_loads_on_same_loop && ldA.io.loop_id === head_loop_id
   ldab_arb.io.forceB := !ab_loads_on_same_loop && ldB.io.loop_id === head_loop_id
+
+  val prefetch_arb = Module(new Arbiter(new RoCCCommand, 2))
+  prefetch_arb.io.in(0).valid := ldA.io.prefetch.fire()
+  prefetch_arb.io.in(0).bits  := ldA.io.prefetch.bits
+  prefetch_arb.io.in(1).valid := ldB.io.prefetch.fire()
+  prefetch_arb.io.in(1).bits  := ldB.io.prefetch.bits
+  val prefetch_q_size = 4
+  val prefetch_q = Module(new Queue(new RoCCCommand, prefetch_q_size, pipe=true))
+  io.prefetch <> prefetch_q.io.deq
+  io.prefetch.bits.status := cmd.bits.status  // TODO This is not guaranteed to be the correct fix! We must fix this
+  prefetch_q.io.enq <> prefetch_arb.io.out
+  when (prefetch_q.io.enq.valid && prefetch_q.io.count === prefetch_q_size.U) {
+    prefetch_q.io.deq.ready := true.B
+  }
+
+  io.busy := cmd.valid || loop_configured
+
 
   // Create global arbiter
   val arb = Module(new Arbiter(new RoCCCommand(), 4))
@@ -890,13 +938,13 @@ object LoopMatmul {
   def apply(in: DecoupledIO[RoCCCommand], ld_utilization: UInt, st_utilization: UInt, ex_utilization: UInt,
             block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int)
-           (implicit p: Parameters): Tuple2[DecoupledIO[RoCCCommand], Bool] = {
+           (implicit p: Parameters): (DecoupledIO[RoCCCommand], Bool, DecoupledIO[RoCCCommand]) = {
     val mod = Module(new LoopMatmul(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes))
     mod.io.in <> in
     mod.io.ld_utilization := ld_utilization
     mod.io.st_utilization := st_utilization
     mod.io.ex_utilization := ex_utilization
-    (mod.io.out, mod.io.busy)
+    (mod.io.out, mod.io.busy, mod.io.prefetch)
   }
 }
