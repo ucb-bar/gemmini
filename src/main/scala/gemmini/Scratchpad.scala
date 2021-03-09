@@ -536,6 +536,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       }
     }
 
+    val acc_adders = Module(new AccPipeShared(acc_latency-1, acc_row_t, acc_banks))
+
     val acc_mems = {
       val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(
         acc_bank_entries, acc_row_t, acc_scale_args,
@@ -553,6 +555,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         if (use_shared_ext_mem) {
           io.ext_mem.get.acc(i) <> bio.ext_mem.get
         }
+
+        acc_adders.io.in_sel(i) := bio.acc.valid
+        acc_adders.io.ina(i) := bio.acc.ina
+        acc_adders.io.inb(i) := bio.acc.inb
+        bio.acc.out := acc_adders.io.out
+
         val ex_read_req = io.acc.read_req(i)
         val exread = ex_read_req.valid
 

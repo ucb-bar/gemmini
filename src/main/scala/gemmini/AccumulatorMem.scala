@@ -54,6 +54,13 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
 
   val ext_mem = if (use_shared_ext_mem) Some(Vec(num_acc_sub_banks, new ExtMemIO)) else None
 
+  val acc = new Bundle {
+    val valid = Output(Bool())
+    val ina = Output(t.cloneType)
+    val inb = Output(t.cloneType)
+    val out = Input(t.cloneType)
+  }
+
   override def cloneType: this.type = new AccumulatorMemIO(n, t, scale_t, num_acc_sub_banks, use_shared_ext_mem).asInstanceOf[this.type]
 }
 
@@ -65,6 +72,25 @@ class AccPipe[T <: Data : Arithmetic](latency: Int, t: T)(implicit ev: Arithmeti
   })
   import ev._
   io.out := ShiftRegister(io.ina + io.inb, latency)
+}
+
+class AccPipeShared[T <: Data : Arithmetic](latency: Int, t: Vec[Vec[T]], banks: Int) extends Module {
+  val io = IO(new Bundle {
+    val in_sel = Input(Vec(banks, Bool()))
+    val ina = Input(Vec(banks, t.cloneType))
+    val inb = Input(Vec(banks, t.cloneType))
+    val out = Output(t.cloneType)
+  })
+  val ina = Mux1H(io.in_sel, io.ina)
+  val inb = Mux1H(io.in_sel, io.inb)
+  io.out := VecInit((ina zip inb).map { case (rv, wv) =>
+    VecInit((rv zip wv).map { case (re, we) =>
+      val m = Module(new AccPipe(latency, t.head.head.cloneType))
+      m.io.ina := re
+      m.io.inb := we
+      m.io.out
+    })
+  })
 }
 
 class AccumulatorMem[T <: Data, U <: Data](
@@ -106,14 +132,10 @@ class AccumulatorMem[T <: Data, U <: Data](
   val read_rdata = Wire(t)
   read_rdata := DontCare
   val block_read_req = WireInit(false.B)
-  val pipe_out_acc_data = VecInit((acc_rdata zip pipe_regs(0).bits.data).map { case (rv, wv) =>
-    VecInit((rv zip wv).map { case (re, we) =>
-      val acc = Module(new AccPipe(acc_latency-1, acc_type))
-      acc.io.ina := re
-      acc.io.inb := we
-      acc.io.out
-    })
-  })
+  val pipe_out_acc_data = io.acc.out
+  io.acc.valid := pipe_regs(0).valid && pipe_regs(0).bits.acc
+  io.acc.ina := acc_rdata
+  io.acc.inb := pipe_regs(0).bits.data
   val counter = RegInit(0.U(32.W))
   counter := counter + 1.U
 
@@ -244,7 +266,7 @@ class AccumulatorMem[T <: Data, U <: Data](
           reads(1).ready := false.B
         }
       } .otherwise {
-        ren := isThisBank(reads(1).bits) && reads(1).valid
+        ren := isThisBank(reads(1).bits) && reads(1).fire()
         raddr := getBankIdx(reads(1).bits)
       }
     }

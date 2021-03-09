@@ -207,7 +207,8 @@ class DualGemminiConfig extends Config((site, here, up) => {
         sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32),
         meshColumns = 8, meshRows = 8,
         acc_singleported = true, acc_banks = 2, num_acc_sub_banks = 2,
-        use_shared_ext_mem = true
+        use_shared_ext_mem = true,
+        headerFileName = "gemmini_params_bf16.h"
       )))
       InModuleBody {
         require(int_gemmini.config.sp_banks == fp_gemmini.config.sp_banks)
