@@ -213,7 +213,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     // TODO we should checck whether op1 and op2 are valid here
     val waws = entries.map { e =>
       // We search for all entries which write to an address that we write to
-      e.valid && new_entry.dst.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q &&
+      e.valid && new_entry.dst.valid && e.bits.dst.valid && (e.bits.q =/= new_entry.q || new_entry.q === ldq) &&
         (new_entry.dst.bits.overlaps(e.bits.dst.bits) || e.bits.dst.bits.overlaps(new_entry.dst.bits))
     }
 
