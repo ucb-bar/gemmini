@@ -96,7 +96,6 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
     val l0_tlb_hit = last_translated_valid && ((client.req.bits.tlb_req.vaddr >> pgIdxBits) === (last_translated_vpn >> pgIdxBits))
     val l0_tlb_paddr = Cat(last_translated_ppn >> pgIdxBits, client.req.bits.tlb_req.vaddr(pgIdxBits-1,0))
 
-
     when (req.fire() && !tlb.io.resp.miss) {
       last_translated_valid := true.B
       last_translated_vpn := req.bits.tlb_req.vaddr

@@ -58,6 +58,11 @@ object DSEBaseConfig {
     use_dedicated_tl_port = false,
     pe_latency = 0,
 
+    ex_read_from_spad = true,
+    ex_read_from_acc = true,
+    ex_write_to_spad = true,
+    ex_write_to_acc = true,
+
     tlb_size = 4,
     use_tlb_register_filter = true,
     max_in_flight_reqs = 16,
