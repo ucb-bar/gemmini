@@ -14,8 +14,6 @@ import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
 import Util._
 
-import midas.targetutils.FpgaDebug
-
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W) // TODO use LocalAddr in DMA
@@ -100,18 +98,6 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
     io.resp.bits.last := beatPacker.io.out.bits.last
-
-    FpgaDebug(io.resp.valid)
-    FpgaDebug(io.resp.ready)
-    /*
-    FpgaDebug(io.resp.bits.is_acc)
-    FpgaDebug(io.resp.bits.accumulate)
-    FpgaDebug(io.resp.bits.has_acc_bitwidth)
-    FpgaDebug(io.resp.bits.repeats)
-    FpgaDebug(io.resp.bits.cmd_id)
-    FpgaDebug(io.resp.bits.bytes_read)
-    FpgaDebug(io.resp.bits.last)
-    */
   }
 }
 
@@ -298,13 +284,6 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
       state := s_req_new_block
     }
-
-    FpgaDebug(io.req.valid)
-    FpgaDebug(io.req.ready)
-    // FpgaDebug(state)
-//    FpgaDebug(req.len)
-//    FpgaDebug(bytesRequested)
-//    FpgaDebug(bytesLeft)
   }
 }
 
@@ -578,12 +557,5 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       assert(io.req.bits.len <= (block_cols * inputType.getWidth / 8).U || io.req.bits.block === 0.U, "DMA can't write multiple blocks to main memory when writing full accumulator output")
       assert(!io.req.bits.pool_en || io.req.bits.block === 0.U, "Can't pool with block-mvout")
     }
-
-    FpgaDebug(io.req.valid)
-    FpgaDebug(io.req.ready)
-    // FpgaDebug(state)
-    // FpgaDebug(req.len)
-    // FpgaDebug(bytesSent)
-    // FpgaDebug(bytesLeft)
  }
 }

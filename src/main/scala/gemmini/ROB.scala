@@ -7,8 +7,6 @@ import freechips.rocketchip.tile.RoCCCommand
 import GemminiISA._
 import Util._
 
-import midas.targetutils.FpgaDebug
-
 // TODO unify this class with GemminiCmdWithDeps
 class ROBIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
   val valid = Output(Bool())
@@ -111,8 +109,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
   val st_block_stride = block_rows.U
 
-  // FpgaDebug(ld_block_strides)
-
   val new_entry = Wire(new Entry)
   new_entry := DontCare
   val new_entry_id = MuxCase((rob_entries-1).U, entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
@@ -141,58 +137,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   dontTouch(older_in_same_q_probe)
   dontTouch(is_st_and_must_wait_for_prior_ex_config_probe)
   dontTouch(is_ex_config_and_must_wait_for_prior_st_probe)
-
-  /*
-  FpgaDebug(is_st_and_must_wait_for_prior_ex_config_probe)
-  FpgaDebug(is_ex_config_and_must_wait_for_prior_st_probe)
-
-  FpgaDebug(new_entry.q)
-  FpgaDebug(new_entry.is_config)
-  FpgaDebug(new_entry.op1.valid)
-  FpgaDebug(new_entry.op1.bits.start.is_acc_addr)
-  FpgaDebug(new_entry.op1.bits.start.accumulate)
-  FpgaDebug(new_entry.op1.bits.start.data)
-  FpgaDebug(new_entry.op1.bits.end.is_acc_addr)
-  FpgaDebug(new_entry.op1.bits.end.accumulate)
-  FpgaDebug(new_entry.op1.bits.end.data)
-  FpgaDebug(new_entry.op1.bits.wraps_around)
-  FpgaDebug(new_entry.op2.valid)
-  FpgaDebug(new_entry.op2.bits.start.is_acc_addr)
-  FpgaDebug(new_entry.op2.bits.start.accumulate)
-  FpgaDebug(new_entry.op2.bits.start.data)
-  FpgaDebug(new_entry.op2.bits.end.is_acc_addr)
-  FpgaDebug(new_entry.op2.bits.end.accumulate)
-  FpgaDebug(new_entry.op2.bits.end.data)
-  FpgaDebug(new_entry.op2.bits.wraps_around)
-  FpgaDebug(new_entry.dst.valid)
-  FpgaDebug(new_entry.dst.bits.start.is_acc_addr)
-  FpgaDebug(new_entry.dst.bits.start.accumulate)
-  FpgaDebug(new_entry.dst.bits.start.data)
-  FpgaDebug(new_entry.dst.bits.end.is_acc_addr)
-  FpgaDebug(new_entry.dst.bits.end.accumulate)
-  FpgaDebug(new_entry.dst.bits.end.data)
-  FpgaDebug(new_entry.dst.bits.wraps_around)
-  FpgaDebug(new_entry.complete_on_issue)
-
-  FpgaDebug(a_stride)
-  */
-
-  FpgaDebug(io.alloc.valid)
-  FpgaDebug(io.alloc.ready)
-  FpgaDebug(io.alloc.bits.inst.funct)
-  FpgaDebug(io.alloc.bits.rs1)
-  FpgaDebug(io.alloc.bits.rs2)
-
-  // FpgaDebug(raws_probe)
-  FpgaDebug(waws_probe)
-  // FpgaDebug(wars_probe)
-  // FpgaDebug(older_in_same_q_probe)
-
-  FpgaDebug(raws_op1_probe)
-  FpgaDebug(raws_op2_probe)
-
-  FpgaDebug(wars_op1_probe)
-  FpgaDebug(wars_op2_probe)
 
   when (io.alloc.fire()) {
     val spAddrBits = 32
@@ -410,18 +354,15 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   io.st_utilization := utilization_st_q
   io.ex_utilization := utilization_ex_q
 
-  val packed_deps = VecInit(entries.map(e => Cat(e.bits.deps.reverse)))
-  dontTouch(packed_deps)
-
-  FpgaDebug(packed_deps)
-
   val valids = VecInit(entries.map(_.valid))
   val functs = VecInit(entries.map(_.bits.cmd.inst.funct))
   val issueds = VecInit(entries.map(_.bits.issued))
+  val packed_deps = VecInit(entries.map(e => Cat(e.bits.deps.reverse)))
 
-  FpgaDebug(valids)
-  FpgaDebug(functs)
-  FpgaDebug(issueds)
+  dontTouch(valids)
+  dontTouch(functs)
+  dontTouch(issueds)
+  dontTouch(packed_deps)
 
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
@@ -437,16 +378,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < 10000.U, "pipeline stall")
-
-  FpgaDebug(cycles_since_issue)
-  FpgaDebug(instructions_allocated)
-
-//  FpgaDebug(io.issue.ld.ready)
-//  FpgaDebug(io.issue.ld.valid)
-//  FpgaDebug(io.issue.st.ready)
-//  FpgaDebug(io.issue.st.valid)
-//  FpgaDebug(io.issue.ex.ready)
-//  FpgaDebug(io.issue.ex.valid)
 
   for (e <- entries) {
     dontTouch(e.bits.allocated_at)

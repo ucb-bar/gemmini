@@ -2,9 +2,6 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import midas.targetutils.FpgaDebug
-
-import midas.targetutils.FpgaDebug
 
 
 // This module is meant to go inside the Load controller, where it can track which commands are currently
@@ -67,8 +64,6 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
   // val cmds = RegInit(VecInit(Seq.fill(nCmds)(entry_init)))
   val cmds = Reg(Vec(nCmds, new Entry))
   val cmd_valids = cmds.map(_.valid)
-
-  FpgaDebug(cmds)
 
   val next_empty_alloc = MuxCase(0.U, cmd_valids.zipWithIndex.map { case (v, i) => (!v) -> i.U })
 

@@ -5,8 +5,6 @@ import chisel3.util._
 
 import Util._
 
-import midas.targetutils.FpgaDebug
-
 class AccumulatorReadReq[T <: Data](n: Int, shift_width: Int, scale_t: T) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
   val scale = scale_t
@@ -168,23 +166,4 @@ class AccumulatorMem[T <: Data, U <: Data](n: Int, t: Vec[Vec[T]], rdataType: Ve
   // assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
   assert(!(io.read.req.fire() && io.write.fire() && io.read.req.bits.addr === io.write.bits.addr), "reading from and writing to same address is not supported")
   assert(!(io.read.req.fire() && w_buf_valid && waddr_buf === io.read.req.bits.addr), "reading from an address immediately after writing to it is not supported")
-
-  val simultaneous_read_write_1 = io.read.req.fire() && io.write.fire() && io.read.req.bits.addr === io.write.bits.addr
-  val simultaneous_read_write_2 = io.read.req.fire() && w_buf_valid && waddr_buf === io.read.req.bits.addr
-
-  FpgaDebug(simultaneous_read_write_1)
-  FpgaDebug(simultaneous_read_write_2)
-
-  FpgaDebug(io.write.valid)
-  FpgaDebug(io.write.ready)
-  FpgaDebug(io.write.bits.addr)
-  FpgaDebug(io.write.bits.acc)
-
-  FpgaDebug(io.read.req.valid)
-  FpgaDebug(io.read.req.ready)
-  FpgaDebug(io.read.req.bits.addr)
-  FpgaDebug(io.read.req.bits.full)
-
-  FpgaDebug(w_buf_valid)
-  FpgaDebug(waddr_buf)
 }

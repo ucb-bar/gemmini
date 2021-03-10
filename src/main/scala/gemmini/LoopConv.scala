@@ -8,8 +8,6 @@ import freechips.rocketchip.config.Parameters
 import GemminiISA._
 import Util._
 
-import midas.targetutils.FpgaDebug
-
 class LoopConvOuterBounds(val large_iterator_bitwidth: Int, val small_iterator_bitwidth: Int, val tiny_iterator_bitwidth: Int) extends Bundle {
   val batch_size = UInt(large_iterator_bitwidth.W)
   val in_dim = UInt(small_iterator_bitwidth.W)
@@ -767,10 +765,6 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   arb.io.in(3) <> ld_weights.io.cmd
   arb.io.in(4) <> ld_input.io.cmd
   val unrolled_cmd = arb.io.out
-
-  FpgaDebug(arb.io.out.valid)
-  FpgaDebug(arb.io.out.ready)
-  FpgaDebug(arb.io.out.bits.inst)
 
   // Wire up unrolled command output
   val is_loop_run_cmd = cmd.bits.inst.funct === LOOP_CONV_WS
