@@ -233,7 +233,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
       (icol >= icols_unpadded.zext()) -> Mux(icols_unpadded.zext() +& rpad.zext() -& icol > block_size.S, block_size.S, icols_unpadded.zext() +& rpad.zext() -& icol)
     )
   )
-  val K = Mux(ochs.zext() -& ich > max_ichs_per_mvin, max_ichs_per_mvin, ochs.zext() -& ich)
+  val K = Mux(ichs.zext() -& ich > max_ichs_per_mvin, max_ichs_per_mvin, ichs.zext() -& ich)
 
   // Commands
   val config_cmd = Wire(new RoCCCommand)
@@ -735,7 +735,6 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   // Create states
   val concurrent_loops = 2
   val loops = Reg(Vec(concurrent_loops, new LoopConvState(block_size, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth, coreMaxAddrBits, max_addr, max_acc_addr)))
-  // val head_loop_id = Reg(UInt(log2Up(concurrent_loops).W))
   val head_loop_id = RegInit(0.U(log2Up(concurrent_loops).W))
   val tail_loop_id = (~head_loop_id).asUInt() // This is the loop that we always try to configure if available
   val head_loop = loops(head_loop_id)

@@ -35,8 +35,13 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val stride = Reg(UInt(coreMaxAddrBits.W))
   val block_rows = meshRows * tileRows
+  val block_stride = block_rows.U
+  val block_cols = meshColumns * tileColumns
+  val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
+
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
-  val row_counter = RegInit(0.U(12.W))
+  val row_counter = RegInit(0.U(12.W)) // TODO magic number
+  val block_counter = RegInit(0.U(8.W)) // TODO magic number
 
   // Pooling variables
   val pool_stride = Reg(UInt(2.W)) // When this is 0, pooling is disabled // TODO magic number
@@ -71,6 +76,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
   val cols = cmd.bits.cmd.rs2(32 + mvout_cols_bits - 1, 32) // TODO magic numbers
   val rows = cmd.bits.cmd.rs2(48 + mvout_rows_bits - 1, 48) // TODO magic numbers
+  val blocks = (cols / block_cols.U) + (cols % block_cols.U =/= 0.U)
   val config_stride = cmd.bits.cmd.rs2
   val config_pool_stride = cmd.bits.cmd.rs1(5, 4) // TODO magic numbers
   val config_pool_size = cmd.bits.cmd.rs1(7, 6) // TODO magic numbers
@@ -84,7 +90,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val mstatus = cmd.bits.cmd.status
 
-  val localaddr_plus_row_counter = localaddr + row_counter
+  val current_vaddr = vaddr + row_counter * stride
+  val current_localaddr = localaddr + (block_counter * block_stride + row_counter)
 
   val pool_row_addr = localaddr + (orow * pool_ocols +& ocol)
   when (orow_is_negative || ocol_is_negative || orow >= pool_orows || ocol >= pool_ocols) {
@@ -106,7 +113,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     val rob_id = UInt(log2Up(rob_entries).W)
   }
 
-  val cmd_tracker_max_rows = (block_rows max
+  val cmd_tracker_max_rows = ((block_rows * max_blocks) max
     (((1 << pool_orows.getWidth)-1) * ((1 << pool_ocols.getWidth)-1) + 2*((1 << pool_lpad.getWidth)-1) + 2*((1 << pool_upad.getWidth)-1))) min
     ((config.sp_banks * config.sp_bank_entries) max
     (config.acc_banks * config.acc_bank_entries))
@@ -116,21 +123,22 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   // DMA IO wiring
   io.dma.req.valid := (control_state === waiting_for_command && cmd.valid && DoStore && cmd_tracker.io.alloc.ready) ||
     control_state === waiting_for_dma_req_ready ||
-    (control_state === sending_rows && row_counter =/= 0.U) || // TODO Do we really have to check whether the counters should be 0 here?
+    (control_state === sending_rows && (block_counter =/= 0.U || row_counter =/= 0.U)) ||
     (control_state === pooling && (wcol_counter =/= 0.U || wrow_counter =/= 0.U || pocol_counter =/= 0.U || porow_counter =/= 0.U))
 
-  io.dma.req.bits.vaddr := Mux(pooling_is_enabled || mvout_1d_enabled, pool_vaddr, vaddr + row_counter * stride)
-  io.dma.req.bits.laddr := Mux(pooling_is_enabled, pool_row_addr, localaddr_plus_row_counter) //Todo: laddr for 1D?
+  io.dma.req.bits.vaddr := Mux(pooling_is_enabled || mvout_1d_enabled, pool_vaddr, current_vaddr)
+  io.dma.req.bits.laddr := Mux(pooling_is_enabled, pool_row_addr, current_localaddr) //Todo: laddr for 1D?
 
-  io.dma.req.bits.len := cols
+  io.dma.req.bits.len := Mux(block_counter === blocks - 1.U, ((cols - 1.U) % block_cols.U) + 1.U, block_cols.U)
+  io.dma.req.bits.block := block_counter
   io.dma.req.bits.status := mstatus
   io.dma.req.bits.pool_en := pooling_is_enabled && (wrow_counter =/= 0.U || wcol_counter =/= 0.U)
-  io.dma.req.bits.store_en := !pooling_is_enabled ||
-    (wrow_counter === pool_size - 1.U && wcol_counter === pool_size - 1.U)
+  io.dma.req.bits.store_en := Mux(pooling_is_enabled, wrow_counter === pool_size - 1.U && wcol_counter === pool_size - 1.U,
+    block_counter === blocks - 1.U)
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore
-  cmd_tracker.io.alloc.bits.bytes_to_read := Mux(!pooling_is_enabled, Mux(mvout_1d_enabled, mvout_1d_rows, rows), pool_total_rows) // TODO do we have to add upad and lpad to this?
+  cmd_tracker.io.alloc.bits.bytes_to_read := Mux(!pooling_is_enabled, Mux(mvout_1d_enabled, mvout_1d_rows, rows*blocks), pool_total_rows) // TODO do we have to add upad and lpad to this?
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
 
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
@@ -155,13 +163,18 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
         pocol_counter := wrappingAdd(pocol_counter, 1.U, pool_ocols)
         porow_counter := wrappingAdd(porow_counter, 1.U, pool_orows, pocol_counter === pool_ocols - 1.U)
       }
-      row_counter := Mux(mvout_1d_enabled, wrappingAdd(row_counter, 1.U, mvout_1d_rows), wrappingAdd(row_counter, 1.U, rows))
+
+      block_counter := wrappingAdd(block_counter, 1.U, blocks)
+      row_counter := Mux(mvout_1d_enabled, wrappingAdd(row_counter, 1.U, mvout_1d_rows), wrappingAdd(row_counter, 1.U, rows, block_counter === blocks - 1.U))
     }.otherwise {
       wcol_counter := wrappingAdd(wcol_counter, 1.U, pool_size)
       wrow_counter := wrappingAdd(wrow_counter, 1.U, pool_size, wcol_counter === pool_size - 1.U)
       pocol_counter := wrappingAdd(pocol_counter, 1.U, pool_pocols, wrow_counter === pool_size - 1.U && wcol_counter === pool_size - 1.U)
       porow_counter := wrappingAdd(porow_counter, 1.U, pool_porows, pocol_counter === pool_pocols - 1.U && wrow_counter === pool_size - 1.U && wcol_counter === pool_size - 1.U)
     }
+
+    assert(!(io.dma.req.bits.laddr.read_full_acc_row && blocks > 1.U), "Block-mvouts are not permitted when moving out full accumulator data")
+    assert(!((pooling_is_enabled || mvout_1d_enabled) && blocks > 1.U), "Block-mvouts are not permitted when pooling")
   }
 
   // Control logic
@@ -201,11 +214,13 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     }
 
     is (sending_rows) {
-      // TODO Is it really possible for row_counter to be 0 here?
-      val last_row = row_counter === 0.U || (Mux(mvout_1d_enabled, row_counter === mvout_1d_rows - 1.U, row_counter === rows - 1.U) && io.dma.req.fire())
+      val last_block = block_counter === blocks - 1.U && io.dma.req.fire()
+      val last_row = Mux(mvout_1d_enabled, row_counter === mvout_1d_rows - 1.U, row_counter === rows - 1.U) && io.dma.req.fire()
       //normal mvout: row, 1D mvout: orows*ocols
 
-      when (last_row) {
+      val only_one_dma_req = block_counter === 0.U && row_counter === 0.U // This is a special case when only one DMA request is made
+
+      when ((last_block && last_row) || only_one_dma_req) {
         control_state := waiting_for_command
         cmd.ready := true.B
       }
