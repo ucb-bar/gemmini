@@ -196,7 +196,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
           (dt.expWidth, dt.sigWidth) match {
             case (8, 24) => (scala.Float.MinValue.toString, scala.Float.MaxValue.toString)
             case (11, 53) => (scala.Double.MinValue.toString, scala.Double.MaxValue.toString)
-            case _ => throw new IllegalArgumentException(s"Only single- and double-precision IEEE754 floating point types are currently supported")
+            case _ => (((Range(-1,-(dt.sigWidth),-1).map(-Math.pow(2, _)).foldLeft(-1.0)(_ + _)) * Math.pow(2, Math.pow(2, dt.expWidth - 1) - 1)).toString, ((Range(-1,-(dt.sigWidth),-1).map(Math.pow(2, _)).foldLeft(1.0)(_ + _)) * Math.pow(2, Math.pow(2, dt.expWidth - 1) - 1)).toString)
           }
         case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
       }
@@ -210,7 +210,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
           (dt.expWidth, dt.sigWidth) match {
             case (8, 24) => "float"
             case (11, 53) => "double"
-            case _ => throw new IllegalArgumentException(s"Only single- and double-precision IEEE754 floating point types are currently supported")
+            case _ => s"uint" + (Math.pow(2, Math.ceil(Math.log(dt.expWidth + dt.sigWidth)/Math.log(2.0)))).toInt.toString + s"_t"
           }
         case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
       }
@@ -263,8 +263,15 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     // Datatype of the systolic array
     val limits = limitsOfDataType(inputType)
     header ++= s"typedef ${c_type(inputType)} elem_t;\n"
-    header ++= s"static const elem_t elem_t_max = ${limits._2};\n"
-    header ++= s"static const elem_t elem_t_min = ${limits._1};\n"
+    if (inputType.isInstanceOf[Float] && !((inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (8, 24) || (inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (11, 53)))
+    {
+      header ++= "#define ELEM_T_IS_LOWPREC_FLOAT\n"
+      header ++= s"static const float elem_t_max = ${limits._2};\n"
+      header ++= s"static const float elem_t_min = ${limits._1};\n"
+    } else {
+      header ++= s"static const elem_t elem_t_max = ${limits._2};\n"
+      header ++= s"static const elem_t elem_t_min = ${limits._1};\n"
+    }
     header ++= s"typedef ${c_type(accType)} acc_t;\n"
     header ++= s"typedef ${full_c_type(inputType)} full_t;\n\n"
 
@@ -341,6 +348,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                  |         result; })
                  |""".stripMargin
     header ++= "\n"
+
+    header ++= """// Rounding right shift equation: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
+#define ROUNDING_RIGHT_SHIFT_BITS(x, shift) \
+((shift) > 0 ? (((x) >> (shift)) + \
+    (((shift) == 0 ? 0 : (((x) >> ((shift)-1)) & 1)) & \
+         ((((shift) <= 1 ? 0 : ((x) & ((1 << ((shift)-1)) - 1))) != 0) | (((x) >> (shift)) & 1)))) : ((x) << (-(shift))))"""
+    header ++= "\n\n"
 
     header ++= """#define ACC_SCALE(x, scale) \
 """

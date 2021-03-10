@@ -134,6 +134,21 @@ class GemminiBF16DefaultConfig extends Config((site, here, up) => {
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
+class GemminiBF16DefaultHighPerfConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      implicit val v = implicitly[ValName]
+      val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiFPConfigs.BF16DefaultConfig.copy(
+        ex_read_from_acc = false,
+        ex_write_to_spad = false,
+      )))
+      gemmini
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
+
 //===========BFLOAT16 Default Config 8x8=========
 class GemminiBF16Default8Config extends Config((site, here, up) => {
   case BuildRoCC => Seq(
