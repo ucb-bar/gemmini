@@ -196,7 +196,8 @@ class DualGemminiConfig extends Config((site, here, up) => {
       int_gemmini = LazyModule(new Gemmini(GemminiConfigs.defaultConfig.copy(
         opcodes = OpcodeSet.custom3,
         sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32),
-        use_shared_ext_mem = true
+        use_shared_ext_mem = true,
+        dataflow = Dataflow.WS
       )))
       int_gemmini
     }
@@ -208,7 +209,9 @@ class DualGemminiConfig extends Config((site, here, up) => {
         meshColumns = 8, meshRows = 8,
         acc_singleported = true, acc_banks = 2, num_acc_sub_banks = 2,
         use_shared_ext_mem = true,
-        headerFileName = "gemmini_params_bf16.h"
+        headerFileName = "gemmini_params_bf16.h",
+	acc_latency = 3,
+        dataflow = Dataflow.WS
       )))
       InModuleBody {
         require(int_gemmini.config.sp_banks == fp_gemmini.config.sp_banks)
