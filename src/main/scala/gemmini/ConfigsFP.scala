@@ -59,6 +59,11 @@ object GemminiFPConfigs {
     acc_read_small_width = true,
 
     pe_latency = 1,
+
+    ex_read_from_spad = true,
+    ex_read_from_acc = true,
+    ex_write_to_spad = true,
+    ex_write_to_acc = true,
   )
   
   //FP32 Single Precision Configuration
@@ -125,6 +130,21 @@ class GemminiBF16DefaultConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiFPConfigs.BF16DefaultConfig))
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
+
+class GemminiBF16DefaultHighPerfConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      implicit val v = implicitly[ValName]
+      val gemmini = LazyModule(new Gemmini(GemminiFPConfigs.BF16DefaultConfig.copy(
+        ex_read_from_acc = false,
+        ex_write_to_spad = false,
+      )))
+      gemmini
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
