@@ -223,7 +223,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   // Addresses
   val dram_addr = Mux(is_zeros, 0.U,
     req.dram_addr +& (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channels +& ich) * (input_w/8).U).asUInt())
-  val spad_addr = req.addr_start.zext() +& (ich / block_size.S) * batches * irows * icols +& b * irows * icols +& irow_padded * icols +& icol_padded
+  val spad_addr = req.addr_start.zext() +& (ich >> log2Ceil(block_size)) * batches * irows * icols +& b * irows * icols +& irow_padded * icols +& icol_padded
 
   // Sizes
   val I = MuxCase(
