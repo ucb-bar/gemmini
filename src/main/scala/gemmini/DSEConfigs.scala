@@ -13,6 +13,7 @@ import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet}
 
 object DSEBaseConfig {
   val baseConfig = GemminiArrayConfig[SInt, Bool, UInt](
+    opcodes = OpcodeSet.custom3,
     tileRows = 1,
     tileColumns = 1,
     meshRows = 16,
@@ -60,6 +61,11 @@ object DSEBaseConfig {
     use_dedicated_tl_port = false,
     pe_latency = 0,
 
+    ex_read_from_spad = true,
+    ex_read_from_acc = true,
+    ex_write_to_spad = true,
+    ex_write_to_acc = true,
+
     tlb_size = 4,
     use_tlb_register_filter = true,
     max_in_flight_reqs = 16,
@@ -94,7 +100,7 @@ class GemminiParamsDSE1 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.baseConfig))
+        LazyModule(new Gemmini(DSEConfigs.baseConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -106,7 +112,7 @@ class GemminiParamsDSE2 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.wsOnlyConfig))
+        LazyModule(new Gemmini(DSEConfigs.wsOnlyConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -118,7 +124,7 @@ class GemminiParamsDSE3 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.bothDataflowsConfig))
+        LazyModule(new Gemmini(DSEConfigs.bothDataflowsConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -130,7 +136,7 @@ class GemminiParamsDSE4 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.highBitwidthConfig))
+        LazyModule(new Gemmini(DSEConfigs.highBitwidthConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -142,7 +148,7 @@ class GemminiParamsDSE5 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.largerDimConfig))
+        LazyModule(new Gemmini(DSEConfigs.largerDimConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -154,7 +160,7 @@ class GemminiParamsDSE6 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.fullyCombinationalConfig))
+        LazyModule(new Gemmini(DSEConfigs.fullyCombinationalConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -166,7 +172,7 @@ class GemminiParamsDSE7 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.moreMemoryConfig))
+        LazyModule(new Gemmini(DSEConfigs.moreMemoryConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -178,7 +184,7 @@ class GemminiParamsDSE8 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.moreBanksConfig))
+        LazyModule(new Gemmini(DSEConfigs.moreBanksConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -190,7 +196,7 @@ class GemminiParamsDSE10 extends Config((site, here, up) => {
       (p: Parameters) => {
          implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.narrowerBusConfig))
+        LazyModule(new Gemmini(DSEConfigs.narrowerBusConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 8)
@@ -202,7 +208,7 @@ class GemminiParamsPnR16 extends Config((site, here, up) => {
     (p: Parameters) => {
       implicit val q = p
       implicit val v = implicitly[ValName]
-      LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.pnr16Config))
+      LazyModule(new Gemmini(DSEConfigs.pnr16Config))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -214,7 +220,7 @@ class GemminiParamsPnR32 extends Config((site, here, up) => {
     (p: Parameters) => {
       implicit val q = p
       implicit val v = implicitly[ValName]
-      LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.pnr32Config))
+      LazyModule(new Gemmini(DSEConfigs.pnr32Config))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -226,7 +232,7 @@ class GemminiParamsDSE11 extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, DSEConfigs.baseConfig))
+        LazyModule(new Gemmini(DSEConfigs.baseConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
