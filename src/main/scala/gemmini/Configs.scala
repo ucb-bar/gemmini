@@ -48,7 +48,7 @@ object GemminiConfigs {
     ex_queue_length = 8,
 
     rob_entries = 16,
-    hasIm2col = true, //declare im2col block
+    hasIm2col = false, //declare im2col block
 
     sp_banks = 4,
     sp_singleported = true,

@@ -87,8 +87,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   val w_sum = VecInit((RegNext(acc_rdata) zip wdata_buf).map { case (rv, wv) =>
     VecInit((rv zip wv).map(t => t._1 + t._2))
   })
-  val counter = RegInit(0.U(32.W))
-  counter := counter + 1.U
 
   if (!acc_singleported) {
     val mem = TwoPortSyncMem(n, t, t.getWidth / 8) // TODO We assume byte-alignment here. Use aligned_to instead

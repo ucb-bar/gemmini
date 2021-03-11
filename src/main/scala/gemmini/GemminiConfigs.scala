@@ -72,6 +72,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (acc_banks * meshColumns * tileColumns * accType.getWidth)
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / acc_banks
   }
+  require (!acc_singleported || (num_acc_sub_banks <= 4 && isPow2(num_acc_sub_banks)))
 
   val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries)
 
