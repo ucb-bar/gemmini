@@ -39,6 +39,7 @@ object GemminiConfigs {
 
   val defaultConfig = GemminiArrayConfig[SInt, Float, Float](
   // val defaultConfig = GemminiArrayConfig[Float, Float](
+    opcodes = OpcodeSet.custom3,
     tileRows = 1,
     tileColumns = 1,
     // meshRows = 4,
@@ -57,7 +58,7 @@ object GemminiConfigs {
     dataflow = Dataflow.BOTH,
     acc_capacity = CapacityInKilobytes(64),
     mem_pipeline = 4,
-    hasIm2col = true, //declare im2col block
+    hasIm2col = false, //declare im2col block
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
@@ -175,10 +176,22 @@ object GemminiConfigs {
     use_dedicated_tl_port = false,
     pe_latency = 0,
 
+    ex_read_from_spad = true,
+    ex_read_from_acc = true,
+    ex_write_to_spad = true,
+    ex_write_to_acc = true,
+
     tlb_size = 4,
     use_tlb_register_filter = true,
     max_in_flight_reqs = 16,
   )
+
+  val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS)
+  val largeChipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64), dataflow=Dataflow.WS,
+    meshRows=32, meshColumns=32
+  )
+
+  val highPerfConfig = defaultConfig.copy(dataflow=Dataflow.WS, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, max_in_flight_reqs = 64)
 }
 
 /**
@@ -186,33 +199,19 @@ object GemminiConfigs {
    Also sets the system bus width to 128 bits (instead of the deafult 64 bits) to
    allow for the default 16x16 8-bit systolic array to be attached.
  */
-class DefaultGemminiConfig extends Config((site, here, up) => {
+class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.defaultConfig
+) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
-      (p: Parameters) => {
-        implicit val q = p
-        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
-        gemmini
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
-// Default feature for initial Gemmini Chip tape-out experiments
-// ToDo: increase & decrease spad/mesh size, single ported SRAM, increase in flight requests
-class DefaultGemminiChipConfig extends Config((site, here, up) => {
-  case BuildRoCC => up(BuildRoCC) ++ Seq(
-      (p: Parameters) => {
-        implicit val q = p
-        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig.copy(
-          sp_capacity=CapacityInKilobytes(64),
-          acc_capacity=CapacityInKilobytes(32),
-          dataflow = Dataflow.WS
-        )))
-        gemmini
-    }
-  )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
-})
 /**
  * Mixin which configures a smaller host processor for the systolic array.
    This mixin **replaces** the default host rocket (assuming a single core config).
@@ -246,7 +245,7 @@ class GemminiHostMiniCore extends Config((site, here, up) => {
     (up(RocketTilesKey, site).length - 1 ->
       Seq((p: Parameters) => {
         implicit val q = p
-        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        val gemmini = LazyModule(new Gemmini(GemminiConfigs.defaultConfig))
         gemmini
       }))
 })
@@ -285,7 +284,7 @@ class WithGemminiHostMiniCore extends Config((site, here, up) => {
     (up(RocketTilesKey, site).length ->
       Seq((p: Parameters) => {
         implicit val q = p
-        val gemmini = LazyModule(new Gemmini(OpcodeSet.custom3, GemminiConfigs.defaultConfig))
+        val gemmini = LazyModule(new Gemmini(GemminiConfigs.defaultConfig))
         gemmini
       }))
 })
