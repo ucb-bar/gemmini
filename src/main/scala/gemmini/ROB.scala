@@ -56,10 +56,17 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val wraps_around = Bool()
 
     def overlaps(other: OpT): Bool = {
-      (other.start <= start && (start <= other.end || other.wraps_around)) ||
-        (start <= other.start && (other.start <= end || wraps_around))
+      ((other.start <= start && (start < other.end || other.wraps_around)) ||
+        (start <= other.start && (other.start < end || wraps_around))) &&
+        !(start.is_garbage() || other.start.is_garbage()) // TODO the "is_garbage" check might not really be necessary
     }
   }
+
+  val instructions_allocated = RegInit(0.U(32.W))
+  when (io.alloc.fire()) {
+    instructions_allocated := instructions_allocated + 1.U
+  }
+  dontTouch(instructions_allocated)
 
   class Entry extends Bundle {
     val q = q_t.cloneType
@@ -78,6 +85,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     val deps = Vec(rob_entries, Bool())
     def ready(dummy: Int = 0): Bool = !deps.reduce(_ || _)
+
+    // Debugging signals
+    val allocated_at = UInt(instructions_allocated.getWidth.W)
   }
 
   val entries = Reg(Vec(rob_entries, UDValid(new Entry)))
@@ -96,7 +106,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
   val last_allocated = Reg(UInt(log2Up(rob_entries).W))
   val a_stride = Reg(UInt(16.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
-  val block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
+  val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
+  val st_block_stride = block_rows.U
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
@@ -113,7 +124,19 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val wars_op1_probe = WireInit(0.U(rob_entries.W))
   val wars_op2_probe = WireInit(0.U(rob_entries.W))
 
-  dontTouch(new_entry)
+  val raws_op1_probe = WireInit(0.U(rob_entries.W))
+  val raws_op2_probe = WireInit(0.U(rob_entries.W))
+
+  dontTouch(raws_probe)
+  dontTouch(waws_probe)
+  dontTouch(wars_probe)
+  dontTouch(wars_op1_probe)
+  dontTouch(wars_op2_probe)
+  dontTouch(raws_op1_probe)
+  dontTouch(raws_op2_probe)
+  dontTouch(older_in_same_q_probe)
+  dontTouch(is_st_and_must_wait_for_prior_ex_config_probe)
+  dontTouch(is_ex_config_and_must_wait_for_prior_st_probe)
 
   when (io.alloc.fire()) {
     val spAddrBits = 32
@@ -146,9 +169,16 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       new_entry.op2.bits.end := new_entry.op2.bits.start + compute_rows
       new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(compute_rows)._2
     }.otherwise {
+      val block_stride = st_block_stride
+
+      val mvout_cols = cmd.rs2(32 + mvout_cols_bits - 1, 32)
       val mvout_rows = cmd.rs2(48 + mvout_rows_bits - 1, 48)
-      new_entry.op2.bits.end := new_entry.op2.bits.start + mvout_rows
-      new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(mvout_rows)._2
+
+      val mvout_mats = mvout_cols / block_cols.U + (mvout_cols % block_cols.U =/= 0.U)
+      val total_mvout_rows = ((mvout_mats - 1.U) * block_stride) + mvout_rows
+
+      new_entry.op2.bits.end := new_entry.op2.bits.start + total_mvout_rows
+      new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(total_mvout_rows)._2
     }
 
     new_entry.dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
@@ -160,19 +190,22 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     }.otherwise {
       val id = MuxCase(0.U, Seq((new_entry.cmd.inst.funct === LOAD2_CMD) -> 1.U,
         (new_entry.cmd.inst.funct === LOAD3_CMD) -> 2.U))
-      val block_stride = block_strides(id)
+      val block_stride = ld_block_strides(id)
 
       val mvin_cols = cmd.rs2(spAddrBits + mvin_cols_bits - 1, spAddrBits)
-      val mvin_mats = mvin_cols / block_cols.U + (mvin_cols % block_cols.U =/= 0.U)
-      val mvin_rows = mvin_mats * block_stride
+      val mvin_rows = cmd.rs2(spAddrBits + mvin_cols_bits + mvin_rows_bits - 1, spAddrBits + mvin_cols_bits)
 
-      new_entry.dst.bits.end := new_entry.dst.bits.start + mvin_rows
-      new_entry.dst.bits.wraps_around := new_entry.dst.bits.start.add_with_overflow(mvin_rows)._2
+      val mvin_mats = mvin_cols / block_cols.U + (mvin_cols % block_cols.U =/= 0.U)
+      val total_mvin_rows = ((mvin_mats - 1.U) * block_stride) + mvin_rows
+
+      new_entry.dst.bits.end := new_entry.dst.bits.start + total_mvin_rows
+      new_entry.dst.bits.wraps_around := new_entry.dst.bits.start.add_with_overflow(total_mvin_rows)._2
     }
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
     val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_EX || config_cmd_type === CONFIG_IM2COL))
+    val is_im2col = funct === CONFIG_CMD && config_cmd_type === CONFIG_IM2COL // im2col commands are a subset of ex commands, so they still go in the ex queue
 
     new_entry.q := Mux1H(Seq(
       is_load -> ldq,
@@ -187,6 +220,18 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       // We search for all entries which write to an address which we read from
       e.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
         (new_entry.op1.valid && new_entry.op1.bits.overlaps(e.bits.dst.bits)) ||
+          (new_entry.op2.valid && new_entry.op2.bits.overlaps(e.bits.dst.bits)))
+    }
+
+    val raws_op1 = entries.map { e =>
+      // We search for all entries which write to an address which we read from
+      e.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
+        (new_entry.op1.valid && new_entry.op1.bits.overlaps(e.bits.dst.bits)))
+    }
+
+    val raws_op2 = entries.map { e =>
+      // We search for all entries which write to an address which we read from
+      e.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
           (new_entry.op2.valid && new_entry.op2.bits.overlaps(e.bits.dst.bits)))
     }
 
@@ -232,23 +277,18 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     new_entry.deps := (Cat(raws) | Cat(wars) | Cat(waws) | Cat(older_in_same_q) |
       Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).asBools().reverse
 
-    raws_probe := Cat(raws)
-    waws_probe := Cat(waws)
-    wars_probe := Cat(wars)
-    wars_op1_probe := Cat(wars_op1)
-    wars_op2_probe := Cat(wars_op2)
-    older_in_same_q_probe := Cat(older_in_same_q)
-    is_st_and_must_wait_for_prior_ex_config_probe := Cat(is_st_and_must_wait_for_prior_ex_config)
-    is_ex_config_and_must_wait_for_prior_st_probe := Cat(is_ex_config_and_must_wait_for_prior_st)
+    raws_probe := Cat(raws.reverse)
+    waws_probe := Cat(waws.reverse)
+    wars_probe := Cat(wars.reverse)
+    wars_op1_probe := Cat(wars_op1.reverse)
+    wars_op2_probe := Cat(wars_op2.reverse)
+    raws_op1_probe := Cat(raws_op1.reverse)
+    raws_op2_probe := Cat(raws_op2.reverse)
+    older_in_same_q_probe := Cat(older_in_same_q.reverse)
+    is_st_and_must_wait_for_prior_ex_config_probe := Cat(is_st_and_must_wait_for_prior_ex_config.reverse)
+    is_ex_config_and_must_wait_for_prior_st_probe := Cat(is_ex_config_and_must_wait_for_prior_st.reverse)
 
-    dontTouch(raws_probe)
-    dontTouch(waws_probe)
-    dontTouch(wars_probe)
-    dontTouch(wars_op1_probe)
-    dontTouch(wars_op2_probe)
-    dontTouch(older_in_same_q_probe)
-    dontTouch(is_st_and_must_wait_for_prior_ex_config_probe)
-    dontTouch(is_ex_config_and_must_wait_for_prior_st_probe)
+    new_entry.allocated_at := instructions_allocated
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
@@ -257,12 +297,12 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     last_allocated := new_entry_id
 
-    when (new_entry.is_config && new_entry.q === exq) {
+    when (new_entry.is_config && new_entry.q === exq && !is_im2col) {
       a_stride := new_entry.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
     }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
       val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
       val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers
-      block_strides(id) := block_stride
+      ld_block_strides(id) := block_stride
     }
   }
 
@@ -314,12 +354,15 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   io.st_utilization := utilization_st_q
   io.ex_utilization := utilization_ex_q
 
-  val packed_deps = VecInit(entries.map(e => Cat(e.bits.deps.reverse)))
-  dontTouch(packed_deps)
-
   val valids = VecInit(entries.map(_.valid))
   val functs = VecInit(entries.map(_.bits.cmd.inst.funct))
   val issueds = VecInit(entries.map(_.bits.issued))
+  val packed_deps = VecInit(entries.map(e => Cat(e.bits.deps.reverse)))
+
+  dontTouch(valids)
+  dontTouch(functs)
+  dontTouch(issueds)
+  dontTouch(packed_deps)
 
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
@@ -336,11 +379,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   }
   assert(cycles_since_issue < 10000.U, "pipeline stall")
 
-  val instructions_allocated = RegInit(0.U(32.W))
-  when (io.alloc.fire()) {
-    instructions_allocated := instructions_allocated + 1.U
+  for (e <- entries) {
+    dontTouch(e.bits.allocated_at)
   }
-  dontTouch(instructions_allocated)
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {
