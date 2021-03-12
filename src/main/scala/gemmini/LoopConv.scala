@@ -239,7 +239,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val config_cmd = Wire(new RoCCCommand)
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
-  config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U) | (req.derived_params.input_spad_stride << 16.U) | (0.U << 3) | 1.U
+  config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U).asUInt() | (req.derived_params.input_spad_stride << 16.U).asUInt() | (0.U << 3).asUInt() | 1.U
   config_cmd.rs2 := in_channels * (input_w/8).U
 
   val mvin_cmd = Wire(new RoCCCommand)
@@ -253,11 +253,13 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   io.idle := state === idle
   io.loop_id := req.loop_id
 
-  io.cmd.valid := state =/= idle && !io.wait_for_prev_loop && !io.rob_overloaded
+  io.cmd.valid := state =/= idle && !io.wait_for_prev_loop && !io.rob_overloaded && req.dram_addr =/= 0.U
   io.cmd.bits := Mux(state === config, config_cmd, mvin_cmd)
 
   // Sending outputs
-  when(io.cmd.fire()) {
+  when (req.dram_addr === 0.U) {
+    state := idle
+  }.elsewhen (io.cmd.fire()) {
     when (state === config) {
       state := ld
     }.otherwise {
@@ -328,7 +330,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   // Derived parameters
   val max_ochs_per_mvin = Mux(ochs < (max_block_len * block_size).U, ochs, (max_block_len * block_size).U)
   val B_rows = out_channels_per_bank * kcols * krows * kchs
-  val addr_start = req.addr_end - B_rows
+  val addr_start = req.addr_end - B_rows + block_size.U // for possible loopconv bug (like the loopmatmul one)
 
   // Iterators
   val och = Reg(UInt(large_iterator_bitwidth.W))
@@ -348,25 +350,27 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val config_cmd = Wire(new RoCCCommand)
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
-  config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U) | (req.derived_params.weight_spad_stride << 16.U) | (1.U << 3) | 1.U
+  config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U).asUInt() | (req.derived_params.weight_spad_stride << 16.U).asUInt() | (1.U << 3).asUInt() | 1.U
   config_cmd.rs2 := out_channels * (input_w/8).U
 
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
   mvin_cmd.inst.funct := LOAD2_CMD
   mvin_cmd.rs1 := dram_addr
-  mvin_cmd.rs2 := (K << 48.U) | (J << 32.U) | spad_addr
+  mvin_cmd.rs2 := (K << 48.U).asUInt() | (J << 32.U).asUInt() | spad_addr
 
   // Inputs and outputs
   io.req.ready := state === idle
   io.idle := state === idle
   io.loop_id := req.loop_id
 
-  io.cmd.valid := state =/= idle && !io.wait_for_prev_loop && !io.rob_overloaded
+  io.cmd.valid := state =/= idle && !io.wait_for_prev_loop && !io.rob_overloaded && req.dram_addr =/= 0.U
   io.cmd.bits := Mux(state === config, config_cmd, mvin_cmd)
 
   // Sending outputs
-  when(io.cmd.fire()) {
+  when (req.dram_addr === 0.U) {
+    state := idle
+  }.elsewhen (io.cmd.fire()) {
     when (state === config) {
       state := ld
     }.otherwise {
@@ -440,7 +444,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   val B_rows = out_channels_per_bank * kcols * krows * kchs
 
   val a_addr_start = req.a_addr_start
-  val b_addr_start = req.b_addr_end - B_rows
+  val b_addr_start = req.b_addr_end - B_rows + block_size.U //for possible loopconv bug (like loopmatmul)
   val d_addr_start = (BigInt(1) << 31).U | req.c_addr_start
   val c_addr_start = (BigInt(3) << 30).U | req.c_addr_start
 
