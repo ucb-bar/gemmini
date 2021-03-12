@@ -31,6 +31,9 @@ object GemminiISA {
   val LOOP_CONV_WS_CONFIG_5 = 20.U // *weights | *output
   val LOOP_CONV_WS_CONFIG_6 = 21.U // *bias, *input
 
+  val LOOP_LD_CONFIG_BOUNDS = 23.U
+  val LOOP_LD_CONFIG_ADDRS = 24.U
+
   // rs1[2:0] values
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U

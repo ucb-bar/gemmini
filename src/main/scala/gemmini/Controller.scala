@@ -109,8 +109,18 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   val raw_cmd = Queue(io.cmd)
 
+  // Loop Loader (load A or B)
+  // ToDo: collaborate with loopconv fsm (currently, only Loop matmul fsm)
+  val pause_monitor = spad.module.io.pause_out
+  val (loop_ld_cmd, loop_ld_unroller_busy, loop_ld_latency, loop_ld_alert, loop_ld_pause_turn) = LoopLoader(raw_cmd, pause_monitor, meshRows*tileRows, coreMaxAddrBits, sp_banks * sp_bank_entries,
+    inputType.getWidth, dma_maxbytes)
+  loop_ld_cmd.ready := false.B
+  spad.module.io.latency_in := loop_ld_latency
+  spad.module.io.alert_cycles_in := loop_ld_alert
+  spad.module.io.pause_turn_in := loop_ld_pause_turn
+
   // TODO replace 4,12,2 with parameters based on ROB size
-  val (conv_cmd, loop_conv_unroller_busy) = LoopConv(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
+  val (conv_cmd, loop_conv_unroller_busy) = LoopConv(loop_ld_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
     meshRows*tileRows, coreMaxAddrBits, rob_entries, 4, 12, 2, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes)
 

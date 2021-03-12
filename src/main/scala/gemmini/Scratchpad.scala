@@ -24,6 +24,11 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
   val status = new MStatus
 
+  //for bank conflict monitoring
+  val monitor_conflict = Bool()
+  val monitor_conflict_start = Bool()
+  val monitor_conflict_end = Bool()
+
   override def cloneType: this.type = new ScratchpadMemReadRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
@@ -199,6 +204,17 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // Misc. ports
       val busy = Output(Bool())
       val flush = Input(Bool())
+
+      // for detecting conflicts
+      val latency_in = Input(UInt(16.W))
+      val alert_cycles_in = Input(UInt(6.W))
+      val latency_out = Output(UInt(16.W))
+      val alert_cycles_out = Output(UInt(6.W))
+      val pause_turn_in = Input(UInt(3.W))
+      val pause_turn_out = Output(UInt(3.W))
+
+      //for pausing monitoring
+      val pause_out = Output(Bool())
     })
 
     val write_dispatch_q = Queue(io.dma.write.req)
@@ -269,6 +285,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     reader.module.io.req.bits.block_stride := read_issue_q.io.deq.bits.block_stride
     reader.module.io.req.bits.status := read_issue_q.io.deq.bits.status
     reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
+    //for bank conflict monitoring
+    reader.module.io.req.bits.monitor_conflict := read_issue_q.io.deq.bits.monitor_conflict
+    reader.module.io.req.bits.monitor_conflict_end := read_issue_q.io.deq.bits.monitor_conflict_end
+    reader.module.io.req.bits.monitor_conflict_start := read_issue_q.io.deq.bits.monitor_conflict_start
 
     val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(config.mvin_scale_args, config.inputType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits), is_acc = false)
     val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out) else
@@ -324,6 +344,15 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     writer.module.io.flush := io.flush
     reader.module.io.flush := io.flush
+
+    //for monitoring conflicts
+    io.latency_out := io.latency_in
+    io.alert_cycles_out := io.alert_cycles_in
+    io.pause_turn_out := io.pause_turn_in
+    io.pause_out := reader.module.io.pause_out
+    reader.module.io.latency_in := io.latency_out
+    reader.module.io.alert_cycles_in := io.alert_cycles_out
+    reader.module.io.pause_turn_in := io.pause_turn_out
 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid
 
