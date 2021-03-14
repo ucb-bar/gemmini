@@ -86,8 +86,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val B_sp_addr_end = Mux(loop_tag, (max_addr - block_size).U, (max_addr/2 - block_size).U)//RegInit((max_addr/2).U(log2Up(max_addr).W))
   //for conv
   val max_ochs_per_mvin = Mux(ochs < (max_block_len * block_size).U, ochs, (max_block_len * block_size).U)
-  val out_channels_per_bank = RegInit(0.U(8.W))
-  out_channels_per_bank := ochs / block_size.U +& (ochs % block_size.U =/= 0.U)
+  val out_channels_per_bank = ochs / block_size.U +& (ochs % block_size.U =/= 0.U)
   val B_rows = out_channels_per_bank * kcols * krows * kchs
   //val addr_start = B_sp_addr_end - B_rows + block_size.U
 
