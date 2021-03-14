@@ -202,16 +202,15 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     switch(cmd.bits.inst.funct){
       is(LOOP_CONV_LD_CONFIG_BOUNDS){
         pause_turn := cmd.bits.rs2(60, 58)
+        unlock_cycle := cmd.bits.rs2(57, 54)
         alert_cycle := cmd.bits.rs2(53, 48)
         latency := cmd.bits.rs2(47, 32) //ToDo: give this to DMA
-        unlock_cycle := cmd.bits.rs2(57, 54)
+        kernel_dim := cmd.bits.rs2(15, 0)//can code more if needed
 
-        kernel_dim := cmd.bits.rs1(31, 16)//can code more if needed
-
-        krows := cmd.bits.rs2(63, 48)
-        kcols := cmd.bits.rs2(47, 32)
-        kchs := cmd.bits.rs2(31, 16)
-        ochs := cmd.bits.rs2(15, 0)
+        krows := cmd.bits.rs1(63, 48)
+        kcols := cmd.bits.rs1(47, 32)
+        kchs := cmd.bits.rs1(31, 16)
+        ochs := cmd.bits.rs1(15, 0)
         is_conv := true.B
 
         // initialize for safety
