@@ -29,9 +29,13 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val is_conv_ldconfig = cmd.bits.inst.funct === LOOP_CONV_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_CONV_LD_CONFIG_BOUNDS
 
   val pause_req = RegInit(false.B)
-  val loop_tag = RegInit(false.B)
   val lock_tag = RegInit(false.B)
   val is_conv = RegInit(false.B)
+  // for switching between conv and matmul
+  val loop_tag_conv = RegInit(false.B)
+  val loop_tag_matmul = RegInit(false.B)
+  val loop_tag = Mux(is_conv, loop_tag_conv, loop_tag_matmul)
+
   when(cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_CONV_LD_CONFIG_ADDRS){
     lock_tag := true.B
   } // no need to force flip once seen LOOP_LD
@@ -39,7 +43,11 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     when(lock_tag){
       lock_tag := false.B
     }.otherwise{
-      loop_tag := ~loop_tag //force to flip to sync with loop matmul afterwards
+      when(is_conv){
+        loop_tag_conv := ~loop_tag_conv
+      }.otherwise{
+        loop_tag_matmul := ~loop_tag_matmul
+      } //force to flip to sync with loop matmul afterwards
     }
   }
   // config states
@@ -185,7 +193,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
             configured := true.B
             state := ld
           }.otherwise {
-            loop_tag := ~loop_tag
+            loop_tag_matmul := ~loop_tag_matmul
           }
         }
       }
@@ -222,7 +230,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
             configured := true.B
             state := config // for conv, idle -> config -> ld
           }.otherwise{
-            loop_tag := ~loop_tag
+            loop_tag_conv := ~loop_tag_conv
           }
         }
       }
@@ -245,7 +253,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       when(next_row === 0.U && next_col === 0.U) { //finished loading
         state := idle
         configured := false.B
-        loop_tag := ~loop_tag
+        loop_tag_matmul := ~loop_tag_matmul
       }
     }.otherwise{
       //conv loop
@@ -259,8 +267,11 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       krow := next_krow
       och := next_och
 
-      state := Mux(next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U,
-        idle, ld)
+      when(next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U){ //finished loading
+        state := idle
+        configured := false.B
+        loop_tag_conv := ~loop_tag_conv
+      }
     }
   }.elsewhen(io.out.fire() && state === config){ //for conv config
     state := ld
