@@ -32,7 +32,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val loop_tag = RegInit(false.B)
   val lock_tag = RegInit(false.B)
   val is_conv = RegInit(false.B)
-  when(cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS){
+  when(cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_CONV_LD_CONFIG_ADDRS){
     lock_tag := true.B
   } // no need to force flip once seen LOOP_LD
   when(cmd.bits.inst.funct === LOOP_WS || cmd.bits.inst.funct === LOOP_CONV_WS){
@@ -140,7 +140,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   fixed_loop_cmd := DontCare
   fixed_loop_cmd.inst.funct := cmd.bits.inst.funct//LOOP_WS_CONFIG_ADDRS_AB
   fixed_loop_cmd.rs1 := Mux(cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_5, 0.U, Mux(AB, 0.U, cmd.bits.rs1)) //if conv, weight
-  fixed_loop_cmd.rs2 := Mux(AB, cmd.bits.rs2, 0.U)
+  fixed_loop_cmd.rs2 := Mux(is_conv, cmd.bits.rs2, Mux(AB, cmd.bits.rs2, 0.U)) //for now, not do input for conv
 
   val unlock_monitor = RegInit(0.U(4.W))
   val unlock_cycle = RegInit(3.U(4.W))
