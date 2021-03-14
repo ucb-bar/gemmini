@@ -93,7 +93,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   val sp_addr_start = Mux(is_conv, B_sp_addr_end - B_rows + block_size.U,
     Mux(AB, A_sp_addr_start, B_sp_addr_end - max_row_iterator * max_col_iterator * block_size.U + block_size.U)) // Todo: need mux with 0 (skip A)
-  val dram_addr = Mux(is_conv, dram_base_addr + (row_iterator * row_stride + col_iterator) * block_size.U * (input_w/8).U,
+  val dram_addr = Mux(!is_conv, dram_base_addr + (row_iterator * row_stride + col_iterator) * block_size.U * (input_w/8).U,
     dram_base_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U)
   val sp_addr = sp_addr_start + Mux(is_conv, (och / block_size.U) * krows * kcols * kchs + krow * kcols * kchs + kcol * kchs + kch,
     (row_iterator * max_col_iterator + col_iterator) * block_size.U)
@@ -112,7 +112,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val configured = RegInit(false.B)
 
   val conflict_monitor = !((alert_cycle === 0.U) || (latency === 0.U))
-  val conflict_monitor_start = conflict_monitor && (row_iterator === 0.U && col_iterator === 0.U)
+  val conflict_monitor_start = conflict_monitor && (row_iterator === 0.U && col_iterator === 0.U) //ToDo: with conv
   val conflict_monitor_end = conflict_monitor && (row_iterator === max_row_iterator - 1.U && col_iterator >= max_col_iterator - max_blocks)
 
   //ToDo: either load A or B (for now just do with B)
