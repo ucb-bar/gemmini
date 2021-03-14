@@ -349,6 +349,16 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss && !conflict_detected
     tl.a.bits   := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
+    val cycles = freechips.rocketchip.util.WideCounter(32)
+    when(tl.a.fire()){
+      printf("GEMMINI_MEM %x %x %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size)
+      //printf(midas.targetutils.SynthesizePrintf("GEMMINI_MEM: %x %x %x\n", p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size))
+    }
+    when(tl_miss){
+      printf("GEMMINI_BLOCK %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U)
+      //printf(midas.targetutils.SynthesizePrintf("GEMMINI_BLOCK: %x %x \n", p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address))
+
+    }
     /////////////////////////////////////////////////////////////////////////////////////////
 
     //tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
