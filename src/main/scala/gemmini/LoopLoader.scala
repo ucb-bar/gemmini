@@ -25,15 +25,17 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   //queue for cmd
   val cmd = Queue(io.in)
   //val is_ldloop = cmd.bits.inst.funct === LOOP_LD
-  val is_ldconfig = cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_LD_CONFIG_BOUNDS
+  val is_matmul_ldconfig = cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_LD_CONFIG_BOUNDS
+  val is_conv_ldconfig = cmd.bits.inst.funct === LOOP_CONV_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_CONV_LD_CONFIG_BOUNDS
 
   val pause_req = RegInit(false.B)
   val loop_tag = RegInit(false.B)
   val lock_tag = RegInit(false.B)
+  val is_conv = RegInit(false.B)
   when(cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS){
     lock_tag := true.B
   } // no need to force flip once seen LOOP_LD
-  when(cmd.bits.inst.funct === LOOP_WS){
+  when(cmd.bits.inst.funct === LOOP_WS || cmd.bits.inst.funct === LOOP_CONV_WS){
     when(lock_tag){
       lock_tag := false.B
     }.otherwise{
@@ -54,6 +56,15 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   val row_pad = Reg(UInt(iterator_bitwidth.W)) //Mux(req.transpose, pad_j, pad_k)
   val col_pad = Reg(UInt(iterator_bitwidth.W)) //Mux(req.transpose, pad_k, pad_j)
+
+  //conv parameters
+  val out_channels = RegInit(0.U(16.W))
+  val in_channels = RegInit(0.U(16.W))
+  val kernel_dim = RegInit(0.U(4.W))
+  val krows = RegInit(0.U(4.W))
+  val kcols = RegInit(0.U(4.W))
+  val kchs = RegInit(0.U(16.W))
+  val ochs = RegInit(0.U(16.W))
 
   val max_blocks = max_block_len.asUInt()
   val AB = RegInit(false.B) //false if B, true if A
@@ -91,11 +102,11 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   // fix loop_ws command
   val loop_ws_state = RegInit(idle)
-  val is_loop_ws_addr = cmd.bits.inst.funct === LOOP_WS_CONFIG_ADDRS_AB
+  val is_loop_ws_addr = (cmd.bits.inst.funct === LOOP_WS_CONFIG_ADDRS_AB || cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_5) // for now, only weight for conv
   val fixed_loop_cmd = Wire(new RoCCCommand())
   fixed_loop_cmd := DontCare
-  fixed_loop_cmd.inst.funct := LOOP_WS_CONFIG_ADDRS_AB
-  fixed_loop_cmd.rs1 := Mux(AB, 0.U, cmd.bits.rs1)
+  fixed_loop_cmd.inst.funct := cmd.bits.inst.funct//LOOP_WS_CONFIG_ADDRS_AB
+  fixed_loop_cmd.rs1 := Mux(cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_5, 0.U, Mux(AB, 0.U, cmd.bits.rs1)) //if conv, weight
   fixed_loop_cmd.rs2 := Mux(AB, cmd.bits.rs2, 0.U)
 
   val unlock_monitor = RegInit(0.U(4.W))
@@ -105,7 +116,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     unlock_monitor := 0.U
   }
   //when(!configured){
-  when(cmd.bits.inst.funct === LOOP_LD_CONFIG_BOUNDS && cmd.valid){
+  when((cmd.bits.inst.funct === LOOP_LD_CONFIG_BOUNDS || cmd.bits.inst.funct === LOOP_CONV_LD_CONFIG_BOUNDS) && cmd.valid){
     pause_req := io.pause_monitor
   }
 
@@ -113,11 +124,11 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock) && conflict_monitor, fixed_loop_cmd, cmd.bits))
   io.out.bits.status := cmd.bits.status
-  io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_ldconfig)
-  cmd.ready := Mux(is_ldconfig, !configured, !configured && io.out.ready)
+  io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_matmul_ldconfig && !is_conv_ldconfig)
+  cmd.ready := Mux(is_matmul_ldconfig || is_conv_ldconfig, !configured, !configured && io.out.ready)
 
 //  when(cmd.valid && is_ldconfig && state === idle && (!pause_req || unlock)){
-  when(cmd.valid && is_ldconfig && state === idle){
+  when(cmd.valid && is_matmul_ldconfig && state === idle){
     switch(cmd.bits.inst.funct){
       is(LOOP_LD_CONFIG_BOUNDS){
         pause_turn := cmd.bits.rs2(iterator_bitwidth * 3 + 12, iterator_bitwidth * 3 + 10)
@@ -130,6 +141,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
         AB := cmd.bits.rs1(63)
         col_pad := cmd.bits.rs1(iterator_bitwidth * 2 - 1, iterator_bitwidth)
         row_pad := cmd.bits.rs1(iterator_bitwidth-1, 0)
+        is_conv := false.B
       }
       is(LOOP_LD_CONFIG_ADDRS){
         when(!pause_req || unlock) {
@@ -144,21 +156,59 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
         }
       }
     }
+  }.elsewhen(cmd.valid && is_conv_ldconfig && state === idle){
+    switch(cmd.bits.inst.funct){
+      is(LOOP_CONV_LD_CONFIG_BOUNDS){
+        pause_turn := cmd.bits.rs2(60, 58)
+        alert_cycle := cmd.bits.rs2(53, 48)
+        latency := cmd.bits.rs2(47, 32) //ToDo: give this to DMA
+        unlock_cycle := cmd.bits.rs2(57, 54)
+
+        kernel_dim := cmd.bits.rs1(31, 16)//can code more if needed
+
+        krows := cmd.bits.rs2(63, 48)
+        kcols := cmd.bits.rs2(47, 32)
+        kchs := cmd.bits.rs2(31, 16)
+        ochs := cmd.bits.rs2(15, 0)
+        is_conv := true.B
+      }
+      is(LOOP_CONV_LD_CONFIG_ADDRS){
+        when(!pause_req || unlock) {
+          dram_base_addr := cmd.bits.rs1
+          out_channels := cmd.bits.rs2(31, 16)
+          in_channels := cmd.bits.rs2(15, 0)
+          //can code more
+          when(conflict_monitor) {
+            configured := true.B
+            state := ld
+          }.otherwise{
+            loop_tag := ~loop_tag
+          }
+        }
+      }
+    }
   }
-  when(io.out.fire() && state === ld){
-    val row_blocks = 1.U
-    val col_blocks = max_blocks
 
-    val next_col = floorAdd(col_iterator, col_blocks, max_col_iterator)
-    val next_row = floorAdd(row_iterator, row_blocks, max_row_iterator, next_col === 0.U)
 
-    row_iterator := next_row
-    col_iterator := next_col
+  when(io.out.fire() && state === ld) {
+    when(!is_conv) {
+      //matmul loop
+      val row_blocks = 1.U
+      val col_blocks = max_blocks
 
-    when (next_row === 0.U && next_col === 0.U) { //finished loading
-      state := idle
-      configured := false.B
-      loop_tag := ~loop_tag
+      val next_col = floorAdd(col_iterator, col_blocks, max_col_iterator)
+      val next_row = floorAdd(row_iterator, row_blocks, max_row_iterator, next_col === 0.U)
+
+      row_iterator := next_row
+      col_iterator := next_col
+
+      when(next_row === 0.U && next_col === 0.U) { //finished loading
+        state := idle
+        configured := false.B
+        loop_tag := ~loop_tag
+      }
+    }.otherwise{
+      //conv loop
     }
   }
 
