@@ -65,21 +65,39 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val kcols = RegInit(0.U(4.W))
   val kchs = RegInit(0.U(16.W))
   val ochs = RegInit(0.U(16.W))
+  // conv Iterators
+  val och = RegInit(0.U(16.W))
+  val krow = RegInit(0.U(4.W))
+  val kcol = RegInit(0.U(4.W))
+  val kch = RegInit(0.U(16.W))
 
   val max_blocks = max_block_len.asUInt()
   val AB = RegInit(false.B) //false if B, true if A
   //ToDo: rotate starting address like LoopMatmul.scala
   val A_sp_addr_start = Mux(loop_tag, (max_addr/2).U, 0.U)//RegInit(0.U(log2Up(max_addr).W))
   val B_sp_addr_end = Mux(loop_tag, (max_addr - block_size).U, (max_addr/2 - block_size).U)//RegInit((max_addr/2).U(log2Up(max_addr).W))
-  val sp_addr_start = Mux(AB, A_sp_addr_start, B_sp_addr_end - max_row_iterator * max_col_iterator * block_size.U + block_size.U) // Todo: need mux with 0 (skip A)
-  val dram_addr = dram_base_addr + (row_iterator * row_stride + col_iterator) * block_size.U * (input_w/8).U
-  val sp_addr = sp_addr_start + (row_iterator * max_col_iterator + col_iterator) * block_size.U
+  //for conv
+  val max_ochs_per_mvin = Mux(ochs < (max_block_len * block_size).U, ochs, (max_block_len * block_size).U)
+  val out_channels_per_bank = RegInit(0.U(8.W))
+  out_channels_per_bank := ochs / block_size.U +& (ochs % block_size.U =/= 0.U)
+  val B_rows = out_channels_per_bank * kcols * krows * kchs
+  //val addr_start = B_sp_addr_end - B_rows + block_size.U
+
+  val sp_addr_start = Mux(is_conv, B_sp_addr_end - B_rows + block_size.U,
+    Mux(AB, A_sp_addr_start, B_sp_addr_end - max_row_iterator * max_col_iterator * block_size.U + block_size.U)) // Todo: need mux with 0 (skip A)
+  val dram_addr = Mux(is_conv, dram_base_addr + (row_iterator * row_stride + col_iterator) * block_size.U * (input_w/8).U,
+    dram_base_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U)
+  val sp_addr = sp_addr_start + Mux(is_conv, (och / block_size.U) * krows * kcols * kchs + krow * kcols * kchs + kcol * kchs + kch,
+    (row_iterator * max_col_iterator + col_iterator) * block_size.U)
   val blocks = Mux(col_iterator + max_blocks <= max_col_iterator, max_blocks, max_col_iterator-col_iterator)
   val cols = (blocks * block_size.U) - Mux(col_iterator + blocks >= max_col_iterator, col_pad, 0.U)
   val rows = block_size.U - Mux(max_row_iterator === max_row_iterator-1.U, row_pad, 0.U)
+  // for conv rows and cols
+  val J = Mux(ochs - och > max_ochs_per_mvin, max_ochs_per_mvin, ochs - och)
+  val K = Mux(kchs - kch > block_size.U, block_size.U, kchs - kch)
 
   object State extends ChiselEnum {
-    val idle, ld = Value
+    val idle, config, ld = Value //added config for conv
   }
   import State._
   val state = RegInit(idle)
@@ -95,11 +113,26 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   load_cmd.inst.funct := Mux(AB, LOAD_CMD, LOAD2_CMD)
   load_cmd.rs1 := dram_addr
   load_cmd.rs2 :=  (conflict_monitor << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
+
+  //for conv
+  val MVIN_SCALE_IDENTITY = 0x3f800000.U // TODO get this from configs somehow
+  val weight_spad_stride = krows * kcols * kchs
+  val config_cmd = Wire(new RoCCCommand)
+  config_cmd := DontCare
+  config_cmd.inst.funct := CONFIG_CMD
+  config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U).asUInt() | (weight_spad_stride << 16.U).asUInt() | (1.U << 3).asUInt() | 1.U
+  config_cmd.rs2 := out_channels * (input_w/8).U
+  //for conv
+  val mvin_cmd = Wire(new RoCCCommand)
+  mvin_cmd := DontCare
+  mvin_cmd.inst.funct := LOAD2_CMD // for now, only weight
+  mvin_cmd.rs1 := dram_addr
+  mvin_cmd.rs2 := (conflict_monitor << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (K << 48.U).asUInt() | (J << 32.U).asUInt() | sp_addr
+
   io.busy := cmd.valid || configured
   io.alert_cycle := alert_cycle
   io.latency := latency
   io.pause_turn := pause_turn
-
   // fix loop_ws command
   val loop_ws_state = RegInit(idle)
   val is_loop_ws_addr = (cmd.bits.inst.funct === LOOP_WS_CONFIG_ADDRS_AB || cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_5) // for now, only weight for conv
@@ -122,7 +155,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   val unlock = unlock_monitor >= unlock_cycle - 1.U // ToDo: change this number
 
-  io.out.bits := Mux(configured, load_cmd, Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock) && conflict_monitor, fixed_loop_cmd, cmd.bits))
+  io.out.bits := Mux(configured, Mux(is_conv, Mux(state === config, config_cmd, mvin_cmd), load_cmd),
+    Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock) && conflict_monitor, fixed_loop_cmd, cmd.bits))
   io.out.bits.status := cmd.bits.status
   io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_matmul_ldconfig && !is_conv_ldconfig)
   cmd.ready := Mux(is_matmul_ldconfig || is_conv_ldconfig, !configured, !configured && io.out.ready)
@@ -171,6 +205,12 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
         kchs := cmd.bits.rs2(31, 16)
         ochs := cmd.bits.rs2(15, 0)
         is_conv := true.B
+
+        // initialize for safety
+        krow := 0.U
+        kcol := 0.U
+        kch := 0.U
+        och := 0.U
       }
       is(LOOP_CONV_LD_CONFIG_ADDRS){
         when(!pause_req || unlock) {
@@ -180,7 +220,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
           //can code more
           when(conflict_monitor) {
             configured := true.B
-            state := ld
+            state := config // for conv, idle -> config -> ld
           }.otherwise{
             loop_tag := ~loop_tag
           }
@@ -209,7 +249,21 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       }
     }.otherwise{
       //conv loop
+      val next_kch = floorAdd(kch, block_size.U, kchs)
+      val next_kcol = floorAdd(kcol, 1.U, kcols, next_kch === 0.U)
+      val next_krow = floorAdd(krow, 1.U, krows, next_kcol === 0.U && next_kch === 0.U)
+      val next_och = floorAdd(och, max_ochs_per_mvin, ochs, next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U)
+
+      kch := next_kch
+      kcol := next_kcol
+      krow := next_krow
+      och := next_och
+
+      state := Mux(next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U,
+        idle, ld)
     }
+  }.elsewhen(io.out.fire() && state === config){ //for conv config
+    state := ld
   }
 
 }
