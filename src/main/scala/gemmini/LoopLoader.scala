@@ -73,6 +73,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val kcols = RegInit(0.U(4.W))
   val kchs = RegInit(0.U(16.W))
   val ochs = RegInit(0.U(16.W))
+  val padding = RegInit(false.B) // SW padding for bank conflict
+
   // conv Iterators
   val och = RegInit(0.U(16.W))
   val krow = RegInit(0.U(4.W))
@@ -85,6 +87,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val A_sp_addr_start = Mux(loop_tag, (max_addr/2).U, 0.U)//RegInit(0.U(log2Up(max_addr).W))
   val B_sp_addr_end = Mux(loop_tag, (max_addr - block_size).U, (max_addr/2 - block_size).U)//RegInit((max_addr/2).U(log2Up(max_addr).W))
   //for conv
+  val out_channel_stride = Mux(padding, out_channels + max_blocks * block_size.U, out_channels)
   val max_ochs_per_mvin = Mux(ochs < (max_block_len * block_size).U, ochs, (max_block_len * block_size).U)
   val out_channels_per_bank = WireInit(0.U(8.W))
   out_channels_per_bank := ochs / block_size.U +& (ochs % block_size.U =/= 0.U)
@@ -94,7 +97,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val sp_addr_start = Mux(is_conv, B_sp_addr_end - B_rows + block_size.U,
     Mux(AB, A_sp_addr_start, B_sp_addr_end - max_row_iterator * max_col_iterator * block_size.U + block_size.U)) // Todo: need mux with 0 (skip A)
   val dram_addr = Mux(!is_conv, dram_base_addr + (row_iterator * row_stride + col_iterator) * block_size.U * (input_w/8).U,
-    dram_base_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U)
+    dram_base_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channel_stride +& och) * (input_w/8).U)
   val sp_addr = sp_addr_start + Mux(is_conv, (och / block_size.U) * krows * kcols * kchs + krow * kcols * kchs + kcol * kchs + kch,
     (row_iterator * max_col_iterator + col_iterator) * block_size.U)
   val blocks = Mux(col_iterator + max_blocks <= max_col_iterator, max_blocks, max_col_iterator-col_iterator)
@@ -223,6 +226,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       is(LOOP_CONV_LD_CONFIG_ADDRS){
         when(!pause_req || unlock) {
           dram_base_addr := cmd.bits.rs1
+          padding := cmd.bits.rs2(32)
           out_channels := cmd.bits.rs2(31, 16)
           in_channels := cmd.bits.rs2(15, 0)
           //can code more

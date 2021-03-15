@@ -370,14 +370,14 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   dontTouch(pop_count_packed_deps)
   dontTouch(min_pop_count)
 
-  val cycles_since_issue = RegInit(0.U(16.W))
+  val cycles_since_issue = RegInit(0.U(20.W))
 
   when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire() || !io.busy) {
     cycles_since_issue := 0.U
   }.elsewhen(io.busy) {
     cycles_since_issue := cycles_since_issue + 1.U
   }
-  assert(cycles_since_issue < 10000.U, "pipeline stall")
+  assert(cycles_since_issue < 100000.U, "pipeline stall")
 
   for (e <- entries) {
     dontTouch(e.bits.allocated_at)
