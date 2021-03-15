@@ -448,6 +448,7 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
     io.resp.valid := false.B
     io.req.ready := true.B
     io.sram_reads.foreach(_.req.valid := false.B)
+    io.sram_reads.foreach(_.resp.ready := false.B)
   }
 
   // Performance counter

@@ -14,6 +14,7 @@ import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet}
 object GemminiFPConfigs {
   import Arithmetic.FloatArithmetic._
   val defaultFPConfig = GemminiArrayConfig[Float, Float, Float](
+    opcodes = OpcodeSet.custom3,
     tileRows = 1,
     tileColumns = 1,
     meshRows = 4,
@@ -58,6 +59,11 @@ object GemminiFPConfigs {
     acc_read_small_width = true,
 
     pe_latency = 1,
+
+    ex_read_from_spad = true,
+    ex_read_from_acc = true,
+    ex_write_to_spad = true,
+    ex_write_to_acc = true,
   )
   
   //FP32 Single Precision Configuration
@@ -98,7 +104,7 @@ class GemminiFP32DefaultConfig extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiFPConfigs.FP32DefaultConfig))
+        LazyModule(new Gemmini(GemminiFPConfigs.FP32DefaultConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -111,7 +117,7 @@ class GemminiFP16DefaultConfig extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiFPConfigs.FP16DefaultConfig))
+        LazyModule(new Gemmini(GemminiFPConfigs.FP16DefaultConfig))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -123,7 +129,22 @@ class GemminiBF16DefaultConfig extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiFPConfigs.BF16DefaultConfig))
+        LazyModule(new Gemmini(GemminiFPConfigs.BF16DefaultConfig))
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
+
+class GemminiBF16DefaultHighPerfConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      implicit val v = implicitly[ValName]
+      val gemmini = LazyModule(new Gemmini(GemminiFPConfigs.BF16DefaultConfig.copy(
+        ex_read_from_acc = false,
+        ex_write_to_spad = false,
+      )))
+      gemmini
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
@@ -135,7 +156,7 @@ class GemminiBF16Default8Config extends Config((site, here, up) => {
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(OpcodeSet.custom3, GemminiFPConfigs.BF16Default8Config))
+        LazyModule(new Gemmini(GemminiFPConfigs.BF16Default8Config))
     }
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
