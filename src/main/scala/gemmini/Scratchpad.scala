@@ -554,6 +554,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
               bio.read.resp.valid &&
               write_issue_q.io.enq.ready &&
               write_scale_q.io.deq.bits.laddr.is_acc_addr &&
+              !write_scale_q.io.deq.bits.laddr.is_garbage() &&
               write_scale_q.io.deq.bits.laddr.acc_bank() === i.U) {
           write_scale_q.io.deq.ready   := true.B
           acc_scale_unit.io.in.valid := true.B
