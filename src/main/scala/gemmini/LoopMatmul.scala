@@ -626,7 +626,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   val concurrent_loops_per_tile = 2
   val n_loops = tiles * concurrent_loops_per_tile
   val loops = Reg(Vec(tiles * concurrent_loops_per_tile, new LoopMatmulState(iterator_bitwidth, coreMaxAddrBits, max_addr, max_acc_addr, tiles)))
-  val head_loop_id = RegInit(0.U(log2Up(tiles).W))
+  val head_loop_id = RegInit(0.U(log2Up(n_loops).W))
   val head_loop = loops(head_loop_id)
 
   assert(isPow2(loops.size))
@@ -949,6 +949,14 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
       l.tile_id := tile.U
     }
   }
+
+  val stall_counter = RegInit(0.U(16.W))
+  when (io.out.fire() || !loop_configured) {
+    stall_counter := 0.U
+  }.elsewhen (loop_configured) {
+    stall_counter := stall_counter + 1.U
+  }
+  assert(stall_counter < 10000.U, "LoopMatmul has stalled")
 }
 
 object LoopMatmul {
