@@ -242,7 +242,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
   config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U).asUInt() | (req.derived_params.input_spad_stride << 16.U).asUInt() | (0.U << 3).asUInt() | 1.U
-  config_cmd.rs2 := in_channels * (input_w/8).U
+  config_cmd.rs2 := ich_stride * (input_w/8).U
 
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
@@ -356,7 +356,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
   config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U).asUInt() | (req.derived_params.weight_spad_stride << 16.U).asUInt() | (1.U << 3).asUInt() | 1.U
-  config_cmd.rs2 := out_channels * (input_w/8).U
+  config_cmd.rs2 := och_stride * (input_w/8).U
 
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
