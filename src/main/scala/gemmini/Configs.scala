@@ -53,8 +53,8 @@ object GemminiConfigs {
     sp_banks = 4,
     sp_singleported = true,
     acc_banks = 2,
-    acc_singleported = true,
-    num_acc_sub_banks = 2,
+    acc_singleported = false,
+    num_acc_sub_banks = -1,
     sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     dataflow = Dataflow.BOTH,
@@ -106,7 +106,7 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      5, Float(8, 24), 4,
+      4, Float(8, 24), 4,
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (elem_t)y);})"
     )),
@@ -147,7 +147,7 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      5, Float(8, 24), 4,
+      1, Float(8, 24), -1, // TODO pipelining should be 5
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
     ),
@@ -163,8 +163,14 @@ object GemminiConfigs {
     ex_write_to_acc = true
   )
 
-  val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS)
-  val largeChipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64), dataflow=Dataflow.WS,
+  val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
+    acc_scale_args=defaultConfig.acc_scale_args.copy(latency=4),
+    acc_singleported=true,
+    num_acc_sub_banks=2,
+    ex_read_from_acc=false,
+    ex_write_to_spad=false
+  )
+  val largeChipConfig = chipConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64),
     meshRows=32, meshColumns=32
   )
 
