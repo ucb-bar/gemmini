@@ -105,9 +105,12 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   io.alloc.ready := !full
 
   val last_allocated = Reg(UInt(log2Up(rob_entries).W))
+
+  // Config values set by programmer
   val a_stride = Reg(UInt(16.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
   val st_block_stride = block_rows.U
+  val pooling_is_enabled = Reg(Bool())
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
@@ -168,6 +171,17 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val compute_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
       new_entry.op2.bits.end := new_entry.op2.bits.start + compute_rows
       new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(compute_rows)._2
+    }.elsewhen (pooling_is_enabled) {
+      // If pooling is enabled, then we assume that this command simply mvouts everything in this accumulator bank from
+      // start to the end of the bank
+      val acc_bank = new_entry.op2.bits.start.acc_bank()
+
+      val next_bank_addr = WireInit(0.U.asTypeOf(local_addr_t))
+      next_bank_addr.is_acc_addr := true.B
+      next_bank_addr.data := (acc_bank + 1.U) << local_addr_t.accBankRowBits
+
+      new_entry.op2.bits.end := next_bank_addr
+      new_entry.op2.bits.wraps_around := next_bank_addr.acc_bank() === 0.U
     }.otherwise {
       val block_stride = st_block_stride
 
@@ -178,7 +192,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val total_mvout_rows = ((mvout_mats - 1.U) * block_stride) + mvout_rows
 
       new_entry.op2.bits.end := new_entry.op2.bits.start + total_mvout_rows
-      new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(total_mvout_rows)._2
+      new_entry.op2.bits.wraps_around := pooling_is_enabled || new_entry.op2.bits.start.add_with_overflow(total_mvout_rows)._2
     }
 
     new_entry.dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
@@ -303,6 +317,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
       val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers
       ld_block_strides(id) := block_stride
+    }.elsewhen(new_entry.is_config && new_entry.q === stq) {
+      val pool_stride = new_entry.cmd.rs1(5, 4) // TODO magic numbers
+      pooling_is_enabled := pool_stride =/= 0.U
     }
   }
 
