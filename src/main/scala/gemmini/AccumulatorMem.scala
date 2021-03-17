@@ -158,7 +158,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       }
 
       when (w_buf_valid && isThisBank(waddr_buf)) {
-        assert(!RegNext(((w_q_tail.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_))))
+        assert(!((w_q_tail.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_)))
         w_q_tail := w_q_tail << 1 | w_q_tail(nEntries-1)
         for (i <- 0 until nEntries) {
           when (w_q_tail(i)) {
