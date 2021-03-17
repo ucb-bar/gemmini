@@ -629,7 +629,8 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   io.loop_id := req.loop_id
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && !skip && io.ex_completed
-  io.cmd.bits := mvout_cmd
+  io.cmd.bits := MuxLookup(state.asUInt, mvout_cmd, Seq(pre_pool_config.asUInt -> pre_pool_config_cmd,
+    pool.asUInt -> pool_cmd, post_pool_config.asUInt -> post_pool_config_cmd))
 
   // Sending outputs
   when (skip) {
@@ -660,7 +661,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
       b := next_b
 
       state := Mux(next_b === 0.U && next_och === 0.U,
-        idle, pool)
+        post_pool_config, pool)
     }
   }
 
