@@ -87,7 +87,9 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val A_sp_addr_start = Mux(loop_tag, (max_addr/2).U, 0.U)//RegInit(0.U(log2Up(max_addr).W))
   val B_sp_addr_end = Mux(loop_tag, (max_addr - block_size).U, (max_addr/2 - block_size).U)//RegInit((max_addr/2).U(log2Up(max_addr).W))
   //for conv
-  val out_channel_stride = Mux(padding, out_channels + max_blocks * block_size.U, out_channels)
+  val och_divide = RegInit(1.U(4.W))
+  val total_out_channel = out_channels * och_divide
+  val out_channel_stride = Mux(padding, total_out_channel + max_blocks * block_size.U, total_out_channel)
   val max_ochs_per_mvin = Mux(ochs < (max_block_len * block_size).U, ochs, (max_block_len * block_size).U)
   val out_channels_per_bank = WireInit(0.U(8.W))
   out_channels_per_bank := ochs / block_size.U +& (ochs % block_size.U =/= 0.U)
@@ -227,6 +229,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
         when(!pause_req || unlock) {
           dram_base_addr := cmd.bits.rs1
           padding := cmd.bits.rs2(32)
+          och_divide := cmd.bits.rs2(33)
           out_channels := cmd.bits.rs2(31, 16)
           in_channels := cmd.bits.rs2(15, 0)
           //can code more
