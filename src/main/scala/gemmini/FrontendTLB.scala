@@ -17,11 +17,12 @@ class DecoupledTLBReq(val lgMaxSize: Int)(implicit p: Parameters) extends CoreBu
 }
 
 class TLBExceptionIO extends Bundle {
+  // interrupt means we are stalling loads and stores until a gemmini_flush command is received
   val interrupt = Output(Bool())
-  val flush_retry = Input(Bool())
-  val flush_skip = Input(Bool())
+  // vaddr of faulting inst. LSB indicates is_Store
+  val vaddr = Output(UInt(64.W))
 
-  def flush(dummy: Int = 0): Bool = flush_retry || flush_skip
+  val flush = Input(Bool())
 }
 
 // TODO can we make TLB hits only take one cycle?
@@ -30,7 +31,7 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 
   val lgMaxSize = log2Ceil(maxSize)
   val io = new Bundle {
-    val req = Flipped(Valid(new DecoupledTLBReq(lgMaxSize)))
+    val req = Flipped(Decoupled(new DecoupledTLBReq(lgMaxSize)))
     val resp = new TLBResp
     val ptw = new TLBPTWIO
 
@@ -38,7 +39,11 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   }
 
   val interrupt = RegInit(false.B)
+  val interrupt_vaddr = Reg(UInt(64.W))
   io.exp.interrupt := interrupt
+  io.exp.vaddr := interrupt_vaddr
+
+  io.req.ready := !interrupt
 
   val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(nSets=1, nWays=entries)))
   tlb.io.req.valid := io.req.valid
@@ -46,7 +51,7 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   io.resp := tlb.io.resp
   tlb.io.kill := false.B
 
-  tlb.io.sfence.valid := io.exp.flush()
+  tlb.io.sfence.valid := io.exp.flush
   tlb.io.sfence.bits.rs1 := false.B
   tlb.io.sfence.bits.rs2 := false.B
   tlb.io.sfence.bits.addr := DontCare
@@ -54,13 +59,16 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 
   io.ptw <> tlb.io.ptw
   tlb.io.ptw.status := io.req.bits.status
-  val exception = io.req.valid && Mux(io.req.bits.tlb_req.cmd === M_XRD, tlb.io.resp.pf.ld || tlb.io.resp.ae.ld, tlb.io.resp.pf.st || tlb.io.resp.ae.st)
-  when (exception) { interrupt := true.B }
+  val xcpt_ld = io.req.valid && (io.req.bits.tlb_req.cmd === M_XRD) && (tlb.io.resp.pf.ld || tlb.io.resp.ae.ld)
+  val xcpt_st = io.req.valid && (io.req.bits.tlb_req.cmd === M_XWR) && (tlb.io.resp.pf.st || tlb.io.resp.ae.st)
+  when (!interrupt && (xcpt_ld || xcpt_st)) {
+    interrupt := true.B
+    interrupt_vaddr := Cat(tlb.io.req.bits.vaddr >> 1, xcpt_st)
+
+  }
   when (interrupt && tlb.io.sfence.fire()) {
     interrupt := false.B
   }
-
-  assert(!io.exp.flush_retry || !io.exp.flush_skip, "TLB: flushing with both retry and skip at same time")
 }
 
 class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
@@ -81,9 +89,7 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
   val lgMaxSize = log2Ceil(coreDataBytes)
   val tlbArb = Module(new RRArbiter(new DecoupledTLBReq(lgMaxSize), nClients))
   val tlb = Module(new DecoupledTLB(entries, maxSize))
-  tlb.io.req.valid := tlbArb.io.out.valid
-  tlb.io.req.bits := tlbArb.io.out.bits
-  tlbArb.io.out.ready := true.B
+  tlb.io.req <> tlbArb.io.out
 
   io.ptw <> tlb.io.ptw
   io.exp <> tlb.io.exp
@@ -101,7 +107,7 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
       last_translated_vpn := req.bits.tlb_req.vaddr
       last_translated_ppn := tlb.io.resp.paddr
     }
-    when (io.exp.flush()) {
+    when (io.exp.flush) {
       last_translated_valid := false.B
     }
 
