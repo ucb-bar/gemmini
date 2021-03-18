@@ -34,6 +34,8 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
 
     val in_valid = Input(Bool())
     val out_valid = Output(Bool())
+
+    val bad_dataflow = Output(Bool())
   })
 
   val cType = if (df == Dataflow.WS) inputType else accType
@@ -66,6 +68,7 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   val COMPUTE = 0.U(1.W)
   val PROPAGATE = 1.U(1.W)
 
+  io.bad_dataflow := false.B
   when ((df == Dataflow.OS).B || ((df == Dataflow.BOTH).B && dataflow === OUTPUT_STATIONARY)) {
     when(prop === PROPAGATE) {
       io.out_c := (c1 >> shift_offset).clippedToWidthOf(outputType)
@@ -89,7 +92,8 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
       c2 := d
     }
   }.otherwise {
-    assert(false.B, "unknown dataflow")
+    io.bad_dataflow := true.B
+    //assert(false.B, "unknown dataflow")
     io.out_c := DontCare
     io.out_b := DontCare
   }

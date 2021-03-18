@@ -27,7 +27,15 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
 
     val acc = new Bundle {
-      val read = Vec(acc_banks, new AccumulatorReadIO(acc_bank_entries, log2Up(accType.getWidth), Vec(meshColumns, Vec(tileColumns, inputType)), Vec(meshColumns, Vec(tileColumns, accType)), acc_scale_args.multiplicand_t))
+      val read_req = Vec(acc_banks, Decoupled(new AccumulatorReadReq(
+          acc_bank_entries, log2Up(accType.getWidth), acc_scale_args.multiplicand_t
+      )))
+
+      val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
+        Vec(meshColumns, Vec(tileColumns, inputType)),
+        Vec(meshColumns, Vec(tileColumns, accType))
+      ))))
+
       // val write = Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))))
       val write = Vec(acc_banks, Decoupled(new AccumulatorWriteReq(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType)))))
     }
@@ -430,39 +438,39 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val read_d_from_acc = d_valid && d_read_from_acc && dataDBankAcc === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
 
     Seq((read_a_from_acc, a_ready), (read_b_from_acc, b_ready), (read_d_from_acc, d_ready)).foreach { case (rd, r) =>
-      when(rd && !io.acc.read(i).req.ready) {
+      when(rd && !io.acc.read_req(i).ready) {
         r := false.B
       }
     }
 
     if (ex_read_from_acc) {
-      io.acc.read(i).req.valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
-      io.acc.read(i).req.bits.scale := acc_scale
-      io.acc.read(i).req.bits.full := false.B
-      io.acc.read(i).req.bits.relu6_shift := relu6_shift
-      io.acc.read(i).req.bits.act := activation
-      io.acc.read(i).req.bits.fromDMA := false.B
-      io.acc.read(i).req.bits.addr := MuxCase(a_address_rs1.acc_row() + a_fire_counter,
+      io.acc.read_req(i).valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
+      io.acc.read_req(i).bits.scale := acc_scale
+      io.acc.read_req(i).bits.full := false.B
+      io.acc.read_req(i).bits.relu6_shift := relu6_shift
+      io.acc.read_req(i).bits.act := activation
+      io.acc.read_req(i).bits.fromDMA := false.B
+      io.acc.read_req(i).bits.addr := MuxCase(a_address_rs1.acc_row() + a_fire_counter,
         Seq(read_b_from_acc -> (b_address_rs2.acc_row() + b_fire_counter),
           read_d_from_acc -> (d_address_rs1.acc_row() + block_size.U - 1.U - d_fire_counter)))
 
       // TODO this just overrides the previous line. Should we erase the previous line?
       when(im2col_en === false.B){
-        io.acc.read(i).req.bits.addr := MuxCase(a_address.acc_row(),
+        io.acc.read_req(i).bits.addr := MuxCase(a_address.acc_row(),
           Seq(read_b_from_acc -> b_address.acc_row(),
             read_d_from_acc -> d_address.acc_row()))
       }
     } else {
-      io.acc.read(i).req.valid := false.B
-      io.acc.read(i).req.bits.scale := acc_scale
-      io.acc.read(i).req.bits.full := false.B
-      io.acc.read(i).req.bits.relu6_shift := relu6_shift
-      io.acc.read(i).req.bits.act := activation
-      io.acc.read(i).req.bits.fromDMA := false.B
-      io.acc.read(i).req.bits.addr := DontCare
+      io.acc.read_req(i).valid := false.B
+      io.acc.read_req(i).bits.scale := acc_scale
+      io.acc.read_req(i).bits.full := false.B
+      io.acc.read_req(i).bits.relu6_shift := relu6_shift
+      io.acc.read_req(i).bits.act := activation
+      io.acc.read_req(i).bits.fromDMA := false.B
+      io.acc.read_req(i).bits.addr := DontCare
     }
 
-    io.acc.read(i).resp.ready := false.B
+    io.acc.read_resp(i).ready := false.B
   }
 
   // Im2Col reads
@@ -749,11 +757,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh_cntl_signals_q.io.enq.bits.im2colling := im2col_wire && im2col_en //im2col_wire
 
   val readData = VecInit(io.srams.read.map(_.resp.bits.data))
-  val accReadData = if (ex_read_from_acc) VecInit(io.acc.read.map(_.resp.bits.data.asUInt())) else readData
+  val accReadData = if (ex_read_from_acc) VecInit(io.acc.read_resp.map(_.bits.data.asUInt())) else readData
   val im2ColData = io.im2col.resp.bits.a_im2col.asUInt()
 
   val readValid = VecInit(io.srams.read.map(bank => ex_read_from_spad.B && bank.resp.valid && !bank.resp.bits.fromDMA))
-  val accReadValid = VecInit(io.acc.read.map(bank => ex_read_from_acc.B && bank.resp.valid && !bank.resp.bits.fromDMA))
+  val accReadValid = VecInit(io.acc.read_resp.map(bank => ex_read_from_acc.B && bank.valid && !bank.bits.fromDMA))
   val im2ColValid = io.im2col.resp.valid
 
   mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) &&
@@ -788,7 +796,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   when (mesh_cntl_signals_q.io.deq.fire()) {
     when (cntl.a_fire && mesh.io.a.fire() && !cntl.a_garbage && cntl.a_unpadded_cols > 0.U && !cntl.im2colling) {
       when (cntl.a_read_from_acc) {
-        io.acc.read(cntl.a_bank_acc).resp.ready := !io.acc.read(cntl.a_bank_acc).resp.bits.fromDMA
+        io.acc.read_resp(cntl.a_bank_acc).ready := !io.acc.read_resp(cntl.a_bank_acc).bits.fromDMA
       }.otherwise {
         io.srams.read(cntl.a_bank).resp.ready := !io.srams.read(cntl.a_bank).resp.bits.fromDMA
       }
@@ -796,7 +804,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     when (cntl.b_fire && mesh.io.b.fire() && !cntl.b_garbage && !cntl.accumulate_zeros && cntl.b_unpadded_cols > 0.U) {
       when (cntl.b_read_from_acc) {
-        io.acc.read(cntl.b_bank_acc).resp.ready := !io.acc.read(cntl.b_bank_acc).resp.bits.fromDMA
+        io.acc.read_resp(cntl.b_bank_acc).ready := !io.acc.read_resp(cntl.b_bank_acc).bits.fromDMA
       }.otherwise {
         io.srams.read(cntl.b_bank).resp.ready := !io.srams.read(cntl.b_bank).resp.bits.fromDMA
       }
@@ -804,15 +812,15 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     when (cntl.d_fire && mesh.io.d.fire() && !cntl.d_garbage && !cntl.preload_zeros && cntl.d_unpadded_cols > 0.U) {
       when (cntl.d_read_from_acc) {
-        io.acc.read(cntl.d_bank_acc).resp.ready := !io.acc.read(cntl.d_bank_acc).resp.bits.fromDMA
+        io.acc.read_resp(cntl.d_bank_acc).ready := !io.acc.read_resp(cntl.d_bank_acc).bits.fromDMA
       }.otherwise {
         io.srams.read(cntl.d_bank).resp.ready := !io.srams.read(cntl.d_bank).resp.bits.fromDMA
       }
     }
   }
 
-  for (acc_r <- io.acc.read) {
-    acc_r.resp.ready := true.B
+  for (acc_r <- io.acc.read_resp) {
+    acc_r.ready := true.B
   }
 
   when (cntl_valid) {
