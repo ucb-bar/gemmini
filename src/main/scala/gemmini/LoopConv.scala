@@ -562,7 +562,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   })
 
   object State extends ChiselEnum {
-    val idle, st = Value
+    val idle, st, pre_pool_config, pool, post_pool_config = Value
   }
   import State._
   val state = RegInit(idle)
@@ -575,7 +575,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val acc_addr_start = (BigInt(1) << 31).U | req.addr_start
 
   // Derived parameters
-  val skip = !(req.no_pool && (req.dram_addr =/= 0.U))
+  val skip = req.dram_addr === 0.U
 
   // Iterators
   val b = Reg(UInt(large_iterator_bitwidth.W))
@@ -587,9 +587,14 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val dram_addr = req.dram_addr + ((b*out_dim*out_dim + orow*out_dim + ocol) * out_channels + och) * (input_w/8).U
   val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
+  val pool_dram_addr = req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U
+  val pool_spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols
+
   // Sizes
   val I = Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol)
   val J = Mux(ochs - och > block_size.U, block_size.U, ochs - och)
+
+  val channels = J
 
   // Commands
   val mvout_cmd = Wire(new RoCCCommand)
@@ -598,36 +603,72 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   mvout_cmd.rs1 := dram_addr
   mvout_cmd.rs2 := (I << 48.U) | (J << 32.U) | spad_addr
 
+  val pre_pool_config_cmd = Wire(new RoCCCommand)
+  pre_pool_config_cmd := DontCare
+  pre_pool_config_cmd.inst.funct := CONFIG_CMD
+  pre_pool_config_cmd.rs1 := (ocols << 56) | (orows << 48) | (pocols << 40) | (porows << 32) | (pool_out_dim << 24) |
+    (plpad << 10) | (pupad << 8) | (pool_size << 6) | (pool_stride << 4) | // TODO magic numbers
+    CONFIG_STORE
+  pre_pool_config_cmd.rs2 := out_channels * (input_w / 8).U
+
+  val post_pool_config_cmd = Wire(new RoCCCommand)
+  post_pool_config_cmd := DontCare
+  post_pool_config_cmd.inst.funct := CONFIG_CMD
+  post_pool_config_cmd.rs1 := CONFIG_STORE
+  post_pool_config_cmd.rs2 := out_channels * (input_w / 8).U
+
+  val pool_cmd = Wire(new RoCCCommand)
+  pool_cmd := DontCare
+  pool_cmd.inst.funct := STORE_CMD
+  pool_cmd.rs1 := pool_dram_addr
+  pool_cmd.rs2 := (channels << 32.U) | pool_spad_addr
+
   // Inputs and outputs
   io.req.ready := state === idle
   io.idle := state === idle
   io.loop_id := req.loop_id
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && !skip && io.ex_completed
-  io.cmd.bits := mvout_cmd
+  io.cmd.bits := MuxLookup(state.asUInt, mvout_cmd, Seq(pre_pool_config.asUInt -> pre_pool_config_cmd,
+    pool.asUInt -> pool_cmd, post_pool_config.asUInt -> post_pool_config_cmd))
 
   // Sending outputs
   when (skip) {
     state := idle
   }.elsewhen(io.cmd.fire()) {
-    val next_och = floorAdd(och, block_size.U, ochs)
-    val next_ocol = floorAdd(ocol, block_size.U, ocols, next_och === 0.U)
-    val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U && next_och === 0.U)
-    val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U && next_och === 0.U)
+    when (req.no_pool) {
+      val next_och = floorAdd(och, block_size.U, ochs)
+      val next_ocol = floorAdd(ocol, block_size.U, ocols, next_och === 0.U)
+      val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U && next_och === 0.U)
+      val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U && next_och === 0.U)
 
-    och := next_och
-    ocol := next_ocol
-    orow := next_orow
-    b := next_b
+      och := next_och
+      ocol := next_ocol
+      orow := next_orow
+      b := next_b
 
-    state := Mux(next_b === 0.U && next_orow === 0.U && next_ocol === 0.U && next_och === 0.U,
-      idle, st)
+      state := Mux(next_b === 0.U && next_orow === 0.U && next_ocol === 0.U && next_och === 0.U,
+        idle, st)
+    }.elsewhen(state === pre_pool_config) {
+      state := pool
+    }.elsewhen(state === post_pool_config) {
+      state := idle
+    }.otherwise {
+      val next_och = floorAdd(och, block_size.U, ochs)
+      val next_b = floorAdd(b, 1.U, batches, next_och === 0.U)
+
+      och := next_och
+      b := next_b
+
+      state := Mux(next_b === 0.U && next_och === 0.U,
+        post_pool_config, pool)
+    }
   }
 
   // Accepting requests
   when (io.req.fire()) {
     req := io.req.bits
-    state := st
+    state := Mux(io.req.bits.no_pool, st, pre_pool_config)
 
     b := 0.U
     orow := 0.U
