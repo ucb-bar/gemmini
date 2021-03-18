@@ -17,6 +17,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def +(t: T): T
   def >>(u: UInt): T // This is a rounding shift! Rounds away from 0
   def >(t: T): Bool
+  def identity: T
   def withWidthOf(t: T): T
   def clippedToWidthOf(t: T): T // Like "withWidthOf", except that it saturates
   def relu: T
@@ -62,6 +63,7 @@ object Arithmetic {
       }
 
       override def zero: UInt = 0.U
+      override def identity: UInt = 1.U
     }
   }
 
@@ -111,6 +113,7 @@ object Arithmetic {
       }
 
       override def zero: SInt = 0.S
+      override def identity: SInt = 1.S
     }
   }
 
@@ -271,7 +274,25 @@ object Arithmetic {
         */
       }
 
-      override def >(t: Float): Bool = true.B // TODO
+      override def >(t: Float): Bool = {
+        // Recode all operands
+        val t_rec = recFNFromFN(t.expWidth, t.sigWidth, t.bits)
+        val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
+
+        // Resize t to self's width
+        val t_resizer = Module(new RecFNToRecFN(t.expWidth, t.sigWidth, self.expWidth, self.sigWidth))
+        t_resizer.io.in := t_rec
+        t_resizer.io.roundingMode := consts.round_near_even
+        t_resizer.io.detectTininess := consts.tininess_afterRounding
+        val t_rec_resized = t_resizer.io.out
+
+        val comparator = Module(new CompareRecFN(self.expWidth, self.sigWidth))
+        comparator.io.a := self_rec
+        comparator.io.b := t_rec_resized
+        comparator.io.signaling := false.B
+
+        comparator.io.gt
+      }
 
       override def withWidthOf(t: Float): Float = {
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
@@ -375,6 +396,7 @@ object Arithmetic {
       }
 
       override def zero: Float = 0.U.asTypeOf(self)
+      override def identity: Float = Cat(0.U(2.W), ~(0.U((self.expWidth-1).W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
     }
   }
 }
