@@ -57,6 +57,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
     }
   }
   // Chain control signals (pipeline across each column)
+  assert(!(mesh.map(_.map(_.io.bad_dataflow).reduce(_||_)).reduce(_||_)))
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_control(c), io.in_valid(c))) {
       case ((in_ctrl, valid), tile) =>
@@ -68,6 +69,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
         (tile.io.out_control, tile.io.out_valid)
     }
   }
+
   // Chain in_valid (pipeline across each column)
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_valid(c)) {
