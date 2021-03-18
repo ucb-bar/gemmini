@@ -136,8 +136,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.acc.valid := pipe_regs(0).valid && pipe_regs(0).bits.acc
   io.acc.ina := acc_rdata
   io.acc.inb := pipe_regs(0).bits.data
-  val counter = RegInit(0.U(32.W))
-  counter := counter + 1.U
 
   val mask_len = t.getWidth / 8
   val mask_elem = UInt((t.getWidth / mask_len).W)
@@ -232,7 +230,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       }
 
       when (pipe_out.valid && isThisBank(pipe_out.bits.addr)) {
-        assert(!RegNext(((w_q_tail.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_))))
+        assert(!((w_q_tail.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_)))
         w_q_tail := w_q_tail << 1 | w_q_tail(nEntries-1)
         for (i <- 0 until nEntries) {
           when (w_q_tail(i)) {

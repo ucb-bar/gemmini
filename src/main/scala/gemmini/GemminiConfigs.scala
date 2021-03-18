@@ -58,6 +58,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              use_tlb_register_filter: Boolean,
                                                                              max_in_flight_reqs: Int,
 
+                                                                             ex_read_from_spad: Boolean,
+                                                                             ex_read_from_acc: Boolean,
+                                                                             ex_write_to_spad: Boolean,
+                                                                             ex_write_to_acc: Boolean,
+
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth
@@ -69,6 +74,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (acc_banks * meshColumns * tileColumns * accType.getWidth)
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / acc_banks
   }
+  require (!acc_singleported || (num_acc_sub_banks <= 4 && isPow2(num_acc_sub_banks)))
 
   val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries)
 
@@ -91,7 +97,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
   val mvin_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
-  val mvout_cols_bits = log2Up(meshColumns * tileColumns + 1)
+  val mvout_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
 
   val load_states = 3
@@ -199,7 +205,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
             case (8, 24) => (scala.Float.MinValue.toString, scala.Float.MaxValue.toString)
             case (11, 53) => (scala.Double.MinValue.toString, scala.Double.MaxValue.toString)
             case (e, s) => (((Range(-1,-(s),-1).map(-Math.pow(2, _)).foldLeft(-1.0)(_ + _)) * Math.pow(2, Math.pow(2, e - 1) - 1)).toString, ((Range(-1,-(s),-1).map(Math.pow(2, _)).foldLeft(1.0)(_ + _)) * Math.pow(2, Math.pow(2, e - 1) - 1)).toString)
-            //case _ => throw new IllegalArgumentException(s"Only single- and double-precision IEEE754 floating point types are currently supported")
           }
         case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
       }
@@ -272,8 +277,15 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     // Datatype of the systolic array
     val limits = limitsOfDataType(inputType)
     header ++= s"typedef ${c_type(inputType)} elem_t;\n"
-    header ++= s"static const elem_t elem_t_max = ${limits._2};\n"
-    header ++= s"static const elem_t elem_t_min = ${limits._1};\n"
+    if (inputType.isInstanceOf[Float] && !((inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (8, 24) || (inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (11, 53)))
+    {
+      header ++= "#define ELEM_T_IS_LOWPREC_FLOAT\n"
+      header ++= s"static const float elem_t_max = ${limits._2};\n"
+      header ++= s"static const float elem_t_min = ${limits._1};\n"
+    } else {
+      header ++= s"static const elem_t elem_t_max = ${limits._2};\n"
+      header ++= s"static const elem_t elem_t_min = ${limits._1};\n"
+    }
     header ++= s"typedef ${c_type(accType)} acc_t;\n"
     header ++= s"typedef ${full_c_type(inputType)} full_t;\n\n"
 
@@ -350,6 +362,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                  |         result; })
                  |""".stripMargin
     header ++= "\n"
+
+    header ++= """// Rounding right shift equation: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
+#define ROUNDING_RIGHT_SHIFT_BITS(x, shift) \
+((shift) > 0 ? (((x) >> (shift)) + \
+    (((shift) == 0 ? 0 : (((x) >> ((shift)-1)) & 1)) & \
+         ((((shift) <= 1 ? 0 : ((x) & ((1 << ((shift)-1)) - 1))) != 0) | (((x) >> (shift)) & 1)))) : ((x) << (-(shift))))"""
+    header ++= "\n\n"
 
     header ++= """#define ACC_SCALE(x, scale) \
 """

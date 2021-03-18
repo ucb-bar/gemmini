@@ -49,20 +49,20 @@ object GemminiConfigs {
     ex_queue_length = 8,
 
     rob_entries = 16,
-    hasIm2col = true, //declare im2col block
+    hasIm2col = false, //declare im2col block
 
     sp_banks = 4,
     sp_singleported = true,
     acc_banks = 2,
-    acc_singleported = true,
     acc_latency = 2,
-    num_acc_sub_banks = 2,
+    acc_singleported = false,
+    num_acc_sub_banks = -1,
+
     sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     dataflow = Dataflow.BOTH,
     acc_capacity = CapacityInKilobytes(64),
     mem_pipeline = 4,
-
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
@@ -109,7 +109,7 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      5, Float(8, 24), 4,
+      4, Float(8, 24), 4,
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (elem_t)y);})"
     )),
@@ -150,7 +150,7 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      5, Float(8, 24), 4,
+      1, Float(8, 24), -1, // TODO pipelining should be 5
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
     ),
@@ -159,12 +159,25 @@ object GemminiConfigs {
     acc_read_small_width = true,
 
     pe_latency = 0,
+
+    ex_read_from_spad = true,
+    ex_read_from_acc = true,
+    ex_write_to_spad = true,
+    ex_write_to_acc = true
   )
 
-  val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS)
-  val largeChipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64), dataflow=Dataflow.WS,
+  val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
+    acc_scale_args=defaultConfig.acc_scale_args.copy(latency=4),
+    acc_singleported=true,
+    num_acc_sub_banks=2,
+    ex_read_from_acc=false,
+    ex_write_to_spad=false
+  )
+  val largeChipConfig = chipConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64),
     meshRows=32, meshColumns=32
   )
+
+  val highPerfConfig = defaultConfig.copy(dataflow=Dataflow.WS, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, max_in_flight_reqs = 64)
 }
 
 /**
@@ -193,11 +206,9 @@ class DualGemminiConfig extends Config((site, here, up) => {
     var fp_gemmini: Gemmini[_,_,_] = null
     val int_fn = (p: Parameters) => {
       implicit val q = p
-      int_gemmini = LazyModule(new Gemmini(GemminiConfigs.defaultConfig.copy(
+      int_gemmini = LazyModule(new Gemmini(GemminiConfigs.chipConfig.copy(
         opcodes = OpcodeSet.custom3,
-        sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32),
-        use_shared_ext_mem = true,
-        dataflow = Dataflow.WS
+        use_shared_ext_mem = true
       )))
       int_gemmini
     }

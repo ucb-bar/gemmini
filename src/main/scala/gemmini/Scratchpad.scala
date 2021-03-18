@@ -31,7 +31,10 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr)
                               (implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val laddr = local_addr_t.cloneType
+
   val len = UInt(16.W) // TODO don't use a magic number for the width here
+  val block = UInt(8.W) // TODO don't use a magic number for the width here
+
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
   val status = new MStatus
 
@@ -284,6 +287,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
        writeData_is_all_zeros -> 0.U,
        writeData_is_full_width -> fullAccWriteData
     ))
+    writer.module.io.req.bits.block := write_issue_q.io.deq.bits.block
     writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
     writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
@@ -602,6 +606,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
               bio.read.resp.valid &&
               write_issue_q.io.enq.ready &&
               write_scale_q.io.deq.bits.laddr.is_acc_addr &&
+              !write_scale_q.io.deq.bits.laddr.is_garbage() &&
               write_scale_q.io.deq.bits.laddr.acc_bank() === i.U) {
           write_scale_q.io.deq.ready   := true.B
           acc_scale_unit.io.in.valid := true.B
