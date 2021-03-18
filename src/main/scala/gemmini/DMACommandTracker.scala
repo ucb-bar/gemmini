@@ -6,7 +6,7 @@ import chisel3.util._
 
 // This module is meant to go inside the Load controller, where it can track which commands are currently
 // in flight and which are completed
-class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => T) extends Module {
+class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => T) extends Module {
   def cmd_id_t = UInt((log2Ceil(nCmds) max 1).W)
 
   val io = IO(new Bundle {
@@ -24,12 +24,6 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
         override def cloneType: this.type = new BitsT(tag_t.cloneType, cmd_id_t.cloneType).asInstanceOf[this.type]
       }
 
-      /*val bits = new Bundle {
-        val tag = Input(tag_t)
-        val bytes_to_read = Input(UInt(log2Up(maxBytes+1).W))
-        val cmd_id = Output(cmd_id_t)
-      }*/
-
       val bits = new BitsT(tag_t.cloneType, cmd_id_t.cloneType)
 
       def fire(dummy: Int = 0) = valid && ready
@@ -43,11 +37,6 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
       override def cloneType: this.type = new RequestReturnedT(cmd_id_t.cloneType).asInstanceOf[this.type]
     }
 
-    /*val request_returned = Flipped(Valid(new Bundle {
-      val bytes_read = UInt(log2Up(maxBytes+1).W)
-      val cmd_id = cmd_id_t
-    }))*/
-
     val request_returned = Flipped(Valid(new RequestReturnedT(cmd_id_t.cloneType)))
 
     class CmdCompletedT(cmd_id_t: UInt, tag_t: T) extends Bundle {
@@ -56,11 +45,6 @@ class DMAReadCommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t:
 
       override def cloneType: this.type = new CmdCompletedT(cmd_id_t.cloneType, tag_t.cloneType).asInstanceOf[this.type]
     }
-
-    /*val cmd_completed = Decoupled(new Bundle {
-      val cmd_id = cmd_id_t
-      val tag = tag_t
-    })*/
 
     val cmd_completed = Decoupled(new CmdCompletedT(cmd_id_t.cloneType, tag_t.cloneType))
 
