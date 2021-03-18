@@ -47,9 +47,8 @@ object GemminiConfigs {
     st_queue_length = 2,
     ex_queue_length = 8,
 
-    rob_full_entries = 12,
-    rob_read_only_entries = 4,
-    rob_write_only_entries = 4,
+    rob_full_entries = 20,
+    rob_partial_entries = 12,
 
     hasIm2col = false, //declare im2col block
 

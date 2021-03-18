@@ -22,8 +22,7 @@ object DSEBaseConfig {
     st_queue_length = 2,
     ex_queue_length = 8,
     rob_full_entries = 8,
-    rob_read_only_entries = 1,
-    rob_write_only_entries = 1,
+    rob_partial_entries = 1,
 
     sp_banks = 4, // TODO support one-bank designs
     acc_banks = 1,

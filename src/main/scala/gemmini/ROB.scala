@@ -73,9 +73,14 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     val is_config = Bool()
 
-    val op1 = UDValid(new OpT)
-    val op2 = UDValid(new OpT)
-    val dst = UDValid(new OpT)
+    val opa = UDValid(new OpT)
+    val opa_is_dst = Bool()
+    val opb = UDValid(new OpT)
+
+    // val op1 = UDValid(new OpT)
+    // val op1 = UDValid(new OpT)
+    // val op2 = UDValid(new OpT)
+    // val dst = UDValid(new OpT)
 
     val issued = Bool()
 
@@ -89,12 +94,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     // Debugging signals
     val allocated_at = UInt(instructions_allocated.getWidth.W)
   }
-
   val full_entries = Reg(Vec(rob_full_entries, UDValid(new Entry)))
-  val read_only_entries = Reg(Vec(rob_read_only_entries, UDValid(new Entry)))
-  val write_only_entries = Reg(Vec(rob_write_only_entries, UDValid(new Entry)))
+  val partial_entries = Reg(Vec(rob_partial_entries, UDValid(new Entry)))
 
-  val entries = full_entries ++ read_only_entries ++ write_only_entries
+  val entries = full_entries ++ partial_entries
 
   val empty = !entries.map(_.valid).reduce(_ || _)
   val full = entries.map(_.valid).reduce(_ && _)
@@ -114,11 +117,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   new_entry := DontCare
   val new_full_allocs = Wire(Vec(rob_full_entries, Bool()))
   new_full_allocs.foreach(_ := false.B)
-  val new_read_only_allocs = Wire(Vec(rob_read_only_entries, Bool()))
-  new_read_only_allocs.foreach(_ := false.B)
-  val new_write_only_allocs = Wire(Vec(rob_write_only_entries, Bool()))
-  new_write_only_allocs.foreach(_ := false.B)
-  val new_entry_oh = new_full_allocs ++ new_read_only_allocs ++ new_write_only_allocs
+  val new_partial_allocs = Wire(Vec(rob_partial_entries, Bool()))
+  new_partial_allocs.foreach(_ := false.B)
+  val new_entry_oh = new_full_allocs ++ new_partial_allocs
   val alloc_fire = io.alloc.fire()
 
   val raws_probe = WireInit(0.U(rob_entries.W))
@@ -158,24 +159,44 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     new_entry.is_config := funct === CONFIG_CMD
 
-    new_entry.op1.valid := funct === PRELOAD_CMD || funct_is_compute
-    new_entry.op1.bits.start := cmd.rs1.asTypeOf(local_addr_t)
-    when (funct === PRELOAD_CMD) {
-      val preload_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48)
-      new_entry.op1.bits.end := new_entry.op1.bits.start + preload_rows
-      new_entry.op1.bits.wraps_around := new_entry.op1.bits.start.add_with_overflow(preload_rows)._2
-    }.otherwise {
-      val compute_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48) * a_stride
-      new_entry.op1.bits.end := new_entry.op1.bits.start + compute_rows
-      new_entry.op1.bits.wraps_around := new_entry.op1.bits.start.add_with_overflow(compute_rows)._2
+    val op1 = Wire(UDValid(new OpT))
+    op1.valid := false.B
+    op1.bits := DontCare
+    val op2 = Wire(UDValid(new OpT))
+    op2.valid := false.B
+    op2.bits := DontCare
+    val dst = Wire(UDValid(new OpT))
+    dst.valid := false.B
+    dst.bits := DontCare
+    assert(!(op1.valid && op2.valid && dst.valid))
+
+    new_entry.opa_is_dst := dst.valid
+    when (dst.valid) {
+      new_entry.opa := dst
+      new_entry.opb := Mux(op1.valid, op1, op2)
+    } .otherwise {
+      new_entry.opa := Mux(op1.valid, op1, op2)
+      new_entry.opb := op2
     }
 
-    new_entry.op2.valid := funct_is_compute || funct === STORE_CMD
-    new_entry.op2.bits.start := cmd.rs2.asTypeOf(local_addr_t)
+    op1.valid := funct === PRELOAD_CMD || funct_is_compute
+    op1.bits.start := cmd.rs1.asTypeOf(local_addr_t)
+    when (funct === PRELOAD_CMD) {
+      val preload_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48)
+      op1.bits.end := op1.bits.start + preload_rows
+      op1.bits.wraps_around := op1.bits.start.add_with_overflow(preload_rows)._2
+    }.otherwise {
+      val compute_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48) * a_stride
+      op1.bits.end := op1.bits.start + compute_rows
+      op1.bits.wraps_around := op1.bits.start.add_with_overflow(compute_rows)._2
+    }
+
+    op2.valid := funct_is_compute || funct === STORE_CMD
+    op2.bits.start := cmd.rs2.asTypeOf(local_addr_t)
     when (funct_is_compute) {
       val compute_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
-      new_entry.op2.bits.end := new_entry.op2.bits.start + compute_rows
-      new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(compute_rows)._2
+      op2.bits.end := op2.bits.start + compute_rows
+      op2.bits.wraps_around := op2.bits.start.add_with_overflow(compute_rows)._2
     }.otherwise {
       val block_stride = st_block_stride
 
@@ -185,29 +206,29 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val mvout_mats = mvout_cols / block_cols.U + (mvout_cols % block_cols.U =/= 0.U)
       val total_mvout_rows = ((mvout_mats - 1.U) * block_stride) + mvout_rows
 
-      new_entry.op2.bits.end := new_entry.op2.bits.start + total_mvout_rows
-      new_entry.op2.bits.wraps_around := new_entry.op2.bits.start.add_with_overflow(total_mvout_rows)._2
+      op2.bits.end := op2.bits.start + total_mvout_rows
+      op2.bits.wraps_around := op2.bits.start.add_with_overflow(total_mvout_rows)._2
     }
 
-    new_entry.dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
-    new_entry.dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
+    dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
+    dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
       val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
-      new_entry.dst.bits.end := new_entry.dst.bits.start + preload_rows
-      new_entry.dst.bits.wraps_around := new_entry.dst.bits.start.add_with_overflow(preload_rows)._2
+      dst.bits.end := dst.bits.start + preload_rows
+      dst.bits.wraps_around := dst.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
       val id = MuxCase(0.U, Seq((new_entry.cmd.inst.funct === LOAD2_CMD) -> 1.U,
         (new_entry.cmd.inst.funct === LOAD3_CMD) -> 2.U))
       val block_stride = ld_block_strides(id)
 
-      val mvin_cols = cmd.rs2(spAddrBits + mvin_cols_bits - 1, spAddrBits)
-      val mvin_rows = cmd.rs2(spAddrBits + mvin_cols_bits + mvin_rows_bits - 1, spAddrBits + mvin_cols_bits)
+      val mvin_cols = cmd.rs2(32 + mvin_cols_bits - 1, 32)
+      val mvin_rows = cmd.rs2(48 + mvin_rows_bits - 1, 48)
 
       val mvin_mats = mvin_cols / block_cols.U + (mvin_cols % block_cols.U =/= 0.U)
       val total_mvin_rows = ((mvin_mats - 1.U) * block_stride) + mvin_rows
 
-      new_entry.dst.bits.end := new_entry.dst.bits.start + total_mvin_rows
-      new_entry.dst.bits.wraps_around := new_entry.dst.bits.start.add_with_overflow(total_mvin_rows)._2
+      dst.bits.end := dst.bits.start + total_mvin_rows
+      dst.bits.wraps_around := dst.bits.start.add_with_overflow(total_mvin_rows)._2
     }
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
@@ -222,65 +243,58 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     ))
 
     assert(is_load || is_store || is_ex)
+    // This can be RAW op1/op2 <- dst, or WAW dst <- dst
+    val opa_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits) })
+    // This can be WAR dst <- op1/op2
+    val opa_matches_opb = VecInit(entries.map { e => e.valid && e.bits.opb.valid && new_entry.opa.bits.overlaps(e.bits.opb.bits) })
+    // This can be RAW op2 <- dst
+    val opb_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opb.bits.overlaps(e.bits.opa.bits) })
 
-    // TODO we should checck whether op1 and op2 are valid here
-    val raws = entries.map { e =>
-      // We search for all entries which write to an address which we read from
-      e.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
-        (new_entry.op1.valid && new_entry.op1.bits.overlaps(e.bits.dst.bits)) ||
-          (new_entry.op2.valid && new_entry.op2.bits.overlaps(e.bits.dst.bits)))
-    }
+    val op1_matches_opa = VecInit((entries zip (opa_matches_opa zip opb_matches_opa)).map { case (e, (a, b)) =>
+      e.valid && op1.valid && Mux(dst.valid, b, a)
+    })
+    val op2_matches_opa = VecInit((entries zip (opa_matches_opa zip opb_matches_opa)).map { case (e, (a, b)) =>
+      e.valid && op2.valid && Mux(dst.valid || op1.valid, b, a)
+    })
+    val dst_matches_opa = VecInit((entries zip opa_matches_opa).map { case (e, a) =>
+      e.valid && dst.valid && a
+    })
+    val dst_matches_opb = VecInit((entries zip opa_matches_opb).map { case (e, b) =>
+      e.valid && dst.valid && b
+    })
 
-    val raws_op1 = entries.map { e =>
-      // We search for all entries which write to an address which we read from
-      e.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
-        (new_entry.op1.valid && new_entry.op1.bits.overlaps(e.bits.dst.bits)))
-    }
+    val op1_raws_opa = VecInit((entries zip op1_matches_opa).map { case (e, m) =>
+      m && op1.valid && e.bits.q =/= new_entry.q && e.bits.opa_is_dst
+    })
+    val op2_raws_opa = VecInit((entries zip op2_matches_opa).map { case (e, m) =>
+      m && op2.valid && e.bits.q =/= new_entry.q && e.bits.opa_is_dst
+    })
+    val raws = VecInit((op1_raws_opa zip op2_raws_opa).map { case (a, b) => a || b })
 
-    val raws_op2 = entries.map { e =>
-      // We search for all entries which write to an address which we read from
-      e.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q && (
-          (new_entry.op2.valid && new_entry.op2.bits.overlaps(e.bits.dst.bits)))
-    }
+    val dst_wars_opa = VecInit((entries zip dst_matches_opa).map { case (e, m) =>
+      m && dst.valid && e.bits.q =/= new_entry.q && !e.bits.opa_is_dst
+    })
+    val dst_wars_opb = VecInit((entries zip dst_matches_opb).map { case (e, m) =>
+      m && dst.valid && e.bits.q =/= new_entry.q
+    })
+    val wars = VecInit((dst_wars_opa zip dst_wars_opb).map { case (a, b) => a || b })
 
-    // TODO we should checck whether op1 and op2 are valid here
-    val wars = entries.map { e =>
-      // We search for all entries which read from an address that we write to
-      e.valid && new_entry.dst.valid && e.bits.q =/= new_entry.q && (
-        (e.bits.op1.valid && e.bits.op1.bits.overlaps(new_entry.dst.bits)) ||
-          (e.bits.op2.valid && e.bits.op2.bits.overlaps(new_entry.dst.bits)))
-    }
+    val dst_waws_opa = VecInit((entries zip dst_matches_opa).map { case (e, m) =>
+      m && dst.valid && (e.bits.q =/= new_entry.q || new_entry.q === ldq) && e.bits.opa_is_dst
+    })
+    val waws = dst_waws_opa
 
-    val wars_op1 = entries.map { e =>
-      // We search for all entries which read from an address that we write to
-      e.valid && new_entry.dst.valid && e.bits.q =/= new_entry.q && (
-        e.bits.op1.bits.overlaps(new_entry.dst.bits))
-    }
-
-    val wars_op2 = entries.map { e =>
-      // We search for all entries which read from an address that we write to
-      e.valid && new_entry.dst.valid && e.bits.q =/= new_entry.q && (
-        e.bits.op2.bits.overlaps(new_entry.dst.bits))
-    }
-
-    // TODO we should checck whether op1 and op2 are valid here
-    val waws = entries.map { e =>
-      // We search for all entries which write to an address that we write to
-      e.valid && new_entry.dst.valid && e.bits.dst.valid && e.bits.q =/= new_entry.q &&
-        (new_entry.dst.bits.overlaps(e.bits.dst.bits) || e.bits.dst.bits.overlaps(new_entry.dst.bits))
-    }
-
-    val older_in_same_q = entries.map { e =>
+    val older_in_same_q = VecInit(entries.map { e =>
       e.valid && e.bits.q === new_entry.q && !e.bits.issued
-    }
+    })
 
-    val is_st_and_must_wait_for_prior_ex_config = entries.map { e =>
+    val is_st_and_must_wait_for_prior_ex_config = VecInit(entries.map { e =>
       e.valid && new_entry.q === stq && !new_entry.is_config && e.bits.q === exq && e.bits.is_config
-    }
+    })
 
-    val is_ex_config_and_must_wait_for_prior_st = entries.map { e =>
+    val is_ex_config_and_must_wait_for_prior_st = VecInit(entries.map { e =>
       e.valid && new_entry.q === exq && new_entry.is_config && e.bits.q === stq && !e.bits.is_config
-    }
+    })
 
     new_entry.deps := (Cat(raws) | Cat(wars) | Cat(waws) | Cat(older_in_same_q) |
       Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).asBools().reverse
@@ -288,10 +302,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     raws_probe := Cat(raws.reverse)
     waws_probe := Cat(waws.reverse)
     wars_probe := Cat(wars.reverse)
-    wars_op1_probe := Cat(wars_op1.reverse)
-    wars_op2_probe := Cat(wars_op2.reverse)
-    raws_op1_probe := Cat(raws_op1.reverse)
-    raws_op2_probe := Cat(raws_op2.reverse)
     older_in_same_q_probe := Cat(older_in_same_q.reverse)
     is_st_and_must_wait_for_prior_ex_config_probe := Cat(is_st_and_must_wait_for_prior_ex_config.reverse)
     is_ex_config_and_must_wait_for_prior_st_probe := Cat(is_ex_config_and_must_wait_for_prior_st.reverse)
@@ -300,25 +310,17 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
-    val is_read_only = !new_entry.dst.valid
-    val is_write_only = !new_entry.op1.valid && !new_entry.op2.valid
+    val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
     val full_alloc_id = MuxCase((rob_full_entries-1).U, full_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
-    val read_only_alloc_id = MuxCase((rob_read_only_entries-1).U, read_only_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
-    val write_only_alloc_id = MuxCase((rob_write_only_entries-1).U, write_only_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+    val partial_alloc_id = MuxCase((rob_partial_entries-1).U, partial_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
 
-    when (is_read_only && !read_only_entries(read_only_alloc_id).valid) {
+    when (!is_full && !partial_entries(partial_alloc_id).valid) {
       io.alloc.ready := true.B
-      read_only_entries(read_only_alloc_id).valid := true.B
-      read_only_entries(read_only_alloc_id).bits := new_entry
-      read_only_entries(read_only_alloc_id).bits.dst.valid := false.B
-      new_read_only_allocs(read_only_alloc_id) := true.B
-    } .elsewhen (is_write_only && !write_only_entries(write_only_alloc_id).valid) {
-      io.alloc.ready := true.B
-      write_only_entries(write_only_alloc_id).valid := true.B
-      write_only_entries(write_only_alloc_id).bits := new_entry
-      write_only_entries(write_only_alloc_id).bits.op1.valid := false.B
-      write_only_entries(write_only_alloc_id).bits.op2.valid := false.B
-      new_write_only_allocs(write_only_alloc_id) := true.B
+      partial_entries(partial_alloc_id).valid := true.B
+      partial_entries(partial_alloc_id).bits := new_entry
+      partial_entries(partial_alloc_id).bits.opb.valid := false.B
+      partial_entries(partial_alloc_id).bits.opb.bits := DontCare
+      new_partial_allocs(partial_alloc_id) := true.B
     } .elsewhen (!full_entries(full_alloc_id).valid) {
       io.alloc.ready := true.B
       full_entries(full_alloc_id).valid := true.B
