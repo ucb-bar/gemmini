@@ -6,8 +6,8 @@ import chisel3.experimental.DataMirror
 
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
-import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters}
-import freechips.rocketchip.tilelink.TLBundleA
+import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters, RoCCCommand}
+import freechips.rocketchip.tilelink.{TLBundleA, TLHints, TLMessages}
 import testchipip.TLHelper
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
@@ -58,6 +58,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits)))
       val resp = Decoupled(new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to, config.mvin_scale_t_bits))
+      val prefetch = Flipped(Decoupled(new RoCCCommand))
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
       val flush = Input(Bool())
@@ -70,16 +71,17 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     val beatPacker = Module(new BeatMerger(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows, config.mvin_scale_t_bits, nCmds))
 
     core.module.io.req <> io.req
+    core.module.io.prefetch <> io.prefetch
     io.tlb <> core.module.io.tlb
     io.busy := xactTracker.io.busy
     core.module.io.flush := io.flush
 
     xactTracker.io.alloc <> core.module.io.reserve
-    xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, beatPacker.io.req.fire())
-    xactTracker.io.peek.pop := beatPacker.io.in.fire() && core.module.io.beatData.bits.last
+    xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, core.module.io.beatData.fire())
+    xactTracker.io.peek.pop := core.module.io.beatData.fire() && core.module.io.beatData.bits.last
 
-    core.module.io.beatData.ready := beatPacker.io.in.ready
-    beatPacker.io.req.valid := core.module.io.beatData.valid
+    core.module.io.beatData.ready := beatPacker.io.in.ready || core.module.io.beatData.bits.is_hintack
+    beatPacker.io.req.valid := core.module.io.beatData.valid && !core.module.io.beatData.bits.is_hintack
     beatPacker.io.req.bits := xactTracker.io.peek.entry
     beatPacker.io.req.bits.lg_len_req := core.module.io.beatData.bits.lg_len_req
     beatPacker.io.in.valid := core.module.io.beatData.valid
@@ -106,6 +108,7 @@ class StreamReadBeat (val nXacts: Int, val beatBits: Int, val maxReqBytes: Int) 
   val data = UInt(beatBits.W)
   val lg_len_req = UInt(log2Up(log2Up(maxReqBytes+1)+1).W)
   val last = Bool()
+  val is_hintack = Bool()
 }
 
 // TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
@@ -131,6 +134,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits)))
+      val prefetch = Flipped(Decoupled(new RoCCCommand))
       val reserve = new XactTrackerAllocIO(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits, nCmds)
       val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits, maxBytes))
       val tlb = new FrontendTLBIO
@@ -193,6 +197,13 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       lgSize = read_lg_size
     )._2
 
+    val prefetch = edge.Hint(
+      fromSource = io.reserve.xactid,
+      toAddress = 0.U,
+      lgSize = 1.U,
+      param = TLHints.PREFETCH_READ
+    )._2
+
     class TLBundleAWithInfo extends Bundle {
       val tl_a = DataMirror.internal.chiselTypeClone[TLBundleA](tl.a.bits)
       val vaddr = Output(UInt(vaddrBits.W))
@@ -200,10 +211,39 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
-    untranslated_a.valid := state === s_req_new_block && io.reserve.ready
-    untranslated_a.bits.tl_a := get
-    untranslated_a.bits.vaddr := read_vaddr
-    untranslated_a.bits.status := req.status
+    untranslated_a.valid := false.B
+    untranslated_a.bits := DontCare
+    io.prefetch.ready := false.B
+    io.reserve.valid := false.B
+    when (state === s_req_new_block) {
+      io.reserve.valid := untranslated_a.ready
+      untranslated_a.valid := io.reserve.ready
+      untranslated_a.bits.tl_a := get
+      untranslated_a.bits.vaddr := read_vaddr
+      untranslated_a.bits.status := req.status
+
+      when (untranslated_a.fire()) {
+        val next_vaddr = req.vaddr + read_bytes_read // send_size
+        val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
+        req.vaddr := next_vaddr
+
+        bytesRequested := bytesRequested + read_bytes_read // send_size
+
+        // when (send_size >= bytesLeft) {
+        when (read_bytes_read >= bytesLeft) {
+          // We're done with this request at this point
+          state_machine_ready_for_req := true.B
+          state := s_idle
+        }
+      }
+    } .elsewhen (io.prefetch.valid) {
+      io.reserve.valid := untranslated_a.ready
+      untranslated_a.valid := io.reserve.ready
+      io.prefetch.ready := untranslated_a.ready && io.reserve.ready
+      untranslated_a.bits.tl_a := prefetch
+      untranslated_a.bits.vaddr := io.prefetch.bits.rs1
+      untranslated_a.bits.status := io.prefetch.bits.status
+    }
 
     // 0 goes to retries, 1 goes to state machine
     val retry_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -233,7 +273,6 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     tl.a.bits := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
 
-    io.reserve.valid := state === s_req_new_block && untranslated_a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
     io.reserve.entry.is_acc := req.is_acc
     io.reserve.entry.accumulate := req.accumulate
@@ -253,20 +292,6 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         if (bytesRequested.getWidth >= log2Up(spadWidthBytes+1)) bytesRequested / spadWidthBytes.U else 0.U)
     io.reserve.entry.spad_row_offset := Mux(req.has_acc_bitwidth, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
 
-    when (untranslated_a.fire()) {
-      val next_vaddr = req.vaddr + read_bytes_read // send_size
-      val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
-      req.vaddr := next_vaddr
-
-      bytesRequested := bytesRequested + read_bytes_read // send_size
-
-      // when (send_size >= bytesLeft) {
-      when (read_bytes_read >= bytesLeft) {
-        // We're done with this request at this point
-        state_machine_ready_for_req := true.B
-        state := s_idle
-      }
-    }
 
     // Forward TileLink read responses to the reservation buffer
     tl.d.ready := io.beatData.ready
@@ -275,6 +300,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.beatData.bits.data := tl.d.bits.data
     io.beatData.bits.lg_len_req := tl.d.bits.size
     io.beatData.bits.last := edge.last(tl.d)
+    io.beatData.bits.is_hintack := tl.d.bits.opcode === TLMessages.HintAck
     // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
 
     // Accepting requests to kick-start the state machine

@@ -207,6 +207,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // Misc. ports
       val busy = Output(Bool())
       val flush = Input(Bool())
+
+      val prefetch = Flipped(Decoupled(new RoCCCommand))
     })
 
     val write_dispatch_q = Queue(io.dma.write.req)
@@ -297,6 +299,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     reader.module.io.req.bits.block_stride := read_issue_q.io.deq.bits.block_stride
     reader.module.io.req.bits.status := read_issue_q.io.deq.bits.status
     reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
+    reader.module.io.prefetch <> io.prefetch
 
     val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(
       config.mvin_scale_args,
