@@ -219,7 +219,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   spad.module.io.dma.write <> store_controller.io.dma
   ex_controller.io.srams.read <> spad.module.io.srams.read
   ex_controller.io.srams.write <> spad.module.io.srams.write
-  ex_controller.io.acc.read <> spad.module.io.acc.read
+  spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
+  ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
   ex_controller.io.acc.write <> spad.module.io.acc.write
 
   spad.module.io.prefetch <> prefetch
