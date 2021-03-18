@@ -24,6 +24,8 @@ object DSEBaseConfig {
     rob_entries = 8,
     sp_banks = 4, // TODO support one-bank designs
     acc_banks = 1,
+    acc_singleported = false,
+    num_acc_sub_banks = -1,
     sp_capacity = CapacityInKilobytes(64),
     sp_singleported = false,
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
@@ -52,11 +54,16 @@ object DSEBaseConfig {
         val r = (point_five & (zeros | ones_digit)).asBool()
 
         (t >> u).asSInt() + Mux(r, 1.S, 0.S)
-      }, 0, UInt(8.W)),
+      }, 0, UInt(8.W), -1),
     acc_read_full_width = true,
     acc_read_small_width = true,
     use_dedicated_tl_port = false,
     pe_latency = 0,
+
+    ex_read_from_spad = true,
+    ex_read_from_acc = true,
+    ex_write_to_spad = true,
+    ex_write_to_acc = true,
 
     tlb_size = 4,
     use_tlb_register_filter = true,
