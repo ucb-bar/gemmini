@@ -5,6 +5,13 @@ import chisel3.util._
 
 import Util._
 
+class AccumulatorReadRespWithFullData[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U, shift_width: Int) extends Bundle {
+  val resp = new AccumulatorReadResp(fullDataType, scale_t, shift_width)
+  val full_data = fullDataType.cloneType
+  override def cloneType: this.type = new AccumulatorReadRespWithFullData(fullDataType.cloneType, scale_t, shift_width).asInstanceOf[this.type]
+}
+
+
 class AccumulatorScaleResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]]) extends Bundle {
   val full_data = fullDataType.cloneType
   val data = rDataType.cloneType
@@ -75,28 +82,34 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
   val acc_scale_latency = scale_args.latency
 
   if (num_scale_units == -1) {
-    val pipe_out = Pipeline(io.in, acc_scale_latency, Seq.fill(acc_scale_latency)((x: AccumulatorReadResp[T,U]) => x) :+ {
-      x: AccumulatorReadResp[T,U] =>
-      val activated_rdata = VecInit(x.data.map(v => VecInit(v.map { e =>
+    val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, shift_width)(ev)))
+    in.valid := io.in.valid
+    io.in.ready := in.ready
+    in.bits.resp := io.in.bits
+    in.bits.full_data := io.in.bits.data
+
+    val pipe_out = Pipeline(in, acc_scale_latency, Seq.fill(acc_scale_latency)((x: AccumulatorReadRespWithFullData[T,U]) => x) :+ {
+      x: AccumulatorReadRespWithFullData[T,U] =>
+      val activated_rdata = VecInit(x.resp.data.map(v => VecInit(v.map { e =>
         // val e_scaled = e >> x.shiftls
-        val e_scaled = scale_args.scale_func(e, x.scale)
+        val e_scaled = scale_args.scale_func(e, x.resp.scale)
         val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
         val e_act = MuxCase(e_clipped, Seq(
-          (x.act === Activation.RELU) -> e_clipped.relu,
-          (x.act === Activation.RELU6) -> e_clipped.relu6(x.relu6_shift)))
+          (x.resp.act === Activation.RELU) -> e_clipped.relu,
+          (x.resp.act === Activation.RELU6) -> e_clipped.relu6(x.resp.relu6_shift)))
 
         e_act
       })))
       val result = WireInit(x)
-      result.data := activated_rdata
+      result.resp.data := activated_rdata
       result
     })
     out.valid      := pipe_out.valid
     pipe_out.ready := out.ready
-    out.bits.full_data := pipe_out.bits.data
-    out.bits.data      := pipe_out.bits.data
-    out.bits.fromDMA   := pipe_out.bits.fromDMA
-    out.bits.acc_bank_id := pipe_out.bits.acc_bank_id
+    out.bits.full_data := pipe_out.bits.full_data
+    out.bits.data      := pipe_out.bits.resp.data
+    out.bits.fromDMA   := pipe_out.bits.resp.fromDMA
+    out.bits.acc_bank_id := pipe_out.bits.resp.acc_bank_id
   } else {
     val width = io.in.bits.data.size * io.in.bits.data(0).size
     val nEntries = 3
