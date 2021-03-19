@@ -187,13 +187,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh.io.a.valid := false.B
   mesh.io.b.valid := false.B
   mesh.io.d.valid := false.B
-  mesh.io.tag_in.valid := false.B
+  mesh.io.tag_and_rows_in.valid := false.B
   mesh.io.flush.valid := control_state === flush && !cntl_valid // We want to make sure that the mesh has absorbed all inputs before flushing
 
   mesh.io.a.bits := DontCare
   mesh.io.b.bits := DontCare
   mesh.io.d.bits := DontCare
-  mesh.io.tag_in.bits := DontCare
+  mesh.io.tag_and_rows_in.bits.rows := block_size.U
+  mesh.io.tag_and_rows_in.bits.tag := DontCare
   mesh.io.pe_control.propagate := Mux(control_state === flush, in_prop_flush, cntl.prop)
   mesh.io.pe_control.dataflow := cntl.dataflow
   mesh.io.pe_control.shift := cntl.shift
@@ -828,16 +829,16 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.a.valid := cntl.a_fire && dataA_valid
     mesh.io.b.valid := (cntl.b_fire && dataB_valid)
     mesh.io.d.valid := (cntl.d_fire && dataD_valid)
-    mesh.io.tag_in.valid := true.B
+    mesh.io.tag_and_rows_in.valid := true.B
 
     mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
-    mesh.io.tag_in.bits.rob_id := cntl.rob_id
-    mesh.io.tag_in.bits.addr := cntl.c_addr
-    mesh.io.tag_in.bits.cols := cntl.c_cols
-    mesh.io.tag_in.bits.rows := cntl.c_rows
+    mesh.io.tag_and_rows_in.bits.tag.rob_id := cntl.rob_id
+    mesh.io.tag_and_rows_in.bits.tag.addr := cntl.c_addr
+    mesh.io.tag_and_rows_in.bits.tag.cols := cntl.c_cols
+    mesh.io.tag_and_rows_in.bits.rows := cntl.c_rows
   }
 
   when (cntl_valid && cntl.perform_single_preload) {
@@ -848,7 +849,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   when (cntl_valid && cntl.perform_single_mul) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.tag_in.bits.addr.make_this_garbage()
+    mesh.io.tag_and_rows_in.bits.tag.addr.make_this_garbage()
   }
 
   // Scratchpad writes
