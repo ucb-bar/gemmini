@@ -466,8 +466,9 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
   val new_weights = b === 0.U && orow === 0.U && ocol === 0.U
-  val b_addr = Mux(new_weights, GARBAGE_ADDR,
-    b_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow * kcols * kchs +& kcol * kchs +& kch)
+  val b_addr = Mux(new_weights,
+    b_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow * kcols * kchs +& kcol * kchs +& kch,
+    GARBAGE_ADDR)
 
   // Commands
   val pre_cmd = Wire(new RoCCCommand)
@@ -518,8 +519,8 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
       krow := next_krow
       och := next_och
 
-      state := Mux(next_b === 0.U && next_orow === 0.U && next_ocol === 0.U &&
-        next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U,
+      state := Mux(next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U && next_b === 0.U &&
+        next_orow === 0.U && next_ocol === 0.U,
         idle, pre)
     }
   }
