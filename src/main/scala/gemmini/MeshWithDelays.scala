@@ -25,6 +25,10 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
 
   val tagqlen = (if (meshColumns == 1) 4 else 5) * (pe_latency+1) // TODO change the tag-queue so we can make this 3
+  class TagAndRowsT extends Bundle {
+    val tag = tagType
+    val rows = UInt(log2Up(block_size + 1).W)
+  }
 
   val io = IO(new Bundle {
     val a = Flipped(Decoupled(A_TYPE))
@@ -37,10 +41,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val a_transpose = Input(Bool())
     val bd_transpose = Input(Bool())
 
-    val tag_and_rows_in = Flipped(Decoupled(new Bundle {
-      val tag = tagType
-      val rows = UInt(log2Up(block_size + 1).W)
-    }))
+    val tag_and_rows_in = Flipped(Decoupled(new TagAndRowsT))
     val tag_out = Output(tagType)
     val tags_in_progress = Output(Vec(tagqlen, tagType))
 
