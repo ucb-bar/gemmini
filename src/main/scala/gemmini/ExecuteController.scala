@@ -544,54 +544,50 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           io.completed := cmd.bits(0).rob_id
 
           cmd.pop := 1.U
-
         }
-          // Preload
-          .elsewhen(DoPreloads(0) && cmd.valid(1) && (raw_hazards_are_impossible.B || !raw_hazard_pre)) {
-            perform_single_preload := true.B
-            performing_single_preload := true.B
+        // Preload
+        .elsewhen(DoPreloads(0) && cmd.valid(1) && (raw_hazards_are_impossible.B || !raw_hazard_pre)) {
+          perform_single_preload := true.B
+          performing_single_preload := true.B
 
-            //start_inputting_a := current_dataflow === Dataflow.OS.id.U
-            //start_inputting_d := true.B
+          //start_inputting_a := current_dataflow === Dataflow.OS.id.U
+          //start_inputting_d := true.B
 
-            start_inputting_a := a_should_be_fed_into_transposer
-            start_inputting_b := b_should_be_fed_into_transposer
-            start_inputting_d := true.B
+          start_inputting_a := a_should_be_fed_into_transposer
+          start_inputting_b := b_should_be_fed_into_transposer
+          start_inputting_d := true.B
 
-            control_state := compute
-          }
+          control_state := compute
+        }
 
-          // Overlap compute and preload
-          .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && (raw_hazards_are_impossible.B || (cmd.valid(2) && !raw_hazard_mulpre))) {
-            perform_mul_pre := true.B
-            performing_mul_pre := true.B
+        // Overlap compute and preload
+        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && (raw_hazards_are_impossible.B || (cmd.valid(2) && !raw_hazard_mulpre))) {
+          perform_mul_pre := true.B
+          performing_mul_pre := true.B
 
-            start_inputting_a := true.B
-            start_inputting_b := true.B
-            start_inputting_d := true.B
+          start_inputting_a := true.B
+          start_inputting_b := true.B
+          start_inputting_d := true.B
 
-            control_state := compute
-          }
+          control_state := compute
+        }
 
-          // Single mul
-          .elsewhen(DoComputes(0)) {
-            perform_single_mul := true.B
-            performing_single_mul := true.B
+        // Single mul
+        .elsewhen(DoComputes(0)) {
+          perform_single_mul := true.B
+          performing_single_mul := true.B
 
-            //start_inputting_a := current_dataflow === Dataflow.WS.id.U
-            //start_inputting_b := true.B
+          start_inputting_a := !a_should_be_fed_into_transposer
+          start_inputting_b := !b_should_be_fed_into_transposer
+          start_inputting_b := true.B
 
-            start_inputting_a := !a_should_be_fed_into_transposer
-            start_inputting_b := !b_should_be_fed_into_transposer
-            start_inputting_b := true.B
+          control_state := compute
+        }
 
-            control_state := compute
-          }
-
-          // Flush
-          .elsewhen(matmul_in_progress && current_dataflow === Dataflow.OS.id.U) {
-            control_state := flush
-          }
+        // Flush
+        .elsewhen(matmul_in_progress && (current_dataflow === Dataflow.OS.id.U || DoConfig)) {
+          control_state := flush
+        }
       }.elsewhen(matmul_in_progress && current_dataflow === Dataflow.OS.id.U) {
         // TODO code duplication
         control_state := flush
