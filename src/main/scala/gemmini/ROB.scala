@@ -206,8 +206,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
         (new_entry.cmd.inst.funct === LOAD3_CMD) -> 2.U))
       val block_stride = ld_block_strides(id)
 
-      val mvin_cols = cmd.rs2(spAddrBits + mvin_cols_bits - 1, spAddrBits)
-      val mvin_rows = cmd.rs2(spAddrBits + mvin_cols_bits + mvin_rows_bits - 1, spAddrBits + mvin_cols_bits)
+      val mvin_cols = cmd.rs2(32 + mvin_cols_bits - 1, 32)
+      val mvin_rows = cmd.rs2(48 + mvin_rows_bits - 1, 48)
 
       val mvin_mats = mvin_cols / block_cols.U + (mvin_cols % block_cols.U =/= 0.U)
       val total_mvin_rows = ((mvin_mats - 1.U) * block_stride) + mvin_rows
