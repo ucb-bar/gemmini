@@ -83,7 +83,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val flushing = RegInit(false.B)
   val flushing_or_about_to = flushing || io.flush.fire()
 
-  val total_fires = RegEnableThru(io.tag_and_rows_in.bits.rows, io.tag_and_rows_in.fire())
+  val total_fires = RegEnableThru(io.tag_and_rows_in.bits.rows, block_size.U, io.tag_and_rows_in.fire())
   val fire_counter = RegInit(0.U(log2Up(block_size).W))
   val fire_started = RegInit(false.B)
 

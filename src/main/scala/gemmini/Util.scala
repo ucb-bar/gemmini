@@ -91,6 +91,11 @@ object Util {
     Mux(enable, next, buf)
   }
 
+  def RegEnableThru[T <: Data](next: T, init: T, enable: Bool): T = {
+    val buf = RegEnable(next, init, enable)
+    Mux(enable, next, buf)
+  }
+
   def maxOf(u1: UInt, u2: UInt): UInt = {
     Mux(u1 > u2, u1, u2)
   }
