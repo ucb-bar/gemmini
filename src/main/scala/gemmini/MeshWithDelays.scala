@@ -26,7 +26,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   val tagqlen = (if (meshColumns == 1) 4 else 5) * (pe_latency+1) // TODO change the tag-queue so we can make this 3
   class TagAndRowsT extends Bundle {
-    val tag = tagType
+    val tag = tagType.cloneType
     val rows = UInt(log2Up(block_size + 1).W)
   }
 
