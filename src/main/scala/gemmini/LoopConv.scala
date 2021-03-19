@@ -445,13 +445,13 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   val c_addr_start = (BigInt(3) << 30).U | req.c_addr_start
 
   // Iterators
-  val b = Reg(UInt(large_iterator_bitwidth.W))
-  val orow = Reg(UInt(small_iterator_bitwidth.W))
-  val ocol = Reg(UInt(small_iterator_bitwidth.W))
   val och = Reg(UInt(large_iterator_bitwidth.W))
   val krow = Reg(UInt(tiny_iterator_bitwidth.W))
   val kcol = Reg(UInt(tiny_iterator_bitwidth.W))
   val kch = Reg(UInt(large_iterator_bitwidth.W))
+  val b = Reg(UInt(large_iterator_bitwidth.W))
+  val orow = Reg(UInt(small_iterator_bitwidth.W))
+  val ocol = Reg(UInt(small_iterator_bitwidth.W))
 
   val irow = orow * stride +& krow
   val icol = ocol * stride +& kcol
@@ -462,9 +462,12 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
 
   // Addresses
   val a_addr = a_addr_start +& (kch / block_size.U) * batches * irows * icols +& b * irows * icols +& irow * icols +& icol
-  val b_addr = b_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow * kcols * kchs +& kcol * kchs +& kch
   val c_addr = Mux(ex_overwrite && krow === 0.U && kcol === 0.U && kch === 0.U, d_addr_start, c_addr_start) +&
     (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
+
+  val new_weights = b === 0.U && orow === 0.U && ocol === 0.U
+  val b_addr = Mux(new_weights, GARBAGE_ADDR,
+    b_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow * kcols * kchs +& kcol * kchs +& kch)
 
   // Commands
   val pre_cmd = Wire(new RoCCCommand)
@@ -475,7 +478,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
 
   val comp_cmd = Wire(new RoCCCommand())
   comp_cmd := DontCare
-  comp_cmd.inst.funct := COMPUTE_AND_FLIP_CMD
+  comp_cmd.inst.funct := Mux(new_weights, COMPUTE_AND_FLIP_CMD, COMPUTE_AND_STAY_CMD)
   comp_cmd.rs1 := (I << 48) | (K << 32) | a_addr
   comp_cmd.rs2 := (I << 48) | (J << 32) | GARBAGE_ADDR
 
@@ -495,25 +498,25 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     when (state === pre) {
       state := comp
     }.otherwise {
-      val next_kch = floorAdd(kch, block_size.U, kchs)
-      val next_kcol = floorAdd(kcol, 1.U, kcols, next_kch === 0.U)
-      val next_krow = floorAdd(krow, 1.U, krows, next_kcol === 0.U && next_kch === 0.U)
-      val next_och = floorAdd(och, block_size.U, ochs,
-        next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U)
-      val next_ocol = floorAdd(ocol, block_size.U, ocols,
-        next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U)
-      val next_orow = floorAdd(orow, 1.U, orows,
-        next_ocol === 0.U && next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U)
-      val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U &&
-        next_ocol === 0.U && next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U)
+      val next_ocol = floorAdd(ocol, block_size.U, ocols)
+      val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U)
+      val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U)
+      val next_kch = floorAdd(kch, block_size.U, kchs,
+        next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
+      val next_kcol = floorAdd(kcol, 1.U, kcols,
+        next_kch === 0.U && next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
+      val next_krow = floorAdd(krow, 1.U, krows,
+        next_kcol === 0.U && next_kch === 0.U && next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
+      val next_och = floorAdd(och, block_size.U, ochs, next_krow === 0.U &&
+        next_kcol === 0.U && next_kch === 0.U && next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
 
+      ocol := next_ocol
+      orow := next_orow
+      b := next_b
       kch := next_kch
       kcol := next_kcol
       krow := next_krow
       och := next_och
-      ocol := next_ocol
-      orow := next_orow
-      b := next_b
 
       state := Mux(next_b === 0.U && next_orow === 0.U && next_ocol === 0.U &&
         next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U,
