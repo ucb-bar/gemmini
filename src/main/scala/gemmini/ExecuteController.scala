@@ -589,10 +589,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           }
 
           // Flush
-          .elsewhen(matmul_in_progress) {
+          .elsewhen(matmul_in_progress && current_dataflow === Dataflow.OS.id.U) {
             control_state := flush
           }
-      }.elsewhen(matmul_in_progress) {
+      }.elsewhen(matmul_in_progress && current_dataflow === Dataflow.OS.id.U) {
         // TODO code duplication
         control_state := flush
       }
@@ -616,50 +616,50 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           }
         }
       }
-        // Overlapping
-        .elsewhen(perform_mul_pre) {
-          start_inputting_a := true.B
-          start_inputting_b := true.B
-          start_inputting_d := true.B
+      // Overlapping
+      .elsewhen(perform_mul_pre) {
+        start_inputting_a := true.B
+        start_inputting_b := true.B
+        start_inputting_d := true.B
 
-          when(about_to_fire_all_rows) {
-            cmd.pop := 2.U
-            control_state := waiting_for_cmd
+        when(about_to_fire_all_rows) {
+          cmd.pop := 2.U
+          control_state := waiting_for_cmd
 
-            pending_completed_rob_ids(0) := cmd.bits(0).rob_id
-            pending_completed_rob_ids(1).valid := cmd.bits(1).rob_id.valid && c_address_rs2.is_garbage()
-            pending_completed_rob_ids(1).bits := cmd.bits(1).rob_id.bits
+          pending_completed_rob_ids(0) := cmd.bits(0).rob_id
+          pending_completed_rob_ids(1).valid := cmd.bits(1).rob_id.valid && c_address_rs2.is_garbage()
+          pending_completed_rob_ids(1).bits := cmd.bits(1).rob_id.bits
 
-            when(current_dataflow === Dataflow.OS.id.U) {
-              in_prop_flush := !rs2s(1).asTypeOf(local_addr_t).is_garbage()
-            }
+          when(current_dataflow === Dataflow.OS.id.U) {
+            in_prop_flush := !rs2s(1).asTypeOf(local_addr_t).is_garbage()
           }
         }
-        // Only compute
-        .elsewhen(perform_single_mul) {
-              start_inputting_a := !a_should_be_fed_into_transposer
-              start_inputting_b := !b_should_be_fed_into_transposer
+      }
+      // Only compute
+      .elsewhen(perform_single_mul) {
+        start_inputting_a := !a_should_be_fed_into_transposer
+        start_inputting_b := !b_should_be_fed_into_transposer
 
-              when(about_to_fire_all_rows) {
-                cmd.pop := 1.U
-                control_state := waiting_for_cmd
+        when(about_to_fire_all_rows) {
+          cmd.pop := 1.U
+          control_state := waiting_for_cmd
 
-                pending_completed_rob_ids(0) := cmd.bits(0).rob_id
-              }
-            }
+          pending_completed_rob_ids(0) := cmd.bits(0).rob_id
         }
-          is(flush) {
-            when(mesh.io.flush.fire()) {
-              control_state := flushing
-            }
-          }
-          is(flushing) {
-            when(mesh.io.flush.ready) {
-              // TODO we waste a cycle here if it was better to continue with the flush
-              control_state := waiting_for_cmd
-            }
-          }
-        }
+      }
+      }
+    is(flush) {
+      when(mesh.io.flush.fire()) {
+        control_state := flushing
+      }
+    }
+    is(flushing) {
+      when(mesh.io.flush.ready) {
+        // TODO we waste a cycle here if it was better to continue with the flush
+        control_state := waiting_for_cmd
+      }
+    }
+  }
 
 
   // Computing logic
