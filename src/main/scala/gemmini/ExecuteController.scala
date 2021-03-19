@@ -838,7 +838,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.tag_and_rows_in.bits.tag.rob_id := cntl.rob_id
     mesh.io.tag_and_rows_in.bits.tag.addr := cntl.c_addr
     mesh.io.tag_and_rows_in.bits.tag.cols := cntl.c_cols
-    mesh.io.tag_and_rows_in.bits.rows := cntl.c_rows
+    mesh.io.tag_and_rows_in.bits.tag.rows := cntl.c_rows
   }
 
   when (cntl_valid && cntl.perform_single_preload) {
