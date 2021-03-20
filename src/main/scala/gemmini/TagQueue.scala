@@ -5,6 +5,7 @@ import chisel3.util._
 import Util._
 
 trait TagQueueTag {
+  val total_rows: UInt
   def make_this_garbage(dummy: Int = 0): Unit
 }
 

@@ -25,10 +25,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
 
   val tagqlen = (if (meshColumns == 1) 4 else 5) * (pe_latency+1) // TODO change the tag-queue so we can make this 3
-  class TagAndRowsT extends Bundle {
-    val tag = tagType.cloneType
-    val rows = UInt(log2Up(block_size + 1).W)
-  }
 
   val io = IO(new Bundle {
     val a = Flipped(Decoupled(A_TYPE))
@@ -41,7 +37,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val a_transpose = Input(Bool())
     val bd_transpose = Input(Bool())
 
-    val tag_and_rows_in = Flipped(Decoupled(new TagAndRowsT))
+    val tag = Flipped(Decoupled(tagType))
     val tag_out = Output(tagType)
     val tags_in_progress = Output(Vec(tagqlen, tagType))
 
@@ -83,7 +79,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val flushing = RegInit(false.B)
   val flushing_or_about_to = flushing || io.flush.fire()
 
-  val total_fires = RegEnableThru(io.tag_and_rows_in.bits.rows, block_size.U, io.tag_and_rows_in.fire())
+  val total_fires = RegEnableThru(io.tag.bits.total_rows, block_size.U, io.tag.fire())
   val fire_counter = RegInit(0.U(log2Up(block_size).W))
   val fire_started = RegInit(false.B)
 
@@ -101,7 +97,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val tag_written = RegInit(false.B)
 
   val buffering_done = fire_counter === 0.U && fire_started && tag_written
-  val waiting_on_non_matrix_inputs = fire_counter === 0.U && !(tag_written || io.tag_and_rows_in.fire()) // TODO change when more non-matrix inputs are buffered
+  val waiting_on_non_matrix_inputs = fire_counter === 0.U && !(tag_written || io.tag.fire()) // TODO change when more non-matrix inputs are buffered
 
   when (io.a.fire()) {
     a_written := true.B
@@ -196,7 +192,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   tag_garbage := DontCare
   tag_garbage.make_this_garbage()
 
-  tag_queue.io.in.bits := Mux(flushing, tag_garbage, io.tag_and_rows_in.bits.tag)
+  tag_queue.io.in.bits := Mux(flushing, tag_garbage, io.tag.bits)
 
   val tag_id_reg = RegInit(0.U(1.W)) // Used to keep track of when we should increment // TODO inelegant
   val tag_id = WireInit(tag_id_reg)
@@ -204,13 +200,13 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   tag_queue.io.out.next := tag_id_delayed =/= RegNext(tag_id_delayed, 0.U)
 
-  when (io.tag_and_rows_in.fire()) {
+  when (io.tag.fire()) {
     tag_written := true.B
     tag_id := ~tag_id_reg
     tag_id_reg := tag_id
   }
-  io.tag_and_rows_in.ready := !tag_written
-  tag_queue.io.in.valid := io.tag_and_rows_in.fire()
+  io.tag.ready := !tag_written
+  tag_queue.io.in.valid := io.tag.fire()
 
   io.tag_out := tag_queue.io.out.bits(Mux(io.pe_control.dataflow === Dataflow.OS.id.U, 0.U, 1.U))
   io.tags_in_progress := tag_queue.io.out.all
@@ -219,8 +215,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   when(buffering_done && (next_row_input || flushing_or_about_to)) {
     active := not_active
 
-    io.tag_and_rows_in.ready := true.B
-    tag_written := io.tag_and_rows_in.fire()
+    io.tag.ready := true.B
+    tag_written := io.tag.fire()
 
     tag_id := ~tag_id_reg
     tag_id_reg := tag_id
@@ -249,7 +245,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   }
 
   when (flushing) {
-    Seq(io.a.ready, io.b.ready, io.d.ready, io.tag_and_rows_in.ready).foreach(_ := false.B)
+    Seq(io.a.ready, io.b.ready, io.d.ready, io.tag.ready).foreach(_ := false.B)
 
     tag_written := true.B
 
