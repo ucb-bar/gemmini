@@ -220,7 +220,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val total_mvout_rows = ((mvout_mats - 1.U) * block_stride) + mvout_rows
 
       op2.bits.end := op2.bits.start + total_mvout_rows
-      op2.bits.wraps_around := pooling_is_enabled || new_entry.op2.bits.start.add_with_overflow(total_mvout_rows)._2
+      op2.bits.wraps_around := pooling_is_enabled || op2.bits.start.add_with_overflow(total_mvout_rows)._2
     }
 
     dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD

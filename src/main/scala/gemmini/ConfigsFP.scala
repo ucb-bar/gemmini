@@ -25,7 +25,7 @@ object GemminiFPConfigs {
     ex_queue_length = 8,
 
     rob_full_entries = 16,
-    rob_partial_entries = 4,
+    rob_partial_entries = 8,
 
     hasIm2col = false,
 
