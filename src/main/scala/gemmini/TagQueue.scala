@@ -5,49 +5,48 @@ import chisel3.util._
 import Util._
 
 trait TagQueueTag {
-  val total_rows: UInt
   def make_this_garbage(dummy: Int = 0): Unit
 }
 
-class TagQueue[T <: TagQueueTag with Data](entries: Int, t: T) extends Module {
+class TagQueue[T <: Data with TagQueueTag](t: T, entries: Int) extends Module {
   val io = IO(new Bundle {
-    val in = new Bundle {
-      val valid = Input(Bool())
-      val bits = Input(t)
-    }
-
-    val out = new Bundle {
-      val next = Input(Bool())
-      val bits = Output(Vec(2, t))
-      val all = Output(Vec(entries, t))
-    }
-
-    // This should really be a constructor parameter, but Chisel errors out when it is
-    // val garbage = Input(t)
+    val enq = Flipped(Decoupled(t.cloneType))
+    val deq = Decoupled(t.cloneType)
+    val all = Output(Vec(entries, t.cloneType))
   })
 
-  // val regs = RegInit(VecInit(Seq.fill(entries)(io.garbage)))
   val regs = Reg(Vec(entries, t.cloneType))
-  val raddr = RegInit(0.U((log2Ceil(entries) max 1).W))
-  val waddr = RegInit(3.U((log2Ceil(entries) max 1).W))
+  val raddr = RegInit(0.U(log2Up(entries).W))
+  val waddr = RegInit(0.U(log2Up(entries).W))
+  val len = RegInit(0.U(log2Up(entries+1).W))
 
-  val raddr_inc = wrappingAdd(raddr, 1.U, entries)
-  val raddr_inc2 = wrappingAdd(raddr, 2.U, entries)
+  val empty = len === 0.U
+  val full = len === entries.U
 
-  io.out.bits(0) := Mux(io.out.next, regs(raddr_inc), regs(raddr))
-  io.out.bits(1) := Mux(io.out.next, regs(raddr_inc2), regs(raddr_inc))
-  io.out.all := regs
+  io.enq.ready := !full
+  io.deq.valid := !empty
+  io.deq.bits := regs(raddr)
+  io.all := regs
 
-  when (io.in.valid) {
+  when (io.enq.fire()) {
+    regs(waddr) := io.enq.bits
     waddr := wrappingAdd(waddr, 1.U, entries)
-    regs(waddr) := io.in.bits
   }
 
-  when (io.out.next) {
-    raddr := raddr_inc
+  when (io.deq.fire()) {
+    regs(raddr).make_this_garbage()
+    raddr := wrappingAdd(raddr, 1.U, entries)
+  }
+
+  when (io.enq.fire() && !io.deq.fire()) {
+    len := len + 1.U
+  }.elsewhen(!io.enq.fire() && io.deq.fire()) {
+    len := len - 1.U
   }
 
   when (reset.toBool()) {
     regs.foreach(_.make_this_garbage())
   }
+
+  assert(len <= entries.U)
 }

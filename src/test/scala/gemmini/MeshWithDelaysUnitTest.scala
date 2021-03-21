@@ -34,7 +34,7 @@ abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[Mes
   }
 
   def pokeAllInputValids(v: Boolean): Unit = {
-    val valids = Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid, c.io.s, c.io.tag.valid)
+    val valids = Seq(c.io.a.valid, c.io.b.valid, c.io.d.valid, c.io.s, c.io.tag_in.valid)
     valids.foreach(vpin => poke(vpin, v))
   }
 
@@ -106,7 +106,7 @@ abstract class MeshWithDelaysUnitTest(c: MeshWithDelays[SInt, UInt], ms: Seq[Mes
 
     poke(c.io.s, meshIn.S)
     poke(c.io.m, meshIn.M)
-    poke(c.io.tag.bits, meshIn.tag)
+    poke(c.io.tag_in.bits, meshIn.tag)
 
     for ((a, b, d) <- (meshIn.A, meshIn.B, meshIn.D).zipped) {
       pokeAllInputValids(true)

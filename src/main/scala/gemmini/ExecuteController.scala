@@ -52,7 +52,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val addr = local_addr_t.cloneType
     val rows = UInt(log2Up(block_size + 1).W)
     val cols = UInt(log2Up(block_size + 1).W)
-    val total_rows = UInt(log2Up(block_size + 1).W) // TODO we need a better name for this variable to differentiate it from "rows"
 
     override def make_this_garbage(dummy: Int = 0): Unit = {
       rob_id.valid := false.B
@@ -188,20 +187,19 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh.io.a.valid := false.B
   mesh.io.b.valid := false.B
   mesh.io.d.valid := false.B
-  mesh.io.tag.valid := false.B
-  mesh.io.flush.valid := control_state === flush && !cntl_valid // We want to make sure that the mesh has absorbed all inputs before flushing
+  mesh.io.req.valid := control_state === flush
 
   mesh.io.a.bits := DontCare
   mesh.io.b.bits := DontCare
   mesh.io.d.bits := DontCare
-  mesh.io.tag.bits := DontCare
-  mesh.io.tag.bits.total_rows := block_size.U
-  mesh.io.pe_control.propagate := Mux(control_state === flush, in_prop_flush, cntl.prop)
-  mesh.io.pe_control.dataflow := cntl.dataflow
-  mesh.io.pe_control.shift := cntl.shift
-  mesh.io.a_transpose := a_transpose
-  mesh.io.bd_transpose := bd_transpose
-  mesh.io.flush.bits := 0.U
+  mesh.io.req.bits.tag := DontCare
+  mesh.io.req.bits.total_rows := block_size.U
+  mesh.io.req.bits.pe_control.propagate := Mux(control_state === flush, in_prop_flush, cntl.prop)
+  mesh.io.req.bits.pe_control.dataflow := cntl.dataflow
+  mesh.io.req.bits.pe_control.shift := cntl.shift
+  mesh.io.req.bits.a_transpose := a_transpose
+  mesh.io.req.bits.bd_transpose := bd_transpose
+  mesh.io.req.bits.flush := Mux(control_state === flush && !cntl_valid, 1.U, 0.U) // We want to make sure that the mesh has absorbed all inputs before flushing
 
   // Hazards
   val raw_hazard_pre = mesh.io.tags_in_progress.map { t =>
@@ -283,7 +281,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val rows_a = Mux(a_garbage, 1.U, a_rows)
     val rows_b = Mux(b_garbage, 1.U, b_rows)
 
-    total_rows := maxOf(rows_a, rows_b)
+    // total_rows := maxOf(rows_a, rows_b)
   }
 
   //added for mul_pre sync
@@ -327,7 +325,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val others = operands.filter(_.priority != priority)
 
     val same_banks = others.map(o => same_bank(addr, o.addr, is_garbage, o.is_garbage, start_inputting, o.start_inputting, can_be_im2colled || o.can_be_im2colled))
-    val same_counter = others.map(o => counter === o.counter)
+    val same_counter = others.map(o => started === o.started && counter === o.counter)
 
     val one_ahead = others.map(o => started && counter === wrappingAdd(o.counter, 1.U, total_rows))
 
@@ -390,7 +388,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val about_to_fire_all_rows = ((a_fire_counter === (total_rows-1.U) && a_fire) || a_fire_counter === 0.U) &&
     ((b_fire_counter === (total_rows-1.U) && b_fire) || b_fire_counter === 0.U) &&
     ((d_fire_counter === (total_rows-1.U) && d_fire) || d_fire_counter === 0.U) &&
-    (a_fire_counter =/= 0.U || b_fire_counter =/= 0.U || d_fire_counter =/= 0.U) &&
+    (a_fire_started || b_fire_started || d_fire_started) &&
     cntl_ready
 
   when (about_to_fire_all_rows) {
@@ -656,12 +654,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
             }
         }
           is(flush) {
-            when(mesh.io.flush.fire()) {
+            when(mesh.io.req.fire()) {
               control_state := flushing
             }
           }
           is(flushing) {
-            when(mesh.io.flush.ready) {
+            when(mesh.io.req.ready) {
               // TODO we waste a cycle here if it was better to continue with the flush
               control_state := waiting_for_cmd
             }
@@ -839,18 +837,19 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.a.valid := cntl.a_fire && dataA_valid
     mesh.io.b.valid := (cntl.b_fire && dataB_valid)
     mesh.io.d.valid := (cntl.d_fire && dataD_valid)
-    mesh.io.tag.valid := true.B
 
     mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
-    mesh.io.tag.bits.rob_id := cntl.rob_id
-    mesh.io.tag.bits.addr := cntl.c_addr
-    mesh.io.tag.bits.cols := cntl.c_cols
-    mesh.io.tag.bits.rows := cntl.c_rows
+    mesh.io.req.valid := true.B
 
-    mesh.io.tag.bits.rows := cntl.total_rows
+    mesh.io.req.bits.tag.rob_id := cntl.rob_id
+    mesh.io.req.bits.tag.addr := cntl.c_addr
+    mesh.io.req.bits.tag.cols := cntl.c_cols
+    mesh.io.req.bits.tag.rows := cntl.c_rows
+
+    mesh.io.req.bits.total_rows := block_size.U // cntl.total_rows // TODO data duplication between
   }
 
   when (cntl_valid && cntl.perform_single_preload) {
@@ -861,26 +860,26 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   when (cntl_valid && cntl.perform_single_mul) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.tag.bits.addr.make_this_garbage()
+    mesh.io.req.bits.tag.addr.make_this_garbage()
   }
 
   // Scratchpad writes
   // val output_counter = new Counter(block_size)
   val output_counter = RegInit(0.U(log2Up(block_size).W))
 
-  val w_total_output_rows = mesh.io.tag_out.total_rows
+  val w_total_output_rows = mesh.io.resp.bits.total_rows
 
-  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, mesh.io.tag_out.addr + output_counter,
-    mesh.io.tag_out.addr + (w_total_output_rows - 1.U - output_counter))
+  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, mesh.io.resp.bits.tag.addr + output_counter,
+    mesh.io.resp.bits.tag.addr + (w_total_output_rows - 1.U - output_counter))
   val write_to_acc = w_address.is_acc_addr
 
   val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address.sp_bank())
   val w_row = Mux(write_to_acc, w_address.acc_row(), w_address.sp_row())
 
-  val is_garbage_addr = mesh.io.tag_out.addr.is_garbage()
+  val is_garbage_addr = mesh.io.resp.bits.tag.addr.is_garbage()
 
-  val w_matrix_rows = mesh.io.tag_out.rows
-  val w_matrix_cols = mesh.io.tag_out.cols
+  val w_matrix_rows = mesh.io.resp.bits.tag.rows
+  val w_matrix_cols = mesh.io.resp.bits.tag.cols
 
   val write_this_row = Mux(current_dataflow === Dataflow.WS.id.U, output_counter < w_matrix_rows,
     w_total_output_rows - 1.U - output_counter < w_matrix_rows)
@@ -888,7 +887,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // Write to normal scratchpad
   for(i <- 0 until sp_banks) {
-    val activated_wdata = VecInit(mesh.io.out.bits.map(v => VecInit(v.map { e =>
+    val activated_wdata = VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map { e =>
       val e_clipped = e.clippedToWidthOf(inputType)
       val e_act = MuxCase(e_clipped, Seq(
         (activation === Activation.RELU) -> e_clipped.relu,
@@ -915,7 +914,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     if (ex_write_to_acc) {
       io.acc.write(i).valid := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
       io.acc.write(i).bits.addr := w_row
-      io.acc.write(i).bits.data := VecInit(mesh.io.out.bits.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))
+      io.acc.write(i).bits.data := VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))
       io.acc.write(i).bits.acc := w_address.accumulate
       io.acc.write(i).bits.mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
     } else {
@@ -934,15 +933,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   //val complete_lock = RegInit(false.B)
 
   //Seah: added for WS accumulator
-  when(mesh.io.out.fire() && mesh.io.tag_out.rob_id.valid) {
-    val next_output_counter = wrappingAdd(output_counter, 1.U, w_total_output_rows)
-    output_counter := next_output_counter
-    val last = next_output_counter === 0.U
+  when(mesh.io.resp.fire() && mesh.io.resp.bits.tag.rob_id.valid) {
+    output_counter := wrappingAdd(output_counter, 1.U, w_total_output_rows)
+    val last = mesh.io.resp.bits.last
 
     when(last) {
       mesh_completed_rob_id_fire := true.B
       io.completed.valid := true.B
-      io.completed.bits := mesh.io.tag_out.rob_id.bits
+      io.completed.bits := mesh.io.resp.bits.tag.rob_id.bits
     }
     start_array_outputting :=  !is_garbage_addr
   }
@@ -957,7 +955,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
   }
   val complete_bits_count = RegInit(0.U(15.W))
-  when(io.completed.valid){
+  when(io.completed.valid) {
     complete_bits_count := complete_bits_count + 1.U
   }
   dontTouch(complete_bits_count)
