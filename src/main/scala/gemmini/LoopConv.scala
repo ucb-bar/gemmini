@@ -456,13 +456,13 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   val c_addr_start = (BigInt(3) << 30).U | req.c_addr_start
 
   // Iterators
-  val b = Reg(UInt(large_iterator_bitwidth.W))
-  val orow = Reg(UInt(small_iterator_bitwidth.W))
-  val ocol = Reg(UInt(small_iterator_bitwidth.W))
   val och = Reg(UInt(large_iterator_bitwidth.W))
   val krow = Reg(UInt(tiny_iterator_bitwidth.W))
   val kcol = Reg(UInt(tiny_iterator_bitwidth.W))
   val kch = Reg(UInt(large_iterator_bitwidth.W))
+  val b = Reg(UInt(large_iterator_bitwidth.W))
+  val orow = Reg(UInt(small_iterator_bitwidth.W))
+  val ocol = Reg(UInt(small_iterator_bitwidth.W))
 
   val irow = orow * stride +& krow
   val icol = ocol * stride +& kcol
@@ -473,9 +473,13 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
 
   // Addresses
   val a_addr = a_addr_start +& (kch / block_size.U) * batches * irows * icols +& b * irows * icols +& irow * icols +& icol
-  val b_addr = b_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow * kcols * kchs +& kcol * kchs +& kch
   val c_addr = Mux(ex_overwrite && krow === 0.U && kcol === 0.U && kch === 0.U, d_addr_start, c_addr_start) +&
     (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
+
+  val new_weights = b === 0.U && orow === 0.U && ocol === 0.U
+  val b_addr = Mux(new_weights,
+    b_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow * kcols * kchs +& kcol * kchs +& kch,
+    GARBAGE_ADDR)
 
   // Commands
   val pre_cmd = Wire(new RoCCCommand)
@@ -486,7 +490,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
 
   val comp_cmd = Wire(new RoCCCommand())
   comp_cmd := DontCare
-  comp_cmd.inst.funct := COMPUTE_AND_FLIP_CMD
+  comp_cmd.inst.funct := Mux(new_weights, COMPUTE_AND_FLIP_CMD, COMPUTE_AND_STAY_CMD)
   comp_cmd.rs1 := (I << 48) | (K << 32) | a_addr
   comp_cmd.rs2 := (I << 48) | (J << 32) | GARBAGE_ADDR
 
@@ -506,28 +510,28 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     when (state === pre) {
       state := comp
     }.otherwise {
-      val next_kch = floorAdd(kch, block_size.U, kchs)
-      val next_kcol = floorAdd(kcol, 1.U, kcols, next_kch === 0.U)
-      val next_krow = floorAdd(krow, 1.U, krows, next_kcol === 0.U && next_kch === 0.U)
-      val next_och = floorAdd(och, block_size.U, ochs,
-        next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U)
-      val next_ocol = floorAdd(ocol, block_size.U, ocols,
-        next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U)
-      val next_orow = floorAdd(orow, 1.U, orows,
-        next_ocol === 0.U && next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U)
-      val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U &&
-        next_ocol === 0.U && next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U)
+      val next_ocol = floorAdd(ocol, block_size.U, ocols)
+      val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U)
+      val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U)
+      val next_kch = floorAdd(kch, block_size.U, kchs,
+        next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
+      val next_kcol = floorAdd(kcol, 1.U, kcols,
+        next_kch === 0.U && next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
+      val next_krow = floorAdd(krow, 1.U, krows,
+        next_kcol === 0.U && next_kch === 0.U && next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
+      val next_och = floorAdd(och, block_size.U, ochs, next_krow === 0.U &&
+        next_kcol === 0.U && next_kch === 0.U && next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
 
+      ocol := next_ocol
+      orow := next_orow
+      b := next_b
       kch := next_kch
       kcol := next_kcol
       krow := next_krow
       och := next_och
-      ocol := next_ocol
-      orow := next_orow
-      b := next_b
 
-      state := Mux(next_b === 0.U && next_orow === 0.U && next_ocol === 0.U &&
-        next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U,
+      state := Mux(next_och === 0.U && next_krow === 0.U && next_kcol === 0.U && next_kch === 0.U && next_b === 0.U &&
+        next_orow === 0.U && next_ocol === 0.U,
         idle, pre)
     }
   }
@@ -575,7 +579,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   })
 
   object State extends ChiselEnum {
-    val idle, st = Value
+    val idle, st, pre_pool_config, pool, post_pool_config = Value
   }
   import State._
   val state = RegInit(idle)
@@ -588,7 +592,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val acc_addr_start = (BigInt(1) << 31).U | req.addr_start
 
   // Derived parameters
-  val skip = !(req.no_pool && (req.dram_addr =/= 0.U))
+  val skip = req.dram_addr === 0.U
 
   // Iterators
   val b = Reg(UInt(large_iterator_bitwidth.W))
@@ -602,9 +606,14 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val dram_addr = req.dram_addr + ((b*out_dim*out_dim + orow*out_dim + ocol) * och_stride + och) * (input_w/8).U
   val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
+  val pool_dram_addr = req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U
+  val pool_spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols
+
   // Sizes
   val I = Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol)
   val J = Mux(ochs - och > block_size.U, block_size.U, ochs - och)
+
+  val channels = J
 
   // Commands
   val mvout_cmd = Wire(new RoCCCommand)
@@ -613,36 +622,72 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   mvout_cmd.rs1 := dram_addr
   mvout_cmd.rs2 := (I << 48.U) | (J << 32.U) | spad_addr
 
+  val pre_pool_config_cmd = Wire(new RoCCCommand)
+  pre_pool_config_cmd := DontCare
+  pre_pool_config_cmd.inst.funct := CONFIG_CMD
+  pre_pool_config_cmd.rs1 := (ocols << 56) | (orows << 48) | (pocols << 40) | (porows << 32) | (pool_out_dim << 24) |
+    (plpad << 10) | (pupad << 8) | (pool_size << 6) | (pool_stride << 4) | // TODO magic numbers
+    CONFIG_STORE
+  pre_pool_config_cmd.rs2 := out_channels * (input_w / 8).U
+
+  val post_pool_config_cmd = Wire(new RoCCCommand)
+  post_pool_config_cmd := DontCare
+  post_pool_config_cmd.inst.funct := CONFIG_CMD
+  post_pool_config_cmd.rs1 := CONFIG_STORE
+  post_pool_config_cmd.rs2 := out_channels * (input_w / 8).U
+
+  val pool_cmd = Wire(new RoCCCommand)
+  pool_cmd := DontCare
+  pool_cmd.inst.funct := STORE_CMD
+  pool_cmd.rs1 := pool_dram_addr
+  pool_cmd.rs2 := (channels << 32.U) | pool_spad_addr
+
   // Inputs and outputs
   io.req.ready := state === idle
   io.idle := state === idle
   io.loop_id := req.loop_id
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && !skip && io.ex_completed
-  io.cmd.bits := mvout_cmd
+  io.cmd.bits := MuxLookup(state.asUInt, mvout_cmd, Seq(pre_pool_config.asUInt -> pre_pool_config_cmd,
+    pool.asUInt -> pool_cmd, post_pool_config.asUInt -> post_pool_config_cmd))
 
   // Sending outputs
   when (skip) {
     state := idle
   }.elsewhen(io.cmd.fire()) {
-    val next_och = floorAdd(och, block_size.U, ochs)
-    val next_ocol = floorAdd(ocol, block_size.U, ocols, next_och === 0.U)
-    val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U && next_och === 0.U)
-    val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U && next_och === 0.U)
+    when (req.no_pool) {
+      val next_och = floorAdd(och, block_size.U, ochs)
+      val next_ocol = floorAdd(ocol, block_size.U, ocols, next_och === 0.U)
+      val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U && next_och === 0.U)
+      val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U && next_och === 0.U)
 
-    och := next_och
-    ocol := next_ocol
-    orow := next_orow
-    b := next_b
+      och := next_och
+      ocol := next_ocol
+      orow := next_orow
+      b := next_b
 
-    state := Mux(next_b === 0.U && next_orow === 0.U && next_ocol === 0.U && next_och === 0.U,
-      idle, st)
+      state := Mux(next_b === 0.U && next_orow === 0.U && next_ocol === 0.U && next_och === 0.U,
+        idle, st)
+    }.elsewhen(state === pre_pool_config) {
+      state := pool
+    }.elsewhen(state === post_pool_config) {
+      state := idle
+    }.otherwise {
+      val next_och = floorAdd(och, block_size.U, ochs)
+      val next_b = floorAdd(b, 1.U, batches, next_och === 0.U)
+
+      och := next_och
+      b := next_b
+
+      state := Mux(next_b === 0.U && next_och === 0.U,
+        post_pool_config, pool)
+    }
   }
 
   // Accepting requests
   when (io.req.fire()) {
     req := io.req.bits
-    state := st
+    state := Mux(io.req.bits.no_pool, st, pre_pool_config)
 
     b := 0.U
     orow := 0.U
