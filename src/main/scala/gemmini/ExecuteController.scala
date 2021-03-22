@@ -284,7 +284,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val rows_a = Mux(a_garbage, 1.U, a_rows)
     val rows_b = Mux(b_garbage, 1.U, b_rows)
 
-    // total_rows := maxOf(rows_a, rows_b)
+    /* We can only retire one ROB instruction per cycle (max), but if total_rows == 1, then we would be trying to retire
+       2 ROB instructions per cycle (one for the preload, and one for the compute). Therefore, to prevent ROB
+       instructions from being lost, we set a minimum floor for total_rows of 2.
+     */
+    total_rows := maxOf(maxOf(rows_a, rows_b), 2.U)
   }
 
   //added for mul_pre sync
@@ -855,7 +859,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     mesh.io.req.bits.tag.addr := cntl.c_addr
 
-    mesh.io.req.bits.total_rows := block_size.U // cntl.total_rows
+    mesh.io.req.bits.total_rows := cntl.total_rows
   }
 
   when (cntl_valid && cntl.perform_single_preload) {
