@@ -193,12 +193,15 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh.io.b.bits := DontCare
   mesh.io.d.bits := DontCare
   mesh.io.req.bits.tag := DontCare
+  mesh.io.req.bits.tag.cols := cntl.c_cols
+  mesh.io.req.bits.tag.rows := cntl.c_rows
   mesh.io.req.bits.total_rows := block_size.U
   mesh.io.req.bits.pe_control.propagate := Mux(control_state === flush, in_prop_flush, cntl.prop)
   mesh.io.req.bits.pe_control.dataflow := cntl.dataflow
   mesh.io.req.bits.pe_control.shift := cntl.shift
-  mesh.io.req.bits.a_transpose := a_transpose
-  mesh.io.req.bits.bd_transpose := bd_transpose
+  mesh.io.req.bits.a_transpose := cntl.a_transpose
+  mesh.io.req.bits.bd_transpose := cntl.bd_transpose
+  mesh.io.req.bits.tag.rob_id := cntl.rob_id
   mesh.io.req.bits.flush := Mux(control_state === flush && !cntl_valid, 1.U, 0.U) // We want to make sure that the mesh has absorbed all inputs before flushing
 
   // Hazards
@@ -706,6 +709,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val c_rows = UInt(log2Up(block_size + 1).W)
     val c_cols = UInt(log2Up(block_size + 1).W)
 
+    val a_transpose = Bool()
+    val bd_transpose = Bool()
+
     val total_rows = UInt(log2Up(block_size + 1).W)
 
     val rob_id = UDValid(UInt(log2Up(rob_entries).W))
@@ -755,6 +761,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh_cntl_signals_q.io.enq.bits.c_addr := c_address_rs2
   mesh_cntl_signals_q.io.enq.bits.c_rows := c_rows
   mesh_cntl_signals_q.io.enq.bits.c_cols := c_cols
+
+  mesh_cntl_signals_q.io.enq.bits.a_transpose := a_transpose
+  mesh_cntl_signals_q.io.enq.bits.bd_transpose := bd_transpose
 
   mesh_cntl_signals_q.io.enq.bits.rob_id.valid := !performing_single_mul && !c_address_rs2.is_garbage()
   mesh_cntl_signals_q.io.enq.bits.rob_id.bits := cmd.bits(preload_cmd_place).rob_id.bits
@@ -844,12 +853,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     mesh.io.req.valid := true.B
 
-    mesh.io.req.bits.tag.rob_id := cntl.rob_id
     mesh.io.req.bits.tag.addr := cntl.c_addr
-    mesh.io.req.bits.tag.cols := cntl.c_cols
-    mesh.io.req.bits.tag.rows := cntl.c_rows
 
-    mesh.io.req.bits.total_rows := block_size.U // cntl.total_rows // TODO data duplication between
+    mesh.io.req.bits.total_rows := block_size.U // cntl.total_rows
   }
 
   when (cntl_valid && cntl.perform_single_preload) {

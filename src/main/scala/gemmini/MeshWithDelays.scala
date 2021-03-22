@@ -155,10 +155,10 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
 
   transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
-  transposer.io.inRow.bits := MuxCase(a_buf, Seq(
-    b_is_from_transposer -> b_buf,
-    d_is_from_transposer -> d_buf
-  )).flatten
+  transposer.io.inRow.bits := MuxCase(VecInit(a_buf.flatten), Seq(
+    b_is_from_transposer -> VecInit(b_buf.flatten),
+    d_is_from_transposer -> VecInit(d_buf.flatten.reverse),
+  ))
 
   transposer.io.outCol.ready := true.B
   val transposer_out = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
