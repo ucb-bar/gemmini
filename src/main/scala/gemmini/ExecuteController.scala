@@ -6,6 +6,7 @@ import chisel3.util._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
+import midas.targetutils.FpgaDebug
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
@@ -875,6 +876,19 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.req.bits.tag.addr.make_this_garbage()
+  }
+
+  FpgaDebug(mesh.io.req.valid)
+  FpgaDebug(mesh.io.req.ready)
+  FpgaDebug(mesh.io.a.valid)
+  FpgaDebug(mesh.io.a.ready)
+  FpgaDebug(mesh.io.b.valid)
+  FpgaDebug(mesh.io.b.ready)
+  FpgaDebug(mesh.io.d.valid)
+  FpgaDebug(mesh.io.d.ready)
+  FpgaDebug(cntl)
+  for (sr <- io.srams.read) {
+    FpgaDebug(sr)
   }
 
   // Scratchpad writes
