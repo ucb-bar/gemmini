@@ -148,7 +148,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   io.b.ready := !b_written || input_next_row_into_spatial_array || io.req.ready
   io.d.ready := !d_written || input_next_row_into_spatial_array || io.req.ready
 
-  assert(io.req.valid || req.valid || (!io.a.fire() && !io.b.fire() && !io.d.fire()))
+  assert(req.valid || !input_next_row_into_spatial_array)
 
   val pause = !req.valid || !input_next_row_into_spatial_array
 
