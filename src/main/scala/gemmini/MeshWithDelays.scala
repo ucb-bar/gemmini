@@ -48,11 +48,11 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val block_size = meshRows*tileRows
 
   val max_simultaneous_matmuls = if (n_simultaneous_matmuls == -1) {
-    (if (meshColumns == 1) 4 else 5) * (pe_latency + 1)
+    5 * (pe_latency + 1)
   } else {
     n_simultaneous_matmuls
   }
-  assert(max_simultaneous_matmuls >= (if (meshColumns == 1) 4 else 5) * (pe_latency + 1))
+  assert(max_simultaneous_matmuls >= 5 * (pe_latency + 1))
 
   val tagqlen = max_simultaneous_matmuls+1
 
@@ -142,9 +142,11 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     d_written := true.B
   }
 
-  io.a.ready := !a_written || input_next_row_into_spatial_array || io.req.fire()
-  io.b.ready := !b_written || input_next_row_into_spatial_array || io.req.fire()
-  io.d.ready := !d_written || input_next_row_into_spatial_array || io.req.fire()
+  io.a.ready := !a_written || input_next_row_into_spatial_array || io.req.ready
+  io.b.ready := !b_written || input_next_row_into_spatial_array || io.req.ready
+  io.d.ready := !d_written || input_next_row_into_spatial_array || io.req.ready
+
+  assert(io.req.valid || req.valid || !(io.a.fire() && !io.b.fire() && !io.d.fire()))
 
   val pause = !req.valid || !input_next_row_into_spatial_array
 
@@ -219,24 +221,37 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   }
 
   val matmul_id_of_output = wrappingAdd(matmul_id, Mux(io.req.bits.pe_control.dataflow === Dataflow.OS.id.U, 3.U, 2.U), max_simultaneous_matmuls)
+  val matmul_id_of_current = wrappingAdd(matmul_id, 1.U, max_simultaneous_matmuls)
 
   val tagq = Module(new TagQueue(new TagWithIdAndTotalRows, tagqlen))
   tagq.io.enq.valid := io.req.fire() && io.req.bits.flush === 0.U
   tagq.io.enq.bits.tag := io.req.bits.tag
-  tagq.io.enq.bits.total_rows := io.req.bits.total_rows
+  tagq.io.enq.bits.total_rows := DontCare
   tagq.io.enq.bits.id := matmul_id_of_output
 
   val tag_garbage = Wire(tagType.cloneType)
   tag_garbage := DontCare
   tag_garbage.make_this_garbage()
 
-  val out_matmul_id = shifted(mesh.io.out_id, outBanks, reverse = true)(0)(0)
-  io.resp.bits.tag := Mux(out_matmul_id === tagq.io.deq.bits.id, tagq.io.deq.bits.tag, tag_garbage)
-  io.resp.bits.total_rows := Mux(out_matmul_id === tagq.io.deq.bits.id, tagq.io.deq.bits.total_rows, block_size.U)
+  val out_matmul_id = WireInit(shifted(mesh.io.out_id, outBanks, reverse = true)(0)(0))
+  io.resp.bits.tag := Mux(tagq.io.deq.valid && out_matmul_id === tagq.io.deq.bits.id, tagq.io.deq.bits.tag, tag_garbage)
+
+  dontTouch(out_matmul_id)
 
   tagq.io.deq.ready := io.resp.valid && io.resp.bits.last && out_matmul_id === tagq.io.deq.bits.id
 
-  io.req.ready := (!req.valid || last_fire) && tagq.io.enq.ready
+  val total_rows_q = Module(new Queue(new TagWithIdAndTotalRows, tagqlen))
+  total_rows_q.io.enq.valid := io.req.fire() && io.req.bits.flush === 0.U
+  total_rows_q.io.enq.bits.tag := DontCare
+  total_rows_q.io.enq.bits.total_rows := io.req.bits.total_rows
+  total_rows_q.io.enq.bits.id := matmul_id_of_current
+
+  io.resp.bits.total_rows := Mux(total_rows_q.io.deq.valid && out_matmul_id === total_rows_q.io.deq.bits.id,
+    total_rows_q.io.deq.bits.total_rows, block_size.U)
+
+  total_rows_q.io.deq.ready := io.resp.valid && io.resp.bits.last && out_matmul_id === total_rows_q.io.deq.bits.id
+
+  io.req.ready := (!req.valid || last_fire) && tagq.io.enq.ready && total_rows_q.io.enq.ready
   io.tags_in_progress := tagq.io.all.map(_.tag)
 
   when (reset.toBool()) {
