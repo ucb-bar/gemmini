@@ -3,7 +3,6 @@ package gemmini
 import chisel3._
 import chisel3.util._
 import Util._
-import midas.targetutils.FpgaDebug
 
 trait TagQueueTag {
   def make_this_garbage(dummy: Int = 0): Unit
@@ -48,8 +47,6 @@ class TagQueue[T <: Data with TagQueueTag](t: T, entries: Int) extends Module {
   when (reset.toBool()) {
     regs.foreach(_.make_this_garbage())
   }
-
-  FpgaDebug(len)
 
   assert(len <= entries.U)
 }

@@ -6,8 +6,6 @@ import chisel3.util._
 
 import gemmini.Util._
 
-import midas.targetutils.FpgaDebug
-
 class MeshWithDelaysReq[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](accType: T, tagType: TagT, block_size: Int) extends Bundle {
   val pe_control = new PEControl(accType)
   val a_transpose = Bool()
@@ -259,12 +257,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   when (reset.toBool()) {
     req.valid := false.B
   }
-
-  FpgaDebug(tagq.io.enq)
-  FpgaDebug(tagq.io.deq)
-  FpgaDebug(total_rows_q.io)
-  FpgaDebug(out_matmul_id)
-  FpgaDebug(matmul_id)
 
   assert(!(io.req.fire() && !tagq.io.enq.ready && io.req.bits.flush === 0.U))
 }
