@@ -293,7 +293,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val wars = VecInit((dst_wars_opa zip dst_wars_opb).map { case (a, b) => a || b })
 
     val dst_waws_opa = VecInit((entries zip dst_matches_opa).map { case (e, m) =>
-      m && dst.valid && (e.bits.q =/= new_entry.q || new_entry.q === ldq) && e.bits.opa_is_dst
+      m && dst.valid && e.bits.opa_is_dst
     })
     val waws = dst_waws_opa
 
