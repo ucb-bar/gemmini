@@ -225,7 +225,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val dram_addr = Mux(is_zeros, 0.U,
     req.dram_addr +& (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channels +& ich) * (input_w/8).U).asUInt())
   val spad_addr = req.addr_start.zext() +&
-    (ich / block_size.S) * batches * irows * icols +&
+    (ich / block_size.S) * input_spad_stride +&
     b * (irows >> req.downsample) * (icols >> req.downsample) +&
     (irow_padded >> req.downsample) * (icols >> req.downsample) +&
     (icol_padded >> req.downsample)
@@ -271,7 +271,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
       val next_ich = sFloorAdd(ich, max_ichs_per_mvin.asUInt(), ichs.zext(), 0.S)
       val next_icol = sFloorAdd(icol, I.asUInt(), (icols_unpadded +& rpad).zext(), 0.S-&lpad.zext(),
         next_ich === 0.S)
-      val next_irow = sFloorAdd(irow, 1.U + req.downsample, (irows_unpadded +& dpad).zext(), 0.S-&upad.zext(),
+      val next_irow = sFloorAdd(irow, 1.U << req.downsample, (irows_unpadded +& dpad).zext(), 0.S-&upad.zext(),
         next_icol === 0.S-&lpad.zext() && next_ich === 0.S)
       val next_b = sFloorAdd(b, 1.U, batches.zext(), 0.S,
         next_irow === 0.S-&upad.zext() && next_icol === 0.S-&lpad.zext() && next_ich === 0.S)
@@ -470,10 +470,11 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
 
   // Addresses
   val a_addr = a_addr_start +&
-    (kch / block_size.U) * batches * (irows >> req.downsample) * (icols >> req.downsample) +&
+    (kch / block_size.U) * input_spad_stride +&
     b * (irows >> req.downsample) * (icols >> req.downsample) +&
     (irow >> req.downsample) * (icols >> req.downsample) +&
     (icol >> req.downsample)
+
   val c_addr = Mux(ex_overwrite && krow === 0.U && kcol === 0.U && kch === 0.U, d_addr_start, c_addr_start) +&
     (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
