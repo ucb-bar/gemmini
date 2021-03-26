@@ -47,7 +47,9 @@ object GemminiConfigs {
     st_queue_length = 2,
     ex_queue_length = 8,
 
-    rob_entries = 16,
+    rob_full_entries = 16,
+    rob_partial_entries = 8,
+
     hasIm2col = false, //declare im2col block
 
     sp_banks = 4,

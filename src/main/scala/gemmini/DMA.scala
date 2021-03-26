@@ -387,7 +387,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val vaddr = UInt(vaddrBits.W)
       val is_full = Bool()
 
-      val bytes_written = UInt(log2Up(dataBytes+1).W)
+      val bytes_written = UInt(log2Up(maxBytes+1).W)
       val bytes_written_per_beat = Vec(maxBeatsPerReq, UInt(log2Up(beatBytes+1).W))
 
       def total_beats(dummy: Int = 0) = Mux(size < beatBytes.U, 1.U, size / beatBytes.U)
@@ -396,8 +396,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val smallest_write_size = aligned_to max beatBytes
     val write_sizes = (smallest_write_size to maxBytes by aligned_to).
       filter(s => isPow2(s)).
-      filter(s => s % beatBytes == 0).
-      filter(s => s <= dataBytes*2 || s == smallest_write_size)
+      filter(s => s % beatBytes == 0) /*.
+      filter(s => s <= dataBytes*2 || s == smallest_write_size)*/
     val write_packets = write_sizes.map { s =>
       val lg_s = log2Ceil(s)
       val vaddr_aligned_to_size = if (s == 1) vaddr else Cat(vaddr(vaddrBits-1, lg_s), 0.U(lg_s.W))
@@ -441,6 +441,9 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       Mux(p.bytes_written > acc.bytes_written, p, acc)
     }
     val write_packet = RegEnableThru(best_write_packet, state === s_writing_new_block)
+
+    for (wp <- write_packets)
+      dontTouch(wp)
 
     val write_size = write_packet.size
     val lg_write_size = write_packet.lg_size
