@@ -93,7 +93,7 @@ class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundl
   val data = Output(UInt(w.W))
 }
 
-class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_ported: Boolean) extends Module {
+class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean) extends Module {
   // This is essentially a pipelined SRAM with the ability to stall pipeline stages
 
   require(w % aligned_to == 0 || w < aligned_to)
@@ -137,9 +137,7 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_
   val q_will_be_empty = (q.io.count +& q.io.enq.fire()) - q.io.deq.fire() === 0.U
   io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
 
-  // Build the rest of the resp pipeline
-  val rdata_p = Pipeline(q.io.deq, mem_pipeline)
-  io.read.resp <> rdata_p
+  io.read.resp <> q.io.deq
 }
 
 class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V])
@@ -365,16 +363,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
 
     {
-      val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, mem_pipeline, aligned_to, config.sp_singleported)) }
+      val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, aligned_to, config.sp_singleported)) }
       val bank_ios = VecInit(banks.map(_.io))
-
-      // Getting the output of the bank that's about to be issued to the writer
-      val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.sp_bank())
-
-      when (!write_issue_q.io.deq.bits.laddr.is_acc_addr) {
-        writeData.valid := bank_issued_io.read.resp.valid && bank_issued_io.read.resp.bits.fromDMA
-        writeData.bits := bank_issued_io.read.resp.bits.data
-      }
 
       // Reading from the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
@@ -408,14 +398,28 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits := DontCare
         }
 
-        val ex_read_resp = io.srams.read(i).resp
-        val dma_resp_ready = writer.module.io.req.ready &&
+        val dma_read_resp = Wire(Decoupled(new ScratchpadReadResp(spad_w)))
+        dma_read_resp.valid := bio.read.resp.valid && bio.read.resp.bits.fromDMA
+        dma_read_resp.bits := bio.read.resp.bits
+        val ex_read_resp = Wire(Decoupled(new ScratchpadReadResp(spad_w)))
+        ex_read_resp.valid := bio.read.resp.valid && !bio.read.resp.bits.fromDMA
+        ex_read_resp.bits := bio.read.resp.bits
+
+        val dma_read_pipe = Pipeline(dma_read_resp, mem_pipeline)
+        val ex_read_pipe = Pipeline(ex_read_resp, mem_pipeline)
+
+
+        bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
+
+        dma_read_pipe.ready := writer.module.io.req.ready &&
           !write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
           !write_issue_q.io.deq.bits.laddr.is_garbage()
+        when (dma_read_pipe.fire()) {
+          writeData.valid := true.B
+          writeData.bits := dma_read_pipe.bits.data
+        }
 
-        bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_resp_ready, ex_read_resp.ready)
-        ex_read_resp.valid := bio.read.resp.valid // TODO should we AND this with fromDMA?
-        ex_read_resp.bits := bio.read.resp.bits
+        io.srams.read(i).resp <> ex_read_pipe
       }
 
       // Writing to the SRAM banks
