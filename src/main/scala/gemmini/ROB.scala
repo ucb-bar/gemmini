@@ -114,6 +114,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
   val st_block_stride = block_rows.U
   val pooling_is_enabled = Reg(Bool())
+  val ld_pixel_repeats = Reg(Vec(load_states, UInt(8.W))) // This is the ld_pixel_repeat MINUS ONE // TODO magic numbers
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
@@ -224,21 +225,31 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     }
 
     dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
-    dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
       val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
+      dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
       dst.bits.end := dst.bits.start + preload_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
       val id = MuxCase(0.U, Seq((new_entry.cmd.inst.funct === LOAD2_CMD) -> 1.U,
         (new_entry.cmd.inst.funct === LOAD3_CMD) -> 2.U))
       val block_stride = ld_block_strides(id)
+      val pixel_repeats = ld_pixel_repeats(id)
 
       val mvin_cols = cmd.rs2(32 + mvin_cols_bits - 1, 32)
       val mvin_rows = cmd.rs2(48 + mvin_rows_bits - 1, 48)
 
       val mvin_mats = mvin_cols / block_cols.U + (mvin_cols % block_cols.U =/= 0.U)
       val total_mvin_rows = ((mvin_mats - 1.U) * block_stride) + mvin_rows
+
+      // TODO We have to know how the LoopConv's internals work here. Our abstractions are leaking
+      val start = cmd.rs2(31, 0).asTypeOf(local_addr_t)
+      dst.bits.start := Mux(start.is_acc_addr, start,
+        Mux(start.full_sp_addr() > (local_addr_t.maxRows / 2).U,
+          start.floorSub(pixel_repeats, (local_addr_t.maxRows / 2).U),
+          start.floorSub(pixel_repeats, 0.U),
+        )
+      )
 
       dst.bits.end := dst.bits.start + total_mvin_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(total_mvin_rows)._2
@@ -347,7 +358,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
         val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
         val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers
+        val repeat_pixels = new_entry.cmd.rs1(15, 8) // TODO magic numbers
         ld_block_strides(id) := block_stride
+        ld_pixel_repeats(id) := repeat_pixels - 1.U
       }.elsewhen(new_entry.is_config && new_entry.q === stq) {
         val pool_stride = new_entry.cmd.rs1(5, 4) // TODO magic numbers
         pooling_is_enabled := pool_stride =/= 0.U

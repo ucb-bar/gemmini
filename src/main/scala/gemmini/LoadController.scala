@@ -29,6 +29,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val scales = Reg(Vec(load_states, UInt(mvin_scale_t_bits.W)))
   val shrinks = Reg(Vec(load_states, Bool())) // Shrink inputs to accumulator
   val block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W))) // Spad stride during block move-ins
+  val pixel_repeats = Reg(Vec(load_states, UInt(8.W))) // TODO magic numbers
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
@@ -42,6 +43,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
   val config_shrink = cmd.bits.cmd.rs1(2) // TODO magic numbers
   val config_block_stride = cmd.bits.cmd.rs1(31, 16) // TODO magic numbers
+  val config_pixel_repeats = cmd.bits.cmd.rs1(15, 8) // TODO magic numbers
 
   val mstatus = cmd.bits.cmd.status
 
@@ -54,6 +56,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val scale = scales(state_id)
   val shrink = shrinks(state_id)
   val block_stride = block_strides(state_id)
+  val pixel_repeat = pixel_repeats(state_id)
 
   val all_zeros = vaddr === 0.U
 
@@ -94,6 +97,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
   io.dma.req.bits.all_zeros := all_zeros
   io.dma.req.bits.status := mstatus
+  io.dma.req.bits.pixel_repeats := pixel_repeat
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad

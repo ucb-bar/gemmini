@@ -16,6 +16,8 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
   private val accBankBits = log2Up(acc_banks)
   val accBankRowBits = log2Up(acc_bank_entries)
 
+  val maxRows = (1 << maxAddrBits) - 1
+
   val is_acc_addr = Bool()
   val accumulate = Bool()
   val read_full_acc_row = Bool()
@@ -69,6 +71,15 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
     result.data := sum(maxAddrBits - 1, 0)
 
     (result, overflow)
+  }
+
+  def floorSub(other: UInt, floor: UInt): LocalAddr = {
+    require(isPow2(sp_bank_entries)) // TODO remove this requirement
+    require(isPow2(acc_bank_entries)) // TODO remove this requirement
+
+    val result = WireInit(this)
+    result.data := Mux(data > floor, data - other, floor)
+    result
   }
 
   def make_this_garbage(dummy: Int = 0): Unit = {

@@ -21,6 +21,7 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val has_acc_bitwidth = Bool()
   val all_zeros = Bool()
   val block_stride = UInt(16.W) // TODO magic numbers
+  val pixel_repeats = UInt(8.W) // TODO magic numbers
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
   val status = new MStatus
 
@@ -288,6 +289,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       read_issue_q.io.deq.bits.laddr.full_acc_addr(), read_issue_q.io.deq.bits.laddr.full_sp_addr())
     reader.module.io.req.bits.len := read_issue_q.io.deq.bits.cols
     reader.module.io.req.bits.repeats := read_issue_q.io.deq.bits.repeats
+    reader.module.io.req.bits.pixel_repeats := read_issue_q.io.deq.bits.pixel_repeats
     reader.module.io.req.bits.scale := read_issue_q.io.deq.bits.scale
     reader.module.io.req.bits.is_acc := read_issue_q.io.deq.bits.laddr.is_acc_addr
     reader.module.io.req.bits.accumulate := read_issue_q.io.deq.bits.laddr.accumulate
@@ -315,6 +317,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     mvin_scale_in.bits.in := reader.module.io.resp.bits.data.asTypeOf(chiselTypeOf(mvin_scale_in.bits.in))
     mvin_scale_in.bits.scale := reader.module.io.resp.bits.scale.asTypeOf(mvin_scale_t)
     mvin_scale_in.bits.repeats := reader.module.io.resp.bits.repeats
+    mvin_scale_in.bits.pixel_repeats := reader.module.io.resp.bits.pixel_repeats
     mvin_scale_in.bits.last := reader.module.io.resp.bits.last
     mvin_scale_in.bits.tag := reader.module.io.resp.bits
 
@@ -326,6 +329,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       mvin_scale_acc_in.bits.in := reader.module.io.resp.bits.data.asTypeOf(chiselTypeOf(mvin_scale_acc_in.bits.in))
       mvin_scale_acc_in.bits.scale := reader.module.io.resp.bits.scale.asTypeOf(mvin_scale_acc_t)
       mvin_scale_acc_in.bits.repeats := reader.module.io.resp.bits.repeats
+      mvin_scale_acc_in.bits.pixel_repeats := 1.U
       mvin_scale_acc_in.bits.last := reader.module.io.resp.bits.last
       mvin_scale_acc_in.bits.tag := reader.module.io.resp.bits
 
@@ -407,7 +411,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
         val dma_read_pipe = Pipeline(dma_read_resp, mem_pipeline)
         val ex_read_pipe = Pipeline(ex_read_resp, mem_pipeline)
-
 
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
 
@@ -505,7 +508,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     }
 
     {
-
       val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(
         acc_bank_entries, acc_row_t, acc_scale_args,
         acc_singleported, num_acc_sub_banks
