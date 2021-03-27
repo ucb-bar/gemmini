@@ -164,7 +164,7 @@ object GemminiConfigs {
     ex_write_to_spad = true,
     ex_write_to_acc = true,
 
-    output_delay = 0,
+    mesh_output_delay = 0,
   )
 
   val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
