@@ -70,6 +70,8 @@ object DSEBaseConfig {
     tlb_size = 4,
     use_tlb_register_filter = true,
     max_in_flight_reqs = 16,
+
+    mesh_output_delay = 1,
   )
 }
 
