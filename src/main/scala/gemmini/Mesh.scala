@@ -15,7 +15,8 @@ import chisel3.experimental._
   * @param meshColumns
   */
 class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
-                                   df: Dataflow.Value, pe_latency: Int, max_simultaneous_matmuls: Int,
+                                   df: Dataflow.Value, pe_latency: Int,
+                                   max_simultaneous_matmuls: Int, output_delay: Int,
                                    val tileRows: Int, val tileColumns: Int,
                                    val meshRows: Int, val meshColumns: Int) extends Module {
   val io = IO(new Bundle {
@@ -107,11 +108,11 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (((((((b, c), v), ctrl), id), last), tile) <- io.out_b zip io.out_c zip io.out_valid zip io.out_control zip io.out_id zip io.out_last zip mesh.last) {
     // TODO we pipelined this to make physical design easier. Consider removing these if possible
     // TODO shouldn't we clock-gate these signals with "garbage" as well?
-    b := RegNext(tile.io.out_b)
-    c := RegNext(tile.io.out_c)
-    v := RegNext(tile.io.out_valid)
-    ctrl := RegNext(tile.io.out_control)
-    id := RegNext(tile.io.out_id)
-    last := RegNext(tile.io.out_last)
+    b := ShiftRegister(tile.io.out_b, output_delay)
+    c := ShiftRegister(tile.io.out_c, output_delay)
+    v := ShiftRegister(tile.io.out_valid, output_delay)
+    ctrl := ShiftRegister(tile.io.out_control, output_delay)
+    id := ShiftRegister(tile.io.out_id, output_delay)
+    last := ShiftRegister(tile.io.out_last, output_delay)
   }
 }

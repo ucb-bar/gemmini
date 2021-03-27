@@ -68,6 +68,8 @@ object GemminiFPConfigs {
     ex_read_from_acc = true,
     ex_write_to_spad = true,
     ex_write_to_acc = true,
+
+    output_delay = 0,
   )
   
   //FP32 Single Precision Configuration
