@@ -178,6 +178,7 @@ class LoopConvLdInputReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: 
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val dram_addr = UInt(coreMaxAddrBits.W)
   val downsample = Bool()
+  val max_pixels_per_row = UInt(small_iterator_bitwidth.W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -246,7 +247,8 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val config_cmd = Wire(new RoCCCommand)
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
-  config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U) | (input_spad_stride << 16.U) | (0.U << 3) | 1.U
+  config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U) | (input_spad_stride << 16.U) | (req.max_pixels_per_row << 8.U) |
+    (0.U << 3) | 1.U
   config_cmd.rs2 := (in_channels * (input_w/8).U) << req.downsample
 
   val mvin_cmd = Wire(new RoCCCommand)
@@ -411,6 +413,7 @@ class LoopConvExecuteReq(val large_iterator_bitwidth: Int, val small_iterator_bi
   val b_addr_end = UInt(log2Up(max_addr).W)
   val c_addr_start = UInt(log2Up(max_acc_addr).W)
   val downsample = Bool()
+  val max_pixels_per_row = UInt(small_iterator_bitwidth.W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -464,9 +467,12 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   val irow = orow * stride +& krow
   val icol = ocol * stride +& kcol
 
+  val pixels = Wire(UInt((small_iterator_bitwidth min log2Up(block_size+1)).W))
+  pixels := Mux(kcols - kcol > req.max_pixels_per_row, req.max_pixels_per_row, kcols - kcol)
+
   val I = Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol)
   val J = Mux(ochs - och > block_size.U, block_size.U, ochs - och)
-  val K = Mux(kchs - kch > block_size.U, block_size.U, kchs - kch)
+  val K = pixels * Mux(kchs - kch > block_size.U, block_size.U, kchs - kch)
 
   // Addresses
   val a_addr = a_addr_start +&
@@ -517,7 +523,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
       val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U)
       val next_kch = floorAdd(kch, block_size.U, kchs,
         next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
-      val next_kcol = floorAdd(kcol, 1.U, kcols,
+      val next_kcol = floorAdd(kcol, req.max_pixels_per_row, kcols,
         next_kch === 0.U && next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
       val next_krow = floorAdd(krow, 1.U, krows,
         next_kcol === 0.U && next_kch === 0.U && next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
@@ -706,6 +712,8 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val no_bias = Bool()
   val no_pool = Bool()
   val downsample = Bool()
+
+  val max_pixels_per_row = UInt(small_iterator_bitwidth.W)
 
   val configured = Bool()
 
@@ -922,6 +930,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
 
       is (LOOP_CONV_WS) {
         loop_being_configured.no_bias := cmd.bits.rs1(0)
+        loop_being_configured.max_pixels_per_row := cmd.bits.rs1(8, 1)
 
         loop_being_configured.no_pool := cmd.bits.rs2(0)
         loop_being_configured.downsample := cmd.bits.rs2(1)
@@ -966,6 +975,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ld_input.io.req.bits.addr_start := loop_requesting_ld_input.a_addr_start
   ld_input.io.req.bits.dram_addr := loop_requesting_ld_input.input_dram_addr
   ld_input.io.req.bits.downsample := loop_requesting_ld_input.downsample
+  ld_input.io.req.bits.max_pixels_per_row := loop_requesting_ld_input.max_pixels_per_row
   ld_input.io.req.bits.loop_id := loop_requesting_ld_input_id
 
   ld_input.io.req.valid := !loop_requesting_ld_input.ld_input_started && loop_requesting_ld_input.configured
@@ -1000,6 +1010,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ex.io.req.bits.b_addr_end := loop_requesting_ex.b_addr_end
   ex.io.req.bits.c_addr_start := ex_c_addr_start
   ex.io.req.bits.downsample := loop_requesting_ex.downsample
+  ex.io.req.bits.max_pixels_per_row := loop_requesting_ex.max_pixels_per_row
   ex.io.req.bits.loop_id := loop_requesting_ex_id
 
   ex.io.req.valid := !loop_requesting_ex.ex_started && loop_requesting_ex.ld_bias_started &&
