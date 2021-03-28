@@ -135,6 +135,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
           scale := config_scale
           shrink := config_shrink
           block_stride := config_block_stride
+          pixel_repeat := config_pixel_repeats
           cmd.ready := true.B
         }
 

@@ -73,13 +73,17 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
     (result, overflow)
   }
 
-  def floorSub(other: UInt, floor: UInt): LocalAddr = {
+  // This function can only be used with non-accumulator addresses. Returns both new address and underflow
+  def floorSub(other: UInt, floor: UInt): (LocalAddr, Bool) = {
     require(isPow2(sp_bank_entries)) // TODO remove this requirement
     require(isPow2(acc_bank_entries)) // TODO remove this requirement
 
+    val underflow = data < floor + other
+
     val result = WireInit(this)
-    result.data := Mux(data > floor, data - other, floor)
-    result
+    result.data := Mux(underflow, floor, data - other)
+
+    (result, underflow)
   }
 
   def make_this_garbage(dummy: Int = 0): Unit = {

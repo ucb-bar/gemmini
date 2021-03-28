@@ -108,7 +108,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val solitary_preload = utilization === 1.U && entries.map(e => e.valid && e.bits.cmd.inst.funct === PRELOAD_CMD).reduce(_ || _)
   io.busy := !empty && !(solitary_preload && io.solitary_preload)
 
-
   // Config values set by programmer
   val a_stride = Reg(UInt(16.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
@@ -246,8 +245,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val start = cmd.rs2(31, 0).asTypeOf(local_addr_t)
       dst.bits.start := Mux(start.is_acc_addr, start,
         Mux(start.full_sp_addr() > (local_addr_t.maxRows / 2).U,
-          start.floorSub(pixel_repeats, (local_addr_t.maxRows / 2).U),
-          start.floorSub(pixel_repeats, 0.U),
+          start.floorSub(pixel_repeats, (local_addr_t.maxRows / 2).U)._1,
+          start.floorSub(pixel_repeats, 0.U)._1,
         )
       )
 
