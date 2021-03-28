@@ -17,6 +17,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def +(t: T): T
   def >>(u: UInt): T // This is a rounding shift! Rounds away from 0
   def >(t: T): Bool
+  def identity: T
   def withWidthOf(t: T): T
   def clippedToWidthOf(t: T): T // Like "withWidthOf", except that it saturates
   def relu: T
@@ -62,6 +63,7 @@ object Arithmetic {
       }
 
       override def zero: UInt = 0.U
+      override def identity: UInt = 1.U
     }
   }
 
@@ -111,6 +113,7 @@ object Arithmetic {
       }
 
       override def zero: SInt = 0.S
+      override def identity: SInt = 1.S
     }
   }
 
@@ -393,6 +396,7 @@ object Arithmetic {
       }
 
       override def zero: Float = 0.U.asTypeOf(self)
+      override def identity: Float = Cat(0.U(2.W), ~(0.U((self.expWidth-1).W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
     }
   }
 }

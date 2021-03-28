@@ -11,6 +11,7 @@ case class CapacityInKilobytes(kilobytes: Int) extends GemminiMemCapacity
 case class CapacityInMatrices(matrices: Int) extends GemminiMemCapacity
 
 case class ScaleArguments[T <: Data, U <: Data](scale_func: (T, U) => T, latency: Int, multiplicand_t: U,
+                                                num_scale_units: Int,
                                                 identity: String="0", c_str: String="ROUNDING_RIGHT_SHIFT(x, scale)")
 
 case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
@@ -22,11 +23,14 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              ld_queue_length: Int,
                                                                              st_queue_length: Int,
                                                                              ex_queue_length: Int,
-                                                                             rob_entries: Int,
+                                                                             rob_full_entries: Int,
+                                                                             rob_partial_entries: Int,
                                                                              sp_banks: Int, // TODO support one-bank designs
                                                                              sp_singleported: Boolean,
                                                                              sp_capacity: GemminiMemCapacity,
                                                                              acc_banks: Int,
+                                                                             acc_singleported: Boolean,
+                                                                             num_acc_sub_banks: Int,
                                                                              acc_capacity: GemminiMemCapacity,
                                                                              shifter_banks: Int,
                                                                              dataflow: Dataflow.Value,
@@ -58,6 +62,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              ex_write_to_spad: Boolean,
                                                                              ex_write_to_acc: Boolean,
 
+                                                                             mesh_output_delay: Int,
+
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth
@@ -69,16 +75,17 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (acc_banks * meshColumns * tileColumns * accType.getWidth)
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / acc_banks
   }
+  require (!acc_singleported || (num_acc_sub_banks <= 4 && isPow2(num_acc_sub_banks)))
 
   val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries)
 
   val mvin_scale_t = mvin_scale_args match {
-    case Some(ScaleArguments(_, _, t, _, _)) => t
+    case Some(ScaleArguments(_, _, t, _, _, _)) => t
     case None => Bool() // TODO replace this with UInt(0.W)
   }
 
   val mvin_scale_acc_t = mvin_scale_acc_args match {
-    case Some(ScaleArguments(_, _, t, _, _)) => t
+    case Some(ScaleArguments(_, _, t, _, _, _)) => t
     case None => Bool() // TODO replace this with UInt(0.W)
   }
 
@@ -112,6 +119,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   //==========================================================================
   // cisc-gemmini miscellaneous constants (some redundant with above)
   //==========================================================================
+  val rob_entries      = rob_full_entries + rob_partial_entries
   val ROB_ENTRIES      = rob_entries
   val LOG2_ROB_ENTRIES = log2Up(rob_entries)
 
@@ -232,7 +240,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     // assert(Set(8, 16, 32, 64).contains(outputType.getWidth))
     assert(Set(8, 16, 32, 64).contains(accType.getWidth))
 
-    assert(acc_scale_args.latency == 0, "Accumulator's scale latency must be 0 cycles")
 
     val header = new StringBuilder()
     header ++= s"#ifndef $guard\n"
@@ -321,7 +328,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     header ++= s"#define row_align_acc(blocks) __attribute__((aligned(blocks*DIM*sizeof(acc_t))))\n\n"
 
     val mvin_scale_identity = mvin_scale_args match {
-      case Some(ScaleArguments(_, _, _, identity, _)) => identity
+      case Some(ScaleArguments(_, _, _, _, identity, _)) => identity
       case None => "0"
     }
     header ++= s"#define MVIN_SCALE_IDENTITY $mvin_scale_identity\n\n"

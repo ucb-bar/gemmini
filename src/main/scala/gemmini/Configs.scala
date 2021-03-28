@@ -35,60 +35,44 @@ class WithMultiRoCC extends Config((site, here, up) => {
 // -----------------------
 
 object GemminiConfigs {
-  // import Arithmetic.FloatArithmetic._
-
   val defaultConfig = GemminiArrayConfig[SInt, Float, Float](
-  // val defaultConfig = GemminiArrayConfig[Float, Float](
     opcodes = OpcodeSet.custom3,
+
     tileRows = 1,
     tileColumns = 1,
-    // meshRows = 4,
-    // meshColumns = 4,
     meshRows = 16,
     meshColumns = 16,
+
     ld_queue_length = 8,
     st_queue_length = 2,
     ex_queue_length = 8,
-    rob_entries = 16,
+
+    rob_full_entries = 16,
+    rob_partial_entries = 8,
+
+    hasIm2col = false, //declare im2col block
+
     sp_banks = 4,
     sp_singleported = true,
     acc_banks = 2,
+    acc_singleported = false,
+    num_acc_sub_banks = -1,
     sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     dataflow = Dataflow.BOTH,
     acc_capacity = CapacityInKilobytes(64),
     mem_pipeline = 4,
-    hasIm2col = false, //declare im2col block
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
+    tlb_size = 4,
+    use_tlb_register_filter = true,
+    max_in_flight_reqs = 16,
+    use_dedicated_tl_port = false,
 
     inputType = SInt(8.W),
     outputType = SInt(20.W),
     accType = SInt(32.W),
-    // inputType = Float(8, 24),
-    // outputType = Float(8, 24),
-    // accType = Float(8, 24),
-
-    // mvin_scale_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
-    // mvin_scale_acc_args = Some(MvinScaleArguments((t: SInt, u: SInt) => t * u, 0, SInt(8.W))),
-    // mvin_scale_args = None,
-
-//    mvin_scale_args = Some(ScaleArguments(
-//      (t: SInt, s: SInt) => {
-//        // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
-//
-//        // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
-//        val u = s.asUInt()
-//        val point_five = Mux(u === 0.U, 0.U, t(u - 1.U))
-//        val zeros = Mux(u <= 1.U, 0.U, t.asUInt() & ((1.U << (u - 1.U)).asUInt() - 1.U)) =/= 0.U
-//        val ones_digit = t(u)
-//
-//        val r = (point_five & (zeros | ones_digit)).asBool()
-//
-//        Mux(s >= 0.S, ((t >> u).asSInt() + Mux(r, 1.S, 0.S)).asSInt(), (t << (0.S-s).asUInt()).asSInt())
-//      },
-//      0, SInt(8.W), "0")),
 
     mvin_scale_args = Some(ScaleArguments(
       (t: SInt, f: Float) => {
@@ -124,11 +108,10 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      4, Float(8, 24),
+      4, Float(8, 24), 4,
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (elem_t)y);})"
     )),
-
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
 
@@ -166,14 +149,14 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      0, Float(8, 24),
+      1, Float(8, 24), -1, // TODO pipelining should be 5
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
     ),
 
     acc_read_full_width = true,
     acc_read_small_width = true,
-    use_dedicated_tl_port = false,
+
     pe_latency = 0,
 
     ex_read_from_spad = true,
@@ -181,13 +164,17 @@ object GemminiConfigs {
     ex_write_to_spad = true,
     ex_write_to_acc = true,
 
-    tlb_size = 4,
-    use_tlb_register_filter = true,
-    max_in_flight_reqs = 16,
+    mesh_output_delay = 1,
   )
 
-  val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS)
-  val largeChipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64), dataflow=Dataflow.WS,
+  val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
+    acc_scale_args=defaultConfig.acc_scale_args.copy(latency=4),
+    acc_singleported=true,
+    num_acc_sub_banks=2,
+    ex_read_from_acc=false,
+    ex_write_to_spad=false
+  )
+  val largeChipConfig = chipConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64),
     meshRows=32, meshColumns=32
   )
 
@@ -330,5 +317,3 @@ class GemminiAcceleratorDeviceConfig extends Config(
   new WithoutTLMonitors ++
   new freechips.rocketchip.system.DefaultConfig
 )
-
-
