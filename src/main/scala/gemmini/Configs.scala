@@ -48,7 +48,9 @@ object GemminiConfigs {
     st_queue_length = 2,
     ex_queue_length = 8,
 
-    rob_entries = 16,
+    rob_full_entries = 16,
+    rob_partial_entries = 8,
+
     hasIm2col = false, //declare im2col block
 
     sp_banks = 4,
@@ -163,7 +165,9 @@ object GemminiConfigs {
     ex_read_from_spad = true,
     ex_read_from_acc = true,
     ex_write_to_spad = true,
-    ex_write_to_acc = true
+    ex_write_to_acc = true,
+
+    mesh_output_delay = 1,
   )
 
   val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,

@@ -21,7 +21,9 @@ object DSEBaseConfig {
     ld_queue_length = 4,
     st_queue_length = 2,
     ex_queue_length = 8,
-    rob_entries = 8,
+    rob_full_entries = 8,
+    rob_partial_entries = 1,
+
     sp_banks = 4, // TODO support one-bank designs
     acc_banks = 1,
     acc_singleported = false,
@@ -70,6 +72,8 @@ object DSEBaseConfig {
     tlb_size = 4,
     use_tlb_register_filter = true,
     max_in_flight_reqs = 16,
+
+    mesh_output_delay = 1,
   )
 }
 

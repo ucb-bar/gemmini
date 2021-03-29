@@ -16,20 +16,26 @@ import chisel3.experimental._
   */
 class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
                                    df: Dataflow.Value, pe_latency: Int,
+                                   max_simultaneous_matmuls: Int, output_delay: Int,
                                    val tileRows: Int, val tileColumns: Int,
                                    val meshRows: Int, val meshColumns: Int) extends Module {
   val io = IO(new Bundle {
-    val in_a   = Input(Vec(meshRows, Vec(tileRows, inputType)))
-    val in_b   = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
-    val in_d   = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
-    val in_control   = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
-    val out_b  = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
-    val out_c  = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
+    val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
+    val in_b = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
+    val in_d = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
+    val in_control = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
+    val in_id = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Up(max_simultaneous_matmuls).W)))) // The unique id of this particular matmul
+    val in_last = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
+    val out_b = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
+    val out_c = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
     val in_valid = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
     val out_valid = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
+    val out_control = Output(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
+    val out_id = Output(Vec(meshColumns, Vec(tileColumns, UInt(log2Up(max_simultaneous_matmuls).W))))
+    val out_last = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
   })
   // mesh(r)(c) => Tile at row r, column c
-  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, pe_latency, tileRows, tileColumns)))
+  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, pe_latency, max_simultaneous_matmuls, tileRows, tileColumns)))
   val meshT = mesh.transpose
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
@@ -78,13 +84,35 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
         tile.io.out_valid
     }
   }
+
+  // Chain in_id (pipeline across each column)
+  for (c <- 0 until meshColumns) {
+    meshT(c).foldLeft(io.in_id(c)) {
+      case (in_id, tile) =>
+        tile.io.in_id := RegNext(in_id)
+        tile.io.out_id
+    }
+  }
+
+  // Chain in_last (pipeline across each column)
+  for (c <- 0 until meshColumns) {
+    meshT(c).foldLeft(io.in_last(c)) {
+      case (in_last, tile) =>
+        tile.io.in_last := RegNext(in_last)
+        tile.io.out_last
+    }
+  }
+
   // Capture out_vec and out_control_vec (connect IO to bottom row of mesh)
   // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple4)
-  for (((b, c), (v, tile)) <- ((io.out_b zip io.out_c), (io.out_valid zip mesh.last)).zipped) {
+  for (((((((b, c), v), ctrl), id), last), tile) <- io.out_b zip io.out_c zip io.out_valid zip io.out_control zip io.out_id zip io.out_last zip mesh.last) {
     // TODO we pipelined this to make physical design easier. Consider removing these if possible
     // TODO shouldn't we clock-gate these signals with "garbage" as well?
-    b := RegNext(tile.io.out_b)
-    c := RegNext(tile.io.out_c)
-    v := RegNext(tile.io.out_valid)
+    b := ShiftRegister(tile.io.out_b, output_delay)
+    c := ShiftRegister(tile.io.out_c, output_delay)
+    v := ShiftRegister(tile.io.out_valid, output_delay)
+    ctrl := ShiftRegister(tile.io.out_control, output_delay)
+    id := ShiftRegister(tile.io.out_id, output_delay)
+    last := ShiftRegister(tile.io.out_last, output_delay)
   }
 }

@@ -10,8 +10,7 @@ import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar}
 
 import Util._
 
-class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
-                              (implicit p: Parameters) extends CoreBundle {
+class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val laddr = local_addr_t.cloneType
 
@@ -27,8 +26,7 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   override def cloneType: this.type = new ScratchpadMemReadRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
-class ScratchpadMemWriteRequest(local_addr_t: LocalAddr)
-                              (implicit p: Parameters) extends CoreBundle {
+class ScratchpadMemWriteRequest(local_addr_t: LocalAddr)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val laddr = local_addr_t.cloneType
 
@@ -54,8 +52,7 @@ class ScratchpadMemReadResponse extends Bundle {
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
 }
 
-class ScratchpadReadMemIO[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
-                         (implicit p: Parameters) extends CoreBundle {
+class ScratchpadReadMemIO[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val req = Decoupled(new ScratchpadMemReadRequest(local_addr_t, scale_t_bits))
   val resp = Flipped(Valid(new ScratchpadMemReadResponse))
 
@@ -63,8 +60,7 @@ class ScratchpadReadMemIO[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
 }
 
 // class ScratchpadWriteMemIO(val nBanks: Int, val nRows: Int, val acc_rows: Int)
-class ScratchpadWriteMemIO(local_addr_t: LocalAddr)
-                         (implicit p: Parameters) extends CoreBundle {
+class ScratchpadWriteMemIO(local_addr_t: LocalAddr)(implicit p: Parameters) extends CoreBundle {
   val req = Decoupled(new ScratchpadMemWriteRequest(local_addr_t))
   val resp = Flipped(Valid(new ScratchpadMemWriteResponse))
 
@@ -93,9 +89,7 @@ class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundl
   val data = Output(UInt(w.W))
 }
 
-
-
-class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean) extends Module {
+class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean) extends Module {
   // This is essentially a pipelined SRAM with the ability to stall pipeline stages
 
   require(w % aligned_to == 0 || w < aligned_to)
@@ -162,9 +156,7 @@ class ScratchpadBank(n: Int, w: Int, mem_pipeline: Int, aligned_to: Int, single_
   val q_will_be_empty = (q.io.count +& q.io.enq.fire()) - q.io.deq.fire() === 0.U
   io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
 
-  // Build the rest of the resp pipeline
-  val rdata_p = Pipeline(q.io.deq, mem_pipeline)
-  io.read.resp <> rdata_p
+  io.read.resp <> q.io.deq
 }
 
 
@@ -398,19 +390,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     val spad_mems = {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(
-        sp_bank_entries, spad_w, mem_pipeline,
+        sp_bank_entries, spad_w,
         aligned_to, config.sp_singleported,
         use_shared_ext_mem
       )) }
       val bank_ios = VecInit(banks.map(_.io))
-      // Getting the output of the bank that's about to be issued to the writer
-      val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.sp_bank())
-
-      when (!write_issue_q.io.deq.bits.laddr.is_acc_addr) {
-        writeData.valid := bank_issued_io.read.resp.valid && bank_issued_io.read.resp.bits.fromDMA
-        writeData.bits := bank_issued_io.read.resp.bits.data
-      }
-
       // Reading from the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
         if (use_shared_ext_mem) {
@@ -447,14 +431,28 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits := DontCare
         }
 
-        val ex_read_resp = io.srams.read(i).resp
-        val dma_resp_ready = writer.module.io.req.ready &&
+        val dma_read_resp = Wire(Decoupled(new ScratchpadReadResp(spad_w)))
+        dma_read_resp.valid := bio.read.resp.valid && bio.read.resp.bits.fromDMA
+        dma_read_resp.bits := bio.read.resp.bits
+        val ex_read_resp = Wire(Decoupled(new ScratchpadReadResp(spad_w)))
+        ex_read_resp.valid := bio.read.resp.valid && !bio.read.resp.bits.fromDMA
+        ex_read_resp.bits := bio.read.resp.bits
+
+        val dma_read_pipe = Pipeline(dma_read_resp, mem_pipeline)
+        val ex_read_pipe = Pipeline(ex_read_resp, mem_pipeline)
+
+
+        bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
+
+        dma_read_pipe.ready := writer.module.io.req.ready &&
           !write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
           !write_issue_q.io.deq.bits.laddr.is_garbage()
+        when (dma_read_pipe.fire()) {
+          writeData.valid := true.B
+          writeData.bits := dma_read_pipe.bits.data
+        }
 
-        bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_resp_ready, ex_read_resp.ready)
-        ex_read_resp.valid := bio.read.resp.valid // TODO should we AND this with fromDMA?
-        ex_read_resp.bits := bio.read.resp.bits
+        io.srams.read(i).resp <> ex_read_pipe
       }
 
       // Writing to the SRAM banks

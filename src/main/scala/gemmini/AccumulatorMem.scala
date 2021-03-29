@@ -279,7 +279,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   q.io.enq.bits.acc_bank_id := DontCare
   q.io.enq.valid := RegNext(io.read.req.fire())
 
-
   val p = q.io.deq
 
   io.read.resp.bits.data := p.bits.data
@@ -290,7 +289,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.read.resp.bits.acc_bank_id := DontCare // This is set in Scratchpad
   io.read.resp.valid := p.valid
   p.ready := io.read.resp.ready
-
 
   val q_will_be_empty = (q.io.count +& q.io.enq.fire()) - q.io.deq.fire() === 0.U
   io.read.req.ready := q_will_be_empty && (
@@ -303,8 +301,6 @@ class AccumulatorMem[T <: Data, U <: Data](
       io.read.req.ready := false.B
     }
   }
-
-
 
   // io.write.current_waddr.valid := mem.io.wen
   // io.write.current_waddr.bits := mem.io.waddr
