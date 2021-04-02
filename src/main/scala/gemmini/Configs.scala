@@ -212,6 +212,7 @@ class DualGemminiConfig extends Config((site, here, up) => {
       implicit val q = p
       int_gemmini = LazyModule(new Gemmini(GemminiConfigs.chipConfig.copy(
         opcodes = OpcodeSet.custom3,
+        mesh_output_delay = 2,
         use_shared_ext_mem = true
       )))
       int_gemmini
@@ -226,7 +227,8 @@ class DualGemminiConfig extends Config((site, here, up) => {
         use_shared_ext_mem = true,
         headerFileName = "gemmini_params_bf16.h",
 	acc_latency = 3,
-        dataflow = Dataflow.WS
+        dataflow = Dataflow.WS,
+        mesh_output_delay = 3,
       )))
       InModuleBody {
         require(int_gemmini.config.sp_banks == fp_gemmini.config.sp_banks)
