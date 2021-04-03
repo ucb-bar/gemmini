@@ -7,6 +7,7 @@ class Pipeline[T <: Data] (gen: T, latency: Int)(comb: Seq[T => T] = Seq.fill(la
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(gen))
     val out = Decoupled(gen)
+    val busy = Output(Bool())
   })
 
   require(comb.size == latency+1, "length of combinational is incorrect")
@@ -15,10 +16,12 @@ class Pipeline[T <: Data] (gen: T, latency: Int)(comb: Seq[T => T] = Seq.fill(la
     io.in.ready := io.out.ready
     io.out.valid := io.in.valid
     io.out.bits := comb.head(io.in.bits)
+    io.busy := io.in.valid
   } else {
     val stages = Reg(Vec(latency, gen))
     val valids = RegInit(VecInit(Seq.fill(latency)(false.B)))
     val stalling = VecInit(Seq.fill(latency)(false.B))
+    io.busy := io.in.valid || valids.reduce(_||_)
 
     // Stall signals
     io.in.ready := !stalling.head
