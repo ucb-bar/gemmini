@@ -47,6 +47,9 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val monitor_conflict = (cmd.bits.cmd.inst.funct === LOAD2_CMD || cmd.bits.cmd.inst.funct === LOAD_CMD) && cmd.bits.cmd.rs2(63)
   val monitor_conflict_start = monitor_conflict && cmd.bits.cmd.rs2(61)
   val monitor_conflict_end = monitor_conflict && cmd.bits.cmd.rs2(62)
+  //profiling
+  val profile_conflict_start = (cmd.bits.cmd.inst.funct === LOAD3_CMD) && cmd.bits.cmd.rs2(61)
+  val profile_conflict_end = (cmd.bits.cmd.inst.funct === LOAD3_CMD) && cmd.bits.cmd.rs2(62)
 
   val mstatus = cmd.bits.cmd.status
 

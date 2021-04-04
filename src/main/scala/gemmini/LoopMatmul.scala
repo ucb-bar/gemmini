@@ -260,11 +260,14 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val cols = (blocks * block_size.U) - Mux(j + blocks >= req.max_j, req.pad_j, 0.U)
   val rows = block_size.U - Mux(i === req.max_i-1.U, req.pad_i, 0.U)
 
+  //for conflict monitor profiling (ToDo: turn this off, use with conv as well)
+  val start_profile = (i === 1.U) && (j === 0.U)
+  val end_profile = (i === req.max_i - 1.U) && (j + blocks >= req.max_j)
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
   mvin_cmd.inst.funct := LOAD3_CMD
   mvin_cmd.rs1 := dram_addr
-  mvin_cmd.rs2 := (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
+  mvin_cmd.rs2 := (end_profile << 62).asUInt() | (start_profile << 61).asUInt() | (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
 
   io.req.ready := state === idle
   io.idle := state === idle
