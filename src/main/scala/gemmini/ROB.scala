@@ -4,6 +4,7 @@ package gemmini
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.tile.RoCCCommand
+import freechips.rocketchip.util.PlusArg
 import GemminiISA._
 import Util._
 
@@ -433,7 +434,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   }.elsewhen(io.busy) {
     cycles_since_issue := cycles_since_issue + 1.U
   }
-  assert(cycles_since_issue < 10000.U, "pipeline stall")
+  assert(cycles_since_issue < PlusArg("gemmini_timeout", 10000), "pipeline stall")
 
   for (e <- entries) {
     dontTouch(e.bits.allocated_at)
