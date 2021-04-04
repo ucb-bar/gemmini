@@ -31,6 +31,8 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val monitor_conflict = Bool()
   val monitor_conflict_start = Bool()
   val monitor_conflict_end = Bool()
+  val profile_conflict_start = Bool()
+  val profile_conflict_end = Bool()
 
   override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
 }
@@ -191,6 +193,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val monitor_conflict = Bool()
       val monitor_conflict_start = Bool()
       val monitor_conflict_end = Bool()
+      val profile_conflict_start = Bool()
+      val profile_conflict_end = Bool()
     }
 
     // TODO Can we filter out the larger read_sizes here if the systolic array is small, in the same way that we do so
@@ -214,6 +218,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       packet.monitor_conflict := req.monitor_conflict
       packet.monitor_conflict_start := req.monitor_conflict_start
       packet.monitor_conflict_end := req.monitor_conflict_end
+      packet.profile_conflict_end := req.profile_conflict_end
+      packet.profile_conflict_start := req.profile_conflict_start
 
       packet
     }
@@ -228,6 +234,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val read_monitor = read_packet.monitor_conflict
     val read_monitor_start = read_packet.monitor_conflict_start
     val read_monitor_end = read_packet.monitor_conflict_end
+    val profile_start = read_packet.profile_conflict_start
+    val profile_end = read_packet.profile_conflict_end
 
     // Firing off TileLink read requests and allocating space inside the reservation buffer for them
     val get = edge.Get(
@@ -245,6 +253,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val monitor_conflict = Output(Bool())
       val monitor_conflict_start = Output(Bool())
       val monitor_conflict_end = Output(Bool())
+
+      val profile_conflict_start = Output(Bool())
+      val profile_conflict_end = Output(Bool())
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -288,6 +299,28 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     assert(retry_a.ready)
 
     val tl_miss = tl.a.valid && !tl.a.ready
+    val tl_profile_start = translate_q.io.deq.bits.profile_conflict_start
+    val tl_profile_end = translate_q.io.deq.bits.profile_conflict_end
+    val (p_reset :: p_profile_start :: Nil) = Enum(2)
+    val profile_miss_counter = RegInit(0.U(7.W))
+    val p_state = RegInit(s_reset)
+    when(p_state === p_reset){
+      when(tl_profile_start){
+        p_state := p_profile_start
+      }
+    }
+    when(p_state === p_profile_start){
+      when(tl_miss){
+        profile_miss_counter := profile_miss_counter + 1.U //which counter to use?
+      }.otherwise{
+        profile_miss_counter := 0.U
+      }
+      when(tl_profile_end){
+        p_state === p_reset
+        profile_miss_counter := 0.U
+      }
+    }
+
     val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
     val tl_miss_counter = RegInit(0.U(6.W))
     val alert_cycles = RegInit(io.alert_cycles)

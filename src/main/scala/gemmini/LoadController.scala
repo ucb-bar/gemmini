@@ -105,6 +105,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.monitor_conflict := monitor_conflict
   io.dma.req.bits.monitor_conflict_start := monitor_conflict_start
   io.dma.req.bits.monitor_conflict_end := monitor_conflict_end
+  io.dma.req.bits.profile_conflict_start := profile_conflict_start
+  io.dma.req.bits.profile_conflict_end := profile_conflict_end
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
