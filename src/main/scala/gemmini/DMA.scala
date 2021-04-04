@@ -303,7 +303,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val tl_profile_end = translate_q.io.deq.bits.profile_conflict_end
     val (p_reset :: p_profile_start :: Nil) = Enum(2)
     val profile_miss_counter = RegInit(0.U(7.W))
-    val p_state = RegInit(s_reset)
+    val p_state = RegInit(p_reset)
     when(p_state === p_reset){
       when(tl_profile_start){
         p_state := p_profile_start
@@ -320,6 +320,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         profile_miss_counter := 0.U
       }
     }
+    dontTouch(profile_miss_counter)
 
     val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
     val tl_miss_counter = RegInit(0.U(6.W))
