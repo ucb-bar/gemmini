@@ -563,6 +563,8 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val full_c = Bool()
   val ex_accumulate = Bool()
 
+  val weightA = UInt(8.W) // TODO magic numbers
+
   val configured = Bool()
 
   val running = Bool()
@@ -645,12 +647,13 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   io.busy := cmd.valid || loop_configured
 
   // Create ld arbiters
-  val ldab_arb = Module(new WeightedArbiter(new RoCCCommand(), weightA=3))
+  val ldab_arb = Module(new WeightedArbiter(new RoCCCommand(), maxWeightA=255)) // TODO magic numbers
   ldab_arb.io.inA <> ldA.io.cmd
   ldab_arb.io.inB <> ldB.io.cmd
   val ab_loads_on_same_loop = ldA.io.loop_id === ldB.io.loop_id
   ldab_arb.io.forceA := !ab_loads_on_same_loop && ldA.io.loop_id === head_loop_id
   ldab_arb.io.forceB := !ab_loads_on_same_loop && ldB.io.loop_id === head_loop_id
+  ldab_arb.io.weightA := head_loop.weightA
 
   // Create global arbiter
   val arb = Module(new Arbiter(new RoCCCommand(), 4))
@@ -736,6 +739,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
         loop_being_configured.low_d := cmd.bits.rs1(2)
         loop_being_configured.a_transpose := cmd.bits.rs2(0)
         loop_being_configured.b_transpose := cmd.bits.rs2(1)
+
+        loop_being_configured.weightA := cmd.bits.rs1(15, 8) // TODO magic numbers
 
         loop_being_configured.configured := true.B
 
