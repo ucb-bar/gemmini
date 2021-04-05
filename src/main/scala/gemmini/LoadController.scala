@@ -36,7 +36,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val cmd = Queue(io.cmd, ld_queue_length)
   val vaddr = cmd.bits.cmd.rs1
   val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
-  val cols = cmd.bits.cmd.rs2(32 + mvin_cols_bits - 1, 32) // TODO magic numbers
+  //val cols = cmd.bits.cmd.rs2(32 + mvin_cols_bits - 1, 32) // TODO magic numbers
+  val cols = cmd.bits.cmd.rs2(44, 32)
   //val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits - 1, 48) // TODO magic numbers
   val rows = cmd.bits.cmd.rs2(60, 48) // TODO magic numbers
   val config_stride = cmd.bits.cmd.rs2
