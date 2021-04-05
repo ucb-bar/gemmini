@@ -313,6 +313,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val (p_reset :: p_profile_start :: Nil) = Enum(2)
     val profile_miss_counter = RegInit(0.U(7.W))
     val p_state = RegInit(p_reset)
+    val profile_number = RegInit(0.U(5.W))
+    val profile_total = RegInit(0.U(10.W))
+    val profile_cycle = RegInit(0.U(6.W))
+    val profile_detected = RegInit(false.B)
     when(p_state === p_reset){
       when(tl_profile_start){
         p_state := p_profile_start
@@ -320,13 +324,23 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     }
     when(p_state === p_profile_start){
       when(tl_miss && tl_profile){ // and here?
+        when(profile_miss_counter === 5.U){ //only count those that are over 5 cycles (to avoid false detection)
+          profile_number := profile_number + 1.U
+          profile_detected := true.B
+        }
         profile_miss_counter := profile_miss_counter + 1.U //which counter to use?
       }.otherwise{
+        when(profile_detected){
+          profile_total := profile_total + profile_miss_counter
+          profile_detected := false.B
+        }
         profile_miss_counter := 0.U
       }
       when(tl_profile_end){
+        profile_detected := false.B
         p_state := p_reset
         profile_miss_counter := 0.U
+        profile_cycle := profile_total / profile_number // ToDo: need to change (don't use division)
       }
     }
     dontTouch(profile_miss_counter)
