@@ -318,7 +318,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         profile_miss_counter := 0.U
       }
       when(tl_profile_end){
-        p_state === p_reset
+        p_state := p_reset
         profile_miss_counter := 0.U
       }
     }
