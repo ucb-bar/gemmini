@@ -344,6 +344,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       }
     }
     dontTouch(profile_miss_counter)
+    dontTouch(profile_cycle)
+    dontTouch(profile_detected)
+    dontTouch(profile_total)
+    dontTouch(profile_number)
 
     val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
     val tl_miss_counter = RegInit(0.U(6.W))
