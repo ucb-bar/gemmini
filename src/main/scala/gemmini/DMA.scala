@@ -267,6 +267,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     untranslated_a.bits.monitor_conflict := read_monitor
     untranslated_a.bits.monitor_conflict_start := read_monitor_start
     untranslated_a.bits.monitor_conflict_end := read_monitor_end
+    untranslated_a.bits.profile_conflict_end := profile_end
+    untranslated_a.bits.profile_conflict_start := profile_start
 
     // 0 goes to retries, 1 goes to state machine
     val retry_a = Wire(Decoupled(new TLBundleAWithInfo))
