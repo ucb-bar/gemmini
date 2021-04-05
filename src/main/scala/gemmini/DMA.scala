@@ -31,6 +31,7 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val monitor_conflict = Bool()
   val monitor_conflict_start = Bool()
   val monitor_conflict_end = Bool()
+  val profile_conflict = Bool()
   val profile_conflict_start = Bool()
   val profile_conflict_end = Bool()
 
@@ -193,6 +194,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val monitor_conflict = Bool()
       val monitor_conflict_start = Bool()
       val monitor_conflict_end = Bool()
+      val profile_conflict = Bool()
       val profile_conflict_start = Bool()
       val profile_conflict_end = Bool()
     }
@@ -218,6 +220,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       packet.monitor_conflict := req.monitor_conflict
       packet.monitor_conflict_start := req.monitor_conflict_start
       packet.monitor_conflict_end := req.monitor_conflict_end
+      packet.profile_conflict := req.profile_conflict
       packet.profile_conflict_end := req.profile_conflict_end
       packet.profile_conflict_start := req.profile_conflict_start
 
@@ -234,6 +237,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val read_monitor = read_packet.monitor_conflict
     val read_monitor_start = read_packet.monitor_conflict_start
     val read_monitor_end = read_packet.monitor_conflict_end
+    val profile = read_packet.profile_conflict
     val profile_start = read_packet.profile_conflict_start
     val profile_end = read_packet.profile_conflict_end
 
@@ -254,6 +258,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val monitor_conflict_start = Output(Bool())
       val monitor_conflict_end = Output(Bool())
 
+      val profile_conflict = Output(Bool())
       val profile_conflict_start = Output(Bool())
       val profile_conflict_end = Output(Bool())
     }
@@ -267,6 +272,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     untranslated_a.bits.monitor_conflict := read_monitor
     untranslated_a.bits.monitor_conflict_start := read_monitor_start
     untranslated_a.bits.monitor_conflict_end := read_monitor_end
+    untranslated_a.bits.profile_conflict := profile
     untranslated_a.bits.profile_conflict_end := profile_end
     untranslated_a.bits.profile_conflict_start := profile_start
 
@@ -301,6 +307,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     assert(retry_a.ready)
 
     val tl_miss = tl.a.valid && !tl.a.ready
+    val tl_profile = translate_q.io.deq.bits.profile_conflict
     val tl_profile_start = translate_q.io.deq.bits.profile_conflict_start
     val tl_profile_end = translate_q.io.deq.bits.profile_conflict_end
     val (p_reset :: p_profile_start :: Nil) = Enum(2)
@@ -312,7 +319,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       }
     }
     when(p_state === p_profile_start){
-      when(tl_miss){
+      when(tl_miss && tl_profile){ // and here?
         profile_miss_counter := profile_miss_counter + 1.U //which counter to use?
       }.otherwise{
         profile_miss_counter := 0.U

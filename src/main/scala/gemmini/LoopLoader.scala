@@ -83,6 +83,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   val max_blocks = max_block_len.asUInt()
   val AB = RegInit(false.B) //false if B, true if A
+  val profile = RegInit(false.B)
   //ToDo: rotate starting address like LoopMatmul.scala
   val A_sp_addr_start = Mux(loop_tag, (max_addr/2).U, 0.U)//RegInit(0.U(log2Up(max_addr).W))
   val B_sp_addr_end = Mux(loop_tag, (max_addr - block_size).U, (max_addr/2 - block_size).U)//RegInit((max_addr/2).U(log2Up(max_addr).W))
@@ -116,17 +117,19 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val state = RegInit(idle)
   val configured = RegInit(false.B)
 
-  val conflict_monitor = !((alert_cycle === 0.U) || (latency === 0.U))
+  val conflict_monitor = !(latency === 0.U)//!((alert_cycle === 0.U) || (latency === 0.U))
   val conflict_monitor_start = conflict_monitor && Mux(is_conv, (och === 0.U && kch === 0.U && kcol === 0.U && krow === 0.U), (row_iterator === 0.U && col_iterator === 0.U)) && (state === ld) //ToDo: with conv
   val conflict_monitor_end = conflict_monitor && Mux(is_conv, (kch + block_size.U >= kchs && kcol === kcols - 1.U && krow === krows - 1.U && och + max_ochs_per_mvin >= ochs),
     (row_iterator === max_row_iterator - 1.U && col_iterator >= max_col_iterator - max_blocks)) && (state === ld)
 
+  val profile_start = profile && (row_iterator === 1.U && col_iterator === 0.U)
+  val profile_end = profile && (row_iterator === max_row_iterator - 1.U && col_iterator >= max_col_iterator - max_blocks)
   //ToDo: either load A or B (for now just do with B)
   val load_cmd = Wire(new RoCCCommand())
   load_cmd := DontCare
   load_cmd.inst.funct := Mux(AB, LOAD_CMD, LOAD2_CMD)
   load_cmd.rs1 := dram_addr
-  load_cmd.rs2 :=  (conflict_monitor << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
+  load_cmd.rs2 :=  (conflict_monitor << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (profile << 47).asUInt() | (profile_end << 46).asUInt() | (profile_start << 45).asUInt() | (cols << 32).asUInt() | sp_addr
 
   //for conv
   val MVIN_SCALE_IDENTITY = 0x3f800000.U // TODO get this from configs somehow
@@ -170,7 +173,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val unlock = unlock_monitor >= unlock_cycle - 1.U // ToDo: change this number
 
   io.out.bits := Mux(configured, Mux(is_conv, Mux(state === config, config_cmd, mvin_cmd), load_cmd),
-    Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock) && conflict_monitor, fixed_loop_cmd, cmd.bits))
+    Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock) && (conflict_monitor || profile), fixed_loop_cmd, cmd.bits))
   io.out.bits.status := cmd.bits.status
   io.out.valid := Mux(configured, state =/= idle, cmd.valid && !is_matmul_ldconfig && !is_conv_ldconfig)
   cmd.ready := Mux(is_matmul_ldconfig || is_conv_ldconfig, !configured, !configured && io.out.ready)
@@ -187,6 +190,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
         max_row_iterator := cmd.bits.rs2(iterator_bitwidth-1, 0)
 
         AB := cmd.bits.rs1(63)
+        profile := cmd.bits.rs1(62) //added for profiling cache behavior
         col_pad := cmd.bits.rs1(iterator_bitwidth * 2 - 1, iterator_bitwidth)
         row_pad := cmd.bits.rs1(iterator_bitwidth-1, 0)
         is_conv := false.B
@@ -195,7 +199,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
         when(!pause_req || unlock) {
           dram_base_addr := cmd.bits.rs1
           row_stride := cmd.bits.rs2
-          when(conflict_monitor) { // if latency == 0, don't unroll
+          when(conflict_monitor || profile) { // if latency == 0, don't unroll
             configured := true.B
             state := ld
           }.otherwise {

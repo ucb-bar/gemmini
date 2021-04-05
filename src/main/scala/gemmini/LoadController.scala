@@ -48,8 +48,9 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val monitor_conflict_start = monitor_conflict && cmd.bits.cmd.rs2(61)
   val monitor_conflict_end = monitor_conflict && cmd.bits.cmd.rs2(62)
   //profiling
-  val profile_conflict_start = (cmd.bits.cmd.inst.funct === LOAD3_CMD) && cmd.bits.cmd.rs2(61)
-  val profile_conflict_end = (cmd.bits.cmd.inst.funct === LOAD3_CMD) && cmd.bits.cmd.rs2(62)
+  val profile_conflict = (cmd.bits.cmd.inst.funct === LOAD2_CMD || cmd.bits.cmd.inst.funct === LOAD_CMD) && cmd.bits.cmd.rs2(47)
+  val profile_conflict_start = profile_conflict && cmd.bits.cmd.rs2(45)
+  val profile_conflict_end = profile_conflict && cmd.bits.cmd.rs2(46)
 
   val mstatus = cmd.bits.cmd.status
 
@@ -107,6 +108,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.monitor_conflict_end := monitor_conflict_end
   io.dma.req.bits.profile_conflict_start := profile_conflict_start
   io.dma.req.bits.profile_conflict_end := profile_conflict_end
+  io.dma.req.bits.profile_conflict := profile_conflict
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
