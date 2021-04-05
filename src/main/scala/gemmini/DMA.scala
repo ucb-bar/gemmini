@@ -313,9 +313,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val (p_reset :: p_profile_start :: Nil) = Enum(2)
     val profile_miss_counter = RegInit(0.U(7.W))
     val p_state = RegInit(p_reset)
-    val profile_number = RegInit(0.U(5.W))
-    val profile_total = RegInit(0.U(10.W))
-    val profile_cycle = RegInit(0.U(6.W))
+    val profile_number = RegInit(0.U(9.W))
+    val profile_total = RegInit(0.U(12.W))
+    val profile_cycle = RegInit(0.U(7.W))
     val profile_detected = RegInit(false.B)
     when(p_state === p_reset){
       when(tl_profile_start){
