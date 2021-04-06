@@ -124,7 +124,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val unlock_monitor = RegInit(0.U(4.W))
   val unlock_cycle = RegInit(3.U(4.W))
 
-  val profile_hit = profile && (unlock_cycle =/= 0.U)
+  val profile_hit = profile && (pause_turn =/= 0.U)
   val profile_start = profile_hit && (row_iterator === 0.U && col_iterator === 0.U)
   val profile_end = profile_hit && (row_iterator === max_row_iterator - 1.U && col_iterator >= max_col_iterator - max_blocks)
   //ToDo: either load A or B (for now just do with B)

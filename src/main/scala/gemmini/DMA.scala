@@ -302,6 +302,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     /////////////////////////////////////////////////////////////////////////////////////////
     val conflict_detected = RegInit(false.B)
+    val pause_turn = RegInit(io.pause_turn)
     retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready || conflict_detected)
     retry_a.bits := translate_q.io.deq.bits
     assert(retry_a.ready)
@@ -317,8 +318,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val profile_total = RegInit(0.U(12.W))
     val profile_max = RegInit(0.U(7.W))
     val profile_average = RegInit(0.U(7.W))
-    // if too far off, select average
-    val profile_cycle = Mux(profile_max > profile_average + 10.U, profile_average, profile_max)
+    // either average or max
+    val profile_cycle = Mux(pause_turn === 1.U, profile_average + 10.U, profile_max + 1.U) //parameterize what to select
     val profile_detected = RegInit(false.B)
     when(p_state === p_reset){
       when(tl_profile_start){
@@ -358,7 +359,6 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
     val tl_miss_counter = RegInit(0.U(6.W))
     val alert_cycles = RegInit(io.alert_cycles)
-    val pause_turn = RegInit(io.pause_turn)
     val latency = RegInit(io.latency)
 
     tl_miss_counter := satAdd(tl_miss_counter, 1.U, alert_cycles + 2.U, tl_counter_trigger)
