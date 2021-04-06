@@ -306,6 +306,14 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready || conflict_detected)
     retry_a.bits := translate_q.io.deq.bits
     assert(retry_a.ready)
+    when(reset.toBool()){
+      translate_q.io.enq.bits.profile_conflict := false.B
+      translate_q.io.enq.bits.profile_conflict_start := false.B
+      translate_q.io.enq.bits.profile_conflict_end := false.B
+      translate_q.io.enq.bits.monitor_conflict := false.B
+      translate_q.io.enq.bits.monitor_conflict_end := false.B
+      translate_q.io.enq.bits.monitor_conflict_start := false.B
+    }
 
     val tl_miss = tl.a.valid && !tl.a.ready
     val tl_profile = translate_q.io.deq.bits.profile_conflict
@@ -328,7 +336,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     }
     when(p_state === p_profile_start){
       when(tl_miss && tl_profile){ // and here?
-        when(profile_miss_counter === 7.U){ //only count those that are over 5 cycles (to avoid false detection)
+        when(profile_miss_counter === 5.U){ //only count those that are over 5 cycles (to avoid false detection)
           profile_number := profile_number + 1.U
           profile_detected := true.B
         }
@@ -346,7 +354,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         p_state := p_reset
         profile_miss_counter := 0.U
         profile_average := profile_total / profile_number // ToDo: need to change (don't use division)
-        profile_cycle := Mux(pause_turn === 1.U, profile_average + 10.U, profile_max + 1.U) //parameterize what to select
+        profile_cycle := Mux(pause_turn === 1.U, profile_average * 2.U, profile_max + 1.U) //parameterize what to select
       }
     }
     dontTouch(profile_miss_counter)
