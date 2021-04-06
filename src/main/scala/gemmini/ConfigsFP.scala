@@ -17,8 +17,8 @@ object GemminiFPConfigs {
     opcodes = OpcodeSet.custom3,
     tileRows = 1,
     tileColumns = 1,
-    meshRows = 4,
-    meshColumns = 4,
+    meshRows = 8,
+    meshColumns = 8,
 
     ld_queue_length = 8,
     st_queue_length = 2,
@@ -45,7 +45,7 @@ object GemminiFPConfigs {
     aligned_to = 1,
     tlb_size = 4,
     use_tlb_register_filter = true,
-    max_in_flight_reqs = 16,
+    max_in_flight_reqs = 64,
     use_dedicated_tl_port = false,
 
     inputType = Float(8, 24),
