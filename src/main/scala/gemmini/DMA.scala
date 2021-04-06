@@ -313,6 +313,18 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       translate_q.io.enq.bits.monitor_conflict := false.B
       translate_q.io.enq.bits.monitor_conflict_end := false.B
       translate_q.io.enq.bits.monitor_conflict_start := false.B
+      retry_a.bits.profile_conflict := false.B
+      retry_a.bits.profile_conflict_start := false.B
+      retry_a.bits.profile_conflict_end := false.B
+      retry_a.bits.monitor_conflict_end := false.B
+      retry_a.bits.monitor_conflict_start := false.B
+      retry_a.bits.monitor_conflict := false.B
+      untranslated_a.bits.profile_conflict := false.B
+      untranslated_a.bits.profile_conflict_start := false.B
+      untranslated_a.bits.profile_conflict_end := false.B
+      untranslated_a.bits.monitor_conflict_end := false.B
+      untranslated_a.bits.monitor_conflict_start := false.B
+      untranslated_a.bits.monitor_conflict := false.B
     }
 
     val tl_miss = tl.a.valid && !tl.a.ready
