@@ -358,6 +358,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
           profile_total := profile_total + profile_miss_counter
           profile_max := Mux(profile_max < profile_miss_counter, profile_miss_counter, profile_max)//update to max value
           profile_detected := false.B
+          when(profile_number === 64.U){
+            profile_average := profile_total / 64.U
+          }
         }
         profile_miss_counter := 0.U
       }
@@ -365,7 +368,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         profile_detected := false.B
         p_state := p_reset
         profile_miss_counter := 0.U
-        profile_average := profile_total / profile_number // ToDo: need to change (don't use division)
+        when(profile_number === 64.U){
+          profile_average := profile_total / 64.U
+        }
+        //profile_average := profile_total / profile_number // ToDo: need to change (don't use division)
         profile_cycle := Mux(io.pause_turn === 1.U, profile_average * 2.U, profile_max + 1.U) //parameterize what to select
       }
     }
