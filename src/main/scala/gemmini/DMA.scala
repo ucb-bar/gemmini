@@ -360,7 +360,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val tl_miss_counter = RegInit(0.U(6.W))
     val alert_cycles = RegInit(io.alert_cycles)
     //val latency = RegInit(io.latency)
-    val latency = 0.U//io.latency * profile_average
+    val latency = Mux(translate_q.io.deq.bits.monitor_conflict && !translate_q.io.deq.bits.profile_conflict, io.latency * profile_average, 0.U)
 
     tl_miss_counter := satAdd(tl_miss_counter, 1.U, alert_cycles + 2.U, tl_counter_trigger)
     when(tl_miss_counter >= alert_cycles){ //reached limit
