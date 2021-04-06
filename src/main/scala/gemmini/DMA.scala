@@ -319,7 +319,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val profile_max = RegInit(0.U(7.W))
     val profile_average = RegInit(0.U(7.W))
     // either average or max
-    val profile_cycle = Mux(pause_turn === 1.U, profile_average + 10.U, profile_max + 1.U) //parameterize what to select
+    val profile_cycle = RegInit(profile_max)
     val profile_detected = RegInit(false.B)
     when(p_state === p_reset){
       when(tl_profile_start){
@@ -346,6 +346,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         p_state := p_reset
         profile_miss_counter := 0.U
         profile_average := profile_total / profile_number // ToDo: need to change (don't use division)
+        profile_cycle := Mux(pause_turn === 1.U, profile_average + 10.U, profile_max + 1.U) //parameterize what to select
       }
     }
     dontTouch(profile_miss_counter)
@@ -358,7 +359,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
     val tl_miss_counter = RegInit(0.U(6.W))
-    val alert_cycles = RegInit(io.alert_cycles)
+    val alert_cycles = profile_cycle //RegInit(io.alert_cycles)
     //val latency = RegInit(io.latency)
     val latency = Mux(translate_q.io.deq.bits.monitor_conflict && !translate_q.io.deq.bits.profile_conflict, io.latency * profile_average, 0.U)
 
@@ -379,7 +380,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       when(m_state === s_reset) {
         when(translate_q.io.deq.bits.monitor_conflict_start){ // to avoid false detection
           m_state := s_monitor_start
-          alert_cycles := io.alert_cycles
+          //alert_cycles := io.alert_cycles
           //latency := io.latency //delared latency above
           pause_turn := io.pause_turn
         }
