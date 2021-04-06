@@ -974,7 +974,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
   dontTouch(complete_bits_count)
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     // pending_completed_rob_id.valid := false.B
     pending_completed_rob_ids.foreach(_.valid := false.B)
   }

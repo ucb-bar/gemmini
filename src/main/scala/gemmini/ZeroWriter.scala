@@ -64,7 +64,7 @@ class ZeroWriter[T <: Data, U <: Data, V <: Data, Tag <: Data](config: GemminiAr
     col_counter := 0.U
   }
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     req.pop()
   }
 }

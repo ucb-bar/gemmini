@@ -254,7 +254,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   io.req.ready := (!req.valid || last_fire) && tagq.io.enq.ready && total_rows_q.io.enq.ready
   io.tags_in_progress := tagq.io.all.map(_.tag)
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     req.valid := false.B
   }
 
