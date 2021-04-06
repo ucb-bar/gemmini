@@ -379,9 +379,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       when(m_state === s_reset) {
         when(translate_q.io.deq.bits.monitor_conflict_start){ // to avoid false detection
           m_state := s_monitor_start
-          //pause_monitor_start := pause_monitor_start + 1.U
           alert_cycles := io.alert_cycles
-          latency := io.latency
+          //latency := io.latency //delared latency above
           pause_turn := io.pause_turn
         }
       }.elsewhen(m_state === s_monitor_start){
