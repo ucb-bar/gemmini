@@ -149,7 +149,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   mvin_cmd.rs1 := dram_addr
   mvin_cmd.rs2 := (conflict_monitor << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (K << 48.U).asUInt() | (J << 32.U).asUInt() | sp_addr
 
-  val expected_tl_req = (max_addr / (2*max_block_len)).asUInt()
+  val expected_tl_req = (max_addr / (2*2*max_block_len)).asUInt()
   io.busy := cmd.valid || configured
   io.alert_cycle := alert_cycle
   io.latency := expected_tl_req//latency
