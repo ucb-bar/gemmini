@@ -225,6 +225,8 @@ class DualGemminiConfig extends Config((site, here, up) => {
         meshColumns = 8, meshRows = 8,
         acc_singleported = true, acc_banks = 2, num_acc_sub_banks = 2,
         use_shared_ext_mem = true,
+        ex_read_from_acc=false,
+        ex_write_to_spad=false,
         headerFileName = "gemmini_params_bf16.h",
 	acc_latency = 3,
         dataflow = Dataflow.WS,

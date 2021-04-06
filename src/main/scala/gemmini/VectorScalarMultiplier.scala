@@ -87,7 +87,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
       new VectorScalarMultiplierResp(block_cols, t, tag_t),
       latency
     )())
-    io.resp <> pipe.io.out
+    io.resp <> Queue(pipe.io.out)
     in_fire := pipe.io.in.fire()
 
     pipe.io.in.valid := in.valid
