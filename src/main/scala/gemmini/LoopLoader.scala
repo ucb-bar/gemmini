@@ -121,15 +121,18 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val conflict_monitor_start = conflict_monitor && Mux(is_conv, (och === 0.U && kch === 0.U && kcol === 0.U && krow === 0.U), (row_iterator === 0.U && col_iterator === 0.U)) && (state === ld) //ToDo: with conv
   val conflict_monitor_end = conflict_monitor && Mux(is_conv, (kch + block_size.U >= kchs && kcol === kcols - 1.U && krow === krows - 1.U && och + max_ochs_per_mvin >= ochs),
     (row_iterator === max_row_iterator - 1.U && col_iterator >= max_col_iterator - max_blocks)) && (state === ld)
+  val unlock_monitor = RegInit(0.U(4.W))
+  val unlock_cycle = RegInit(3.U(4.W))
 
-  val profile_start = profile && (row_iterator === 0.U && col_iterator === 0.U)
-  val profile_end = profile && (row_iterator === max_row_iterator - 1.U && col_iterator >= max_col_iterator - max_blocks)
+  val profile_hit = profile && (unlock_cycle =/= 0.U)
+  val profile_start = profile_hit && (row_iterator === 0.U && col_iterator === 0.U)
+  val profile_end = profile_hit && (row_iterator === max_row_iterator - 1.U && col_iterator >= max_col_iterator - max_blocks)
   //ToDo: either load A or B (for now just do with B)
   val load_cmd = Wire(new RoCCCommand())
   load_cmd := DontCare
   load_cmd.inst.funct := Mux(AB, LOAD_CMD, LOAD2_CMD)
   load_cmd.rs1 := dram_addr
-  load_cmd.rs2 :=  (conflict_monitor << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (profile << 47).asUInt() | (profile_end << 46).asUInt() | (profile_start << 45).asUInt() | (cols << 32).asUInt() | sp_addr
+  load_cmd.rs2 :=  (conflict_monitor << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (profile_hit << 47).asUInt() | (profile_end << 46).asUInt() | (profile_start << 45).asUInt() | (cols << 32).asUInt() | sp_addr
 
   //for conv
   val MVIN_SCALE_IDENTITY = 0x3f800000.U // TODO get this from configs somehow
@@ -159,8 +162,6 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   fixed_loop_cmd.rs1 := Mux(cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_5, 0.U, Mux(AB, 0.U, cmd.bits.rs1)) //if conv, weight
   fixed_loop_cmd.rs2 := Mux(is_conv, cmd.bits.rs2, Mux(AB, cmd.bits.rs2, 0.U)) //for now, not do input for conv
 
-  val unlock_monitor = RegInit(0.U(4.W))
-  val unlock_cycle = RegInit(3.U(4.W))
   unlock_monitor := floorAdd(unlock_monitor, 1.U, unlock_cycle + pause_turn - 1.U, pause_req && is_loop_ws_addr & lock_tag && cmd.fire())
   when(!pause_req){
     unlock_monitor := 0.U

@@ -315,7 +315,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val p_state = RegInit(p_reset)
     val profile_number = RegInit(0.U(9.W))
     val profile_total = RegInit(0.U(12.W))
-    val profile_cycle = RegInit(0.U(7.W))
+    val profile_max = RegInit(0.U(7.W))
+    val profile_average = RegInit(0.U(7.W))
+    // if too far off, select average
+    val profile_cycle = Mux(profile_max > profile_average + 10.U, profile_average, profile_max)
     val profile_detected = RegInit(false.B)
     when(p_state === p_reset){
       when(tl_profile_start){
@@ -324,7 +327,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     }
     when(p_state === p_profile_start){
       when(tl_miss && tl_profile){ // and here?
-        when(profile_miss_counter === 5.U){ //only count those that are over 5 cycles (to avoid false detection)
+        when(profile_miss_counter === 7.U){ //only count those that are over 5 cycles (to avoid false detection)
           profile_number := profile_number + 1.U
           profile_detected := true.B
         }
@@ -332,6 +335,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       }.otherwise{
         when(profile_detected){
           profile_total := profile_total + profile_miss_counter
+          profile_max := Mux(profile_max < profile_miss_counter, profile_miss_counter, profile_max)//update to max value
           profile_detected := false.B
         }
         profile_miss_counter := 0.U
@@ -340,11 +344,13 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         profile_detected := false.B
         p_state := p_reset
         profile_miss_counter := 0.U
-        profile_cycle := profile_total / profile_number // ToDo: need to change (don't use division)
+        profile_average := profile_total / profile_number // ToDo: need to change (don't use division)
       }
     }
     dontTouch(profile_miss_counter)
     dontTouch(profile_cycle)
+    dontTouch(profile_average)
+    dontTouch(profile_max)
     dontTouch(profile_detected)
     dontTouch(profile_total)
     dontTouch(profile_number)
