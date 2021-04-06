@@ -329,7 +329,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     val tl_miss = tl.a.valid && !tl.a.ready
     val tl_profile = translate_q.io.deq.bits.profile_conflict
-    val tl_profile_start = translate_q.io.deq.bits.profile_conflict_start
+    val tl_profile_start = translate_q.io.deq.bits.profile_conflict_start && translate_q.io.deq.valid
     val tl_profile_end = translate_q.io.deq.bits.profile_conflict_end
     val (p_reset :: p_profile_start :: Nil) = Enum(2)
     val profile_miss_counter = RegInit(0.U(7.W))
@@ -366,7 +366,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         p_state := p_reset
         profile_miss_counter := 0.U
         profile_average := profile_total / profile_number // ToDo: need to change (don't use division)
-        profile_cycle := Mux(pause_turn === 1.U, profile_average * 2.U, profile_max + 1.U) //parameterize what to select
+        profile_cycle := Mux(io.pause_turn === 1.U, profile_average * 2.U, profile_max + 1.U) //parameterize what to select
       }
     }
     dontTouch(profile_miss_counter)
@@ -398,7 +398,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.pause := pause_detect
     when(translate_q.io.deq.bits.monitor_conflict && !translate_q.io.deq.bits.monitor_conflict_end){
       when(m_state === s_reset) {
-        when(translate_q.io.deq.bits.monitor_conflict_start){ // to avoid false detection
+        when(translate_q.io.deq.bits.monitor_conflict_start && translate_q.io.deq.valid){ // to avoid false detection
           m_state := s_monitor_start
           //alert_cycles := io.alert_cycles
           //latency := io.latency //delared latency above
