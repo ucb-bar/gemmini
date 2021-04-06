@@ -1062,7 +1062,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   }
 
   // Resets
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     loops.zipWithIndex.foreach { case (l, i) =>
       l.reset()
       l.a_addr_start := (i * (max_addr / concurrent_loops)).U

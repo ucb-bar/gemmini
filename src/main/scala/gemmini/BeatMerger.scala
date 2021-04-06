@@ -132,7 +132,7 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
     }
   }
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     req.valid := false.B
   }
 }
