@@ -137,7 +137,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val im2col_en = WireInit(false.B)
 
   //val row_turn_counter = RegInit(row_turn)
-  im2col_en := Mux(weight_stride === 0.U, false.B, true.B)
+  im2col_en := hasIm2col.B && weight_stride =/= 0.U
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = rs1s(a_address_place).asTypeOf(local_addr_t)
