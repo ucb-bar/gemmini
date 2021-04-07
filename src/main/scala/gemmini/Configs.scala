@@ -167,6 +167,8 @@ object GemminiConfigs {
     ex_write_to_spad = true,
     ex_write_to_acc = true,
 
+    hardcode_d_to_garbage_addr = false,
+
     mesh_output_delay = 1,
   )
 
@@ -181,7 +183,7 @@ object GemminiConfigs {
     meshRows=32, meshColumns=32
   )
 
-  val highPerfConfig = defaultConfig.copy(dataflow=Dataflow.WS, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, max_in_flight_reqs = 64)
+  val highPerfConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true)
 }
 
 /**

@@ -69,6 +69,8 @@ object DSEBaseConfig {
     ex_write_to_spad = true,
     ex_write_to_acc = true,
 
+    hardcode_d_to_garbage_addr = false,
+
     tlb_size = 4,
     use_tlb_register_filter = true,
     max_in_flight_reqs = 16,

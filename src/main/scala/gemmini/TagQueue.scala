@@ -44,7 +44,7 @@ class TagQueue[T <: Data with TagQueueTag](t: T, entries: Int) extends Module {
     len := len - 1.U
   }
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     regs.foreach(_.make_this_garbage())
   }
 

@@ -64,6 +64,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              ex_write_to_spad: Boolean,
                                                                              ex_write_to_acc: Boolean,
 
+                                                                             hardcode_d_to_garbage_addr: Boolean,
+
                                                                              mesh_output_delay: Int,
 
                                                                              headerFileName: String = "gemmini_params.h"

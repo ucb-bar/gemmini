@@ -145,6 +145,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val d_address_rs1 = rs1s(preload_cmd_place).asTypeOf(local_addr_t)
   val c_address_rs2 = rs2s(preload_cmd_place).asTypeOf(local_addr_t)
 
+  if (dataflow == Dataflow.OS && hardcode_d_to_garbage_addr) {
+    d_address_rs1.make_this_garbage()
+  } else if (dataflow == Dataflow.WS && hardcode_d_to_garbage_addr) {
+    b_address_rs2.make_this_garbage()
+  }
+
   val multiply_garbage = a_address_rs1.is_garbage()
   val accumulate_zeros = b_address_rs2.is_garbage()
   val preload_zeros = d_address_rs1.is_garbage()
@@ -974,7 +980,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
   dontTouch(complete_bits_count)
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     // pending_completed_rob_id.valid := false.B
     pending_completed_rob_ids.foreach(_.valid := false.B)
   }
