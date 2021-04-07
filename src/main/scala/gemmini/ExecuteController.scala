@@ -173,7 +173,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val pending_completed_rob_ids = Reg(Vec(2, UDValid(UInt(log2Up(rob_entries).W))))
 
   // Instantiate a queue which queues up signals which must be fed into the mesh
-  val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, mem_pipeline+1,
+  val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, mem_pipeline+2,
     pipe=true))
 
   val cntl_ready = mesh_cntl_signals_q.io.enq.ready
