@@ -303,6 +303,7 @@ class LoopConvLdWeightReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth:
   val loop_id = UInt(log2Up(concurrent_loops).W)
   val dram_padding = Bool()
   val dram_stride_divide = UInt(4.W)
+  val depthwise = Bool()
 }
 
 class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_addr: Int, input_w: Int,
@@ -346,7 +347,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val och_stride = Mux(req.dram_padding, total_out_channels + block_size.U * max_block_len.U, total_out_channels)
 
   // Addresses
-  val dram_addr = req.dram_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * och_stride +& och) * (input_w/8).U
+  val dram_addr = Mux(req.depthwise, req.dram_addr +& ((krow*kernel_dim +& kcol +& kch) * och_stride +& och) * (input_w/8).U, req.dram_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * och_stride +& och) * (input_w/8).U)
   val spad_addr = addr_start + (och / block_size.U) * krows * kcols * kchs + krow * kcols * kchs + kcol * kchs + kch
 
   // Sizes
@@ -707,6 +708,7 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
 
   val no_bias = Bool()
   val no_pool = Bool()
+  val depthwise = Bool()
   val dram_ich_padding = Bool()
   val dram_och_padding = Bool()
   val dram_och_divide = UInt(4.W)
@@ -928,6 +930,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
         loop_being_configured.no_bias := cmd.bits.rs1(0)
 
         loop_being_configured.no_pool := cmd.bits.rs2(0)
+        loop_being_configured.depthwise := cmd.bits.rs2(63)
 
         loop_being_configured.dram_ich_padding := cmd.bits.rs2(1)
         loop_being_configured.dram_och_padding := cmd.bits.rs2(2)
@@ -993,6 +996,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ld_weights.io.req.bits.loop_id := loop_requesting_ld_weights_id
   ld_weights.io.req.bits.dram_padding := loop_requesting_ld_weights.dram_och_padding
   ld_weights.io.req.bits.dram_stride_divide := loop_requesting_ld_weights.dram_och_divide
+  ld_weights.io.req.bits.depthwise := loop_requesting_ld_weights.depthwise
 
   ld_weights.io.req.valid := !loop_requesting_ld_weights.ld_weights_started && loop_requesting_ld_weights.configured
 
