@@ -119,12 +119,13 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val state = RegInit(idle)
   val configured = RegInit(false.B)
 
-  val conflict_monitor = !(latency === 0.U)//!((alert_cycle === 0.U) || (latency === 0.U))
+  val unlock_monitor = RegInit(0.U(4.W))
+  val unlock_cycle = RegInit(0.U(4.W))
+  val conflict_monitor = !(unlock_cycle === 0.U)//!((alert_cycle === 0.U) || (latency === 0.U))
   val conflict_monitor_start = conflict_monitor && Mux(is_conv, (och === 0.U && kch === 0.U && kcol === 0.U && krow === 0.U), (row_iterator === 0.U && col_iterator === 0.U)) && (state === ld) //ToDo: with conv
   val conflict_monitor_end = conflict_monitor && Mux(is_conv, (kch + block_size.U >= kchs && kcol === kcols - 1.U && krow === krows - 1.U && och + max_ochs_per_mvin >= ochs),
     (row_iterator === max_row_iterator - 1.U && col_iterator >= max_col_iterator - max_blocks)) && (state === ld)
-  val unlock_monitor = RegInit(0.U(4.W))
-  val unlock_cycle = RegInit(3.U(4.W))
+
 
   val profile_hit = profile && (pause_turn =/= 0.U)
   val profile_start = profile_hit && (row_iterator === 0.U && col_iterator === 0.U)
@@ -174,7 +175,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     pause_req := io.pause_monitor
   }
 
-  val unlock = unlock_monitor >= unlock_cycle - 1.U // ToDo: change this number
+  val unlock = unlock_monitor + 1.U >= unlock_cycle // ToDo: change this number
 
   io.out.bits := Mux(configured, Mux(is_conv, Mux(state === config, config_cmd, mvin_cmd), load_cmd),
     Mux(lock_tag && is_loop_ws_addr && (!pause_req || unlock) && (conflict_monitor || profile), fixed_loop_cmd, cmd.bits))

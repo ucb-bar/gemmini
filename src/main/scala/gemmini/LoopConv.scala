@@ -178,6 +178,7 @@ class LoopConvLdInputReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: 
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val dram_addr = UInt(coreMaxAddrBits.W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  val dram_stride_divide = UInt(4.W)
   val dram_padding = Bool()
 }
 
@@ -220,7 +221,9 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val irow_padded = irow +& upad.zext()
   val icol_padded = icol +& lpad.zext()
   val is_zeros = irow < 0.S || irow >= irows_unpadded.zext() || icol < 0.S || icol >= icols_unpadded.zext()
-  val ich_stride = Mux(req.dram_padding, in_channels + block_size.U * max_block_len.U, in_channels)
+
+  val total_in_channels = in_channels * req.dram_stride_divide
+  val ich_stride = Mux(req.dram_padding, total_in_channels + block_size.U * max_block_len.U, total_in_channels)
 
   // Addresses
   val dram_addr = Mux(is_zeros, 0.U,
@@ -978,6 +981,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ld_input.io.req.bits.dram_addr := loop_requesting_ld_input.input_dram_addr
   ld_input.io.req.bits.loop_id := loop_requesting_ld_input_id
   ld_input.io.req.bits.dram_padding := loop_requesting_ld_input.dram_ich_padding
+  // for dw conv, divide input channel when output channel is divided
+  ld_input.io.req.bits.dram_stride_divide := Mux(loop_requesting_ld_input.depthwise, loop_requesting_ld_input.dram_och_divide, 1.U)
 
   ld_input.io.req.valid := !loop_requesting_ld_input.ld_input_started && loop_requesting_ld_input.configured
 

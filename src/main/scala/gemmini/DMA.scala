@@ -385,7 +385,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict
     val tl_miss_counter = RegInit(0.U(6.W))
-    val alert_cycles = profile_cycle //RegInit(io.alert_cycles)
+    val alert_cycles = RegInit(profile_cycle)
     //val latency = RegInit(io.latency)
     val latency = Mux(translate_q.io.deq.bits.monitor_conflict && !translate_q.io.deq.bits.profile_conflict, io.latency * profile_average, 0.U)
 
@@ -406,7 +406,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       when(m_state === s_reset) {
         when(translate_q.io.deq.bits.monitor_conflict_start && translate_q.io.deq.valid){ // to avoid false detection
           m_state := s_monitor_start
-          //alert_cycles := io.alert_cycles
+          alert_cycles := Mux(io.alert_cycles === 0.U, profile_cycle, io.alert_cycles)
           //latency := io.latency //delared latency above
           pause_turn := io.pause_turn
         }
