@@ -346,6 +346,7 @@ class LoopConvLdWeightReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth:
   val addr_end = UInt(log2Up(max_addr).W)
   val dram_addr = UInt(coreMaxAddrBits.W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  val depthwise = Bool()
 }
 
 class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_addr: Int, input_w: Int,
@@ -386,7 +387,8 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val kch = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = req.dram_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U
+  //val dram_addr = req.dram_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U
+  val dram_addr = Mux(req.depthwise, req.dram_addr +& ((krow*kernel_dim +& kcol +& kch) * out_channels +& och) * (input_w/8).U, req.dram_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U)
   val spad_addr = addr_start + (och / block_size.U) * krows * kcols * kchs + krow * kcols * kchs + kcol * kchs + kch
 
   // Sizes
@@ -834,6 +836,7 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
 
   val no_bias = Bool()
   val no_pool = Bool()
+  val depthwise = Bool()
   val downsample = Bool()
 
   val configured = Bool()
@@ -1055,7 +1058,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
 
         loop_being_configured.no_pool := cmd.bits.rs2(0)
         loop_being_configured.downsample := cmd.bits.rs2(1)
-
+		  loop_being_configured.depthwise := cmd.bits.rs2(63)
         loop_being_configured.configured := true.B
       }
     }
@@ -1113,6 +1116,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ld_weights.io.req.bits.addr_end := loop_requesting_ld_weights.b_addr_end
   ld_weights.io.req.bits.dram_addr := loop_requesting_ld_weights.weights_dram_addr
   ld_weights.io.req.bits.loop_id := loop_requesting_ld_weights_id
+  ld_weights.io.req.bits.depthwise := loop_requesting_ld_weights.depthwise
 
   ld_weights.io.req.valid := !loop_requesting_ld_weights.ld_weights_started && loop_requesting_ld_weights.configured
 
