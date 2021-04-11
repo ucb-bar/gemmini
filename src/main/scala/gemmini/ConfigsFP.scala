@@ -69,6 +69,8 @@ object GemminiFPConfigs {
     ex_write_to_spad = false,
     ex_write_to_acc = true,
 
+    hardcode_d_to_garbage_addr = false,
+
     mesh_output_delay = 0,
   )
   

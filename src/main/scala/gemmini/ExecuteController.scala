@@ -134,16 +134,19 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     "Too many inputs are being fed into the single transposer we have")
 
   //fix by input
-  val im2col_en = WireInit(false.B)
-
-  //val row_turn_counter = RegInit(row_turn)
-  im2col_en := Mux(weight_stride === 0.U, false.B, true.B)
+  val im2col_en = hasIm2col.B && weight_stride =/= 0.U
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = rs1s(a_address_place).asTypeOf(local_addr_t)
   val b_address_rs2 = rs2s(b_address_place).asTypeOf(local_addr_t)
   val d_address_rs1 = rs1s(preload_cmd_place).asTypeOf(local_addr_t)
   val c_address_rs2 = rs2s(preload_cmd_place).asTypeOf(local_addr_t)
+
+  if (dataflow == Dataflow.OS && hardcode_d_to_garbage_addr) {
+    d_address_rs1.make_this_garbage()
+  } else if (dataflow == Dataflow.WS && hardcode_d_to_garbage_addr) {
+    b_address_rs2.make_this_garbage()
+  }
 
   val multiply_garbage = a_address_rs1.is_garbage()
   val accumulate_zeros = b_address_rs2.is_garbage()
@@ -974,7 +977,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
   dontTouch(complete_bits_count)
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     // pending_completed_rob_id.valid := false.B
     pending_completed_rob_ids.foreach(_.valid := false.B)
   }
