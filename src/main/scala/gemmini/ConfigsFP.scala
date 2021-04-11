@@ -17,8 +17,8 @@ object GemminiFPConfigs {
     opcodes = OpcodeSet.custom3,
     tileRows = 1,
     tileColumns = 1,
-    meshRows = 8,
-    meshColumns = 8,
+    meshRows = 4,
+    meshColumns = 4,
 
     ld_queue_length = 8,
     st_queue_length = 2,
@@ -77,6 +77,8 @@ object GemminiFPConfigs {
                                                pe_latency = 2,
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
+    						sp_capacity = CapacityInKilobytes(512),
+    						acc_capacity = CapacityInKilobytes(128),
                                               )
   
   //FP16 Half Precision Configuration
@@ -97,10 +99,21 @@ object GemminiFPConfigs {
   val BF16Default8Config = defaultFPConfig.copy(inputType = Float(8, 8), outputType = Float(8, 8), accType = Float(8, 24),
                                                meshRows = 8, meshColumns = 8,
                                                pe_latency = 2,
-                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
-                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
+                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
+                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
+                                               hardcode_d_to_garbage_addr = true,
                                               )
 
+  //FP32 Single Precision Configuration Configuration 8x8 array
+  val FP32Default8Config = defaultFPConfig.copy(inputType = Float(8, 24), outputType = Float(8, 24), accType = Float(8, 24),
+                                               meshRows = 8, meshColumns = 8,
+                                               pe_latency = 2,
+                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
+                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
+    						sp_capacity = CapacityInKilobytes(512),
+    						acc_capacity = CapacityInKilobytes(128),
+						hardcode_d_to_garbage_addr = true,
+                                              )
 }
 
 
