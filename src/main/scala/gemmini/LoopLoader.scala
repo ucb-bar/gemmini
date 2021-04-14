@@ -73,7 +73,6 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val kcols = RegInit(0.U(4.W))
   val kchs = RegInit(0.U(16.W))
   val ochs = RegInit(0.U(16.W))
-  val padding = RegInit(false.B) // SW padding for bank conflict
 
   // conv Iterators
   val och = RegInit(0.U(16.W))
@@ -88,10 +87,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val A_sp_addr_start = Mux(loop_tag, (max_addr/2).U, 0.U)//RegInit(0.U(log2Up(max_addr).W))
   val B_sp_addr_end = Mux(loop_tag, (max_addr - block_size).U, (max_addr/2 - block_size).U)//RegInit((max_addr/2).U(log2Up(max_addr).W))
   //for conv
-  val och_divide = RegInit(1.U(4.W))
   val depthwise = RegInit(false.B)
-  val total_out_channel = out_channels * och_divide
-  val out_channel_stride = Mux(padding, total_out_channel + max_blocks * block_size.U, total_out_channel)
+  val out_channel_stride = RegInit(0.U(coreMaxAddrBits.W))
   val max_ochs_per_mvin = Mux(ochs < (max_block_len * block_size).U, ochs, (max_block_len * block_size).U)
   val out_channels_per_bank = WireInit(0.U(8.W))
   out_channels_per_bank := ochs / block_size.U +& (ochs % block_size.U =/= 0.U)
@@ -237,8 +234,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       is(LOOP_CONV_LD_CONFIG_ADDRS){
         when(!pause_req || unlock) {
           dram_base_addr := cmd.bits.rs1
-          padding := cmd.bits.rs2(32)
-          och_divide := cmd.bits.rs2(33)
+          out_channel_stride := cmd.bits.rs2(47, 32)
           depthwise := cmd.bits.rs2(63)
           out_channels := cmd.bits.rs2(31, 16)
           in_channels := cmd.bits.rs2(15, 0)
