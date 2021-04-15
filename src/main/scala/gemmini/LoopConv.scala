@@ -473,6 +473,7 @@ class LoopConvExecuteReq(val large_iterator_bitwidth: Int, val small_iterator_bi
   val a_addr_start = UInt(log2Up(max_addr).W)
   val b_addr_end = UInt(log2Up(max_addr).W)
   val c_addr_start = UInt(log2Up(max_acc_addr).W)
+  val wrot180 = Bool()
   val downsample = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
@@ -542,8 +543,10 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
   val new_weights = b === 0.U && orow === 0.U && ocol === 0.U
+  val krow_ = Mux(req.wrot180, krows - krow - 1.U, krow)
+  val kcol_ = Mux(req.wrot180, kcols - kcol - 1.U, kcol)
   val b_addr = Mux(new_weights,
-    b_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow * kcols * kchs +& kcol * kchs +& kch,
+    b_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow_ * kcols * kchs +& kcol_ * kchs +& kch,
     GARBAGE_ADDR)
 
   class RoCCCommandWithAddr extends Bundle {
@@ -833,6 +836,7 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val output_dram_addr = UInt(coreMaxAddrBits.W)
 
   val no_bias = Bool()
+  val wrot180 = Bool()
   val no_pool = Bool()
   val downsample = Bool()
 
@@ -1052,6 +1056,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
 
       is (LOOP_CONV_WS) {
         loop_being_configured.no_bias := cmd.bits.rs1(0)
+        loop_being_configured.wrot180 := cmd.bits.rs1(1)
 
         loop_being_configured.no_pool := cmd.bits.rs2(0)
         loop_being_configured.downsample := cmd.bits.rs2(1)
