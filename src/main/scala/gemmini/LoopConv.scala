@@ -558,7 +558,9 @@ class LoopConvStReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: Int, 
   val derived_params = new LoopConvDerivedParams(large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth)
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val dram_addr = UInt(coreMaxAddrBits.W)
+  val dram_addr_pool = UInt(coreMaxAddrBits.W)
   val no_pool = Bool()
+  val both_out = Bool() // output both pooled and unpooled
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -703,9 +705,11 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val weights_dram_addr = UInt(coreMaxAddrBits.W)
   val input_dram_addr = UInt(coreMaxAddrBits.W)
   val output_dram_addr = UInt(coreMaxAddrBits.W)
+  val pool_output_dram_addr = UInt(coreMaxAddrBits.W)
 
   val no_bias = Bool()
   val no_pool = Bool()
+  val both_out = Bool() // both pool and not pool
   val depthwise = Bool()
 
   val configured = Bool()
@@ -925,9 +929,11 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
       }
 
       is (LOOP_CONV_WS) {
-        loop_being_configured.no_bias := cmd.bits.rs1(0)
+        loop_being_configured.pool_output_dram_addr := cmd.bits.rs1 // added for 2 mvout
+        loop_being_configured.no_bias := cmd.bits.rs2(61)
 
         loop_being_configured.no_pool := cmd.bits.rs2(0)
+        loop_being_configured.both_out := cmd.bits.rs2(62)
         loop_being_configured.depthwise := cmd.bits.rs2(63)
 
 
@@ -1026,7 +1032,10 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   st.io.req.bits.addr_start := st_addr_start
   st.io.req.bits.dram_addr := loop_requesting_st.output_dram_addr
   st.io.req.bits.no_pool := loop_requesting_st.no_pool
+  st.io.req.bits.both_out := loop_requesting_st.both_out
   st.io.req.bits.loop_id := loop_requesting_st_id
+  // added for 2 mvout
+  st.io.req.bits.dram_addr_pool := loop_requesting_st.pool_output_dram_addr
 
 
   st.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started && loop_requesting_st.configured
