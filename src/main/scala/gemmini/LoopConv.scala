@@ -652,11 +652,12 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   io.cmd.bits := MuxLookup(state.asUInt, mvout_cmd, Seq(pre_pool_config.asUInt -> pre_pool_config_cmd,
     pool.asUInt -> pool_cmd, post_pool_config.asUInt -> post_pool_config_cmd))
 
+  val second_pool = RegInit(false.B) //need to output pool next
   // Sending outputs
   when (skip) {
     state := idle
   }.elsewhen(io.cmd.fire()) {
-    when (req.no_pool) {
+    when (req.no_pool || (req.both_out && !second_pool)) { // needs normal output first before pool
       val next_och = floorAdd(och, block_size.U, ochs)
       val next_ocol = floorAdd(ocol, block_size.U, ocols, next_och === 0.U)
       val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U && next_och === 0.U)
@@ -666,9 +667,11 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
       ocol := next_ocol
       orow := next_orow
       b := next_b
-
-      state := Mux(next_b === 0.U && next_orow === 0.U && next_ocol === 0.U && next_och === 0.U,
-        idle, st)
+      val next_all_zero = next_b === 0.U && next_orow === 0.U && next_ocol === 0.U && next_och === 0.U
+      state := Mux(next_all_zero, Mux(req.both_out, pre_pool_config, idle), st)
+      when(next_all_zero && !second_pool && req.both_out){
+        second_pool := true.B
+      }
     }.elsewhen(state === pre_pool_config) {
       state := pool
     }.elsewhen(state === post_pool_config) {
@@ -682,6 +685,9 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
 
       state := Mux(next_b === 0.U && next_och === 0.U,
         post_pool_config, pool)
+      when(next_b === 0.U && next_och === 0.U && req.both_out){
+        second_pool := false.B
+      }
     }
   }
 
