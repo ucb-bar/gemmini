@@ -692,7 +692,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   // Accepting requests
   when (io.req.fire()) {
     req := io.req.bits
-    state := Mux(io.req.bits.no_pool, st, pre_pool_config)
+    state := Mux(io.req.bits.no_pool || io.req.bits.both_out, st, pre_pool_config)
 
     b := 0.U
     orow := 0.U
