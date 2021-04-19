@@ -607,7 +607,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val dram_addr = req.dram_addr + ((b*out_dim*out_dim + orow*out_dim + ocol) * och_stride + och) * (input_w/8).U
   val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
-  val pool_dram_addr = req.dram_addr + ((b * pool_out_dim * pool_out_dim) * och_stride + och) * (input_w/8).U
+  val pool_dram_addr = Mux(req.both_out, req.dram_addr_pool, req.dram_addr) + ((b * pool_out_dim * pool_out_dim) * och_stride + och) * (input_w/8).U
   val pool_spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols
 
   // Sizes
