@@ -676,6 +676,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
       state := pool
     }.elsewhen(state === post_pool_config) {
       state := idle
+      second_pool := false.B
     }.otherwise {
       val next_och = floorAdd(och, block_size.U, ochs)
       val next_b = floorAdd(b, 1.U, batches, next_och === 0.U)
@@ -685,9 +686,6 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
 
       state := Mux(next_b === 0.U && next_och === 0.U,
         post_pool_config, pool)
-      when(next_b === 0.U && next_och === 0.U && req.both_out){
-        second_pool := false.B
-      }
     }
   }
 
