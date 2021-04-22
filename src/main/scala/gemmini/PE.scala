@@ -132,6 +132,8 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
     //assert(false.B, "unknown dataflow")
     io.out_c := DontCare
     io.out_b := DontCare
+    io.out_b_zero := DontCare
+    io.out_c_zero := DontCare
   }
 
   when (!valid) {
