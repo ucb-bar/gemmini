@@ -23,9 +23,17 @@ class Tile[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T, df: 
     val out_b       = Output(Vec(columns, outputType))
     val out_control = Output(Vec(columns, new PEControl(accType)))
 
+    val in_a_zero = Input(Vec(rows, Bool()))
+    val in_b_zero = Input(Vec(columns, Bool()))
+    val in_d_zero = Input(Vec(columns, Bool()))
+
+    val out_a_zero = Output(Vec(rows, Bool()))
+    val out_b_zero = Output(Vec(columns, Bool()))
+    val out_c_zero = Output(Vec(columns, Bool()))
+
     val in_valid = Input(Vec(columns, Bool()))
     val out_valid = Output(Vec(columns, Bool()))
-    
+
     val bad_dataflow = Output(Bool())
   })
 
@@ -78,17 +86,48 @@ class Tile[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T, df: 
     }
   }
 
+  // Broadcast 'a_zero' horizontally across the Tile
+  for (r <- 0 until columns) {
+    tile(r).foldLeft(io.in_a_zero(r)) {
+      case (z, pe) =>
+        pe.io.in_a_zero := z
+        pe.io.out_a_zero
+    }
+  }
+
+  // Broadcast 'b_zero' vertically across the Tile
+  for (c <- 0 until columns) {
+    tileT(c).foldLeft(io.in_b_zero(c)) {
+      case (z, pe) =>
+        pe.io.in_b_zero := z
+        pe.io.out_b_zero
+    }
+  }
+
+  // Broadcast 'd_zero' vertically across the Tile
+  for (c <- 0 until columns) {
+    tileT(c).foldLeft(io.in_d_zero(c)) {
+      case (z, pe) =>
+        pe.io.in_d_zero := z
+        pe.io.out_c_zero
+    }
+  }
+
   // Drive the Tile's bottom IO
   for (c <- 0 until columns) {
     io.out_c(c) := tile(rows-1)(c).io.out_c
     io.out_b(c) := tile(rows-1)(c).io.out_b
     io.out_control(c) := tile(rows-1)(c).io.out_control
     io.out_valid(c) := tile(rows-1)(c).io.out_valid
+
+    io.out_b_zero(c) := tile(rows-1)(c).io.out_b_zero
+    io.out_c_zero(c) := tile(rows-1)(c).io.out_c_zero
   }
   io.bad_dataflow := tile.map(_.map(_.io.bad_dataflow).reduce(_||_)).reduce(_||_)
 
   // Drive the Tile's right IO
   for (r <- 0 until rows) {
     io.out_a(r) := tile(r)(columns-1).io.out_a
+    io.out_a_zero(r) := tile(r)(columns-1).io.out_a_zero
   }
 }

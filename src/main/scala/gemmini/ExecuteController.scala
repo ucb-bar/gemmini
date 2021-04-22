@@ -117,17 +117,17 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val acc_scale = Reg(acc_scale_args.multiplicand_t)
   val relu6_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val activation = Reg(UInt(2.W))
-  val a_transpose = Reg(Bool())
-  val bd_transpose = Reg(Bool())
+  val a_transpose = false.B // Reg(Bool())
+  val bd_transpose = false.B // Reg(Bool())
   val config_initialized = RegInit(false.B)
 
-  val a_should_be_fed_into_transposer = Mux(current_dataflow === Dataflow.OS.id.U, !a_transpose, a_transpose)
+  val a_should_be_fed_into_transposer = false.B // Mux(current_dataflow === Dataflow.OS.id.U, !a_transpose, a_transpose)
   val a_address_place = Mux(preload_cmd_place === 0.U, 1.U, Mux(a_should_be_fed_into_transposer, 2.U, 0.U))
 
-  val b_should_be_fed_into_transposer = current_dataflow === Dataflow.OS.id.U && bd_transpose
+  val b_should_be_fed_into_transposer = false.B // current_dataflow === Dataflow.OS.id.U && bd_transpose
   val b_address_place = Mux(preload_cmd_place === 0.U, 1.U, Mux(b_should_be_fed_into_transposer, 2.U, 0.U))
 
-  val d_should_be_fed_into_transposer = current_dataflow === Dataflow.WS.id.U && bd_transpose
+  val d_should_be_fed_into_transposer = false.B // current_dataflow === Dataflow.WS.id.U && bd_transpose
 
   assert(!(config_initialized &&
     (a_should_be_fed_into_transposer +& b_should_be_fed_into_transposer +& d_should_be_fed_into_transposer) > 1.U),
@@ -823,6 +823,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.tag_in.bits.addr.make_this_garbage()
   }
+
+  mesh.io.b.bits := 0.U.asTypeOf(mesh.io.b)
 
   // Scratchpad writes
   val output_counter = new Counter(block_size)

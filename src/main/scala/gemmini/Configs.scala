@@ -49,7 +49,7 @@ object GemminiConfigs {
     ex_queue_length = 8,
 
     rob_entries = 16,
-    hasIm2col = true, //declare im2col block
+    hasIm2col = false, //declare im2col block
 
     sp_banks = 4,
     sp_singleported = true,
@@ -77,37 +77,7 @@ object GemminiConfigs {
 
     mvin_scale_args = Some(ScaleArguments(
       (t: SInt, f: Float) => {
-        val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)
-
-        val in_to_rec_fn = Module(new INToRecFN(t.getWidth, f.expWidth, f.sigWidth))
-        in_to_rec_fn.io.signedIn := true.B
-        in_to_rec_fn.io.in := t.asTypeOf(UInt(t.getWidth.W))
-        in_to_rec_fn.io.roundingMode := consts.round_near_even
-        in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
-
-        val t_rec = in_to_rec_fn.io.out
-
-        val muladder = Module(new MulAddRecFN(f.expWidth, f.sigWidth))
-        muladder.io.op := 0.U
-        muladder.io.roundingMode := consts.round_near_even
-        muladder.io.detectTininess := consts.tininess_afterRounding
-
-        muladder.io.a := t_rec
-        muladder.io.b := f_rec
-        muladder.io.c := 0.U
-
-        val rec_fn_to_in = Module(new RecFNToIN(f.expWidth, f.sigWidth, t.getWidth))
-        rec_fn_to_in.io.in := muladder.io.out
-        rec_fn_to_in.io.roundingMode := consts.round_near_even
-        rec_fn_to_in.io.signedOut := true.B
-
-        val overflow = rec_fn_to_in.io.intExceptionFlags(1)
-        val maxsat = ((1 << (t.getWidth-1))-1).S
-        val minsat = (-(1 << (t.getWidth-1))).S
-        val sign = rawFloatFromRecFN(f.expWidth, f.sigWidth, rec_fn_to_in.io.in).sign
-        val sat = Mux(sign, minsat, maxsat)
-
-        Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
+        t
       },
       5, Float(8, 24), 4,
       identity = "1.0",
@@ -118,44 +88,14 @@ object GemminiConfigs {
 
     acc_scale_args = ScaleArguments(
       (t: SInt, f: Float) => {
-        val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)
-
-        val in_to_rec_fn = Module(new INToRecFN(t.getWidth, f.expWidth, f.sigWidth))
-        in_to_rec_fn.io.signedIn := true.B
-        in_to_rec_fn.io.in := t.asTypeOf(UInt(t.getWidth.W))
-        in_to_rec_fn.io.roundingMode := consts.round_near_even
-        in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
-
-        val t_rec = in_to_rec_fn.io.out
-
-        val muladder = Module(new MulAddRecFN(f.expWidth, f.sigWidth))
-        muladder.io.op := 0.U
-        muladder.io.roundingMode := consts.round_near_even
-        muladder.io.detectTininess := consts.tininess_afterRounding
-
-        muladder.io.a := t_rec
-        muladder.io.b := f_rec
-        muladder.io.c := 0.U
-
-        val rec_fn_to_in = Module(new RecFNToIN(f.expWidth, f.sigWidth, t.getWidth))
-        rec_fn_to_in.io.in := muladder.io.out
-        rec_fn_to_in.io.roundingMode := consts.round_near_even
-        rec_fn_to_in.io.signedOut := true.B
-
-        val overflow = rec_fn_to_in.io.intExceptionFlags(1)
-        val maxsat = ((1 << (t.getWidth-1))-1).S
-        val minsat = (-(1 << (t.getWidth-1))).S
-        val sign = rawFloatFromRecFN(f.expWidth, f.sigWidth, rec_fn_to_in.io.in).sign
-        val sat = Mux(sign, minsat, maxsat)
-
-        Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
+        t
       },
       5, Float(8, 24), 4,
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
     ),
 
-    acc_read_full_width = true,
+    acc_read_full_width = false,
     acc_read_small_width = true,
 
     pe_latency = 0,
@@ -194,8 +134,10 @@ class DualGemminiConfig extends Config((site, here, up) => {
     val int_fn = (p: Parameters) => {
       implicit val q = p
       int_gemmini = LazyModule(new Gemmini(GemminiConfigs.defaultConfig.copy(
+        outputType = SInt(8.W),
+        accType = SInt(16.W),
         opcodes = OpcodeSet.custom3,
-        sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32),
+        sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(16),
         use_shared_ext_mem = true,
         dataflow = Dataflow.WS
       )))
