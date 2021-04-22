@@ -147,12 +147,13 @@ class DualGemminiConfig extends Config((site, here, up) => {
       implicit val q = p
       fp_gemmini = LazyModule(new Gemmini(GemminiFPConfigs.BF16DefaultConfig.copy(
         opcodes = OpcodeSet.custom2,
-        sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32),
+        outputType = Float(8, 8), accType = Float(8, 8),
+        sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(16),
         meshColumns = 8, meshRows = 8,
         acc_singleported = true, acc_banks = 2, num_acc_sub_banks = 2,
         use_shared_ext_mem = true,
         headerFileName = "gemmini_params_bf16.h",
-	acc_latency = 3,
+        acc_latency = 3,
         dataflow = Dataflow.WS
       )))
       InModuleBody {
