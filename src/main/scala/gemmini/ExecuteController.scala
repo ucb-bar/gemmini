@@ -824,7 +824,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.tag_in.bits.addr.make_this_garbage()
   }
 
-  mesh.io.b.bits := 0.U.asTypeOf(mesh.io.b)
+  mesh.io.b.bits := 0.U.asTypeOf(mesh.io.b.bits)
 
   // Scratchpad writes
   val output_counter = new Counter(block_size)
