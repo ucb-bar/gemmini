@@ -72,7 +72,6 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   io.out_valid := valid
 
   io.out_a_zero := a_zero
-  io.out_c_zero := io.out_c.asUInt() === 0.U
 
   val last_s = RegEnable(prop, valid)
   val flip = last_s =/= prop
@@ -103,21 +102,30 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
     }
 
     io.out_b_zero := b_zero
+    io.out_c_zero := io.out_c.asUInt() === 0.U
   }.elsewhen ((df == Dataflow.WS).B || ((df == Dataflow.BOTH).B && dataflow === WEIGHT_STATIONARY)) {
     when(prop === PROPAGATE) {
       io.out_c := c1
       io.out_b := Mux(c2_zero, b, Mux(b_zero, 0.U.asTypeOf(b), b).mac(Mux(a_zero, 0.U.asTypeOf(a), a), c2.asTypeOf(inputType)))
-      c1 := Mux(d_zero, 0.U.asTypeOf(d), d)
+
+      when (!d_zero) {
+        c1 := d
+      }
 
       c1_zero := d_zero
       io.out_b_zero := Mux(c2_zero, b_zero, io.out_b.asUInt() === 0.U)
+      io.out_c_zero := c1_zero
     }.otherwise {
       io.out_c := c2
       io.out_b := Mux(c1_zero, b, Mux(b_zero, 0.U.asTypeOf(b), b).mac(Mux(a_zero, 0.U.asTypeOf(a), a), c1.asTypeOf(inputType)))
-      c2 := Mux(d_zero, 0.U.asTypeOf(d), d)
+
+      when (!d_zero) {
+        c2 := d
+      }
 
       c2_zero := d_zero
       io.out_b_zero := Mux(c1_zero, b_zero, io.out_b.asUInt() === 0.U)
+      io.out_c_zero := c2_zero
     }
   }.otherwise {
     io.bad_dataflow := true.B
