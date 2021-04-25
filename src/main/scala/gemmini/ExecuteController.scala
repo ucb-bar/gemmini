@@ -242,7 +242,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // "A" stride variables
   val a_addr_offset = Reg(UInt((16 + log2Up(block_size)).W))
-  val a_addr_stride = Reg(UInt(16.W))
+  val a_addr_stride = Reg(UInt(8.W))
+
+  // "C" stride variables
+  val c_addr_stride = Reg(UInt(8.W))
 
   val a_address = a_address_rs1 + a_addr_offset
   val b_address = b_address_rs2 + b_fire_counter
@@ -538,7 +541,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
             in_shift := rs2s(0)(31, 0) // TODO magic number
             acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
             relu6_shift := rs2s(0)(xLen - 1, 32) // TODO magic number
-            a_addr_stride := rs1s(0)(31, 16) // TODO magic number // TODO this needs to be kept in sync with ROB.scala
+            a_addr_stride := rs1s(0)(23, 16) // TODO magic number // TODO this needs to be kept in sync with ROB.scala
+            c_addr_stride := rs1s(0)(31, 24) // TODO magic number // TODO this needs to be kept in sync with ROB.scala
             a_transpose := rs1s(0)(8)
             bd_transpose := rs1s(0)(9)
 
@@ -886,8 +890,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val w_total_output_rows = mesh.io.resp.bits.total_rows
 
-  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, mesh.io.resp.bits.tag.addr + output_counter,
-    mesh.io.resp.bits.tag.addr + (w_total_output_rows - 1.U - output_counter))
+  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, mesh.io.resp.bits.tag.addr + output_counter * c_addr_stride,
+    mesh.io.resp.bits.tag.addr + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
   val write_to_acc = w_address.is_acc_addr
 
   val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address.sp_bank())
