@@ -613,7 +613,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   }
 
   // Updating "new_weights"
-  when (command_p.io.in.fire()) {
+  when (state === pre && command_p.io.in.fire()) {
     new_weights := false.B
   }
 
