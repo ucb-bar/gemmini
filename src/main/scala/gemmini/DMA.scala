@@ -457,7 +457,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       //printf(midas.targetutils.SynthesizePrintf("GEMMINI_BLOCK: %x %x \n", p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address))
 
     }
-    
+
      */
     /////////////////////////////////////////////////////////////////////////////////////////
 
