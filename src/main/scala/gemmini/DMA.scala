@@ -356,7 +356,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       }.otherwise{
         when(profile_detected){
           profile_total := profile_total + profile_miss_counter
-          profile_max := Mux(profile_max < profile_miss_counter, profile_miss_counter, profile_max)//update to max value
+          profile_max := Mux(profile_max < profile_miss_counter && !translate_q.io.deq.bits.profile_conflict_start, profile_miss_counter, profile_max)//update to max value
           profile_detected := false.B
           when(profile_number === 64.U){
             profile_average := profile_total / 64.U
