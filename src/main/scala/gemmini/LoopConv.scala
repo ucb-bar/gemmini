@@ -1102,8 +1102,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
 
         loop_being_configured.configured := true.B
 
-        assert(!loop_being_configured.input_dilated || loop_being_configured.outer_bounds.stride === 1.U)
-        assert(!loop_being_configured.downsample || (loop_being_configured.outer_bounds.kernel_dim === 1.U && loop_being_configured.outer_bounds.stride === 2.U)) // TODO add the rest of the conditions that must be true for "downsample" to be enabled
+        // assert(!loop_being_configured.input_dilated || loop_being_configured.outer_bounds.stride === 1.U)
+        // assert(!loop_being_configured.downsample || (loop_being_configured.outer_bounds.kernel_dim === 1.U && loop_being_configured.outer_bounds.stride === 2.U)) // TODO add the rest of the conditions that must be true for "downsample" to be enabled
       }
     }
   }
