@@ -313,19 +313,19 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
       state := ld
     }.otherwise {
       val next_ich = sFloorAdd(ich, max_ichs_per_mvin.asUInt(), ichs.zext(), 0.S)
-      val next_icol = sFloorAdd(icol, I.asUInt(), (icols_unpadded +& rpad).zext(), 0.S-&lpad.zext(),
+      val next_icol = sFloorAdd(icol, I.asUInt(), (icols_unpadded +& undilated(rpad)).zext(), 0.S-&undilated(lpad).zext(),
         next_ich === 0.S)
-      val next_irow = sFloorAdd(irow, 1.U << req.downsample, (irows_unpadded +& dpad).zext(), 0.S-&upad.zext(),
+      val next_irow = sFloorAdd(irow, 1.U << req.downsample, (irows_unpadded +& undilated(dpad)).zext(), 0.S-&undilated(upad).zext(),
         next_icol === 0.S-&undilated(lpad).zext() && next_ich === 0.S)
       val next_b = sFloorAdd(b, 1.U, batches.zext(), 0.S,
-        next_irow === 0.S-&undilated(upad).zext() && next_icol === 0.S-&lpad.zext() && next_ich === 0.S)
+        next_irow === 0.S-&undilated(upad).zext() && next_icol === 0.S-&undilated(lpad).zext() && next_ich === 0.S)
 
       ich := next_ich
       icol := next_icol
       irow := next_irow
       b := next_b
 
-      state := Mux(next_b === 0.S && next_irow === 0.S-&upad.zext() && next_icol === 0.S-&lpad.zext() && next_ich === 0.S,
+      state := Mux(next_b === 0.S && next_irow === 0.S-&undilated(upad).zext() && next_icol === 0.S-&undilated(lpad).zext() && next_ich === 0.S,
         idle, ld)
     }
   }
