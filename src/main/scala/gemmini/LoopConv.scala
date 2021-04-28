@@ -13,7 +13,7 @@ class LoopConvOuterBounds(val large_iterator_bitwidth: Int, val small_iterator_b
   val in_dim = UInt(small_iterator_bitwidth.W)
   val in_channels = UInt(large_iterator_bitwidth.W)
   val out_channels = UInt(large_iterator_bitwidth.W)
-  val out_dim = UInt(small_iterator_bitwidth.W)
+  val out_dim = UInt(large_iterator_bitwidth.W)
   val pool_out_dim = UInt(small_iterator_bitwidth.W)
   val stride = UInt(tiny_iterator_bitwidth.W)
   val padding = UInt(tiny_iterator_bitwidth.W)
