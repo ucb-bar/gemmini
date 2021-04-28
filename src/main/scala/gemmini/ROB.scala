@@ -111,7 +111,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
 
   // Config values set by programmer
-  val a_stride = Reg(UInt(16.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
+  val a_stride = Reg(UInt(8.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
+  val c_stride = Reg(UInt(8.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
   val st_block_stride = block_rows.U
   val pooling_is_enabled = Reg(Bool())
@@ -227,7 +228,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
     dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
-      val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
+      val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48) * c_stride
       dst.bits.end := dst.bits.start + preload_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
@@ -344,7 +345,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     when (io.alloc.fire()) {
       when (new_entry.is_config && new_entry.q === exq && !is_im2col) {
-        a_stride := new_entry.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
+        a_stride := new_entry.cmd.rs1(23, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
+        c_stride := new_entry.cmd.rs1(31, 24) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
       }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
         val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
         val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers
