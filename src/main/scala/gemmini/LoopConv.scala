@@ -895,11 +895,6 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
 
     result.ochs := pochs
 
-    result.irows := orows * stride +& krows - 1.U
-    result.icols := ocols * stride +& kcols - 1.U
-    result.irows_unpadded := result.irows - upad - dpad
-    result.icols_unpadded := result.icols - lpad - rpad
-
     val dilated_krows = krows + (kernel_dilation - 1.U)*(krows - 1.U)
     val dilated_kcols = kcols + (kernel_dilation - 1.U)*(kcols - 1.U)
 
@@ -913,8 +908,11 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
     val irows_unpadded = undilated(irows_unpadded_without_dilation)
     val icols_unpadded = undilated(icols_unpadded_without_dilation)
 
-    val irows = Mux(input_dilated, irows_unpadded +& undilated(upad) +& undilated(dpad), irows_without_dilation)
-    val icols = Mux(input_dilated, icols_unpadded +& undilated(lpad) +& undilated(rpad), icols_without_dilation)
+    result.irows := Mux(input_dilated, irows_unpadded +& undilated(upad) +& undilated(dpad), irows_without_dilation)
+    result.icols := Mux(input_dilated, icols_unpadded +& undilated(lpad) +& undilated(rpad), icols_without_dilation)
+
+    result.irows_unpadded := irows_unpadded
+    result.icols_unpadded := icols_unpadded
 
     result.ichs := kchs
 
