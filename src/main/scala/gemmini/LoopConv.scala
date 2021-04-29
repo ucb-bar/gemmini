@@ -348,6 +348,7 @@ class LoopConvLdWeightReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth:
   val derived_params = new LoopConvDerivedParams(large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth)
   val addr_end = UInt(log2Up(max_addr).W)
   val dram_addr = UInt(coreMaxAddrBits.W)
+  val trans_weight_1203 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -381,6 +382,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val max_ochs_per_mvin = Mux(ochs < (max_block_len * block_size).U, ochs, (max_block_len * block_size).U)
   val B_rows = out_channels_per_bank * kcols * krows * kchs
   val addr_start = req.addr_end - B_rows
+  val dram_stride = Mux(req.trans_weight_1203, kernel_dim * kernel_dim * out_channels, out_channels) * (input_w/8).U
 
   // Iterators
   val och = Reg(UInt(large_iterator_bitwidth.W))
@@ -389,7 +391,9 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val kch = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = req.dram_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U
+  val dram_addr = Mux(req.trans_weight_1203,
+    req.dram_addr +& ((kch*kernel_dim*kernel_dim +& krow*kernel_dim +& kcol) * out_channels +& och) * (input_w/8).U,
+    req.dram_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U)
   val spad_addr = addr_start + (och / block_size.U) * krows * kcols * kchs + krow * kcols * kchs + kcol * kchs + kch
 
   // Sizes
@@ -409,7 +413,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
   config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U) | (req.derived_params.weight_spad_stride << 16.U) | (1.U << 3) | 1.U
-  config_cmd.rs2 := out_channels * (input_w/8).U
+  config_cmd.rs2 := dram_stride
 
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
@@ -680,6 +684,7 @@ class LoopConvStReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: Int, 
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val dram_addr = UInt(coreMaxAddrBits.W)
   val no_pool = Bool()
+  val trans_output_1203 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -721,7 +726,9 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val och = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = req.dram_addr + ((b*out_dim*out_dim + orow*out_dim + ocol) * out_channels + och) * (input_w/8).U
+  val dram_addr = Mux(req.trans_output_1203,
+    req.dram_addr + ((orow*out_dim*batch_size +& ocol*batch_size +& b) * out_channels +& och) * (input_w/8).U,
+    req.dram_addr + ((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_channels +& och) * (input_w/8).U)
   val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
   val pool_dram_addr = req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U
@@ -865,6 +872,8 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val no_pool = Bool()
   val downsample = Bool()
   val input_dilated = Bool()
+  val trans_output_1203 = Bool()
+  val trans_weight_1203 = Bool()
 
   val configured = Bool()
 
@@ -1099,6 +1108,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
       is (LOOP_CONV_WS) {
         loop_being_configured.no_bias := cmd.bits.rs1(0)
         loop_being_configured.wrot180 := cmd.bits.rs1(1)
+        loop_being_configured.trans_output_1203 := cmd.bits.rs1(2)
+        loop_being_configured.trans_weight_1203 := cmd.bits.rs1(3)
 
         loop_being_configured.no_pool := cmd.bits.rs2(0)
         loop_being_configured.downsample := cmd.bits.rs2(1)
@@ -1164,6 +1175,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ld_weights.io.req.bits.derived_params := loop_requesting_ld_weights.derived_params()
   ld_weights.io.req.bits.addr_end := loop_requesting_ld_weights.b_addr_end
   ld_weights.io.req.bits.dram_addr := loop_requesting_ld_weights.weights_dram_addr
+  ld_weights.io.req.bits.trans_weight_1203 := loop_requesting_ld_weights.trans_weight_1203
   ld_weights.io.req.bits.loop_id := loop_requesting_ld_weights_id
 
   ld_weights.io.req.valid := !loop_requesting_ld_weights.ld_weights_started && loop_requesting_ld_weights.configured
@@ -1206,6 +1218,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   st.io.req.bits.addr_start := st_addr_start
   st.io.req.bits.dram_addr := loop_requesting_st.output_dram_addr
   st.io.req.bits.no_pool := loop_requesting_st.no_pool
+  st.io.req.bits.trans_output_1203 := loop_requesting_st.trans_output_1203
   st.io.req.bits.loop_id := loop_requesting_st_id
 
   st.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started && loop_requesting_st.configured
