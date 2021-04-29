@@ -18,6 +18,7 @@ class LoopConvOuterBounds(val large_iterator_bitwidth: Int, val small_iterator_b
   val stride = UInt(tiny_iterator_bitwidth.W)
   val padding = UInt(tiny_iterator_bitwidth.W)
   val kernel_dim = UInt(tiny_iterator_bitwidth.W)
+  val kernel_dilation = UInt(tiny_iterator_bitwidth.W)
   val pool_size = UInt(tiny_iterator_bitwidth.W)
   val pool_stride = UInt(tiny_iterator_bitwidth.W)
   val pool_padding = UInt(tiny_iterator_bitwidth.W)
@@ -530,11 +531,12 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   val orow = Reg(UInt(small_iterator_bitwidth.W))
   val ocol = Reg(UInt(small_iterator_bitwidth.W))
 
-  val skip_iteration = state =/= idle && req.input_dilated && (((krow +& orow -& upad)(0) & req.input_dilated).asBool() ||
-    ((kcol +& ocol -& lpad)(0) & req.input_dilated).asBool())
+  // TODO kernel-dilation and input-dilation can never be activated at the same time, so we can optimize out some multiplications by kernel_dilation
+  val skip_iteration = state =/= idle && req.input_dilated && (((krow * kernel_dilation +& orow -& upad)(0) & req.input_dilated).asBool() ||
+    ((kcol * kernel_dilation +& ocol -& lpad)(0) & req.input_dilated).asBool())
 
-  val irow = undilated(orow * stride +& krow)
-  val icol = undilated(ocol * stride +& kcol)
+  val irow = undilated(orow * stride +& krow * kernel_dilation)
+  val icol = undilated(ocol * stride +& kcol * kernel_dilation)
 
   val I = undilated(Mux(ocols - ocol > (block_size.U << req.input_dilated).asUInt(), (block_size.U << req.input_dilated).asUInt(), ocols - ocol))
   val J = Mux(ochs - och > block_size.U, block_size.U, ochs - och)
@@ -886,20 +888,18 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val b_addr_end = UInt(log2Up(max_addr).W)
 
   def derived_params(dummy: Int=0): LoopConvDerivedParams = {
-    import outer_bounds.stride
+    import outer_bounds.{stride, kernel_dilation}
     import inner_bounds.{batches, pochs, orows, ocols, krows, kcols, upad, dpad, lpad, rpad, kchs}
 
     val result = Wire(new LoopConvDerivedParams(large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth))
 
     result.ochs := pochs
 
-    result.irows := orows * stride +& krows - 1.U
-    result.icols := ocols * stride +& kcols - 1.U
-    result.irows_unpadded := result.irows - upad - dpad
-    result.icols_unpadded := result.icols - lpad - rpad
+    val dilated_krows = krows + (kernel_dilation - 1.U)*(krows - 1.U)
+    val dilated_kcols = kcols + (kernel_dilation - 1.U)*(kcols - 1.U)
 
-    val irows_without_dilation = orows * stride +& krows -& 1.U
-    val icols_without_dilation = ocols * stride +& kcols -& 1.U
+    val irows_without_dilation = orows * stride +& dilated_krows -& 1.U
+    val icols_without_dilation = ocols * stride +& dilated_kcols -& 1.U
     val irows_unpadded_without_dilation = irows_without_dilation -& upad -& dpad
     val icols_unpadded_without_dilation = icols_without_dilation -& lpad -& rpad
 
@@ -908,8 +908,11 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
     val irows_unpadded = undilated(irows_unpadded_without_dilation)
     val icols_unpadded = undilated(icols_unpadded_without_dilation)
 
-    val irows = Mux(input_dilated, irows_unpadded +& undilated(upad) +& undilated(dpad), irows_without_dilation)
-    val icols = Mux(input_dilated, icols_unpadded +& undilated(lpad) +& undilated(rpad), icols_without_dilation)
+    result.irows := Mux(input_dilated, irows_unpadded +& undilated(upad) +& undilated(dpad), irows_without_dilation)
+    result.icols := Mux(input_dilated, icols_unpadded +& undilated(lpad) +& undilated(rpad), icols_without_dilation)
+
+    result.irows_unpadded := irows_unpadded
+    result.icols_unpadded := icols_unpadded
 
     result.ichs := kchs
 
@@ -1078,6 +1081,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
         loop_being_configured.inner_bounds.pdpad := cmd.bits.rs1(15, 0)
 
         loop_being_configured.inner_bounds.ocols := cmd.bits.rs2(15, 0)
+        loop_being_configured.outer_bounds.kernel_dilation := cmd.bits.rs2(31, 16)
       }
 
       is (LOOP_CONV_WS_CONFIG_5) {
