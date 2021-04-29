@@ -680,6 +680,7 @@ class LoopConvStReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: Int, 
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val dram_addr = UInt(coreMaxAddrBits.W)
   val no_pool = Bool()
+  val trans_output_1203 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -721,7 +722,8 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val och = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = req.dram_addr + ((b*out_dim*out_dim + orow*out_dim + ocol) * out_channels + och) * (input_w/8).U
+  val dram_addr = Mux(req.trans_output_1203, req.dram_addr + ((orow*out_dim*batch_size + ocol*batch_size + b) * out_channels + och) * (input_w/8).U,
+    req.dram_addr + ((b*out_dim*out_dim + orow*out_dim + ocol) * out_channels + och) * (input_w/8).U)
   val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
   val pool_dram_addr = req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U
@@ -865,6 +867,7 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val no_pool = Bool()
   val downsample = Bool()
   val input_dilated = Bool()
+  val trans_output_1203 = Bool()
 
   val configured = Bool()
 
@@ -1099,6 +1102,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
       is (LOOP_CONV_WS) {
         loop_being_configured.no_bias := cmd.bits.rs1(0)
         loop_being_configured.wrot180 := cmd.bits.rs1(1)
+        loop_being_configured.trans_output_1203 := cmd.bits.rs1(2)
 
         loop_being_configured.no_pool := cmd.bits.rs2(0)
         loop_being_configured.downsample := cmd.bits.rs2(1)
@@ -1206,6 +1210,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   st.io.req.bits.addr_start := st_addr_start
   st.io.req.bits.dram_addr := loop_requesting_st.output_dram_addr
   st.io.req.bits.no_pool := loop_requesting_st.no_pool
+  st.io.req.bits.trans_output_1203 := loop_requesting_st.trans_output_1203
   st.io.req.bits.loop_id := loop_requesting_st_id
 
   st.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started && loop_requesting_st.configured
