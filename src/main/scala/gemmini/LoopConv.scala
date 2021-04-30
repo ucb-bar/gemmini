@@ -71,6 +71,7 @@ class LoopConvLdBiasReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: I
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val dram_addr = UInt(coreMaxAddrBits.W)
   val no_bias = Bool()
+  val partial_sum_mvin = Bool() //for partial sum move-in
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -97,6 +98,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
 
   val req = Reg(new LoopConvLdBiasReq(coreMaxAddrBits, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth: Int, max_acc_addr, concurrent_loops))
   import req.inner_bounds._
+  import req.outer_bounds._
   import req.derived_params._
 
   val acc_addr_start = (BigInt(1) << 31).U | req.addr_start
@@ -113,7 +115,11 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   val och = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = req.dram_addr +& och * (acc_w/8).U
+//  val dram_addr = req.dram_addr +& och * (acc_w/8).U
+  val dram_addr = Mux(req.partial_sum_mvin, req.dram_addr + ((b*out_dim*out_dim + orow*out_dim + ocol) * out_channels + och) * (acc_w/8).U,
+  req.dram_addr +& och * (acc_w/8).U)
+  //stride for partial sum: out_channels (not och_stride)
+
   val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
   // Sizes
@@ -125,7 +131,8 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
   config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U) | (req.derived_params.bias_spad_stride << 16.U) | (2.U << 3) | 1.U
-  config_cmd.rs2 := 0.U
+  config_cmd.rs2 := Mux(req.partial_sum_mvin, out_channels * (acc_w/8).U, 0.U)
+  // to move in partial sum, need stride
 
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
@@ -716,7 +723,8 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val no_bias = Bool()
   val no_pool = Bool()
   val both_out = Bool() // both pool and not pool
-  val partial_sum = Bool()
+  val partial_sum_mvout = Bool()
+  val partial_sum_mvin = Bool()
   val depthwise = Bool()
 
   val configured = Bool()
@@ -938,10 +946,11 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
       is (LOOP_CONV_WS) {
         loop_being_configured.pool_output_dram_addr := cmd.bits.rs1 // added for 2 mvout
         loop_being_configured.no_bias := cmd.bits.rs2(61)
+        loop_being_configured.partial_sum_mvin := cmd.bits.rs2(59)
 
         loop_being_configured.no_pool := cmd.bits.rs2(0)
         loop_being_configured.both_out := cmd.bits.rs2(62)
-        loop_being_configured.partial_sum := cmd.bits.rs2(60)
+        loop_being_configured.partial_sum_mvout := cmd.bits.rs2(60)
         loop_being_configured.depthwise := cmd.bits.rs2(63)
 
 
@@ -963,6 +972,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ld_bias.io.req.bits.addr_start := ld_bias_addr_start
   ld_bias.io.req.bits.dram_addr := loop_requesting_ld_bias.bias_dram_addr
   ld_bias.io.req.bits.no_bias := loop_requesting_ld_bias.no_bias
+  ld_bias.io.req.bits.partial_sum_mvin := loop_requesting_ld_bias.partial_sum_mvin
   ld_bias.io.req.bits.loop_id := loop_requesting_ld_bias_id
 
 
@@ -1041,7 +1051,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   st.io.req.bits.dram_addr := loop_requesting_st.output_dram_addr
   st.io.req.bits.no_pool := loop_requesting_st.no_pool
   st.io.req.bits.both_out := loop_requesting_st.both_out
-  st.io.req.bits.partial_sum := loop_requesting_st.partial_sum
+  st.io.req.bits.partial_sum := loop_requesting_st.partial_sum_mvout
   st.io.req.bits.loop_id := loop_requesting_st_id
   // added for 2 mvout
   st.io.req.bits.dram_addr_pool := loop_requesting_st.pool_output_dram_addr
