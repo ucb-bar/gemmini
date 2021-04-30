@@ -605,7 +605,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   //further divide due to squeezenet fire module concatenation
   val och_stride = out_stride
   // Addresses
-  val dram_addr = req.dram_addr + ((b*out_dim*out_dim + orow*out_dim + ocol) * och_stride + och) * (input_w/8).U
+  val dram_addr = req.dram_addr + ((b*out_dim*out_dim + orow*out_dim + ocol) * och_stride + och) * Mux(req.partial_sum, (acc_w/8).U, (input_w/8).U)
   val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
   val pool_dram_addr = Mux(req.both_out, req.dram_addr_pool, req.dram_addr) + ((b * pool_out_dim * pool_out_dim) * och_stride + och) * (input_w/8).U
@@ -622,7 +622,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   mvout_cmd := DontCare
   mvout_cmd.inst.funct := STORE_CMD
   mvout_cmd.rs1 := dram_addr
-  mvout_cmd.rs2 := Mux(req.partial_sum, (I << 48.U) | (J << 32.U) | spad_addr | (1.U << 30), (I << 48.U) | (J << 32.U) | spad_addr)
+  mvout_cmd.rs2 := Mux(req.partial_sum, (I << 48.U) | (J << 32.U) | spad_addr | (1.U << 29), (I << 48.U) | (J << 32.U) | spad_addr)
 
   val pre_pool_config_cmd = Wire(new RoCCCommand)
   pre_pool_config_cmd := DontCare
