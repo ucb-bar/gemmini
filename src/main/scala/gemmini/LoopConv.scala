@@ -561,6 +561,7 @@ class LoopConvStReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: Int, 
   val dram_addr_pool = UInt(coreMaxAddrBits.W)
   val no_pool = Bool()
   val both_out = Bool() // output both pooled and unpooled
+  val partial_sum = Bool() // move out 32 bits of partial sum
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -621,7 +622,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   mvout_cmd := DontCare
   mvout_cmd.inst.funct := STORE_CMD
   mvout_cmd.rs1 := dram_addr
-  mvout_cmd.rs2 := (I << 48.U) | (J << 32.U) | spad_addr
+  mvout_cmd.rs2 := Mux(req.partial_sum, (I << 48.U) | (J << 32.U) | spad_addr | (1.U << 30), (I << 48.U) | (J << 32.U) | spad_addr)
 
   val pre_pool_config_cmd = Wire(new RoCCCommand)
   pre_pool_config_cmd := DontCare
@@ -714,6 +715,7 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val no_bias = Bool()
   val no_pool = Bool()
   val both_out = Bool() // both pool and not pool
+  val partial_sum = Bool()
   val depthwise = Bool()
 
   val configured = Bool()
@@ -938,6 +940,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
 
         loop_being_configured.no_pool := cmd.bits.rs2(0)
         loop_being_configured.both_out := cmd.bits.rs2(62)
+        loop_being_configured.partial_sum := cmd.bits.rs2(60)
         loop_being_configured.depthwise := cmd.bits.rs2(63)
 
 
@@ -1037,6 +1040,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   st.io.req.bits.dram_addr := loop_requesting_st.output_dram_addr
   st.io.req.bits.no_pool := loop_requesting_st.no_pool
   st.io.req.bits.both_out := loop_requesting_st.both_out
+  st.io.req.bits.partial_sum := loop_requesting_st.partial_sum
   st.io.req.bits.loop_id := loop_requesting_st_id
   // added for 2 mvout
   st.io.req.bits.dram_addr_pool := loop_requesting_st.pool_output_dram_addr

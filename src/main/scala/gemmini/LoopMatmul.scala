@@ -447,6 +447,7 @@ class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val dram_addr = UInt(coreMaxAddrBits.W)
   val dram_stride = UInt(coreMaxAddrBits.W)
   val full_c = Bool()
+  val partial_sum = Bool() // to move out partial sum
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
@@ -497,7 +498,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   mvout_cmd := DontCare
   mvout_cmd.inst.funct := STORE_CMD
   mvout_cmd.rs1 := dram_addr
-  mvout_cmd.rs2 := (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr
+  mvout_cmd.rs2 := Mux(req.partial_sum, (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr | (1.U << 30).asUInt(), (rows << 48).asUInt() | (cols << 32).asUInt() | sp_addr)
 
   io.req.ready := state === idle
   io.j := j
@@ -563,6 +564,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val b_transpose = Bool()
 
   val low_d = Bool()
+  val partial_sum = Bool() //to moveout partial sum
   val full_c = Bool()
   val ex_accumulate = Bool()
 
@@ -737,6 +739,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
         loop_being_configured.ex_accumulate := cmd.bits.rs1(0)
         loop_being_configured.full_c := cmd.bits.rs1(1)
         loop_being_configured.low_d := cmd.bits.rs1(2)
+        loop_being_configured.partial_sum := cmd.bits.rs1(3)
         loop_being_configured.a_transpose := cmd.bits.rs2(0)
         loop_being_configured.b_transpose := cmd.bits.rs2(1)
 
@@ -851,6 +854,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   stC.io.req.bits.dram_addr := loop_requesting_st.c_dram_addr
   stC.io.req.bits.dram_stride := loop_requesting_st.c_dram_stride
   stC.io.req.bits.full_c := loop_requesting_st.full_c
+  stC.io.req.bits.partial_sum := loop_requesting_st.partial_sum
   stC.io.req.bits.addr_start := st_c_addr_start
   stC.io.req.bits.loop_id := loop_requesting_st_id
 
