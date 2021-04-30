@@ -565,7 +565,7 @@ class LoopConvStReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: Int, 
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
-class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, max_block_len: Int, concurrent_loops: Int)(implicit p: Parameters) extends Module {
+class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int)(implicit p: Parameters) extends Module {
   val MVIN_SCALE_IDENTITY = 0x3f800000.U // TODO get this from configs somehow
 
   val io = IO(new Bundle {
@@ -636,7 +636,8 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   post_pool_config_cmd := DontCare
   post_pool_config_cmd.inst.funct := CONFIG_CMD
   post_pool_config_cmd.rs1 := CONFIG_STORE
-  post_pool_config_cmd.rs2 := och_stride * (input_w / 8).U
+  post_pool_config_cmd.rs2 := Mux(req.partial_sum, och_stride * (acc_w / 8).U, och_stride * (input_w / 8).U)
+  //need 32 bits stride to move out partial sum
 
   val pool_cmd = Wire(new RoCCCommand)
   pool_cmd := DontCare
@@ -820,7 +821,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   val ld_input = Module(new LoopConvLdInput(block_size, coreMaxAddrBits, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth, max_addr, input_w, max_block_len, concurrent_loops))
   val ld_weights = Module(new LoopConvLdWeight(block_size, coreMaxAddrBits, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth, max_addr, input_w, max_block_len, concurrent_loops))
   val ex = Module(new LoopConvExecute(block_size, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops))
-  val st = Module(new LoopConvSt(block_size, coreMaxAddrBits, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth, max_acc_addr, input_w, max_block_len, concurrent_loops))
+  val st = Module(new LoopConvSt(block_size, coreMaxAddrBits, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth, max_acc_addr, input_w, acc_w, max_block_len, concurrent_loops))
 
   // Create command queue
   val cmd = Queue(io.in)
