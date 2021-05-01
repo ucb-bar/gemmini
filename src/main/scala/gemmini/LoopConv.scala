@@ -408,7 +408,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
     req.trans_weight_0132 -> (req.dram_addr +& ((krow*kernel_dim*out_channels +& kcol*out_channels +& och) * in_channels +& kch) * (input_w/8).U)
   ))
 
-  val spad_addr = Mux(req.trans_weight_1203,
+  val spad_addr = Mux(req.trans_weight_0132,
     addr_start + (kch / block_size.U) * krows * kcols * ochs + krow * kcols * ochs + kcol * ochs + och,
     addr_start + (och / block_size.U) * krows * kcols * kchs + krow * kcols * kchs + kcol * kchs + kch)
 
