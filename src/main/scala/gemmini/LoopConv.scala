@@ -543,7 +543,8 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   def undilated(x: UInt): UInt = (x +& req.input_dilated) >> req.input_dilated
 
   // Derived parameters
-  val B_rows = out_channels_per_bank * kcols * krows * kchs
+  val B_rows = Mux(req.trans_weight_0132, in_channels_per_bank * kcols * krows * ochs,
+    out_channels_per_bank * kcols * krows * kchs)
 
   val a_addr_start = req.a_addr_start
   val b_addr_start = req.b_addr_end - B_rows
