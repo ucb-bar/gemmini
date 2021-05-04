@@ -133,7 +133,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   load_cmd := DontCare
   load_cmd.inst.funct := Mux(AB, LOAD_CMD, LOAD2_CMD)
   load_cmd.rs1 := dram_addr
-  load_cmd.rs2 :=  ((conflict_monitor && enable_bubble) << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (profile_hit << 47).asUInt() | (profile_end << 46).asUInt() | (profile_start << 45).asUInt() | (cols << 32).asUInt() | sp_addr
+  load_cmd.rs2 :=  ((conflict_monitor) << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (profile_hit << 47).asUInt() | (profile_end << 46).asUInt() | (profile_start << 45).asUInt() | (cols << 32).asUInt() | sp_addr
 
   //for conv
   val MVIN_SCALE_IDENTITY = 0x3f800000.U // TODO get this from configs somehow
@@ -148,12 +148,13 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   mvin_cmd := DontCare
   mvin_cmd.inst.funct := LOAD2_CMD // for now, only weight
   mvin_cmd.rs1 := dram_addr
-  mvin_cmd.rs2 := ((conflict_monitor && enable_bubble) << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (K << 48.U).asUInt() | (J << 32.U).asUInt() | sp_addr
+  mvin_cmd.rs2 := ((conflict_monitor) << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (K << 48.U).asUInt() | (J << 32.U).asUInt() | sp_addr
 
   //val expected_tl_req = (max_addr / (2*2*max_block_len)).asUInt()
   io.busy := cmd.valid || configured
   io.alert_cycle := alert_cycle
-  io.latency := latency//Mux(latency === 0.U, expected_tl_req, latency)
+  io.latency := Mux(enable_bubble, latency, 1.U) // latency
+  // not enable bubble -> DMA latency 1 (loopld+FSM without bubble)
   io.pause_turn := pause_turn
   // fix loop_ws command
   val loop_ws_state = RegInit(idle)
