@@ -661,7 +661,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := (o.K << 48) | (o.J << 32) | o.pre_addr
     io.cmd.bits.rs2 := (o.I << 48) | (o.J << 32) | o.c_addr
-  } .otherwise {
+  }.elsewhen(command_p.io.out.bits.cmd.inst.funct =/= CONFIG_CMD) {
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := (o.I << 48) | (o.K << 32) | o.a_addr
     io.cmd.bits.rs2 := (o.I << 48) | (o.J << 32) | GARBAGE_ADDR
