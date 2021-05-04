@@ -126,6 +126,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
     val J = UInt()
   }
   val command_p = Module(new Pipeline(new RoCCCommandWithAddr, latency)())
+
   // Commands
   val config_cmd = Wire(new RoCCCommand)
   config_cmd := DontCare
@@ -257,7 +258,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
     req.trans_input_3120 -> (req.dram_addr +& (((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U).asUInt())
   ))
   val spad_addr = Mux(req.trans_input_3120,
-    req.addr_start.zext() +& (b / block_size.S) * input_spad_stride +& b * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample),
+    req.addr_start.zext() +& (b / block_size.S) * input_spad_stride +& ich * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample),
     req.addr_start.zext() +& (ich / block_size.S) * input_spad_stride +& b * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample))
 
   // Sizes
@@ -573,7 +574,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   val ocol = Reg(UInt(small_iterator_bitwidth.W))
 
   // TODO kernel-dilation and input-dilation can never be activated at the same time, so we can optimize out some multiplications by kernel_dilation
-  val skip_iteration = state =/= idle && req.input_dilated && (((krow * kernel_dilation +& orow -& upad)(0) & req.input_dilated).asBool() ||
+  val skip_iteration = state >= pre && req.input_dilated && (((krow * kernel_dilation +& orow -& upad)(0) & req.input_dilated).asBool() ||
     ((kcol * kernel_dilation +& ocol -& lpad)(0) & req.input_dilated).asBool())
 
   val irow = undilated(orow * stride +& krow * kernel_dilation)
@@ -645,7 +646,6 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   io.loop_id := req.loop_id
 
   command_p.io.in.valid := state =/= idle && !skip_iteration && ld_ahead
-  command_p.io.in.bits.cmd := Mux(state === pre, pre_cmd, comp_cmd)
   command_p.io.in.bits.cmd := MuxCase(config_cmd, Seq((state === pre) -> pre_cmd, (state === comp) -> comp_cmd))
   command_p.io.in.bits.a_addr := a_addr
   command_p.io.in.bits.pre_addr := pre_addr

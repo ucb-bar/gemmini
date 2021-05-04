@@ -59,7 +59,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
   val localaddr_plus_row_counter = localaddr + row_counter
 
-  val actual_rows_read = Mux(stride === 0.U, 1.U, rows)
+  val actual_rows_read = Mux(stride === 0.U && !all_zeros, 1.U, rows)
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoLoad = !DoConfig // TODO change this if more commands are added
