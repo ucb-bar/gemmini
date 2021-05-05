@@ -435,7 +435,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         }.elsewhen(!tl_miss) {
           tl_miss_counter := 0.U
         }
-      }.elsewhen(translate_q.io.deq.bits.monitor_conflict_end) {
+      }
+      when(translate_q.io.deq.bits.monitor_conflict_end) {
         when(m_state === s_conflict_detected) { //if something has detected during time window
           m_state := s_reset
           pause_count := 0.U
