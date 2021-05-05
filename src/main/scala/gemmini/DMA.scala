@@ -324,7 +324,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val busy = Output(Bool())
       val flush = Input(Bool())
     })
-
+    val req_pipe = Queue(io.req)
     val (s_idle :: s_writing_new_block :: s_writing_beats :: Nil) = Enum(3)
     val state = RegInit(s_idle)
 
@@ -348,7 +348,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     xactBusy := (xactBusy | xactBusy_add) & xactBusy_remove.asUInt()
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
-    io.req.ready := state_machine_ready_for_req
+    req_pipe.ready := state_machine_ready_for_req
     io.busy := xactBusy.orR || (state =/= s_idle)
 
     val vaddr = req.vaddr
@@ -538,27 +538,27 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
 
     // Accepting requests to kick-start the state machine
-    when (io.req.fire()) {
+    when (req_pipe.fire()) {
       val pooled = {
         val cols = dataWidth / inputType.getWidth
-        val v1 = io.req.bits.data.asTypeOf(Vec(cols, inputType))
+        val v1 = req_pipe.bits.data.asTypeOf(Vec(cols, inputType))
         val v2 = data_single_block.asTypeOf(Vec(cols, inputType))
         val m = v1.zip(v2)
         VecInit(m.zipWithIndex.map{case ((x, y), i) => if (i < block_cols) maxOf(x, y) else y}).asUInt()
       }
 
-      req := io.req.bits
-      req.len := io.req.bits.block * inputTypeRowBytes.U + io.req.bits.len
+      req := req_pipe.bits
+      req.len := req_pipe.bits.block * inputTypeRowBytes.U + req_pipe.bits.len
 
-      data_single_block := Mux(io.req.bits.pool_en, pooled, io.req.bits.data)
-      data_blocks(io.req.bits.block) := io.req.bits.data
+      data_single_block := Mux(req_pipe.bits.pool_en, pooled, req_pipe.bits.data)
+      data_blocks(req_pipe.bits.block) := req_pipe.bits.data
 
       bytesSent := 0.U
 
-      state := Mux(io.req.bits.store_en, s_writing_new_block, s_idle)
+      state := Mux(req_pipe.bits.store_en, s_writing_new_block, s_idle)
 
-      assert(io.req.bits.len <= (block_cols * inputType.getWidth / 8).U || io.req.bits.block === 0.U, "DMA can't write multiple blocks to main memory when writing full accumulator output")
-      assert(!io.req.bits.pool_en || io.req.bits.block === 0.U, "Can't pool with block-mvout")
+      assert(req_pipe.bits.len <= (block_cols * inputType.getWidth / 8).U || req_pipe.bits.block === 0.U, "DMA can't write multiple blocks to main memory when writing full accumulator output")
+      assert(!req_pipe.bits.pool_en || req_pipe.bits.block === 0.U, "Can't pool with block-mvout")
     }
  }
 }

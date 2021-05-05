@@ -6,7 +6,7 @@ import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
-import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar}
+import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar, TLBuffer}
 
 import Util._
 
@@ -186,9 +186,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   // id_node :=* reader.node
   // id_node :=* writer.node
 
-  xbar_node := reader.node // TODO
-  xbar_node := writer.node
-  id_node := xbar_node
+  xbar_node := TLBuffer() := reader.node // TODO
+  xbar_node := TLBuffer() := writer.node
+  id_node := TLBuffer() := xbar_node
 
   lazy val module = new LazyModuleImp(this) with HasCoreParameters {
 
@@ -438,8 +438,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         ex_read_resp.valid := bio.read.resp.valid && !bio.read.resp.bits.fromDMA
         ex_read_resp.bits := bio.read.resp.bits
 
-        val dma_read_pipe = Pipeline(dma_read_resp, mem_pipeline)
-        val ex_read_pipe = Pipeline(ex_read_resp, mem_pipeline)
+        val dma_read_pipe = Pipeline(Queue(dma_read_resp), mem_pipeline)
+        val ex_read_pipe = Pipeline(Queue(ex_read_resp), mem_pipeline)
 
 
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
