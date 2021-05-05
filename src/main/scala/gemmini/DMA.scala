@@ -451,6 +451,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
             //m_state := s_reset
           }
         }
+      }
     }
 
     when(m_state === s_conflict_detected){
@@ -473,7 +474,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         conflict_detected := false.B
       }
     }
-      
+
 
     tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits   := translate_q.io.deq.bits.tl_a
