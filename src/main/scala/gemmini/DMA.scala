@@ -406,6 +406,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       when(m_state === s_reset) {
         tl_miss_counter := 0.U //check alert
         tl_miss_timer := 0.U //check latency
+        conflict_detected := false.B
         when(translate_q.io.deq.bits.monitor_conflict_start && translate_q.io.deq.valid) {
           m_state := s_monitor_start
           // set parameters
@@ -422,7 +423,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
           }
           pause_turn := io.pause_turn
         }
-      }.elsewhen(m_state === s_monitor_start) {
+      }.elsewhen(m_state === s_monitor_start && !translate_q.io.deq.bits.monitor_conflict_end) {
         tl_miss_counter := satAdd(tl_miss_counter, 1.U, alert_cycles + 2.U, tl_miss) //count up when TL miss
         when(tl_miss_counter >= alert_cycles) { // when miss cycle goes above alert cycles
           m_state := s_conflict_detected // conflict detected (move state)
@@ -437,6 +438,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         }
       }
       when(translate_q.io.deq.bits.monitor_conflict_end) {
+        conflict_detected := false.B
         when(m_state === s_conflict_detected) { //if something has detected during time window
           m_state := s_reset
           pause_count := 0.U
@@ -455,7 +457,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       }
     }
 
-    when(m_state === s_conflict_detected){
+    when(m_state === s_conflict_detected && !translate_q.io.deq.bits.monitor_conflict_end){
       tl_miss_counter := satAdd(tl_miss_counter, 1.U, alert_cycles + 2.U, tl_miss_trigger) //count up when TL miss and deq is valid
       when(tl_miss_counter >= alert_cycles){
         when(enable_bubble) {
