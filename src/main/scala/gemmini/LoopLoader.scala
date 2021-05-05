@@ -18,7 +18,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     val out = Decoupled(new RoCCCommand)
     val busy = Output(Bool())
     val latency = Output(UInt(iterator_bitwidth.W))
-    val alert_cycle = Output(UInt(6.W))
+    val alert_cycle = Output(UInt(7.W))
     val pause_turn = Output(UInt(3.W))
     val pause_monitor = Input(Bool())
   })
@@ -52,7 +52,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   }
   // config states
   val latency = RegInit(0.U(iterator_bitwidth.W)) //how many cycles to push
-  val alert_cycle = RegInit(0.U(6.W)) //raise flag after how much cycles?
+  val alert_cycle = RegInit(0.U(7.W)) //raise flag after how much cycles?
   val pause_turn = RegInit(1.U(3.W)) // how many turns to wait to pause monitoring TL ports
   val dram_base_addr = RegInit(0.U(coreMaxAddrBits.W))
   val row_stride = RegInit(0.U(coreMaxAddrBits.W))
@@ -189,8 +189,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       is(LOOP_LD_CONFIG_BOUNDS){
         enable_bubble := cmd.bits.rs2(63) //diable: just loop B without bubble insertion
         pause_turn := cmd.bits.rs2(iterator_bitwidth * 3 + 12, iterator_bitwidth * 3 + 10)
-        alert_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 5, iterator_bitwidth * 3)
-        latency := cmd.bits.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2) //ToDo: give this to DMA
+        alert_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 5, iterator_bitwidth * 3 - 1)
+        latency := cmd.bits.rs2(iterator_bitwidth * 3 - 2, iterator_bitwidth * 2) //ToDo: give this to DMA
         unlock_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 9, iterator_bitwidth * 3 + 6)
         max_col_iterator := cmd.bits.rs2(iterator_bitwidth * 2 - 1, iterator_bitwidth)
         max_row_iterator := cmd.bits.rs2(iterator_bitwidth-1, 0)
@@ -220,8 +220,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
         enable_bubble := cmd.bits.rs2(63) //diable: just loop B without bubble insertion
         pause_turn := cmd.bits.rs2(60, 58)
         unlock_cycle := cmd.bits.rs2(57, 54)
-        alert_cycle := cmd.bits.rs2(53, 48)
-        latency := cmd.bits.rs2(47, 32) //ToDo: give this to DMA
+        alert_cycle := cmd.bits.rs2(53, 47)
+        latency := cmd.bits.rs2(46, 32) //ToDo: give this to DMA
         kernel_dim := cmd.bits.rs2(15, 0)//can code more if needed
 
         krows := cmd.bits.rs1(63, 48)

@@ -219,9 +219,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       // for detecting conflicts
       val latency_in = Input(UInt(16.W))
-      val alert_cycles_in = Input(UInt(6.W))
+      val alert_cycles_in = Input(UInt(7.W))
       val latency_out = Output(UInt(16.W))
-      val alert_cycles_out = Output(UInt(6.W))
+      val alert_cycles_out = Output(UInt(7.W))
       val pause_turn_in = Input(UInt(3.W))
       val pause_turn_out = Output(UInt(3.W))
 
