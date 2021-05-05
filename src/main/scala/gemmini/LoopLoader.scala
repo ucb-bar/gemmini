@@ -118,7 +118,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   val unlock_monitor = RegInit(0.U(4.W))
   val unlock_cycle = RegInit(0.U(4.W))
-  //val enable_bubble = WireInit(false.B)
+  val enable_bubble = RegInit(false.B) // enable monitoring for cache hits
   val conflict_monitor = !(unlock_cycle === 0.U)//!((alert_cycle === 0.U) || (latency === 0.U))
   val conflict_monitor_start = conflict_monitor && Mux(is_conv, (och === 0.U && kch === 0.U && kcol === 0.U && krow === 0.U), (row_iterator === 0.U && col_iterator === 0.U)) && (state === ld) //ToDo: with conv
   val conflict_monitor_end = conflict_monitor && Mux(is_conv, (kch + block_size.U >= kchs && kcol === kcols - 1.U && krow === krows - 1.U && och + max_ochs_per_mvin >= ochs),
@@ -133,7 +133,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   load_cmd := DontCare
   load_cmd.inst.funct := Mux(AB, LOAD_CMD, LOAD2_CMD)
   load_cmd.rs1 := dram_addr
-  load_cmd.rs2 :=  ((conflict_monitor) << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (profile_hit << 47).asUInt() | (profile_end << 46).asUInt() | (profile_start << 45).asUInt() | (cols << 32).asUInt() | sp_addr
+  load_cmd.rs2 :=  ((conflict_monitor && enable_bubble) << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (profile_hit << 47).asUInt() | (profile_end << 46).asUInt() | (profile_start << 45).asUInt() | (cols << 32).asUInt() | sp_addr
 
   //for conv
   val MVIN_SCALE_IDENTITY = 0x3f800000.U // TODO get this from configs somehow
@@ -148,13 +148,13 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   mvin_cmd := DontCare
   mvin_cmd.inst.funct := LOAD2_CMD // for now, only weight
   mvin_cmd.rs1 := dram_addr
-  mvin_cmd.rs2 := ((conflict_monitor) << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (K << 48.U).asUInt() | (J << 32.U).asUInt() | sp_addr
+  mvin_cmd.rs2 := ((conflict_monitor && enable_bubble) << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (K << 48.U).asUInt() | (J << 32.U).asUInt() | sp_addr
 
   //val expected_tl_req = (max_addr / (2*2*max_block_len)).asUInt()
   io.busy := cmd.valid || configured
   io.alert_cycle := alert_cycle
   io.latency := latency//Mux(enable_bubble, latency, 1.U) // latency
-  // enable_bubble := (latency =/= 0.U) //if latency == 0, disable bubble
+  //enable_bubble := (latency =/= 0.U) //if latency == 0, disable bubble
   // not enable bubble (loopld+FSM without bubble)
   io.pause_turn := pause_turn
   // fix loop_ws command
@@ -187,7 +187,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   when(cmd.valid && is_matmul_ldconfig && state === idle){
     switch(cmd.bits.inst.funct){
       is(LOOP_LD_CONFIG_BOUNDS){
-        //enable_bubble := cmd.bits.rs2(63) //diable: just loop B without bubble insertion
+        enable_bubble := cmd.bits.rs2(63) //diable: just loop B without bubble insertion
         pause_turn := cmd.bits.rs2(iterator_bitwidth * 3 + 12, iterator_bitwidth * 3 + 10)
         alert_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 5, iterator_bitwidth * 3)
         latency := cmd.bits.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2) //ToDo: give this to DMA
@@ -217,7 +217,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   }.elsewhen(cmd.valid && is_conv_ldconfig && state === idle){
     switch(cmd.bits.inst.funct){
       is(LOOP_CONV_LD_CONFIG_BOUNDS){
-        //enable_bubble := cmd.bits.rs2(63) //diable: just loop B without bubble insertion
+        enable_bubble := cmd.bits.rs2(63) //diable: just loop B without bubble insertion
         pause_turn := cmd.bits.rs2(60, 58)
         unlock_cycle := cmd.bits.rs2(57, 54)
         alert_cycle := cmd.bits.rs2(53, 48)
