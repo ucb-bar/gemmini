@@ -179,7 +179,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val bytesLeft = Mux(req.has_acc_bitwidth, req.len * (config.accType.getWidth / 8).U, req.len * (config.inputType.getWidth / 8).U) - bytesRequested
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
-    io.req.ready := state_machine_ready_for_req
+    val conflict_detected = RegInit(false.B)
+    //method 2: make this not ready instead of dealing with TL ports
+    io.req.ready := state_machine_ready_for_req && !conflict_detected
 
     // Select the size and mask of the TileLink request
     class Packet extends Bundle {
@@ -301,9 +303,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     //assert(retry_a.ready)
 
     /////////////////////////////////////////////////////////////////////////////////////////
-    val conflict_detected = RegInit(false.B)
+    //val conflict_detected = RegInit(false.B)
     val pause_turn = RegInit(io.pause_turn)
-    retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready || conflict_detected)
+    retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready)
     retry_a.bits := translate_q.io.deq.bits
     assert(retry_a.ready)
     when(reset.toBool()){
@@ -383,110 +385,97 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     dontTouch(profile_total)
     dontTouch(profile_number)
 
-    val tl_counter_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict && !translate_q.io.deq.bits.monitor_conflict_end
     val tl_miss_counter = RegInit(0.U(6.W))
     val alert_cycles = RegInit(profile_cycle)
     val latency = RegInit(io.latency)
     val enable_bubble = RegInit(false.B)
     //val max_block_len = (maxBytes / (meshRows * spadWidth / 8)) max 1
     val expected_tl_req = (spad_rows / (2*2*4)).asUInt()
-    //val latency = Mux(translate_q.io.deq.bits.monitor_conflict && !translate_q.io.deq.bits.profile_conflict,
-    //  Mux(io.latency === 0.U, expected_tl_req * profile_average, io.latency), 0.U) //if latency not give, use profiled one
-    //tl_miss_counter := satAdd(tl_miss_counter, 1.U, alert_cycles + 2.U, tl_counter_trigger)
-    /*
-    when(tl_miss_counter >= alert_cycles){ //reached limit
-      conflict_detected := true.B
-    }.elsewhen(!tl_counter_trigger){
-      tl_miss_counter := 0.U
-    }
 
-     */
     // pause monitoring detecting logic
     val (s_reset :: s_monitor_start :: s_conflict_detected  :: Nil) = Enum(3)
     val m_state = RegInit(s_reset)
     val pause_detect = RegInit(false.B)
     val pause_count = RegInit(0.U(2.W)) //Todo: parameterize it?
     val tl_miss_timer = RegInit(0.U(16.W))
-    /*
-    tl_miss_timer := floorAdd(tl_miss_timer, 1.U, latency + 1.U, conflict_detected)
-    when(tl_miss_timer === latency){ //resolve miss counter temporary
-      tl_miss_counter := 0.U //reset miss counter
-      conflict_detected := false.B
-    }
-     */
-    //val pause_monitor_start = RegInit(0.U(6.W))
+
     io.pause := pause_detect
-    when(translate_q.io.deq.bits.monitor_conflict && !translate_q.io.deq.bits.monitor_conflict_end){
+    val tl_miss_trigger = tl_miss && translate_q.io.deq.bits.monitor_conflict && translate_q.io.deq.valid
+
+    when(translate_q.io.deq.bits.monitor_conflict && translate_q.io.deq.valid) {
       when(m_state === s_reset) {
-        tl_miss_counter := 0.U
-        tl_miss_timer := 0.U
-        when(translate_q.io.deq.bits.monitor_conflict_start && translate_q.io.deq.valid){ // to avoid false detection
+        tl_miss_counter := 0.U //check alert
+        tl_miss_timer := 0.U //check latency
+        when(translate_q.io.deq.bits.monitor_conflict_start && translate_q.io.deq.valid) {
           m_state := s_monitor_start
+          // set parameters
           alert_cycles := Mux(io.alert_cycles === 0.U, profile_cycle, io.alert_cycles)
-          when(io.latency === 0.U){
+          when(io.latency === 0.U) {
             latency := expected_tl_req * profile_average // use profiled one
             enable_bubble := true.B
-          }.elsewhen(io.latency === 1.U){
+          }.elsewhen(io.latency === 1.U) {
             latency := 0.U
             enable_bubble := false.B
-          }.otherwise{
+          }.otherwise {
             enable_bubble := true.B
             latency := io.latency
           }
           pause_turn := io.pause_turn
         }
-      }.elsewhen(m_state === s_monitor_start){
-        tl_miss_counter := satAdd(tl_miss_counter, 1.U, alert_cycles + 2.U, tl_miss)
-        when(tl_miss_counter >= alert_cycles){
-          m_state := s_conflict_detected
-          when(enable_bubble){
+      }.elsewhen(m_state === s_monitor_start) {
+        tl_miss_counter := satAdd(tl_miss_counter, 1.U, alert_cycles + 2.U, tl_miss) //count up when TL miss
+        when(tl_miss_counter >= alert_cycles) { // when miss cycle goes above alert cycles
+          m_state := s_conflict_detected // conflict detected (move state)
+          when(enable_bubble) {
             conflict_detected := true.B
-          }.otherwise{
+          }.otherwise {
             tl_miss_counter := 0.U //resolve miss counter immediately (no bubbbles)
-            conflict_detected := false.B
+            conflict_detected := false.B // no bubbles -> no need to stall
           }
-        }.elsewhen(!tl_miss){
+        }.elsewhen(!tl_miss) {
           tl_miss_counter := 0.U
         }
-        //pause_monitor_start := 0.U
-      }.elsewhen(m_state === s_conflict_detected){
-        tl_miss_counter := satAdd(tl_miss_counter, 1.U, alert_cycles + 2.U, tl_miss)
-        tl_miss_timer := floorAdd(tl_miss_timer, 1.U, latency + 1.U, conflict_detected)
-        when(tl_miss_counter >= alert_cycles){
-          when(enable_bubble){
-            conflict_detected := true.B
-          }.otherwise{
-            tl_miss_counter := 0.U //resolve miss counter immediately (no bubbbles)
-            conflict_detected := false.B
+      }.elsewhen(translate_q.io.deq.bits.monitor_conflict_end) {
+        when(m_state === s_conflict_detected) { //if something has detected during time window
+          m_state := s_reset
+          pause_count := 0.U
+          pause_detect := false.B
+        }.elsewhen(m_state === s_monitor_start) { // no detection during time window
+          m_state := s_reset
+          when(pause_count === pause_turn && (pause_turn =/= 0.U)) { // pause monitoring (gain full FSM mode), if pause_turn 0, don't gain full FSM mode
+            pause_detect := true.B
+            //m_state := s_reset
+            pause_count := 0.U // reset pause counter
+          }.elsewhen(pause_turn =/= 0.U) {
+            pause_count := pause_count + 1.U
+            //m_state := s_reset
           }
-        }.elsewhen(!tl_miss){
-          tl_miss_counter := 0.U
         }
-        when(tl_miss_timer === latency){ //resolve miss counter temporary
-          tl_miss_counter := 0.U //reset miss counter
+    }
+
+    when(m_state === s_conflict_detected){
+      tl_miss_counter := satAdd(tl_miss_counter, 1.U, alert_cycles + 2.U, tl_miss_trigger) //count up when TL miss and deq is valid
+      when(tl_miss_counter >= alert_cycles){
+        when(enable_bubble) {
+          conflict_detected := true.B
+        }.otherwise {
+          tl_miss_counter := 0.U //resolve miss counter immediately (no bubbbles)
           conflict_detected := false.B
         }
+      }.elsewhen(!tl_miss_trigger){ //wouldn't hold when tl_miss_counter hasn't been resolved yet
+          tl_miss_counter := 0.U
+          tl_miss_timer := 0.U
       }
-    }.elsewhen(translate_q.io.deq.bits.monitor_conflict_end) {
-      when(m_state === s_conflict_detected) {
-        m_state := s_reset
-        pause_count := 0.U
-        pause_detect := false.B
-      }.elsewhen(m_state === s_monitor_start) { // no detection during time window
-        when(pause_count === pause_turn) { // pause monitoring
-          pause_detect := true.B
-          m_state := s_reset
-          pause_count := 0.U // reset pause counter
-        }.otherwise {
-          pause_count := pause_count + 1.U
-          m_state := s_reset
-        }
+      tl_miss_timer := floorAdd(tl_miss_timer, 1.U, latency + 1.U, conflict_detected) // if conflict is detected, stall for certain cycles
+      when(tl_miss_timer === latency) { //resolve miss counter temporary
+        tl_miss_counter := 0.U //reset miss counter
+        tl_miss_timer := 0.U //reset miss timer
+        conflict_detected := false.B
       }
-      //pause_monitor_start := 0.U
-    } //ToDo: how to restart monitoring after pausing
+    }
+      
 
-
-    tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss && !(conflict_detected)
+    tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits   := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
     /*
