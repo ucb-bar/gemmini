@@ -429,7 +429,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
           when(enable_bubble) {
             conflict_detected := true.B
           }.otherwise {
-            tl_miss_counter := 0.U //resolve miss counter immediately (no bubbbles)
+            tl_miss_counter := 0.U //resolve miss counter immediately (no bubbles)
             conflict_detected := false.B // no bubbles -> no need to stall
           }
         }.elsewhen(!tl_miss) {
@@ -446,7 +446,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
             pause_detect := true.B
             //m_state := s_reset
             pause_count := 0.U // reset pause counter
-          }.elsewhen(pause_turn =/= 0.U) {
+          }.otherwise {
             pause_count := pause_count + 1.U
             //m_state := s_reset
           }
