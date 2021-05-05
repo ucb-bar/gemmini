@@ -52,6 +52,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   }
   // config states
   val latency = RegInit(0.U(iterator_bitwidth.W)) //how many cycles to push
+  val multiply_factor = RegInit(1.U(2.W))
   val alert_cycle = RegInit(0.U(7.W)) //raise flag after how much cycles?
   val pause_turn = RegInit(1.U(3.W)) // how many turns to wait to pause monitoring TL ports
   val dram_base_addr = RegInit(0.U(coreMaxAddrBits.W))
@@ -152,7 +153,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
 
   //val expected_tl_req = (max_addr / (2*2*max_block_len)).asUInt()
   io.busy := cmd.valid || configured
-  io.alert_cycle := alert_cycle
+  io.alert_cycle := Mux(alert_cycle === 0.U, multiply_factor + 1.U, alert_cycle * (multiply_factor + 1.U)) //multiply for longer alert cycle when cache miss
   io.latency := latency//Mux(enable_bubble, latency, 1.U) // latency
   //enable_bubble := (latency =/= 0.U) //if latency == 0, disable bubble
   // not enable bubble (loopld+FSM without bubble)
@@ -188,6 +189,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     switch(cmd.bits.inst.funct){
       is(LOOP_LD_CONFIG_BOUNDS){
         enable_bubble := cmd.bits.rs2(63) //diable: just loop B without bubble insertion
+        multiply_factor := cmd.bits.rs2(62, 61)
         pause_turn := cmd.bits.rs2(iterator_bitwidth * 3 + 12, iterator_bitwidth * 3 + 10)
         alert_cycle := cmd.bits.rs2(iterator_bitwidth * 3 + 5, iterator_bitwidth * 3 - 1)
         latency := cmd.bits.rs2(iterator_bitwidth * 3 - 2, iterator_bitwidth * 2) //ToDo: give this to DMA
@@ -218,6 +220,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     switch(cmd.bits.inst.funct){
       is(LOOP_CONV_LD_CONFIG_BOUNDS){
         enable_bubble := cmd.bits.rs2(63) //diable: just loop B without bubble insertion
+        multiply_facor := cmd.bits.rs2(62, 61)
         pause_turn := cmd.bits.rs2(60, 58)
         unlock_cycle := cmd.bits.rs2(57, 54)
         alert_cycle := cmd.bits.rs2(53, 47)
