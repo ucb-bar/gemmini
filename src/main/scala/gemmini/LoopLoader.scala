@@ -220,7 +220,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     switch(cmd.bits.inst.funct){
       is(LOOP_CONV_LD_CONFIG_BOUNDS){
         enable_bubble := cmd.bits.rs2(63) //diable: just loop B without bubble insertion
-        multiply_facor := cmd.bits.rs2(62, 61)
+        multiply_factor := cmd.bits.rs2(62, 61)
         pause_turn := cmd.bits.rs2(60, 58)
         unlock_cycle := cmd.bits.rs2(57, 54)
         alert_cycle := cmd.bits.rs2(53, 47)
