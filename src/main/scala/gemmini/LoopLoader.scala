@@ -153,7 +153,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   //val expected_tl_req = (max_addr / (2*2*max_block_len)).asUInt()
   io.busy := cmd.valid || configured
   io.alert_cycle := alert_cycle
-  io.latency := Mux(enable_bubble, latency, 1.U) // latency
+  io.latency := latency//Mux(enable_bubble, latency, 1.U) // latency
   // not enable bubble -> DMA latency 1 (loopld+FSM without bubble)
   io.pause_turn := pause_turn
   // fix loop_ws command
