@@ -411,7 +411,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         when(translate_q.io.deq.bits.monitor_conflict_start && translate_q.io.deq.valid) {
           m_state := s_monitor_start
           // set parameters
-          alert_cycles := Mux(io.alert_cycles < 6.U, profile_cycle * io.alert_cycles, io.alert_cycles) //alert cycles < 5 -> multiply factor given
+          alert_cycles := Mux(io.alert_cycles < 8.U, profile_cycle * io.alert_cycles, io.alert_cycles) //alert cycles < 5 -> multiply factor given
           when(io.latency === 0.U) {
             latency := expected_tl_req * profile_average // use profiled one
             enable_bubble := true.B
