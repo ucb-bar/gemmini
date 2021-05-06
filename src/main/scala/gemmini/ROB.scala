@@ -111,8 +111,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
 
   // Config values set by programmer
-  val a_stride = Reg(UInt(8.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
-  val c_stride = Reg(UInt(8.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
+  val a_stride = Reg(UInt(16.W)) // TODO magic numbers
+  val c_stride = Reg(UInt(16.W)) // TODO magic numbers
+  val a_transpose = Reg(Bool())
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
   val st_block_stride = block_rows.U
   val pooling_is_enabled = Reg(Bool())
@@ -186,11 +187,14 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     op1.valid := funct === PRELOAD_CMD || funct_is_compute
     op1.bits.start := cmd.rs1.asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
+      // TODO check b_transpose here iff WS mode is enabled
       val preload_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48)
       op1.bits.end := op1.bits.start + preload_rows
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
-      val compute_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48) * a_stride
+      val rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48)
+      val cols = cmd.rs1(32 + log2Up(block_cols + 1) - 1, 32)
+      val compute_rows = Mux(a_transpose, cols, rows) * a_stride
       op1.bits.end := op1.bits.start + compute_rows
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(compute_rows)._2
     }
@@ -203,7 +207,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       op2.bits.wraps_around := op2.bits.start.add_with_overflow(compute_rows)._2
     }.elsewhen (pooling_is_enabled) {
       // If pooling is enabled, then we assume that this command simply mvouts everything in this accumulator bank from
-      // start to the end of the bank
+      // start to the end of the bank // TODO this won't work when acc_banks =/= 2
       val acc_bank = op2.bits.start.acc_bank()
 
       val next_bank_addr = WireInit(0.U.asTypeOf(local_addr_t))
@@ -345,8 +349,12 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     when (io.alloc.fire()) {
       when (new_entry.is_config && new_entry.q === exq && !is_im2col) {
-        a_stride := new_entry.cmd.rs1(23, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
-        c_stride := new_entry.cmd.rs1(31, 24) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
+        a_stride := new_entry.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
+        c_stride := new_entry.cmd.rs2(63, 48) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
+        val set_only_strides = new_entry.cmd.rs1(7) // TODO magic numbers
+        when (!set_only_strides) {
+          a_transpose := new_entry.cmd.rs1(8) // TODO magic numbers
+        }
       }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
         val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
         val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers

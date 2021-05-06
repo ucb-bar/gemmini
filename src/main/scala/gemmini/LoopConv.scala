@@ -126,6 +126,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
     val J = UInt()
   }
   val command_p = Module(new Pipeline(new RoCCCommandWithAddr, latency)())
+
   // Commands
   val config_cmd = Wire(new RoCCCommand)
   config_cmd := DontCare
@@ -201,6 +202,7 @@ class LoopConvLdInputReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: 
   val dram_addr = UInt(coreMaxAddrBits.W)
   val downsample = Bool()
   val input_dilated = Bool()
+  val trans_input_3120 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -234,6 +236,8 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
 
   // Derived parameters
   val max_ichs_per_mvin = Mux(ichs < (max_block_len * block_size).U, ichs, (max_block_len * block_size).U).zext()
+  val max_batches_per_mvin = Mux(batches < (max_block_len * block_size).U, batches, (max_block_len * block_size).U).zext()
+  val max_chs_per_mvin = Mux(req.trans_input_3120, max_batches_per_mvin, max_ichs_per_mvin)
 
   // Iterators
   val b = Reg(SInt(large_iterator_bitwidth.W))
@@ -246,14 +250,16 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val icol_padded = icol +& undilated(lpad).zext()
   val is_zeros = irow < 0.S || irow >= irows_unpadded.zext() || icol < 0.S || icol >= icols_unpadded.zext()
 
+  val dram_stride = Mux(req.trans_input_3120, batch_size * (input_w/8).U, in_channels * (input_w/8).U)
+
   // Addresses
-  val dram_addr = Mux(is_zeros, 0.U,
-    req.dram_addr +& (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channels +& ich) * (input_w/8).U).asUInt())
-  val spad_addr = req.addr_start.zext() +&
-    (ich / block_size.S) * input_spad_stride +&
-    b * (irows >> req.downsample) * (icols >> req.downsample) +&
-    (irow_padded >> req.downsample) * (icols >> req.downsample) +&
-    (icol_padded >> req.downsample)
+  val dram_addr = MuxCase(req.dram_addr +& (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channels +& ich) * (input_w/8).U).asUInt(), Seq(
+    is_zeros -> 0.U,
+    req.trans_input_3120 -> (req.dram_addr +& (((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U).asUInt())
+  ))
+  val spad_addr = Mux(req.trans_input_3120,
+    req.addr_start.zext() +& (b / block_size.S) * input_spad_stride +& ich * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample),
+    req.addr_start.zext() +& (ich / block_size.S) * input_spad_stride +& b * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample))
 
   // Sizes
   val block_size_downsampled = (block_size.U << req.downsample).asUInt().zext()
@@ -265,7 +271,9 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
       (icol >= icols_unpadded.zext()) -> Mux(icols_unpadded.zext() +& undilated(rpad).zext() -& icol > block_size.S, block_size.S, icols_unpadded.zext() +& undilated(rpad).zext() -& icol)
     )
   )
-  val K = Mux(ichs.zext() -& ich > max_ichs_per_mvin, max_ichs_per_mvin, ichs.zext() -& ich)
+  val K = Mux(req.trans_input_3120,
+    Mux(batches.zext() -& b > max_chs_per_mvin, max_chs_per_mvin, batches.zext() -& b),
+    Mux(ichs.zext() -& ich > max_chs_per_mvin, max_chs_per_mvin, ichs.zext() -& ich))
 
   class RoCCCommandWithAddr extends Bundle {
     val cmd = new RoCCCommand
@@ -280,7 +288,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
   config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U) | (input_spad_stride << 16.U) | (0.U << 3) | 1.U
-  config_cmd.rs2 := (in_channels * (input_w/8).U) << req.downsample
+  config_cmd.rs2 := dram_stride << req.downsample
 
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
@@ -314,12 +322,15 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
     when (state === config) {
       state := ld
     }.otherwise {
-      val next_ich = sFloorAdd(ich, max_ichs_per_mvin.asUInt(), ichs.zext(), 0.S)
+      val b_it = Mux(req.trans_input_3120, max_chs_per_mvin.asUInt(), 1.U)
+      val ich_it = Mux(req.trans_input_3120, 1.U, max_chs_per_mvin.asUInt())
+
+      val next_ich = sFloorAdd(ich, ich_it, ichs.zext(), 0.S)
       val next_icol = sFloorAdd(icol, I.asUInt(), (icols_unpadded +& undilated(rpad)).zext(), 0.S-&undilated(lpad).zext(),
         next_ich === 0.S)
       val next_irow = sFloorAdd(irow, 1.U << req.downsample, (irows_unpadded +& undilated(dpad)).zext(), 0.S-&undilated(upad).zext(),
         next_icol === 0.S-&undilated(lpad).zext() && next_ich === 0.S)
-      val next_b = sFloorAdd(b, 1.U, batches.zext(), 0.S,
+      val next_b = sFloorAdd(b, b_it, batches.zext(), 0.S,
         next_irow === 0.S-&undilated(upad).zext() && next_icol === 0.S-&undilated(lpad).zext() && next_ich === 0.S)
 
       ich := next_ich
@@ -428,6 +439,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
     val J = UInt()
   }
   val command_p = Module(new Pipeline(new RoCCCommandWithAddr, latency)())
+
   // Commands
   val config_cmd = Wire(new RoCCCommand)
   config_cmd := DontCare
@@ -507,6 +519,7 @@ class LoopConvExecuteReq(val large_iterator_bitwidth: Int, val small_iterator_bi
   val downsample = Bool()
   val input_dilated = Bool()
   val trans_weight_0132 = Bool()
+  val trans_input_3120 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -529,7 +542,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   })
 
   object State extends ChiselEnum {
-    val idle, pre, comp = Value
+    val idle, config, pre, comp = Value
   }
   import State._
   val state = RegInit(idle)
@@ -561,22 +574,22 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   val ocol = Reg(UInt(small_iterator_bitwidth.W))
 
   // TODO kernel-dilation and input-dilation can never be activated at the same time, so we can optimize out some multiplications by kernel_dilation
-  val skip_iteration = state =/= idle && req.input_dilated && (((krow * kernel_dilation +& orow -& upad)(0) & req.input_dilated).asBool() ||
+  val skip_iteration = state >= pre && req.input_dilated && (((krow * kernel_dilation +& orow -& upad)(0) & req.input_dilated).asBool() ||
     ((kcol * kernel_dilation +& ocol -& lpad)(0) & req.input_dilated).asBool())
 
   val irow = undilated(orow * stride +& krow * kernel_dilation)
   val icol = undilated(ocol * stride +& kcol * kernel_dilation)
 
-  val I = undilated(Mux(ocols - ocol > (block_size.U << req.input_dilated).asUInt(), (block_size.U << req.input_dilated).asUInt(), ocols - ocol))
+  val I = Mux(req.trans_input_3120,
+    Mux(batches - b > block_size.U, block_size.U, batches - b),
+    undilated(Mux(ocols - ocol > (block_size.U << req.input_dilated).asUInt(), (block_size.U << req.input_dilated).asUInt(), ocols - ocol)))
   val J = Mux(ochs - och > block_size.U, block_size.U, ochs - och)
   val K = Mux(kchs - kch > block_size.U, block_size.U, kchs - kch)
 
   // Addresses
-  val a_addr = a_addr_start +&
-    (kch / block_size.U) * input_spad_stride +&
-    b * (irows >> req.downsample) * (icols >> req.downsample) +&
-    (irow >> req.downsample) * (icols >> req.downsample) +&
-    (icol >> req.downsample)
+  val a_addr = Mux(req.trans_input_3120,
+    a_addr_start +& (b / block_size.U) * input_spad_stride +& kch * (irows >> req.downsample) * (icols >> req.downsample) +& (irow >> req.downsample) * (icols >> req.downsample) +& (icol >> req.downsample),
+    a_addr_start +& (kch / block_size.U) * input_spad_stride +& b * (irows >> req.downsample) * (icols >> req.downsample) +& (irow >> req.downsample) * (icols >> req.downsample) +& (icol >> req.downsample))
 
   // val c_addr = Mux(ex_overwrite && krow === 0.U && kcol === 0.U && kch === 0.U, d_addr_start, c_addr_start) +&
   //   (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
@@ -605,7 +618,14 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     val K = UInt()
   }
   val command_p = Module(new Pipeline(new RoCCCommandWithAddr, latency)())
+
   // Commands
+  val config_cmd = Wire(new RoCCCommand)
+  config_cmd := DontCare
+  config_cmd.inst.funct := CONFIG_CMD
+  config_cmd.rs1 := ((irows * icols) << 16) | (1.U << 7)
+  config_cmd.rs2 := (orows * ocols) << 48
+
   val pre_cmd = Wire(new RoCCCommand)
   pre_cmd := DontCare
   pre_cmd.inst.funct := PRELOAD_CMD
@@ -619,13 +639,14 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   comp_cmd.rs2 := 0.U//(I << 48) | (J << 32) | GARBAGE_ADDR
 
   val ld_ahead = io.lda_completed && io.ldb_completed && io.ldd_completed
+
   // Inputs and outputs
   io.req.ready := state === idle && !command_p.io.busy
   io.idle := state === idle && !command_p.io.busy
   io.loop_id := req.loop_id
 
   command_p.io.in.valid := state =/= idle && !skip_iteration && ld_ahead
-  command_p.io.in.bits.cmd := Mux(state === pre, pre_cmd, comp_cmd)
+  command_p.io.in.bits.cmd := MuxCase(config_cmd, Seq((state === pre) -> pre_cmd, (state === comp) -> comp_cmd))
   command_p.io.in.bits.a_addr := a_addr
   command_p.io.in.bits.pre_addr := pre_addr
   command_p.io.in.bits.c_addr := c_addr
@@ -640,7 +661,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := (o.K << 48) | (o.J << 32) | o.pre_addr
     io.cmd.bits.rs2 := (o.I << 48) | (o.J << 32) | o.c_addr
-  } .otherwise {
+  }.elsewhen(command_p.io.out.bits.cmd.inst.funct =/= CONFIG_CMD) {
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := (o.I << 48) | (o.K << 32) | o.a_addr
     io.cmd.bits.rs2 := (o.I << 48) | (o.J << 32) | GARBAGE_ADDR
@@ -653,14 +674,17 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
 
   // Sending outputs
   when (command_p.io.in.fire() || skip_iteration) {
-    when (state === pre) {
+    when (state === config) {
+      state := pre
+    }.elsewhen (state === pre) {
       state := comp
     }.otherwise {
-      val ocol_it = Mux(skip_iteration, 1.U, block_size.U << req.input_dilated).asUInt()
+      val b_it = Mux(req.trans_input_3120, block_size.U, 1.U)
+      val ocol_it = Mux(skip_iteration || req.trans_input_3120, 1.U, block_size.U << req.input_dilated).asUInt()
 
       val next_ocol = floorAdd(ocol, ocol_it, ocols)
       val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U)
-      val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U)
+      val next_b = floorAdd(b, b_it, batches, next_orow === 0.U && next_ocol === 0.U)
       val next_kch = floorAdd(kch, block_size.U, kchs,
         next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
       val next_kcol = floorAdd(kcol, 1.U, kcols,
@@ -691,7 +715,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   // Accepting requests
   when (io.req.fire()) {
     req := io.req.bits
-    state := pre
+    state := Mux(io.req.bits.trans_input_3120, config, pre)
 
     b := 0.U
     orow := 0.U
@@ -903,6 +927,7 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val trans_output_1203 = Bool()
   val trans_weight_1203 = Bool()
   val trans_weight_0132 = Bool()
+  val trans_input_3120 = Bool()
 
   val configured = Bool()
 
@@ -958,7 +983,9 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
     result.in_channels_per_bank := result.ichs / block_size.U +& (result.ichs % block_size.U =/= 0.U)
 
     result.bias_spad_stride := batches * orows * ocols
-    result.input_spad_stride := batches * (result.irows >> downsample) * (result.icols >> downsample)
+    result.input_spad_stride := Mux(trans_input_3120,
+      result.ichs * (result.irows >> downsample) * (result.icols >> downsample),
+      batches * (result.irows >> downsample) * (result.icols >> downsample))
     result.weight_spad_stride := Mux(trans_weight_0132, krows * kcols * pochs, krows * kcols * kchs)
 
     // result.ex_overwrite := bias_dram_addr =/= 0.U && no_bias
@@ -1141,6 +1168,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
         loop_being_configured.trans_output_1203 := cmd.bits.rs1(2)
         loop_being_configured.trans_weight_1203 := cmd.bits.rs1(3)
         loop_being_configured.trans_weight_0132 := cmd.bits.rs1(4)
+        loop_being_configured.trans_input_3120 := cmd.bits.rs1(5)
 
         loop_being_configured.no_pool := cmd.bits.rs2(0)
         loop_being_configured.downsample := cmd.bits.rs2(1)
@@ -1190,6 +1218,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ld_input.io.req.bits.dram_addr := loop_requesting_ld_input.input_dram_addr
   ld_input.io.req.bits.downsample := loop_requesting_ld_input.downsample
   ld_input.io.req.bits.input_dilated := loop_requesting_ld_input.input_dilated
+  ld_input.io.req.bits.trans_input_3120 := loop_requesting_ld_input.trans_input_3120
   ld_input.io.req.bits.loop_id := loop_requesting_ld_input_id
 
   ld_input.io.req.valid := !loop_requesting_ld_input.ld_input_started && loop_requesting_ld_input.configured
@@ -1229,6 +1258,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ex.io.req.bits.downsample := loop_requesting_ex.downsample
   ex.io.req.bits.input_dilated := loop_requesting_ex.input_dilated
   ex.io.req.bits.trans_weight_0132 := loop_requesting_ex.trans_weight_0132
+  ex.io.req.bits.trans_input_3120 := loop_requesting_ex.trans_input_3120
   ex.io.req.bits.loop_id := loop_requesting_ex_id
 
   ex.io.req.valid := !loop_requesting_ex.ex_started && loop_requesting_ex.ld_bias_started &&
