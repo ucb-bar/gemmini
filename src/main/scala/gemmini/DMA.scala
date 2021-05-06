@@ -376,7 +376,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         }
         //profile_average := profile_total / profile_number // ToDo: need to change (don't use division)
         profile_cycle := Mux(io.pause_turn === 1.U, profile_average, profile_max) //parameterize what to select, scaling factor
-        expected_tl_req := (spad_rows / (2*2*4)).asUInt() * io.latency // scale
+        expected_tl_req := (spad_rows / (2*2*4)).asUInt() * io.alert_cycles // scale
       }
     }
     dontTouch(profile_miss_counter)
