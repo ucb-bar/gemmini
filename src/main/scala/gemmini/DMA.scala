@@ -343,6 +343,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     // either average or max
     val profile_cycle = RegInit(profile_max)
     val profile_detected = RegInit(false.B)
+    val expected_tl_req = RegInit(io.latency)//(spad_rows / (2*2*4)).asUInt()
     when(p_state === p_reset){
       when(tl_profile_start){
         p_state := p_profile_start
@@ -374,7 +375,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
           profile_average := profile_total / 64.U
         }
         //profile_average := profile_total / profile_number // ToDo: need to change (don't use division)
-        profile_cycle := Mux(io.pause_turn === 1.U, profile_average * 2.U, profile_max + 1.U) //parameterize what to select
+        profile_cycle := Mux(io.pause_turn === 1.U, profile_average, profile_max) //parameterize what to select, scaling factor
+        expected_tl_req := (spad_rows / (2*2*4)).asUInt() * io.latency // scale
       }
     }
     dontTouch(profile_miss_counter)
@@ -390,7 +392,6 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val latency = RegInit(io.latency)
     val enable_bubble = RegInit(false.B)
     //val max_block_len = (maxBytes / (meshRows * spadWidth / 8)) max 1
-    val expected_tl_req = (spad_rows / (2*2*4)).asUInt()
 
     // pause monitoring detecting logic
     val (s_reset :: s_monitor_start :: s_conflict_detected  :: Nil) = Enum(3)
