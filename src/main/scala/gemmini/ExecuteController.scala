@@ -208,12 +208,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh.io.req.bits.flush := Mux(control_state === flush && !cntl_valid, 1.U, 0.U) // We want to make sure that the mesh has absorbed all inputs before flushing
 
   // Hazards
+  val raw_hazards_are_impossible = !ex_read_from_acc && !ex_write_to_spad // Special case where RAW hazards are impossible
+
   val raw_hazard_pre = mesh.io.tags_in_progress.map { t =>
     val is_garbage = t.addr.is_garbage()
     val pre_raw_haz = t.addr.is_same_address(rs1s(0))
     val mul_raw_haz = t.addr.is_same_address(rs1s(1)) || t.addr.is_same_address(rs2s(1))
 
-    !is_garbage && (pre_raw_haz || mul_raw_haz)
+    !is_garbage && (pre_raw_haz || mul_raw_haz) && !raw_hazards_are_impossible.B
   }.reduce(_ || _)
 
   val raw_hazard_mulpre = mesh.io.tags_in_progress.map { t =>
@@ -221,10 +223,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val pre_raw_haz = t.addr.is_same_address(rs1s(1))
     val mul_raw_haz = t.addr.is_same_address(rs1s(2)) || t.addr.is_same_address(rs2s(2))
 
-    !is_garbage && (mul_raw_haz || pre_raw_haz)
+    !is_garbage && (mul_raw_haz || pre_raw_haz) && !raw_hazards_are_impossible.B
   }.reduce(_ || _)
-
-  val raw_hazards_are_impossible = !ex_read_from_acc && !ex_write_to_spad // Special case where RAW hazards are impossible
 
   val third_instruction_needed = a_address_place > 1.U || b_address_place > 1.U || preload_cmd_place > 1.U || !raw_hazards_are_impossible.B
 
@@ -574,6 +574,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
           cmd.pop := 1.U
         }
+
         // Preload
         .elsewhen(DoPreloads(0) && cmd.valid(1) && (raw_hazards_are_impossible.B || !raw_hazard_pre)) {
           perform_single_preload := true.B
