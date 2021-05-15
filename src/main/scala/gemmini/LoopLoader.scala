@@ -142,7 +142,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
       (icol >= icols_unpadded.zext()) -> Mux(icols_unpadded.zext() +& rpad.zext() -& icol > block_size.S, block_size.S, icols_unpadded.zext() +& rpad.zext() -& icol)
     )
   )
-  val K = Mux(AB, Mux(ichs.zext() -& ich > max_ichs_per_mvin, max_ichs_per_mvin, ichs.zext() -& ich), Mux(kchs - kch > block_size.U, block_size.U, kchs - kch))
+  val K = Mux(AB, (Mux(ichs.zext() -& ich > max_ichs_per_mvin, max_ichs_per_mvin, ichs.zext() -& ich)).asUInt(), Mux(kchs - kch > block_size.U, block_size.U, kchs - kch))
 
   object State extends ChiselEnum {
     val idle, config, ld = Value //added config for conv
