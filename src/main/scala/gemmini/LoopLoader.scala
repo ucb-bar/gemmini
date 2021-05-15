@@ -168,7 +168,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   load_cmd := DontCare
   load_cmd.inst.funct := Mux(AB, LOAD_CMD, LOAD2_CMD)
   load_cmd.rs1 := dram_addr
-  load_cmd.rs2 :=  ((conflict_monitor && enable_bubble) << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (profile_hit << 47).asUInt() | (profile_end << 46).asUInt() | (profile_start << 45).asUInt() | (cols << 32).asUInt() | sp_addr
+  load_cmd.rs2 :=  ((conflict_monitor && enable_bubble) << 63).asUInt() | (conflict_monitor_end << 62).asUInt() | (conflict_monitor_start << 61).asUInt() | (rows << 48).asUInt() | (profile_hit << 47).asUInt() | (profile_end << 46).asUInt() | (profile_start << 45).asUInt() | (cols << 32).asUInt() | sp_addr.asUInt()
 
   //for conv
   val MVIN_SCALE_IDENTITY = 0x3f800000.U // TODO get this from configs somehow
