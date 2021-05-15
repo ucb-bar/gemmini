@@ -361,6 +361,12 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
     }
   }.elsewhen(io.out.fire() && state === config){ //for conv config
     state := ld
+    when(AB){
+      b := 0.S
+      irow := 0.S -& upad.zext()
+      icol := 0.S -& lpad.zext()
+      ich := 0.S
+    }
   }
 
 }
