@@ -126,7 +126,7 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val conv_dram_addr = Mux(depthwise, dram_base_addr +& ((krow*kernel_dim +& kcol +& kch) * out_channel_stride +& och) * (input_w/8).U, dram_base_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channel_stride +& och) * (input_w/8).U)
   val dram_addr = Mux(!is_conv, dram_base_addr + (row_iterator * row_stride + col_iterator) * block_size.U * (input_w/8).U,
     Mux(AB,  Mux(is_zeros, 0.U, dram_base_addr +& (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channel_stride +& ich) * (input_w/8).U).asUInt()), conv_dram_addr))
-  val sp_addr = Mux(is_conv, Mux(AB, sp_addr_start.zext() +& (ich / block_size.S) * batches * irows * icols +& b * irows * icols +& irow_padded * icols +& icol_padded, sp_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow * kcols * kchs +& kcol * kchs +& kch),
+  val sp_addr = Mux(is_conv, Mux(AB, (sp_addr_start.zext() +& (ich / block_size.S) * batches * irows * icols +& b * irows * icols +& irow_padded * icols +& icol_padded).asUInt(), sp_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow * kcols * kchs +& kcol * kchs +& kch),
     sp_addr_start + (row_iterator * max_col_iterator + col_iterator) * block_size.U)
   val blocks = Mux(col_iterator + max_blocks <= max_col_iterator, max_blocks, max_col_iterator-col_iterator)
   val cols = (blocks * block_size.U) - Mux(col_iterator + blocks >= max_col_iterator, col_pad, 0.U)
