@@ -196,12 +196,12 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   io.pause_turn := pause_turn
   // fix loop_ws command
   val loop_ws_state = RegInit(idle)
-  val is_loop_ws_addr = (cmd.bits.inst.funct === LOOP_WS_CONFIG_ADDRS_AB || cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_5 || cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_6)
+  val is_loop_ws_addr = (cmd.bits.inst.funct === LOOP_WS_CONFIG_ADDRS_AB || (cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_5 && !AB) || (cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_6 && AB))
   val fixed_loop_cmd = Wire(new RoCCCommand())
   fixed_loop_cmd := DontCare
   fixed_loop_cmd.inst.funct := cmd.bits.inst.funct//LOOP_WS_CONFIG_ADDRS_AB
-  fixed_loop_cmd.rs1 := Mux(AB, 0.U, cmd.bits.rs1)//Mux(cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_5, 0.U, Mux(AB, 0.U, cmd.bits.rs1)) //if conv, weight
-  fixed_loop_cmd.rs2 := Mux(AB, cmd.bits.rs2, 0.U)//Mux(is_conv, cmd.bits.rs2, Mux(AB, cmd.bits.rs2, 0.U)) //for now, not do input for conv
+  fixed_loop_cmd.rs1 := Mux(is_conv, Mux(cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_5 && !AB, 0.U, cmd.bits.rs1), Mux(AB, 0.U, cmd.bits.rs1)) //if conv, weight
+  fixed_loop_cmd.rs2 := Mux(is_conv, Mux(cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_6 && AB, 0.U, cmd.bits.rs2), Mux(AB, cmd.bits.rs2, 0.U)) //for now, not do input for conv
 
   unlock_monitor := floorAdd(unlock_monitor, 1.U, unlock_cycle + pause_turn - 1.U, pause_req && is_loop_ws_addr & lock_tag && cmd.fire())
   when(!pause_req){
