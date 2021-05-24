@@ -2,34 +2,17 @@
 package gemmini
 
 import chisel3._
-import freechips.rocketchip.config.{Config, Field, Parameters}
-import freechips.rocketchip.diplomacy.{LazyModule, ValName}
+import freechips.rocketchip.config.{Config, Parameters}
+import freechips.rocketchip.diplomacy.LazyModule
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet, XLen}
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.system._
 import freechips.rocketchip.diplomacy._
+
 import gemmini.Arithmetic.SIntArithmetic
 import hardfloat._
-
-
-// ------------------
-// Multi-RoCC Support
-// ------------------
-
-/**
- * Map from a hartId to a particular RoCC accelerator
- */
-case object MultiRoCCKey extends Field[Map[Int, Seq[Parameters => LazyRoCC]]](Map.empty[Int, Seq[Parameters => LazyRoCC]])
-
-/**
- * Mixin to enable different RoCCs based on the hartId
- */
-class WithMultiRoCC extends Config((site, here, up) => {
-  case BuildRoCC => site(MultiRoCCKey).getOrElse(site(TileKey).hartId, Nil)
-})
-
 
 // -----------------------
 // Component Mixin Configs
@@ -185,7 +168,7 @@ object GemminiConfigs {
     meshRows=32, meshColumns=32
   )
 
-  val highPerfConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true)
+  val leanConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true)
 }
 
 /**
@@ -205,8 +188,6 @@ class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
-
-
 class DualGemminiConfig extends Config((site, here, up) => {
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
   case BuildRoCC => {
@@ -274,122 +255,3 @@ class DualGemminiConfig extends Config((site, here, up) => {
     up(BuildRoCC) ++ Seq(int_fn, fp_fn)
   }
 })
-
-/**
- * Mixin which configures a smaller host processor for the systolic array.
-   This mixin **replaces** the default host rocket (assuming a single core config).
-   This is useful for hierarcical physical design purposes.
- */
-class GemminiHostMiniCore extends Config((site, here, up) => {
-  case RocketTilesKey => Seq(
-    RocketTileParams(
-      core = RocketCoreParams(
-        useVM = true,
-        mulDiv = Some(MulDivParams(mulUnroll = 8))),
-      btb = Some(BTBParams(nEntries = 14, nRAS = 2)),
-      dcache = Some(DCacheParams(
-        rowBits = site(SystemBusKey).beatBits,
-        nSets = 64, // 4Kb
-        nWays = 4,  // 4Kb * 4
-//        nTLBEntries = 16,
-        nMSHRs = 0,
-//        blockBytes = site(CacheBlockBytes)
-        )),
-      icache = Some(ICacheParams(
-        rowBits = site(SystemBusKey).beatBits,
-        nSets = 64,
-        nWays = 4,
-//        nTLBEntries = 16,
-//        blockBytes = site(CacheBlockBytes)
-        )),
-      hartId = up(RocketTilesKey, site).length - 1
-        ))
-  case MultiRoCCKey => up(MultiRoCCKey, site) +
-    (up(RocketTilesKey, site).length - 1 ->
-      Seq((p: Parameters) => {
-        implicit val q = p
-        val gemmini = LazyModule(new Gemmini(GemminiConfigs.defaultConfig))
-        gemmini
-      }))
-})
-
-
-
-/**
- * Mixin which configures a smaller host processor for the systolic array.
-   This mixin **adds** the small core to the default host rocket (as the last hart).
-   This is useful for software development purposes for the gemmini accelerator
-   as a device with a control processor (rather than a rocc-attached accelerator)
- */
-class WithGemminiHostMiniCore extends Config((site, here, up) => {
-  case RocketTilesKey => up(RocketTilesKey, site) :+
-    RocketTileParams(
-      core = RocketCoreParams(
-        useVM = true,
-        mulDiv = Some(MulDivParams(mulUnroll = 8))),
-      btb = Some(BTBParams(nEntries = 14, nRAS = 2)),
-      dcache = Some(DCacheParams(
-        rowBits = site(SystemBusKey).beatBits,
-        nSets = 64, // 4Kb scratchpad
-        nWays = 4,
-//        nTLBEntries = 16,
-        nMSHRs = 0,
-        blockBytes = site(CacheBlockBytes))),
-      icache = Some(ICacheParams(
-        rowBits = site(SystemBusKey).beatBits,
-        nSets = 64,
-        nWays = 4,
-//        nTLBEntries = 16,
-        blockBytes = site(CacheBlockBytes))),
-      hartId = up(RocketTilesKey, site).length
-        )
-  case MultiRoCCKey => up(MultiRoCCKey, site) +
-    (up(RocketTilesKey, site).length ->
-      Seq((p: Parameters) => {
-        implicit val q = p
-        val gemmini = LazyModule(new Gemmini(GemminiConfigs.defaultConfig))
-        gemmini
-      }))
-})
-
-
-
-// -----------------------------
-// Example TopLevel Configs
-// -----------------------------
-
-
-/**
- * Top level config with a default single core rocket and gemmini rocc accelerator.
-   Useful for gemmini performance evaluation and debugging.
- */
-class GemminiConfig extends Config(new DefaultGemminiConfig ++
-                                    new freechips.rocketchip.system.DefaultConfig)
-
-
-/**
- * Top level config with a small host rocket and gemmini rocc accelerator.
-   Useful for physical design.
- */
-class GemminiAcceleratorConfig extends Config(
-  new GemminiHostMiniCore ++
-  new WithMultiRoCC ++
-  new DefaultGemminiConfig ++
-  new WithoutTLMonitors ++
-  new freechips.rocketchip.system.DefaultConfig
-)
-
-
-/**
- * Top level config with a default single core rocket,
-   and a small mini-core rocket attached to a gemmini rocc accelerator.
-   Useful for device driver development
- */
-class GemminiAcceleratorDeviceConfig extends Config(
-  new WithGemminiHostMiniCore ++
-  new WithMultiRoCC ++
-  new DefaultGemminiConfig ++
-  new WithMultiRoCC ++
-  new WithoutTLMonitors ++
-  new freechips.rocketchip.system.DefaultConfig
-)
