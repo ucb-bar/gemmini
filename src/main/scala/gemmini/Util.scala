@@ -35,12 +35,30 @@ object Util {
     Mux(u +& v > max, max, u + v)
   }
 
+  def satAdd(u: UInt, v: UInt, max_plus_one: UInt, en: Bool = true.B): UInt = {
+    val max = max_plus_one - 1.U
+
+    MuxCase(u + v, Seq(
+      (!en) -> u,
+      ((u +& v) > max) -> max
+    ))
+  }
+
   def floorAdd(u: UInt, n: UInt, max_plus_one: UInt, en: Bool = true.B): UInt = {
     val max = max_plus_one - 1.U
 
     MuxCase(u + n, Seq(
       (!en) -> u,
       ((u +& n) > max) -> 0.U
+    ))
+  }
+
+  def sFloorAdd(s: SInt, n: UInt, max_plus_one: SInt, min: SInt, en: Bool = true.B): SInt = {
+    val max = max_plus_one - 1.S
+
+    MuxCase(s + n.zext(), Seq(
+      (!en) -> s,
+      ((s +& n.zext()) > max) -> min
     ))
   }
 
@@ -79,6 +97,11 @@ object Util {
   // the "pipe" and "flow" parameters set to "true"
   def RegEnableThru[T <: Data](next: T, enable: Bool): T = {
     val buf = RegEnable(next, enable)
+    Mux(enable, next, buf)
+  }
+
+  def RegEnableThru[T <: Data](next: T, init: T, enable: Bool): T = {
+    val buf = RegEnable(next, init, enable)
     Mux(enable, next, buf)
   }
 
