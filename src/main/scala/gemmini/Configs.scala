@@ -153,6 +153,7 @@ object GemminiConfigs {
     hardcode_d_to_garbage_addr = false,
 
     mesh_output_delay = 1,
+    clock_gate = false,
   )
 
   val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
@@ -197,7 +198,8 @@ class DualGemminiConfig extends Config((site, here, up) => {
       implicit val q = p
       int_gemmini = LazyModule(new Gemmini(GemminiConfigs.chipConfig.copy(
         opcodes = OpcodeSet.custom3,
-        use_shared_ext_mem = true
+        use_shared_ext_mem = true,
+        clock_gate = true
       )))
       int_gemmini
     }
@@ -216,6 +218,7 @@ class DualGemminiConfig extends Config((site, here, up) => {
 	acc_latency = 3,
         dataflow = Dataflow.WS,
         mesh_output_delay = 3,
+        clock_gate = true
       )))
       InModuleBody {
         require(int_gemmini.config.sp_banks == fp_gemmini.config.sp_banks)

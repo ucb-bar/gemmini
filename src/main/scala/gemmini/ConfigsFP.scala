@@ -73,6 +73,7 @@ object GemminiFPConfigs {
     hardcode_d_to_garbage_addr = false,
 
     mesh_output_delay = 0,
+    clock_gate = false
   )
   
   //FP32 Single Precision Configuration

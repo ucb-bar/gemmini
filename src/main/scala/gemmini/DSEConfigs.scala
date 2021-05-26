@@ -76,6 +76,7 @@ object DSEBaseConfig {
     max_in_flight_reqs = 16,
 
     mesh_output_delay = 1,
+    clock_gate = false
   )
 }
 
