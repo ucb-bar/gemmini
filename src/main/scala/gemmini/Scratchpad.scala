@@ -401,7 +401,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           io.ext_mem.get.spad(i) <> bio.ext_mem.get
         }
 
-        val ex_read_req = Queue(io.srams.read(i).req, 1, pipe=true)
+        val ex_read_req = io.srams.read(i).req
         val exread = ex_read_req.valid
 
         // TODO we tie the write dispatch queue's, and write issue queue's, ready and valid signals together here
