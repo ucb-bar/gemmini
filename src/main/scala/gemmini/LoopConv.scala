@@ -1016,8 +1016,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int)
   (implicit p: Parameters) extends Module {
   val large_iterator_bitwidth = 16
-  val small_iterator_bitwidth = 8
-  val tiny_iterator_bitwidth = 4
+  val small_iterator_bitwidth = 16 // 8
+  val tiny_iterator_bitwidth = 16 // 4
 
   val max_block_len = (dma_max_bytes / (block_size * (input_w / 8))) max 1
   val max_block_len_acc = (dma_max_bytes / (block_size * (acc_w / 8))) max 1
