@@ -208,12 +208,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh.io.req.bits.flush := Mux(control_state === flush && !cntl_valid, 1.U, 0.U) // We want to make sure that the mesh has absorbed all inputs before flushing
 
   // Hazards
+  val raw_hazards_are_impossible = !ex_read_from_acc && !ex_write_to_spad // Special case where RAW hazards are impossible
+
   val raw_hazard_pre = mesh.io.tags_in_progress.map { t =>
     val is_garbage = t.addr.is_garbage()
     val pre_raw_haz = t.addr.is_same_address(rs1s(0))
     val mul_raw_haz = t.addr.is_same_address(rs1s(1)) || t.addr.is_same_address(rs2s(1))
 
-    !is_garbage && (pre_raw_haz || mul_raw_haz)
+    !is_garbage && (pre_raw_haz || mul_raw_haz) && !raw_hazards_are_impossible.B
   }.reduce(_ || _)
 
   val raw_hazard_mulpre = mesh.io.tags_in_progress.map { t =>
@@ -221,10 +223,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val pre_raw_haz = t.addr.is_same_address(rs1s(1))
     val mul_raw_haz = t.addr.is_same_address(rs1s(2)) || t.addr.is_same_address(rs2s(2))
 
-    !is_garbage && (mul_raw_haz || pre_raw_haz)
+    !is_garbage && (mul_raw_haz || pre_raw_haz) && !raw_hazards_are_impossible.B
   }.reduce(_ || _)
 
-  val raw_hazards_are_impossible = !ex_read_from_acc && !ex_write_to_spad // Special case where RAW hazards are impossible
+  val third_instruction_needed = a_address_place > 1.U || b_address_place > 1.U || preload_cmd_place > 1.U || !raw_hazards_are_impossible.B
 
   val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_id.valid).reduce(_ || _)
 
@@ -242,7 +244,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // "A" stride variables
   val a_addr_offset = Reg(UInt((16 + log2Up(block_size)).W))
-  val a_addr_stride = Reg(UInt(16.W))
+  val a_addr_stride = Reg(UInt(16.W)) // TODO magic numbers
+
+  // "C" stride variables
+  val c_addr_stride = Reg(UInt(16.W)) // TODO magic numbers
 
   val a_address = a_address_rs1 + a_addr_offset
   val b_address = b_address_rs2 + b_fire_counter
@@ -534,17 +539,23 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           val config_cmd_type = rs1s(0)(1,0) // TODO magic numbers
 
           when (config_cmd_type === CONFIG_EX) {
-            activation := rs1s(0)(4, 3) // TODO magic number
-            in_shift := rs2s(0)(31, 0) // TODO magic number
-            acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
-            relu6_shift := rs2s(0)(xLen - 1, 32) // TODO magic number
-            a_addr_stride := rs1s(0)(31, 16) // TODO magic number // TODO this needs to be kept in sync with ROB.scala
-            a_transpose := rs1s(0)(8)
-            bd_transpose := rs1s(0)(9)
+            val set_only_strides = rs1s(0)(7) // TODO magic number
 
-            if (dataflow == Dataflow.BOTH) {
-              current_dataflow := rs1s(0)(2)
+            when (!set_only_strides) {
+              activation := rs1s(0)(4, 3) // TODO magic number
+              in_shift := rs2s(0)(31, 0) // TODO magic number
+              acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
+              relu6_shift := rs2s(0)(47, 32) // TODO magic number
+              a_transpose := rs1s(0)(8) // TODO magic number
+              bd_transpose := rs1s(0)(9) // TODO magic number
+
+              if (dataflow == Dataflow.BOTH) {
+                current_dataflow := rs1s(0)(2) // TODO magic number
+              }
             }
+
+            a_addr_stride := rs1s(0)(31, 16) // TODO magic number // TODO this needs to be kept in sync with ROB.scala
+            c_addr_stride := rs2s(0)(63, 48) // TODO magic number // TODO this needs to be kept in sync with ROB.scala
 
             config_initialized := true.B
           }.otherwise { // config_cmd_type === CONFIG_IM2COL
@@ -563,6 +574,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
           cmd.pop := 1.U
         }
+
         // Preload
         .elsewhen(DoPreloads(0) && cmd.valid(1) && (raw_hazards_are_impossible.B || !raw_hazard_pre)) {
           perform_single_preload := true.B
@@ -579,7 +591,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
         }
 
         // Overlap compute and preload
-        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && (raw_hazards_are_impossible.B || (cmd.valid(2) && !raw_hazard_mulpre))) {
+        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && (!third_instruction_needed || (cmd.valid(2) && !raw_hazard_mulpre)))
+        {
           perform_mul_pre := true.B
           performing_mul_pre := true.B
 
@@ -886,8 +899,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val w_total_output_rows = mesh.io.resp.bits.total_rows
 
-  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, mesh.io.resp.bits.tag.addr + output_counter,
-    mesh.io.resp.bits.tag.addr + (w_total_output_rows - 1.U - output_counter))
+  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, mesh.io.resp.bits.tag.addr + output_counter * c_addr_stride,
+    mesh.io.resp.bits.tag.addr + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
   val write_to_acc = w_address.is_acc_addr
 
   val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address.sp_bank())

@@ -648,13 +648,19 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   io.busy := cmd.valid || loop_configured
 
   // Create ld arbiters
-  val ldab_arb = Module(new WeightedArbiter(new RoCCCommand(), maxWeightA=255)) // TODO magic numbers
+  val ldab_arb = Module(new WeightedArbiter(new RoCCCommand(), maxWeightA=255, staticWeightAEnabled=true)) // TODO magic numbers
   ldab_arb.io.inA <> ldA.io.cmd
   ldab_arb.io.inB <> ldB.io.cmd
   val ab_loads_on_same_loop = ldA.io.loop_id === ldB.io.loop_id
   ldab_arb.io.forceA := !ab_loads_on_same_loop && ldA.io.loop_id === head_loop_id
   ldab_arb.io.forceB := !ab_loads_on_same_loop && ldB.io.loop_id === head_loop_id
   ldab_arb.io.weightA := head_loop.weightA
+  ldab_arb.io.inA_idle := ldA.io.idle
+  ldab_arb.io.inB_idle := ldB.io.idle
+  ldab_arb.io.inA_k := ldA.io.k
+  ldab_arb.io.inA_i := ldA.io.i
+  ldab_arb.io.inB_k := ldB.io.k
+  ldab_arb.io.inB_j := ldB.io.j
 
   // Create global arbiter
   val arb = Module(new Arbiter(new RoCCCommand(), 4))
