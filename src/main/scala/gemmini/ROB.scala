@@ -24,6 +24,11 @@ class ROBIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
 class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: RoCCCommand) extends Module {
   import config._
 
+  // TODO make *_ooo config parameters
+  val ld_ooo = false
+  val ex_ooo = true
+  val st_ooo = true
+
   val block_rows = tileRows * meshRows
   val block_cols = tileColumns * meshColumns
 
@@ -98,7 +103,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val full_entries = Reg(Vec(rob_full_entries, UDValid(new Entry)))
   val partial_entries = Reg(Vec(rob_partial_entries, UDValid(new Entry)))
 
-  val entries = full_entries ++ partial_entries
+  val entries = full_entries ++ partial_entries // WARNING: The last_allocated_preload code below assumes that full_entries comes before the partial_entries
 
   val empty = !entries.map(_.valid).reduce(_ || _)
   val full = entries.map(_.valid).reduce(_ && _)
@@ -109,7 +114,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val solitary_preload = utilization === 1.U && entries.map(e => e.valid && e.bits.cmd.inst.funct === PRELOAD_CMD).reduce(_ || _)
   io.busy := !empty && !(solitary_preload && io.solitary_preload)
 
-
   // Config values set by programmer
   val a_stride = Reg(UInt(16.W)) // TODO magic numbers
   val c_stride = Reg(UInt(16.W)) // TODO magic numbers
@@ -117,6 +121,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
   val st_block_stride = block_rows.U
   val pooling_is_enabled = Reg(Bool())
+
+  // Registers to help keep OOO execute working properly
+  val last_allocated_preload = Reg(UInt(log2Up(rob_entries).W))
+  val last_ex_issued_was_preload = RegInit(false.B)
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
@@ -303,8 +311,16 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     })
     val waws = dst_waws_opa
 
-    val older_in_same_q = VecInit(entries.map { e =>
-      e.valid && e.bits.q === new_entry.q && !e.bits.issued
+    val older_in_same_q = VecInit(entries.zipWithIndex.map { case (e, i) =>
+
+      val ooo_q = (ld_ooo.B && new_entry.q === ldq) || (ex_ooo.B && new_entry.q === exq) || (st_ooo.B && new_entry.q === stq)
+
+      val is_last_preload = i.U === last_allocated_preload
+      val new_entry_is_compute = new_entry.cmd.inst.funct === COMPUTE_AND_STAY_CMD ||
+        new_entry.cmd.inst.funct === COMPUTE_AND_FLIP_CMD
+
+      e.valid && e.bits.q === new_entry.q && !e.bits.issued &&
+        (!ooo_q || e.bits.is_config || new_entry.is_config || (is_last_preload && new_entry_is_compute))
     })
 
     val is_st_and_must_wait_for_prior_ex_config = VecInit(entries.map { e =>
@@ -362,13 +378,20 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       }.elsewhen(new_entry.is_config && new_entry.q === stq) {
         val pool_stride = new_entry.cmd.rs1(5, 4) // TODO magic numbers
         pooling_is_enabled := pool_stride =/= 0.U
+      }.elsewhen(new_entry.cmd.inst.funct === PRELOAD_CMD) {
+        last_allocated_preload := full_alloc_id
       }
     }
   }
 
   // Issue commands which are ready to be issued
   Seq((ldq, io.issue.ld), (stq, io.issue.st), (exq, io.issue.ex)).foreach { case (q, io) =>
-    val issue_valids = entries.map(e => e.valid && e.bits.ready() && !e.bits.issued && e.bits.q === q)
+    val must_be_compute = q === exq && last_ex_issued_was_preload && ex_ooo.B
+
+    val issue_valids = entries.map { e =>
+      val is_compute = e.bits.cmd.inst.funct === COMPUTE_AND_FLIP_CMD || e.bits.cmd.inst.funct === COMPUTE_AND_STAY_CMD
+      e.valid && e.bits.ready() && !e.bits.issued && e.bits.q === q && (!must_be_compute || is_compute)
+    }
     val issue_sel = PriorityEncoderOH(issue_valids)
     val issue_id = OHToUInt(issue_sel)
     val issue_entry = Mux1H(issue_sel, entries)
@@ -395,6 +418,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
         }
       }
     }
+  }
+
+  when (io.issue.ex.fire()) {
+    last_ex_issued_was_preload := io.issue.ex.cmd.inst.funct === PRELOAD_CMD
   }
 
   // Mark entries as completed once they've returned
