@@ -97,7 +97,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   import req.inner_bounds._
   import req.derived_params._
 
-  val acc_addr_start = (BigInt(1) << 31).U | req.addr_start
+  // val acc_addr_start = (BigInt(1) << 31).U | req.addr_start
 
   // Derived parameters
   val max_ochs_per_mvin = Mux(ochs < (max_block_len_acc * block_size).U, ochs, (max_block_len_acc * block_size).U)
@@ -111,12 +111,12 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   val och = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = Mux(req.no_bias, 0.U, req.dram_addr +& och * (acc_w/8).U)
-  val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
+  val dram_addr = Mux(req.no_bias, 0.U, req.dram_addr + och * (acc_w/8).U)
+  val spad_addr = req.addr_start + resize((och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
 
   // Sizes
-  val I = Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol)
-  val J = Mux(ochs - och > max_ochs_per_mvin, max_ochs_per_mvin, ochs - och)
+  val I = resize(Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol), log2Up(max_acc_addr max (block_size + 1)))
+  val J = resize(Mux(ochs - och > max_ochs_per_mvin, max_ochs_per_mvin, ochs - och), log2Up(max_acc_addr max (max_block_len_acc * block_size + 1)))
 
   class RoCCCommandWithAddr extends Bundle {
     val cmd = new RoCCCommand
@@ -158,7 +158,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   when (command_p.io.out.bits.cmd.inst.funct === LOAD3_CMD) {
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := o.dram_addr
-    io.cmd.bits.rs2 := (o.I << 48.U) | (o.J << 32.U) | o.spad_addr
+    io.cmd.bits.rs2 := (o.I << 48.U) | (o.J << 32.U) | (BigInt(1) << 31).U | o.spad_addr
   }
 
   // Sending outputs
@@ -232,7 +232,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   import req.inner_bounds._
   import req.derived_params._
 
-  def undilated(x: UInt): UInt = (x +& req.input_dilated) >> req.input_dilated
+  def undilated(x: UInt): UInt = ((x +& req.input_dilated) >> req.input_dilated).asUInt()
 
   // Derived parameters
   val max_ichs_per_mvin = Mux(ichs < (max_block_len * block_size).U, ichs, (max_block_len * block_size).U).zext()
@@ -253,27 +253,29 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val dram_stride = Mux(req.trans_input_3120, batch_size * (input_w/8).U, in_channels * (input_w/8).U)
 
   // Addresses
-  val dram_addr = MuxCase(req.dram_addr +& (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channels +& ich) * (input_w/8).U).asUInt(), Seq(
+  val dram_addr = resize(MuxCase(req.dram_addr + (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channels +& ich) * (input_w/8).U).asUInt(), Seq(
     is_zeros -> 0.U,
-    req.trans_input_3120 -> (req.dram_addr +& (((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U).asUInt())
-  ))
-  val spad_addr = Mux(req.trans_input_3120,
+    req.trans_input_3120 -> (req.dram_addr + (((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U).asUInt())
+  )), coreMaxAddrBits)
+  val spad_addr = resize(Mux(req.trans_input_3120,
     req.addr_start.zext() +& (b / block_size.S) * input_spad_stride +& ich * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample),
-    req.addr_start.zext() +& (ich / block_size.S) * input_spad_stride +& b * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample))
+    req.addr_start.zext() +& (ich / block_size.S) * input_spad_stride +& b * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample)),
+    log2Up(max_addr))
 
   // Sizes
   val block_size_downsampled = (block_size.U << req.downsample).asUInt().zext()
 
-  val I = MuxCase(
+  val I = resize(MuxCase(
     Mux(icols_unpadded.zext() -& icol > block_size_downsampled, block_size_downsampled, icols_unpadded.zext() -& icol),
     Seq(
       (icol < 0.S) -> Mux((0.S-&icol) > block_size.S, block_size.S, 0.S-&icol),
       (icol >= icols_unpadded.zext()) -> Mux(icols_unpadded.zext() +& undilated(rpad).zext() -& icol > block_size.S, block_size.S, icols_unpadded.zext() +& undilated(rpad).zext() -& icol)
     )
-  )
-  val K = Mux(req.trans_input_3120,
+  ), log2Up(max_addr max (max_block_len * block_size + 1)))
+  val K = resize(Mux(req.trans_input_3120,
     Mux(batches.zext() -& b > max_chs_per_mvin, max_chs_per_mvin, batches.zext() -& b),
-    Mux(ichs.zext() -& ich > max_chs_per_mvin, max_chs_per_mvin, ichs.zext() -& ich))
+    Mux(ichs.zext() -& ich > max_chs_per_mvin, max_chs_per_mvin, ichs.zext() -& ich)),
+    log2Up(max_addr max (max_block_len * block_size + 1)))
 
   class RoCCCommandWithAddr extends Bundle {
     val cmd = new RoCCCommand
@@ -402,10 +404,10 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
     out_channels_per_bank * kcols * krows * kchs)
   val addr_start = req.addr_end - B_rows
 
-  val dram_stride = MuxCase(out_channels, Seq(
+  val dram_stride = resize(MuxCase(out_channels, Seq(
     req.trans_weight_1203 -> (kernel_dim * kernel_dim * out_channels),
     req.trans_weight_0132 -> in_channels
-  )) * (input_w/8).U
+  )) * (input_w/8).U, 32) // TODO magic number
 
   // Iterators
   val och = Reg(UInt(large_iterator_bitwidth.W))
@@ -414,22 +416,25 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val kch = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = MuxCase(req.dram_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U, Seq(
-    req.trans_weight_1203 -> (req.dram_addr +& ((kch*kernel_dim*kernel_dim +& krow*kernel_dim +& kcol) * out_channels +& och) * (input_w/8).U),
-    req.trans_weight_0132 -> (req.dram_addr +& ((krow*kernel_dim*out_channels +& kcol*out_channels +& och) * in_channels +& kch) * (input_w/8).U)
-  ))
+  val dram_addr = resize(MuxCase(req.dram_addr + ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U, Seq(
+    req.trans_weight_1203 -> (req.dram_addr + ((kch*kernel_dim*kernel_dim +& krow*kernel_dim +& kcol) * out_channels +& och) * (input_w/8).U),
+    req.trans_weight_0132 -> (req.dram_addr + ((krow*kernel_dim*out_channels +& kcol*out_channels +& och) * in_channels +& kch) * (input_w/8).U)
+  )), coreMaxAddrBits)
 
-  val spad_addr = Mux(req.trans_weight_0132,
+  val spad_addr = resize(Mux(req.trans_weight_0132,
     addr_start + (kch / block_size.U) * krows * kcols * ochs + krow * kcols * ochs + kcol * ochs + och,
-    addr_start + (och / block_size.U) * krows * kcols * kchs + krow * kcols * kchs + kcol * kchs + kch)
+    addr_start + (och / block_size.U) * krows * kcols * kchs + krow * kcols * kchs + kcol * kchs + kch),
+    log2Up(max_addr))
 
   // Sizes
-  val J = Mux(req.trans_weight_0132,
+  val J = resize(Mux(req.trans_weight_0132,
     Mux(kchs - kch > max_chs_per_mvin, max_chs_per_mvin, kchs - kch),
-    Mux(ochs - och > max_chs_per_mvin, max_chs_per_mvin, ochs - och))
-  val K = Mux(req.trans_weight_0132,
+    Mux(ochs - och > max_chs_per_mvin, max_chs_per_mvin, ochs - och)),
+    log2Up(max_addr max (max_block_len * block_size + 1)))
+  val K = resize(Mux(req.trans_weight_0132,
     Mux(ochs - och > block_size.U, block_size.U, ochs - och),
-    Mux(kchs - kch > block_size.U, block_size.U, kchs - kch))
+    Mux(kchs - kch > block_size.U, block_size.U, kchs - kch)),
+    log2Up(max_addr max (block_size+1)))
 
   class RoCCCommandWithAddr extends Bundle {
     val cmd = new RoCCCommand
@@ -556,13 +561,12 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   def undilated(x: UInt): UInt = (x +& req.input_dilated) >> req.input_dilated
 
   // Derived parameters
-  val B_rows = Mux(req.trans_weight_0132, in_channels_per_bank * kcols * krows * ochs,
-    out_channels_per_bank * kcols * krows * kchs)
+  val B_rows = resize(Mux(req.trans_weight_0132, in_channels_per_bank * kcols * krows * ochs,
+    out_channels_per_bank * kcols * krows * kchs), log2Up(max_addr))
 
   val a_addr_start = req.a_addr_start
   val b_addr_start = req.b_addr_end - B_rows
-  // val d_addr_start = (BigInt(1) << 31).U | req.c_addr_start
-  val c_addr_start = (BigInt(3) << 30).U | req.c_addr_start
+  val c_addr_start = /* (BigInt(3) << 30).U | */ req.c_addr_start
 
   // Iterators
   val och = Reg(UInt(large_iterator_bitwidth.W))
@@ -577,34 +581,35 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   val skip_iteration = state >= pre && req.input_dilated && (((krow * kernel_dilation +& orow -& upad)(0) & req.input_dilated).asBool() ||
     ((kcol * kernel_dilation +& ocol -& lpad)(0) & req.input_dilated).asBool())
 
-  val irow = undilated(orow * stride +& krow * kernel_dilation)
-  val icol = undilated(ocol * stride +& kcol * kernel_dilation)
+  val irow = resize(undilated(orow * stride +& krow * kernel_dilation), log2Up(max_addr))
+  val icol = resize(undilated(ocol * stride +& kcol * kernel_dilation), log2Up(max_addr))
 
-  val I = Mux(req.trans_input_3120,
+  val I = resize(Mux(req.trans_input_3120,
     Mux(batches - b > block_size.U, block_size.U, batches - b),
-    undilated(Mux(ocols - ocol > (block_size.U << req.input_dilated).asUInt(), (block_size.U << req.input_dilated).asUInt(), ocols - ocol)))
-  val J = Mux(ochs - och > block_size.U, block_size.U, ochs - och)
-  val K = Mux(kchs - kch > block_size.U, block_size.U, kchs - kch)
+    undilated(Mux(ocols - ocol > (block_size.U << req.input_dilated).asUInt(), (block_size.U << req.input_dilated).asUInt(), ocols - ocol))),
+    log2Up(max_addr max max_acc_addr max (block_size + 1)))
+  val J = resize(Mux(ochs - och > block_size.U, block_size.U, ochs - och), log2Up(max_addr max max_acc_addr max (block_size + 1)))
+  val K = resize(Mux(kchs - kch > block_size.U, block_size.U, kchs - kch), log2Up(max_addr max max_acc_addr max (block_size + 1)))
 
   // Addresses
-  val a_addr = Mux(req.trans_input_3120,
+  val a_addr = resize(Mux(req.trans_input_3120,
     a_addr_start +& (b / block_size.U) * input_spad_stride +& kch * (irows >> req.downsample) * (icols >> req.downsample) +& (irow >> req.downsample) * (icols >> req.downsample) +& (icol >> req.downsample),
-    a_addr_start +& (kch / block_size.U) * input_spad_stride +& b * (irows >> req.downsample) * (icols >> req.downsample) +& (irow >> req.downsample) * (icols >> req.downsample) +& (icol >> req.downsample))
+    a_addr_start +& (kch / block_size.U) * input_spad_stride +& b * (irows >> req.downsample) * (icols >> req.downsample) +& (irow >> req.downsample) * (icols >> req.downsample) +& (icol >> req.downsample)),
+    log2Up(max_addr))
 
-  // val c_addr = Mux(ex_overwrite && krow === 0.U && kcol === 0.U && kch === 0.U, d_addr_start, c_addr_start) +&
-  //   (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
-
-  val c_addr = c_addr_start +&
-    (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
+  val c_addr = resize(c_addr_start +&
+    (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol,
+    log2Up(max_acc_addr))
 
   // val new_weights = b === 0.U && orow === 0.U && ocol === 0.U
   val new_weights = Reg(Bool())
   val krow_ = Mux(req.wrot180, krows - krow - 1.U, krow)
   val kcol_ = Mux(req.wrot180, kcols - kcol - 1.U, kcol)
 
-  val b_addr = Mux(req.trans_weight_0132,
+  val b_addr = resize(Mux(req.trans_weight_0132,
     b_addr_start +& (kch / block_size.U) * krows * kcols * ochs +& krow_ * kcols * ochs +& kcol_ * ochs +& och,
-    b_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow_ * kcols * kchs +& kcol_ * kchs +& kch)
+    b_addr_start +& (och / block_size.U) * krows * kcols * kchs +& krow_ * kcols * kchs +& kcol_ * kchs +& kch),
+    log2Up(max_addr))
 
   val pre_addr = Mux(new_weights, b_addr, GARBAGE_ADDR)
 
@@ -660,7 +665,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   when (command_p.io.out.bits.cmd.inst.funct === PRELOAD_CMD) {
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := (o.K << 48) | (o.J << 32) | o.pre_addr
-    io.cmd.bits.rs2 := (o.I << 48) | (o.J << 32) | o.c_addr
+    io.cmd.bits.rs2 := (o.I << 48) | (o.J << 32) | (BigInt(3) << 30).U | o.c_addr
   }.elsewhen(command_p.io.out.bits.cmd.inst.funct =/= CONFIG_CMD) {
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := (o.I << 48) | (o.K << 32) | o.a_addr
@@ -766,7 +771,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   import req.inner_bounds._
   import req.derived_params._
 
-  val acc_addr_start = (BigInt(1) << 31).U | req.addr_start
+  val acc_addr_start = /*(BigInt(1) << 31).U |*/ req.addr_start
 
   // Derived parameters
   val skip = req.dram_addr === 0.U
@@ -778,17 +783,18 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val och = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = Mux(req.trans_output_1203,
+  val dram_addr = resize(Mux(req.trans_output_1203,
     req.dram_addr + ((orow*out_dim*batch_size +& ocol*batch_size +& b) * out_channels +& och) * (input_w/8).U,
-    req.dram_addr + ((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_channels +& och) * (input_w/8).U)
-  val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
+    req.dram_addr + ((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_channels +& och) * (input_w/8).U),
+    coreMaxAddrBits)
+  val spad_addr = resize(acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
 
-  val pool_dram_addr = req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U
-  val pool_spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols
+  val pool_dram_addr = resize(req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U, coreMaxAddrBits)
+  val pool_spad_addr = resize(acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols, log2Up(max_acc_addr))
 
   // Sizes
-  val I = Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol)
-  val J = Mux(ochs - och > block_size.U, block_size.U, ochs - och)
+  val I = resize(Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol), log2Up(max_acc_addr max block_size))
+  val J = resize(Mux(ochs - och > block_size.U, block_size.U, ochs - och), log2Up(max_acc_addr max block_size))
 
   val channels = J
 
@@ -858,10 +864,10 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
     val o = command_p.io.out.bits
     when (o.is_pool) {
       io.cmd.bits.rs1 := o.pool_dram_addr
-      io.cmd.bits.rs2 := (o.channels << 32.U) | o.pool_spad_addr
+      io.cmd.bits.rs2 := (o.channels << 32.U) | (BigInt(1) << 31).U | o.pool_spad_addr
     } .otherwise {
       io.cmd.bits.rs1 := o.dram_addr
-      io.cmd.bits.rs2 := (o.I << 48) | (o.J << 32) | o.spad_addr
+      io.cmd.bits.rs2 := (o.I << 48) | (o.J << 32) | (BigInt(1) << 31).U | o.spad_addr
     }
   }
 

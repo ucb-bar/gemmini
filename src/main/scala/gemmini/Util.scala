@@ -139,4 +139,15 @@ object Util {
     (reg, wire)
   }
 
+  def resize(x: UInt, n: Int): UInt = {
+    val result = Wire(UInt(n.W))
+    result := x
+    result
+  }
+
+  def resize(x: SInt, n: Int): SInt = {
+    val result = Wire(SInt((n+1).W))
+    result := x
+    result
+  }
 }
