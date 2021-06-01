@@ -60,6 +60,8 @@ class LoopConvDerivedParams(val large_iterator_bitwidth: Int, val small_iterator
   val input_spad_stride = UInt(large_iterator_bitwidth.W)
   val weight_spad_stride = UInt(large_iterator_bitwidth.W)
 
+  val kcols_times_kchs = UInt(large_iterator_bitwidth.W)
+  val kcols_times_ochs = UInt(large_iterator_bitwidth.W)
   val orows_times_ocols = UInt(large_iterator_bitwidth.W)
   val irows_ds_times_ocols_ds = UInt(large_iterator_bitwidth.W)
   val krows_times_kcols_times_ochs = UInt(large_iterator_bitwidth.W)
@@ -427,8 +429,8 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   )), coreMaxAddrBits)
 
   val spad_addr = resize(Mux(req.trans_weight_0132,
-    addr_start + (kch / block_size.U) * krows_times_kcols_times_ochs + krow * kcols * ochs + kcol * ochs + och,
-    addr_start + (och / block_size.U) * krows_times_kcols_times_kchs + krow * kcols * kchs + kcol * kchs + kch),
+    addr_start + (kch / block_size.U) * krows_times_kcols_times_ochs + krow * kcols_times_ochs + kcol * ochs + och,
+    addr_start + (och / block_size.U) * krows_times_kcols_times_kchs + krow * kcols_times_kchs + kcol * kchs + kch),
     log2Up(max_addr))
 
   // Sizes
@@ -612,8 +614,8 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   val kcol_ = Mux(req.wrot180, kcols - kcol - 1.U, kcol)
 
   val b_addr = resize(Mux(req.trans_weight_0132,
-    b_addr_start +& (kch / block_size.U) * krows_times_kcols_times_ochs +& krow_ * kcols * ochs +& kcol_ * ochs +& och,
-    b_addr_start +& (och / block_size.U) * krows_times_kcols_times_kchs +& krow_ * kcols * kchs +& kcol_ * kchs +& kch),
+    b_addr_start +& (kch / block_size.U) * krows_times_kcols_times_ochs +& krow_ * kcols_times_ochs +& kcol_ * ochs +& och,
+    b_addr_start +& (och / block_size.U) * krows_times_kcols_times_kchs +& krow_ * kcols_times_kchs +& kcol_ * kchs +& kch),
     log2Up(max_addr))
 
   val pre_addr = Mux(new_weights, b_addr, GARBAGE_ADDR)
@@ -999,6 +1001,8 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
       batches * (result.irows >> downsample) * (result.icols >> downsample))
     result.weight_spad_stride := Mux(trans_weight_0132, krows * kcols * pochs, krows * kcols * kchs)
 
+    result.kcols_times_kchs := kcols * kchs
+    result.kcols_times_ochs := kcols * result.ochs
     result.orows_times_ocols := orows * ocols
     result.irows_ds_times_ocols_ds := (result.irows >> downsample) * (result.icols >> downsample)
     result.krows_times_kcols_times_ochs := krows * kcols * result.ochs
