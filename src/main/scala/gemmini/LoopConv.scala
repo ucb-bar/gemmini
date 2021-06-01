@@ -1019,7 +1019,7 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
 }
 
 class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
-  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int)
+  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int, train: Boolean)
   (implicit p: Parameters) extends Module {
   val large_iterator_bitwidth = 16
   val small_iterator_bitwidth = 16 // 8
@@ -1170,15 +1170,15 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
 
       is (LOOP_CONV_WS) {
         loop_being_configured.no_bias := cmd.bits.rs1(0)
-        loop_being_configured.wrot180 := cmd.bits.rs1(1)
-        loop_being_configured.trans_output_1203 := cmd.bits.rs1(2)
-        loop_being_configured.trans_weight_1203 := cmd.bits.rs1(3)
-        loop_being_configured.trans_weight_0132 := cmd.bits.rs1(4)
-        loop_being_configured.trans_input_3120 := cmd.bits.rs1(5)
+        loop_being_configured.wrot180 := train.B && cmd.bits.rs1(1)
+        loop_being_configured.trans_output_1203 := train.B && cmd.bits.rs1(2)
+        loop_being_configured.trans_weight_1203 := train.B && cmd.bits.rs1(3)
+        loop_being_configured.trans_weight_0132 := train.B && cmd.bits.rs1(4)
+        loop_being_configured.trans_input_3120 := train.B && cmd.bits.rs1(5)
 
         loop_being_configured.no_pool := cmd.bits.rs2(0)
         loop_being_configured.downsample := cmd.bits.rs2(1)
-        loop_being_configured.input_dilated := cmd.bits.rs2(2)
+        loop_being_configured.input_dilated := train.B && cmd.bits.rs2(2)
 
         loop_being_configured.configured := true.B
 
@@ -1340,10 +1340,10 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
 object LoopConv {
   def apply(in: DecoupledIO[RoCCCommand], ld_utilization: UInt, st_utilization: UInt, ex_utilization: UInt,
             block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
-            max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int)
+            max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int, train: Boolean)
            (implicit p: Parameters): Tuple2[DecoupledIO[RoCCCommand], Bool] = {
     val mod = Module(new LoopConv(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
-      max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes))
+      max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes, train))
     mod.io.in <> in
     mod.io.ld_utilization := ld_utilization
     mod.io.st_utilization := st_utilization
