@@ -118,7 +118,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   val och = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = Mux(req.no_bias, 0.U, req.dram_addr + och * (acc_w/8).U)
+  val dram_addr = resize(Mux(req.no_bias, 0.U, req.dram_addr + resize(och * (acc_w/8).U, 32)), coreMaxAddrBits)
   val spad_addr = req.addr_start + resize((och / block_size.U) * bias_spad_stride +& b * orows_times_ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
 
   // Sizes
@@ -260,9 +260,9 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val dram_stride = Mux(req.trans_input_3120, batch_size * (input_w/8).U, in_channels * (input_w/8).U)
 
   // Addresses
-  val dram_addr = resize(MuxCase(req.dram_addr + (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channels +& ich) * (input_w/8).U).asUInt(), Seq(
+  val dram_addr = resize(MuxCase(req.dram_addr + resize((((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channels +& ich) * (input_w/8).U).asUInt(), 32), Seq(
     is_zeros -> 0.U,
-    req.trans_input_3120 -> (req.dram_addr + (((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U).asUInt())
+    req.trans_input_3120 -> (req.dram_addr + resize((((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U).asUInt(), 32))
   )), coreMaxAddrBits)
   val spad_addr = resize(Mux(req.trans_input_3120,
     req.addr_start.zext() +& (b / block_size.S) * input_spad_stride +& ich * irows_ds_times_ocols_ds +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample),
@@ -423,9 +423,9 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val kch = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = resize(MuxCase(req.dram_addr + ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U, Seq(
-    req.trans_weight_1203 -> (req.dram_addr + ((kch*kernel_dim*kernel_dim +& krow*kernel_dim +& kcol) * out_channels +& och) * (input_w/8).U),
-    req.trans_weight_0132 -> (req.dram_addr + ((krow*kernel_dim*out_channels +& kcol*out_channels +& och) * in_channels +& kch) * (input_w/8).U)
+  val dram_addr = resize(MuxCase(req.dram_addr + resize(((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U, 32), Seq(
+    req.trans_weight_1203 -> (req.dram_addr + resize(((kch*kernel_dim*kernel_dim +& krow*kernel_dim +& kcol) * out_channels +& och) * (input_w/8).U, 32)),
+    req.trans_weight_0132 -> (req.dram_addr + resize(((krow*kernel_dim*out_channels +& kcol*out_channels +& och) * in_channels +& kch) * (input_w/8).U, 32))
   )), coreMaxAddrBits)
 
   val spad_addr = resize(Mux(req.trans_weight_0132,
@@ -791,12 +791,12 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
 
   // Addresses
   val dram_addr = resize(Mux(req.trans_output_1203,
-    req.dram_addr + ((orow*out_dim*batch_size +& ocol*batch_size +& b) * out_channels +& och) * (input_w/8).U,
-    req.dram_addr + ((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_channels +& och) * (input_w/8).U),
+    req.dram_addr + resize(((orow*out_dim*batch_size +& ocol*batch_size +& b) * out_channels +& och) * (input_w/8).U, 32),
+    req.dram_addr + resize(((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_channels +& och) * (input_w/8).U, 32)),
     coreMaxAddrBits)
   val spad_addr = resize(acc_addr_start +& (och / block_size.U) * bias_spad_stride +& b * orows_times_ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
 
-  val pool_dram_addr = resize(req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U, coreMaxAddrBits)
+  val pool_dram_addr = resize(req.dram_addr + resize(((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U, 32), coreMaxAddrBits)
   val pool_spad_addr = resize(acc_addr_start +& (och / block_size.U) * bias_spad_stride +& b * orows_times_ocols, log2Up(max_acc_addr))
 
   // Sizes
