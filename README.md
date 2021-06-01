@@ -321,11 +321,13 @@ This section describes an additional set of RoCC instructions that configure and
 # Citing Gemmini
 If Gemmini helps you in your academic research, you are encouraged to cite our paper. Here is an example bibtex:
 ```
-@article{genc2019gemmini,
-  title={Gemmini: An Agile Systolic Array Generator Enabling Systematic Evaluations of Deep-Learning Architectures},
-  author={Genc, Hasan and Haj-Ali, Ameer and Iyer, Vighnesh and Amid, Alon and Mao, Howard and Wright, John and Schmidt, Colin and Zhao, Jerry and Ou, Albert and Banister, Max and Shao, Yakun Sophia and Nikolic, Borivoje and Stoica, Ion and Asanovic, Krste},
-  journal={arXiv preprint arXiv:1911.09925},
-  year={2019}
+@INPROCEEDINGS{gemmini-dac,
+  author={Genc, Hasan and Kim, Seah and Amid, Alon and Haj-Ali, Ameer and Iyer, Vighnesh and Prakash, Pranav and Zhao, Jerry and Grubb, Daniel and Liew, Harrison and Mao, Howard and Ou, Albert and Schmidt, Colin and Steffl, Samuel and Wright, John and Stoica, Ion and Ragan-Kelley, Jonathan and Asanovic, Krste and Nikolic, Borivoje and Shao, Yakun Sophia},
+  booktitle={Proceedings of the 58th Annual Design Automation Conference (DAC)}, 
+  title={Gemmini: Enabling Systematic Deep-Learning Architecture Evaluation via Full-Stack Integration}, 
+  year={2021},
+  volume={},
+  number={},
+  pages={}
 }
 ```
-
