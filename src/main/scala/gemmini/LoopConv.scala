@@ -60,6 +60,8 @@ class LoopConvDerivedParams(val large_iterator_bitwidth: Int, val small_iterator
   val input_spad_stride = UInt(large_iterator_bitwidth.W)
   val weight_spad_stride = UInt(large_iterator_bitwidth.W)
 
+  val orows_times_ocols = UInt(large_iterator_bitwidth.W)
+
   // val ex_overwrite = Bool()
 }
 
@@ -112,7 +114,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
 
   // Addresses
   val dram_addr = Mux(req.no_bias, 0.U, req.dram_addr + och * (acc_w/8).U)
-  val spad_addr = req.addr_start + resize((och / block_size.U) * bias_spad_stride +& b * orows * ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
+  val spad_addr = req.addr_start + resize((och / block_size.U) * bias_spad_stride +& b * orows_times_ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
 
   // Sizes
   val I = resize(Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol), log2Up(max_acc_addr max (block_size + 1)))
@@ -598,7 +600,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     log2Up(max_addr))
 
   val c_addr = resize(c_addr_start +&
-    (och / block_size.U) * bias_spad_stride +& b * orows * ocols +& orow * ocols +& ocol,
+    (och / block_size.U) * bias_spad_stride +& b * orows_times_ocols +& orow * ocols +& ocol,
     log2Up(max_acc_addr))
 
   // val new_weights = b === 0.U && orow === 0.U && ocol === 0.U
@@ -629,7 +631,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
   config_cmd.rs1 := ((irows * icols) << 16) | (1.U << 7)
-  config_cmd.rs2 := (orows * ocols) << 48
+  config_cmd.rs2 := orows_times_ocols << 48
 
   val pre_cmd = Wire(new RoCCCommand)
   pre_cmd := DontCare
@@ -787,10 +789,10 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
     req.dram_addr + ((orow*out_dim*batch_size +& ocol*batch_size +& b) * out_channels +& och) * (input_w/8).U,
     req.dram_addr + ((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_channels +& och) * (input_w/8).U),
     coreMaxAddrBits)
-  val spad_addr = resize(acc_addr_start +& (och / block_size.U) * bias_spad_stride +& b * orows * ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
+  val spad_addr = resize(acc_addr_start +& (och / block_size.U) * bias_spad_stride +& b * orows_times_ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
 
   val pool_dram_addr = resize(req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U, coreMaxAddrBits)
-  val pool_spad_addr = resize(acc_addr_start +& (och / block_size.U) * bias_spad_stride +& b * orows * ocols, log2Up(max_acc_addr))
+  val pool_spad_addr = resize(acc_addr_start +& (och / block_size.U) * bias_spad_stride +& b * orows_times_ocols, log2Up(max_acc_addr))
 
   // Sizes
   val I = resize(Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol), log2Up(max_acc_addr max block_size))
@@ -993,6 +995,8 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
       result.ichs * (result.irows >> downsample) * (result.icols >> downsample),
       batches * (result.irows >> downsample) * (result.icols >> downsample))
     result.weight_spad_stride := Mux(trans_weight_0132, krows * kcols * pochs, krows * kcols * kchs)
+
+    result.orows_times_ocols := orows * ocols
 
     // result.ex_overwrite := bias_dram_addr =/= 0.U && no_bias
 
