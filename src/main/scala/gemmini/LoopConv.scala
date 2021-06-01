@@ -112,7 +112,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
 
   // Addresses
   val dram_addr = Mux(req.no_bias, 0.U, req.dram_addr + och * (acc_w/8).U)
-  val spad_addr = req.addr_start + resize((och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
+  val spad_addr = req.addr_start + resize((och / block_size.U) * bias_spad_stride +& b * orows * ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
 
   // Sizes
   val I = resize(Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol), log2Up(max_acc_addr max (block_size + 1)))
@@ -598,7 +598,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     log2Up(max_addr))
 
   val c_addr = resize(c_addr_start +&
-    (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol,
+    (och / block_size.U) * bias_spad_stride +& b * orows * ocols +& orow * ocols +& ocol,
     log2Up(max_acc_addr))
 
   // val new_weights = b === 0.U && orow === 0.U && ocol === 0.U
@@ -787,10 +787,10 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
     req.dram_addr + ((orow*out_dim*batch_size +& ocol*batch_size +& b) * out_channels +& och) * (input_w/8).U,
     req.dram_addr + ((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_channels +& och) * (input_w/8).U),
     coreMaxAddrBits)
-  val spad_addr = resize(acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
+  val spad_addr = resize(acc_addr_start +& (och / block_size.U) * bias_spad_stride +& b * orows * ocols +& orow * ocols +& ocol, log2Up(max_acc_addr))
 
   val pool_dram_addr = resize(req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U, coreMaxAddrBits)
-  val pool_spad_addr = resize(acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols, log2Up(max_acc_addr))
+  val pool_spad_addr = resize(acc_addr_start +& (och / block_size.U) * bias_spad_stride +& b * orows * ocols, log2Up(max_acc_addr))
 
   // Sizes
   val I = resize(Mux(ocols - ocol > block_size.U, block_size.U, ocols - ocol), log2Up(max_acc_addr max block_size))
