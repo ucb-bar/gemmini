@@ -636,7 +636,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
   config_cmd.rs1 := ((irows * icols) << 16) | (1.U << 7)
-  config_cmd.rs2 := orows * ocols << 48
+  config_cmd.rs2 := (orows * ocols) << 48
 
   val pre_cmd = Wire(new RoCCCommand)
   pre_cmd := DontCare
