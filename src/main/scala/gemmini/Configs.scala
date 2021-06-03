@@ -149,7 +149,7 @@ object GemminiConfigs {
 
     ld_ooo = false,
     ex_ooo = false,
-    st_ooo = true,
+    st_ooo = false,
 
     use_preload_filter = true,
   )

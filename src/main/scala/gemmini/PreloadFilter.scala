@@ -48,12 +48,14 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
   val b_transposed = Reg(Bool())
   val preloaded_address = Reg(new AddressRangeT)
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
+  val last_preload_was_filtered = RegInit(false.B)
 
   val ex_set_only_strides = io.in_ex.cmd.rs1(7) // TODO magic numbers
   val ex_is_config = io.in_ex.cmd.inst.funct === CONFIG_CMD && io.in_ex.cmd.rs1(1,0).asUInt() === CONFIG_EX && !ex_set_only_strides // TODO magic numbers
   val ex_config_dataflow = io.in_ex.cmd.rs1(2) // TODO magic numbers
   val ex_config_b_transposed = io.in_ex.cmd.rs1(9) // TODO magic numbers
   val ex_is_preload = io.in_ex.cmd.inst.funct === PRELOAD_CMD
+  val ex_is_compute = io.in_ex.cmd.inst.funct === COMPUTE_AND_STAY_CMD || io.in_ex.cmd.inst.funct === COMPUTE_AND_FLIP_CMD
   val ex_preload_rows = {
     val default_rows = io.in_ex.cmd.rs1(48 + log2Up(block_size) - 1, 48).asUInt() // TODO magic numbers
     val default_cols = io.in_ex.cmd.rs1(32 + log2Up(block_size) - 1, 32).asUInt() // TODO magic numbers
@@ -75,6 +77,7 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
 
     addr
   }
+  val should_filter_preload = ex_is_preload && df === Dataflow.WS.id.U && preloaded_address === ex_preload_addr
 
   val ld_is_config = io.in_ld.cmd.inst.funct === CONFIG_CMD
   val ld_id = MuxCase(0.U, Seq((io.in_ld.cmd.inst.funct === LOAD2_CMD) -> 1.U,
@@ -119,12 +122,22 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
     }
   }
 
+  when (io.in_ex.fire()) {
+    when (should_filter_preload) {
+      last_preload_was_filtered := true.B
+    }.elsewhen(ex_is_compute) {
+      last_preload_was_filtered := false.B
+    }
+  }
+
   // Set outputs
   io.out_ld <> io.in_ld
   io.out_ex <> io.in_ex
 
-  when (ex_is_preload && df === Dataflow.WS.id.U && preloaded_address === ex_preload_addr) {
+  when (should_filter_preload) {
     io.out_ex.cmd.rs1 := (block_rows.U << 48) | (block_cols.U << 32) | GARBAGE_ADDR // TODO magic numbers
+  }.elsewhen(ex_is_compute && last_preload_was_filtered) {
+    io.out_ex.cmd.inst.funct := COMPUTE_AND_STAY_CMD
   }
 
   when (reset.toBool()) {
