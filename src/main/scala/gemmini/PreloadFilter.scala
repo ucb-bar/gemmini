@@ -129,7 +129,7 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
     preloaded_address.make_this_garbage()
   }
 
-  assert(!ex_preload_addr.overlaps(ld_addr))
+  assert(!(io.in_ex.valid && io.in_ld.valid && ex_preload_addr.overlaps(ld_addr)))
 }
 
 object PreloadFilter{
