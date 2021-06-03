@@ -40,6 +40,8 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
     def make_this_garbage(dummy: Int=0): Unit = {
       start.make_this_garbage()
     }
+
+    def is_garbage(dummy: Int=0): Bool = start.is_garbage()
   }
 
   val df = if (dataflow == Dataflow.BOTH) Reg(UInt(1.W)) else dataflow.id.U
@@ -112,7 +114,7 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
         df := ex_config_dataflow
       }
       b_transposed := ex_config_b_transposed
-    }.elsewhen(ex_is_preload) {
+    }.elsewhen(ex_is_preload && !ex_preload_addr.is_garbage()) {
       preloaded_address := ex_preload_addr
     }
   }
