@@ -121,7 +121,7 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
   io.out_ld <> io.in_ld
   io.out_ex <> io.in_ex
 
-  when (ex_is_preload && preloaded_address === ex_preload_addr) {
+  when (ex_is_preload && df === Dataflow.WS.id.U && preloaded_address === ex_preload_addr) {
     io.out_ex.cmd.rs1 := (block_rows.U << 48) | (block_cols.U << 32) | GARBAGE_ADDR // TODO magic numbers
   }
 
