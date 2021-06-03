@@ -170,13 +170,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   tiler.io.issue.load.ready := false.B
   tiler.io.issue.store.ready := false.B
   tiler.io.issue.exec.ready := false.B
-  */
 
   rob.io.issue.ld.ready := false.B
   rob.io.issue.st.ready := false.B
   rob.io.issue.ex.ready := false.B
 
-  /*
   when (is_cisc_mode) {
     load_controller.io.cmd  <> tiler.io.issue.load
     store_controller.io.cmd <> tiler.io.issue.store
@@ -203,11 +201,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
   */
 
-  load_controller.io.cmd.valid := rob.io.issue.ld.valid
-  rob.io.issue.ld.ready := load_controller.io.cmd.ready
-  load_controller.io.cmd.bits.cmd := rob.io.issue.ld.cmd
-  load_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
-  load_controller.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+  val (rob_issue_ld, rob_issue_ex) = PreloadFilter(outer.config, new RoCCCommand, rob.io.issue.ld, rob.io.issue.ex)
+
+  load_controller.io.cmd.valid := rob_issue_ld.valid
+  rob_issue_ld.ready := load_controller.io.cmd.ready
+  load_controller.io.cmd.bits.cmd := rob_issue_ld.cmd
+  load_controller.io.cmd.bits.cmd.inst.funct := rob_issue_ld.cmd.inst.funct
+  load_controller.io.cmd.bits.rob_id.push(rob_issue_ld.rob_id)
 
   store_controller.io.cmd.valid := rob.io.issue.st.valid
   rob.io.issue.st.ready := store_controller.io.cmd.ready
@@ -215,11 +215,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   store_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.st.cmd.inst.funct
   store_controller.io.cmd.bits.rob_id.push(rob.io.issue.st.rob_id)
 
-  ex_controller.io.cmd.valid := rob.io.issue.ex.valid
-  rob.io.issue.ex.ready := ex_controller.io.cmd.ready
-  ex_controller.io.cmd.bits.cmd := rob.io.issue.ex.cmd
-  ex_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ex.cmd.inst.funct
-  ex_controller.io.cmd.bits.rob_id.push(rob.io.issue.ex.rob_id)
+  ex_controller.io.cmd.valid := rob_issue_ex.valid
+  rob_issue_ex.ready := ex_controller.io.cmd.ready
+  ex_controller.io.cmd.bits.cmd := rob_issue_ex.cmd
+  ex_controller.io.cmd.bits.cmd.inst.funct := rob_issue_ex.cmd.inst.funct
+  ex_controller.io.cmd.bits.rob_id.push(rob_issue_ex.rob_id)
 
   // Wire up scratchpad to controllers
   spad.module.io.dma.read <> load_controller.io.dma

@@ -24,11 +24,6 @@ class ROBIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
 class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: RoCCCommand) extends Module {
   import config._
 
-  // TODO make *_ooo config parameters
-  val ld_ooo = false
-  val ex_ooo = true
-  val st_ooo = true
-
   val block_rows = tileRows * meshRows
   val block_cols = tileColumns * meshColumns
 
