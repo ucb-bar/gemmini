@@ -59,7 +59,7 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
   val ex_preload_rows = {
     val default_rows = io.in_ex.cmd.rs1(48 + log2Up(block_size) - 1, 48).asUInt() // TODO magic numbers
     val default_cols = io.in_ex.cmd.rs1(32 + log2Up(block_size) - 1, 32).asUInt() // TODO magic numbers
-    Mux(b_transposed, default_rows, default_cols)
+    Mux(b_transposed, default_cols, default_rows)
   }
   val ex_preload_addr = {
     val start = io.in_ex.cmd.rs1(31, 0).asTypeOf(local_addr_t) // TODO magic numbers
@@ -103,7 +103,7 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
   }
 
   // Set all state registers
-  when (io.in_ld.valid) {
+  when (io.in_ld.fire()) {
     when (ld_is_config) {
       ld_block_strides(ld_id) := ld_config_block_stride
     }.elsewhen(preloaded_address.overlaps(ld_addr)) {
@@ -111,18 +111,20 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
     }
   }
 
-  when (io.in_ex.valid) {
+  when (io.in_ex.fire()) {
     when (ex_is_config) {
       if (dataflow == Dataflow.BOTH) {
         df := ex_config_dataflow
       }
       b_transposed := ex_config_b_transposed
+
+      when (b_transposed =/= ex_config_b_transposed) {
+        preloaded_address.make_this_garbage()
+      }
     }.elsewhen(ex_is_preload && !ex_preload_addr.is_garbage()) {
       preloaded_address := ex_preload_addr
     }
-  }
 
-  when (io.in_ex.fire()) {
     when (should_filter_preload) {
       last_preload_was_filtered := true.B
     }.elsewhen(ex_is_compute) {
