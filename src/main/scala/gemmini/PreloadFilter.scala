@@ -44,7 +44,7 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
     def is_garbage(dummy: Int=0): Bool = start.is_garbage()
   }
 
-  val df = if (dataflow == Dataflow.BOTH) Reg(UInt(1.W)) else dataflow.id.U
+  val df = if (dataflow == Dataflow.BOTH) Reg(UInt(1.W)) else dataflow.id.U // TODO magic numbers
   val b_transposed = Reg(Bool())
   val preloaded_address = Reg(new AddressRangeT)
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))

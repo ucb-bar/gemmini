@@ -116,9 +116,15 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
   val st_block_stride = block_rows.U
   val pooling_is_enabled = Reg(Bool())
+  val current_dataflow = if (dataflow == Dataflow.BOTH) Reg(UInt(1.W)) else dataflow.id.U // TODO magic number
+
+  val ex_ooo_is_enabled = ex_ooo.B && current_dataflow === Dataflow.WS.id.U
 
   // Registers to help keep OOO execute working properly
-  val last_allocated_preload = Reg(UInt(log2Up(rob_entries).W))
+  val last_allocated_preload = Reg(UDValid(UInt(log2Up(rob_entries).W)))
+  val last_allocated_garbage_preload = Reg(UDValid(UInt(log2Up(rob_entries).W)))
+  val last_allocated_preload_being_updated = WireInit(false.B)
+  val last_allocated_garbage_preload_being_updated = WireInit(false.B)
   val last_ex_issued_was_preload = RegInit(false.B)
 
   val new_entry = Wire(new Entry)
@@ -308,14 +314,22 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     val older_in_same_q = VecInit(entries.zipWithIndex.map { case (e, i) =>
 
-      val ooo_q = (ld_ooo.B && new_entry.q === ldq) || (ex_ooo.B && new_entry.q === exq) || (st_ooo.B && new_entry.q === stq)
+      val ooo_q = (ld_ooo.B && new_entry.q === ldq) || (ex_ooo_is_enabled && new_entry.q === exq) || (st_ooo.B && new_entry.q === stq)
 
-      val is_last_preload = i.U === last_allocated_preload
+      val is_last_preload = last_allocated_preload.valid && i.U === last_allocated_preload.bits
+      val is_last_garbage_preload = last_allocated_garbage_preload.valid && i.U === last_allocated_garbage_preload.bits
+
       val new_entry_is_compute = new_entry.cmd.inst.funct === COMPUTE_AND_STAY_CMD ||
         new_entry.cmd.inst.funct === COMPUTE_AND_FLIP_CMD
+      val new_entry_is_preload = new_entry.cmd.inst.funct === PRELOAD_CMD
+      val preload_addr = new_entry.cmd.rs1(31, 0).asTypeOf(local_addr_t) // TODO magic number
+      val preload_garbage = preload_addr.is_garbage()
 
       e.valid && e.bits.q === new_entry.q && !e.bits.issued &&
-        (!ooo_q || e.bits.is_config || new_entry.is_config || (is_last_preload && new_entry_is_compute))
+        (!ooo_q || e.bits.is_config || new_entry.is_config ||
+          ((new_entry_is_compute && is_last_preload) ||
+            (new_entry_is_preload && preload_garbage && is_last_preload) ||
+            (new_entry_is_preload && !preload_garbage && is_last_garbage_preload)))
     })
 
     val is_st_and_must_wait_for_prior_ex_config = VecInit(entries.map { e =>
@@ -365,6 +379,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
         val set_only_strides = new_entry.cmd.rs1(7) // TODO magic numbers
         when (!set_only_strides) {
           a_transpose := new_entry.cmd.rs1(8) // TODO magic numbers
+          if (dataflow == Dataflow.BOTH) current_dataflow := new_entry.cmd.rs1(2) // TODO magic numbers
         }
       }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
         val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
@@ -374,7 +389,14 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
         val pool_stride = new_entry.cmd.rs1(5, 4) // TODO magic numbers
         pooling_is_enabled := pool_stride =/= 0.U
       }.elsewhen(new_entry.cmd.inst.funct === PRELOAD_CMD) {
-        last_allocated_preload := full_alloc_id
+        last_allocated_preload.push(full_alloc_id)
+        last_allocated_preload_being_updated := true.B
+
+        val preload_addr = new_entry.cmd.rs1(31, 0).asTypeOf(local_addr_t) // TODO magic number
+        when (preload_addr.is_garbage()) {
+          last_allocated_preload.push(full_alloc_id)
+          last_allocated_garbage_preload_being_updated := true.B
+        }
       }
     }
   }
@@ -427,6 +449,14 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       when (i.U === io.completed.bits) {
         e.valid := false.B
         assert(e.valid)
+
+        when (last_allocated_preload.bits === i.U && !last_allocated_preload_being_updated) {
+          last_allocated_preload.pop()
+        }
+
+        when (last_allocated_garbage_preload.bits === i.U && !last_allocated_garbage_preload_being_updated) {
+          last_allocated_garbage_preload.pop()
+        }
       }
     }
   }
@@ -485,6 +515,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   }
 
   when (reset.asBool()) {
-    entries.foreach(_.valid := false.B)
+    entries.foreach(_.pop())
+    last_allocated_preload.pop()
+    last_allocated_garbage_preload.pop()
   }
 }
