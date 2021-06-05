@@ -155,7 +155,7 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
   val io = IO(new CounterIO(nPerfCounter, counterWidth))
 
   val config_width = log2Ceil(scala.math.max(CounterEvent.n, CounterExternal.n)) + 1;
-  val counter_config = VecInit.tabulate(nPerfCounter)(_ => RegInit(0.U(config_width.W)))
+  val counter_config = RegInit(VecInit.tabulate(nPerfCounter)(_ => 0.U(config_width.W)))
 
   io.event_io.external_reset := io.counter_reset
   withReset(reset.asBool || io.counter_reset) {
@@ -182,12 +182,12 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
       snapshot_enable := true.B
       // Move counter values to snapshot register
       (counter_snapshot zip (counters zip counter_config)) map { case (snapshot, (counter, config)) => {
-        snapshot := take_value(counter, config)
+        snapshot := take_value(config, counter)
       }}
     }
 
     // Connect read port
-    io.data := Mux(snapshot_enable, counter_snapshot(io.addr), take_value(counters(io.addr), counter_config(io.addr)))
+    io.data := Mux(snapshot_enable, counter_snapshot(io.addr), take_value(counter_config(io.addr), counters(io.addr)))
 
     // Write configuration reg
     when (io.config_address.valid) {

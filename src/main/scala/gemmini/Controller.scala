@@ -123,7 +123,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val tagWidth = 32
 
   // Counters
-  val counters = Module(new CounterController(CounterEvent.n, outer.xLen))
+  val counters = Module(new CounterController(8, outer.xLen))
   io.resp <> counters.io.out  // Counter access command will be committed immediately
   counters.io.event_io.external_values(0) := 0.U
   counters.io.event_io.event_signal(0) := false.B
