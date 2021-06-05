@@ -1,4 +1,4 @@
-![Image description](./img/full-logo.svg)
+![Image description](./img/full-logo.png)
 
 Gemmini
 ====================================
