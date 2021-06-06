@@ -394,7 +394,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
         val preload_addr = new_entry.cmd.rs1(31, 0).asTypeOf(local_addr_t) // TODO magic number
         when (preload_addr.is_garbage()) {
-          last_allocated_preload.push(full_alloc_id)
+          last_allocated_garbage_preload.push(full_alloc_id)
           last_allocated_garbage_preload_being_updated := true.B
         }
       }
