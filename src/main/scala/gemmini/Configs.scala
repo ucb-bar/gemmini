@@ -148,7 +148,7 @@ object GemminiConfigs {
     mesh_output_delay = 1,
 
     ld_ooo = false,
-    ex_ooo = true,
+    ex_ooo = false,
     st_ooo = true,
 
     use_preload_filter = true,
