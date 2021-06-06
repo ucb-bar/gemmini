@@ -80,7 +80,7 @@ class PreloadFilter[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemmin
   val should_filter_preload = ex_is_preload && df === Dataflow.WS.id.U && preloaded_address === ex_preload_addr
 
   val ld_is_config = io.in_ld.cmd.inst.funct === CONFIG_CMD
-  val ld_id = Mux(ld_is_config, io.in_ex.cmd.rs1(4,3).asUInt(), // TODO magic numbers
+  val ld_id = Mux(ld_is_config, io.in_ld.cmd.rs1(4,3).asUInt(), // TODO magic numbers
     MuxCase(0.U, Seq((io.in_ld.cmd.inst.funct === LOAD2_CMD) -> 1.U,
       (io.in_ld.cmd.inst.funct === LOAD3_CMD) -> 2.U)))
   val ld_config_block_stride = io.in_ld.cmd.rs1(31, 16).asUInt() // TODO magic numbers
