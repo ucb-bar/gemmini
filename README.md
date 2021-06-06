@@ -1,4 +1,6 @@
-![Image description](./img/full-logo.svg)
+<p align="center">
+  <img width="1000" src="./img/full-logo.svg">
+</p>
 
 Gemmini
 ====================================
