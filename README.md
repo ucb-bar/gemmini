@@ -335,3 +335,7 @@ If Gemmini helps you in your academic research, you are encouraged to cite our p
   pages={}
 }
 ```
+
+# Acknowledgements
+
+- The Gemmini [logo](./img/full-logo.svg) was designed by Vadim Nikiforov ([@CobbledSteel](https://github.com/CobbledSteel)).
