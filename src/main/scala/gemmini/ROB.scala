@@ -92,6 +92,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val deps = Vec(rob_entries, Bool())
     def ready(dummy: Int = 0): Bool = !deps.reduce(_ || _)
 
+    // Signals that are necessary for OoO operation
+    val waiting_for_compute_inst = Bool()
+
     // Debugging signals
     val allocated_at = UInt(instructions_allocated.getWidth.W)
   }
@@ -354,6 +357,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
+    new_entry.waiting_for_compute_inst := ex_ooo.B && funct === PRELOAD_CMD
+
     val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
     val full_alloc_id = MuxCase((rob_full_entries-1).U, full_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
     val partial_alloc_id = MuxCase((rob_partial_entries-1).U, partial_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
@@ -397,6 +402,16 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
           last_allocated_garbage_preload.push(full_alloc_id)
           last_allocated_garbage_preload_being_updated := true.B
         }
+      }.elsewhen(funct_is_compute) {
+        when (last_allocated_preload.valid) {
+          entries.zipWithIndex.foreach { case (e,i) =>
+            when (i.U === last_allocated_preload.bits) {
+              e.bits.waiting_for_compute_inst := false.B
+              e.bits.deps := (e.bits.deps.asUInt() | new_entry.deps.asUInt()).asTypeOf(e.bits.deps)
+              assert(e.valid)
+            }
+          }
+        }
       }
     }
   }
@@ -407,7 +422,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     val issue_valids = entries.map { e =>
       val is_compute = e.bits.cmd.inst.funct === COMPUTE_AND_FLIP_CMD || e.bits.cmd.inst.funct === COMPUTE_AND_STAY_CMD
-      e.valid && e.bits.ready() && !e.bits.issued && e.bits.q === q && (!must_be_compute || is_compute)
+      e.valid && e.bits.ready() && !e.bits.issued && e.bits.q === q && (!must_be_compute || is_compute) &&
+        (!ex_ooo.B || !e.bits.waiting_for_compute_inst)
     }
     val issue_sel = PriorityEncoderOH(issue_valids)
     val issue_id = OHToUInt(issue_sel)
@@ -459,6 +475,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
         }
       }
     }
+  }
+
+  // Hardcode deps that point to the entry that owns the deps to 0
+  entries.zipWithIndex.foreach { case (e,i) =>
+      e.bits.deps(i) := false.B
   }
 
   // val utilization = PopCount(entries.map(e => e.valid))
