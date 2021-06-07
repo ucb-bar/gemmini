@@ -305,6 +305,7 @@ class LoopMatmulExecuteReq(val block_size: Int, val coreMaxAddrBits: Int, val it
   val pad_i = UInt(log2Up(block_size).W)
   val a_tranpose = Bool()
   val b_tranpose = Bool()
+  val ooo = Bool()
   val accumulate = Bool()
   val a_addr_start = UInt(log2Up(max_addr).W)
   val b_addr_end = UInt(log2Up(max_addr).W)
@@ -374,7 +375,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val c_cols = block_size.U - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)
   val c_rows = block_size.U - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)
 
-  val pre_addr = Mux(i === 0.U, b_addr, GARBAGE_ADDR)
+  val pre_addr = Mux(i === 0.U || req.ooo, b_addr, GARBAGE_ADDR)
   val out_addr = Mux(req.accumulate || k =/= 0.U, c_addr, d_addr)
 
   val pre_cmd = Wire(new RoCCCommand)
@@ -385,7 +386,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
   val comp_cmd = Wire(new RoCCCommand())
   comp_cmd := DontCare
-  comp_cmd.inst.funct := Mux(i === 0.U, COMPUTE_AND_FLIP_CMD, COMPUTE_AND_STAY_CMD)
+  comp_cmd.inst.funct := Mux(i === 0.U || req.ooo, COMPUTE_AND_FLIP_CMD, COMPUTE_AND_STAY_CMD)
   comp_cmd.rs1 := a_addr | (a_cols << 32).asUInt() | (a_rows << 48).asUInt()
   comp_cmd.rs2 := GARBAGE_ADDR | (block_size.U << 32).asUInt() | (block_size.U << 48).asUInt()
 
@@ -564,6 +565,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val ex_accumulate = Bool()
 
   val weightA = UInt(8.W) // TODO magic numbers
+  val ooo = Bool()
 
   val configured = Bool()
 
@@ -741,6 +743,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
         loop_being_configured.b_transpose := cmd.bits.rs2(1)
 
         loop_being_configured.weightA := cmd.bits.rs1(15, 8) // TODO magic numbers
+        loop_being_configured.ooo := cmd.bits.rs2(2) // TODO magic numbers
 
         loop_being_configured.configured := true.B
 
@@ -805,6 +808,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   ex.io.req.bits.b_addr_end := loop_requesting_ex.b_addr_end
   ex.io.req.bits.a_tranpose := loop_requesting_ex.a_transpose
   ex.io.req.bits.b_tranpose := loop_requesting_ex.b_transpose
+  ex.io.req.bits.ooo := loop_requesting_ex.ooo
   ex.io.req.bits.c_addr_start := ex_c_addr_start
   ex.io.req.bits.loop_id := loop_requesting_ex_id
 
