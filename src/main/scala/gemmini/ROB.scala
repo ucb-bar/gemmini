@@ -56,9 +56,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val end = local_addr_t.cloneType
     val wraps_around = Bool()
 
-    def overlaps(other: OpT): Bool = {
+    def overlaps(other: OpT, check_accumulates: Boolean=false): Bool = {
       ((other.start <= start && (start < other.end || other.wraps_around)) ||
         (start <= other.start && (other.start < end || wraps_around))) &&
+        (!check_accumulates.B ||
+          !(start.is_acc_addr && start.accumulate && other.start.is_acc_addr && other.start.accumulate)) &&
         !(start.is_garbage() || other.start.is_garbage()) // TODO the "is_garbage" check might not really be necessary
     }
   }
@@ -274,8 +276,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     ))
 
     assert(is_load || is_store || is_ex)
-    // This can be RAW op1/op2 <- dst, or WAW dst <- dst
+    // This can be RAW op1/op2 <- dst
     val opa_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits) })
+    // This can be WAW dst <- dst
+    val opa_matches_opa_for_waws = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits, check_accumulates=true) })
     // This can be WAR dst <- op1/op2
     val opa_matches_opb = VecInit(entries.map { e => e.valid && e.bits.opb.valid && new_entry.opa.bits.overlaps(e.bits.opb.bits) })
     // This can be RAW op2 <- dst
@@ -290,28 +294,37 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val dst_matches_opa = VecInit((entries zip opa_matches_opa).map { case (e, a) =>
       e.valid && dst.valid && a
     })
+    val dst_matches_opa_for_waws = VecInit((entries zip opa_matches_opa_for_waws).map { case (e, a) =>
+      e.valid && dst.valid && a
+    })
     val dst_matches_opb = VecInit((entries zip opa_matches_opb).map { case (e, b) =>
       e.valid && dst.valid && b
     })
 
+    def compare_q(e: Entry, new_entry: Entry): Bool = {
+      // This function returns true if these entries are in different queues, or if they're in the
+      // same q, but "e" has not been issued yet.
+      e.q =/= new_entry.q || (e.q === new_entry.q && !e.issued)
+    }
+
     val op1_raws_opa = VecInit((entries zip op1_matches_opa).map { case (e, m) =>
-      m && op1.valid && e.bits.q =/= new_entry.q && e.bits.opa_is_dst
+      m && op1.valid && compare_q(e.bits, new_entry) && e.bits.opa_is_dst
     })
     val op2_raws_opa = VecInit((entries zip op2_matches_opa).map { case (e, m) =>
-      m && op2.valid && e.bits.q =/= new_entry.q && e.bits.opa_is_dst
+      m && op2.valid && compare_q(e.bits, new_entry) && e.bits.opa_is_dst
     })
     val raws = VecInit((op1_raws_opa zip op2_raws_opa).map { case (a, b) => a || b })
 
     val dst_wars_opa = VecInit((entries zip dst_matches_opa).map { case (e, m) =>
-      m && dst.valid && e.bits.q =/= new_entry.q && !e.bits.opa_is_dst
+      m && dst.valid && compare_q(e.bits, new_entry) && !e.bits.opa_is_dst
     })
     val dst_wars_opb = VecInit((entries zip dst_matches_opb).map { case (e, m) =>
-      m && dst.valid && e.bits.q =/= new_entry.q
+      m && dst.valid && compare_q(e.bits, new_entry)
     })
     val wars = VecInit((dst_wars_opa zip dst_wars_opb).map { case (a, b) => a || b })
 
-    val dst_waws_opa = VecInit((entries zip dst_matches_opa).map { case (e, m) =>
-      m && dst.valid && (e.bits.q =/= new_entry.q || new_entry.q === ldq) && e.bits.opa_is_dst
+    val dst_waws_opa = VecInit((entries zip dst_matches_opa_for_waws).map { case (e, m) =>
+      m && dst.valid && (compare_q(e.bits, new_entry) || new_entry.q === ldq) && e.bits.opa_is_dst
     })
     val waws = dst_waws_opa
 
