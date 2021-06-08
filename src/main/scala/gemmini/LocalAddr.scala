@@ -57,6 +57,10 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
     is_acc_addr === other.is_acc_addr &&
       Mux(is_acc_addr, full_acc_addr() > other.full_acc_addr(), full_sp_addr() > other.full_sp_addr())
 
+  def ===(other: LocalAddr) =
+    is_acc_addr === other.is_acc_addr &&
+      Mux(is_acc_addr, full_acc_addr() === other.full_acc_addr(), full_sp_addr() === other.full_sp_addr())
+
   def add_with_overflow(other: UInt): Tuple2[LocalAddr, Bool] = {
     require(isPow2(sp_bank_entries)) // TODO remove this requirement
     require(isPow2(acc_bank_entries)) // TODO remove this requirement

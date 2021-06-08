@@ -113,10 +113,15 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   val last_fire = fire_counter === total_fires - 1.U && input_next_row_into_spatial_array
 
+  val preloads = RegInit(0.U(32.W))
+  dontTouch(preloads)
+
   when (io.req.fire()) {
     req.push(io.req.bits)
     in_prop := io.req.bits.pe_control.propagate ^ in_prop
     matmul_id := wrappingAdd(matmul_id, 1.U, max_simultaneous_matmuls)
+
+    preloads := preloads + io.req.bits.pe_control.propagate
   }.elsewhen (last_fire) {
     req.valid := req.bits.flush > 1.U
     req.bits.flush := req.bits.flush - 1.U
