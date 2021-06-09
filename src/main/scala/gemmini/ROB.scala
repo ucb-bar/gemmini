@@ -198,8 +198,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       new_entry.opb := op2
     }
 
-    op1.valid := funct === PRELOAD_CMD || funct_is_compute
-    op1.bits.start := cmd.rs1.asTypeOf(local_addr_t)
+    val op1_address = cmd.rs1.asTypeOf(local_addr_t)
+    val op1_is_garbage = op1_address.is_garbage()
+    op1.valid := (funct === PRELOAD_CMD || funct_is_compute) && !op1_is_garbage
+    op1.bits.start := op1_address
     when (funct === PRELOAD_CMD) {
       // TODO check b_transpose here iff WS mode is enabled
       val preload_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48)
@@ -213,8 +215,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(compute_rows)._2
     }
 
-    op2.valid := funct_is_compute || funct === STORE_CMD
-    op2.bits.start := cmd.rs2.asTypeOf(local_addr_t)
+    val op2_address = cmd.rs2.asTypeOf(local_addr_t)
+    val op2_is_garbage_in_compute = (dataflow == Dataflow.WS && hardcode_d_to_garbage_addr).B ||
+      op2_address.is_garbage()
+    op2.valid := (funct_is_compute && !op2_is_garbage_in_compute) || funct === STORE_CMD
+    op2.bits.start := op2_address
     when (funct_is_compute) {
       val compute_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
       op2.bits.end := op2.bits.start + compute_rows
@@ -243,8 +248,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       op2.bits.wraps_around := pooling_is_enabled || op2.bits.start.add_with_overflow(total_mvout_rows)._2
     }
 
-    dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
-    dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
+    val dst_address = cmd.rs2(31, 0).asTypeOf(local_addr_t)
+    val dst_is_garbage_in_preload = (dataflow == Dataflow.BOTH || dataflow == Dataflow.OS).B && dst_address.is_garbage()
+    dst.valid := (funct === PRELOAD_CMD && !dst_is_garbage_in_preload) || funct === LOAD_CMD || funct === LOAD2_CMD ||
+      funct === LOAD3_CMD
+    dst.bits.start := dst_address
     when (funct === PRELOAD_CMD) {
       val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48) * c_stride
       dst.bits.end := dst.bits.start + preload_rows
