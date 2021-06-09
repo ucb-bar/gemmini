@@ -31,7 +31,6 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds)))
     val in = Flipped(Decoupled(UInt(beatBits.W)))
-    // val in = Flipped(Decoupled(new BeatPackerIn(beatBits)))
     val out = Decoupled(new BeatMergerOut(spadWidth, accWidth, spadRows, accRows, alignedTo))
   })
 
@@ -72,7 +71,7 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
     i.U >= spad_row_offset &&
       i.U < spad_row_offset +& (req.bits.bytes_to_read - bytesSent)
   })
-  io.out.bits.addr := req.bits.addr + meshRows.U * {
+  io.out.bits.addr := req.bits.addr + req.bits.block_stride * {
     val total_bytes_sent = req.bits.spad_row_offset + bytesSent
     Mux(req.bits.has_acc_bitwidth,
       // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
@@ -133,7 +132,7 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
     }
   }
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     req.valid := false.B
   }
 }

@@ -44,6 +44,15 @@ object Util {
     ))
   }
 
+  def sFloorAdd(s: SInt, n: UInt, max_plus_one: SInt, min: SInt, en: Bool = true.B): SInt = {
+    val max = max_plus_one - 1.S
+
+    MuxCase(s + n.zext(), Seq(
+      (!en) -> s,
+      ((s +& n.zext()) > max) -> min
+    ))
+  }
+
   def wrappingSub(u: UInt, n: UInt, max_plus_one: Int): UInt = {
     val max = max_plus_one - 1
     assert(n <= max.U, "cannot wrapSub when n is larger than max")
@@ -79,6 +88,11 @@ object Util {
   // the "pipe" and "flow" parameters set to "true"
   def RegEnableThru[T <: Data](next: T, enable: Bool): T = {
     val buf = RegEnable(next, enable)
+    Mux(enable, next, buf)
+  }
+
+  def RegEnableThru[T <: Data](next: T, init: T, enable: Bool): T = {
+    val buf = RegEnable(next, init, enable)
     Mux(enable, next, buf)
   }
 
