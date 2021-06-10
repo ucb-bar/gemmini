@@ -536,6 +536,16 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     dontTouch(e.bits.allocated_at)
   }
 
+  val first_preload_allocated = RegInit(false.B)
+  when (io.alloc.fire() && io.alloc.bits.inst.funct === PRELOAD_CMD) {
+    first_preload_allocated := true.B
+  }
+  val cycles_that_ex_stalls_due_to_dependencies = RegInit(0.U(32.W))
+  when (first_preload_allocated && utilization_ex_q > 0.U && !io.issue.ex.valid) {
+    cycles_that_ex_stalls_due_to_dependencies := cycles_that_ex_stalls_due_to_dependencies + 1.U
+  }
+  dontTouch(cycles_that_ex_stalls_due_to_dependencies)
+
   val cntr = Counter(10000000)
   when (cntr.inc()) {
     printf(p"Utilization: $utilization\n")
