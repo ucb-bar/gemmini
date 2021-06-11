@@ -55,7 +55,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val shrink = shrinks(state_id)
   val block_stride = block_strides(state_id)
 
-  val all_zeros = vaddr === 0.U
+  //val all_zeros = vaddr === 0.U
+  val all_zeros = false.B
 
   val localaddr_plus_row_counter = localaddr + row_counter
 

@@ -322,14 +322,18 @@ object Arithmetic {
       }
 
       override def relu: Float = {
+/*
         val raw = rawFloatFromFN(self.expWidth, self.sigWidth, self.bits)
 
         val result = Wire(Float(self.expWidth, self.sigWidth))
         result.bits := Mux(!raw.isZero && raw.sign, 0.U, self.bits)
         result
+*/
+        self
       }
 
       override def relu6(shift: UInt): Float = {
+/*
         // Get a constant 6 as a float
         val in_to_rec_fn = Module(new INToRecFN(log2Up(6+1), self.expWidth, self.sigWidth))
         in_to_rec_fn.io.signedIn := false.B
@@ -393,6 +397,8 @@ object Arithmetic {
         val result = Wire(Float(self.expWidth, self.sigWidth))
         result.bits := fNFromRecFN(self.expWidth, self.sigWidth, result_rec)
         result
+*/
+        self
       }
 
       override def zero: Float = 0.U.asTypeOf(self)

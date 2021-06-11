@@ -273,7 +273,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       io.dma.read.req.ready := zero_writer.io.req.ready
     }
 
-    zero_writer.io.req.valid := io.dma.read.req.valid && io.dma.read.req.bits.all_zeros
+    zero_writer.io.req.valid := false.B
+    // zero_writer.io.req.valid := io.dma.read.req.valid && io.dma.read.req.bits.all_zeros
     zero_writer.io.req.bits.laddr := io.dma.read.req.bits.laddr
     zero_writer.io.req.bits.cols := io.dma.read.req.bits.cols
     zero_writer.io.req.bits.block_stride := io.dma.read.req.bits.block_stride
@@ -380,10 +381,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val exread = ex_read_req.valid
 
         // TODO we tie the write dispatch queue's, and write issue queue's, ready and valid signals together here
-        val dmawrite = write_dispatch_q.valid && write_scale_q.io.enq.ready &&
-          !write_dispatch_q.bits.laddr.is_garbage() &&
-          !(bio.write.en && config.sp_singleported.B) &&
-          !write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.sp_bank() === i.U
+        val dmawrite = false.B
+        //val dmawrite = write_dispatch_q.valid && write_scale_q.io.enq.ready &&
+        //  !write_dispatch_q.bits.laddr.is_garbage() &&
+        //  !(bio.write.en && config.sp_singleported.B) &&
+        //  !write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.sp_bank() === i.U
 
         bio.read.req.valid := exread || dmawrite
         ex_read_req.ready := bio.read.req.ready
@@ -407,7 +409,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }
 
         val dma_read_resp = Wire(Decoupled(new ScratchpadReadResp(spad_w)))
-        dma_read_resp.valid := bio.read.resp.valid && bio.read.resp.bits.fromDMA
+        //dma_read_resp.valid := bio.read.resp.valid && bio.read.resp.bits.fromDMA
+        dma_read_resp.valid := false.B
         dma_read_resp.bits := bio.read.resp.bits
         val ex_read_resp = Wire(Decoupled(new ScratchpadReadResp(spad_w)))
         ex_read_resp.valid := bio.read.resp.valid && !bio.read.resp.bits.fromDMA
