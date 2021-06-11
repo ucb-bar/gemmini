@@ -422,6 +422,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   dontTouch(issueds)
   dontTouch(packed_deps)
 
+  FpgaDebug(valids)
+  FpgaDebug(functs)
+  FpgaDebug(issueds)
+  FpgaDebug(packed_deps)
+
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
   // assert(min_pop_count < 2.U)
@@ -436,6 +441,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < PlusArg("gemmini_timeout", 10000), "pipeline stall")
+
+  FpgaDebug(cycles_since_issue)
 
   for (e <- entries) {
     dontTouch(e.bits.allocated_at)
