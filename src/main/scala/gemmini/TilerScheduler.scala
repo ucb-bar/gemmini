@@ -426,6 +426,10 @@ class TilerScheduler[T <: Data: Arithmetic, U <: Data, V <: Data]
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < 10000.U, "pipeline stall")
+  when (cycles_since_issue > 10000.U)
+  {
+    printf(midas.targetutils.SynthesizePrintf("gemmini pipeline stall: io.busy %d, io.issue.load.valid %d, io.issue.load.ready %d, io.issue.store.valid %d, io.issue.store.ready %d, io.issue.exec.valid %d, io.issue.exec.ready %d\n", io.busy, io.issue.load.valid, io.issue.load.ready, io.issue.store.valid, io.issue.store.ready, io.issue.exec.valid, io.issue.exec.ready))
+  }
 
   val cntr = Counter(10000000)
   when (cntr.inc()) {
