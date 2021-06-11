@@ -80,7 +80,6 @@ object GemminiFPConfigs {
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
     						sp_capacity = CapacityInKilobytes(512),
-    						acc_capacity = CapacityInKilobytes(128),
                                               )
   
   //FP16 Half Precision Configuration
@@ -101,8 +100,10 @@ object GemminiFPConfigs {
   val BF16Default8Config = defaultFPConfig.copy(inputType = Float(8, 8), outputType = Float(8, 8), accType = Float(8, 24),
                                                meshRows = 8, meshColumns = 8,
                                                pe_latency = 2,
-                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
-                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
+                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), 8, identity = "1.0", c_str="((x) * (scale))")),
+                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), 8, identity = "1.0", c_str="((x) * (scale))")),
+    					       acc_scale_args = ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), 8, identity = "1.0",c_str="((x) * (scale))"),
+    					       dataflow = Dataflow.WS,
                                                hardcode_d_to_garbage_addr = true,
                                               )
 
@@ -110,11 +111,12 @@ object GemminiFPConfigs {
   val FP32Default8Config = defaultFPConfig.copy(inputType = Float(8, 24), outputType = Float(8, 24), accType = Float(8, 24),
                                                meshRows = 8, meshColumns = 8,
                                                pe_latency = 2,
-                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
-                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
-    						sp_capacity = CapacityInKilobytes(512),
-    						acc_capacity = CapacityInKilobytes(128),
-						hardcode_d_to_garbage_addr = true,
+                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), 4, identity = "1.0", c_str="((x) * (scale))")),
+                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), 4, identity = "1.0", c_str="((x) * (scale))")),
+    					       acc_scale_args = ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), 4, identity = "1.0", c_str="((x) * (scale))"),
+    					       sp_capacity = CapacityInKilobytes(512),
+    					       dataflow = Dataflow.WS,
+					       hardcode_d_to_garbage_addr = true,
                                               )
 }
 
@@ -182,4 +184,5 @@ class GemminiBF16Default8Config extends Config((site, here, up) => {
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
+
 
