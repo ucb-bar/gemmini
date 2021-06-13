@@ -2,14 +2,13 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile.{CoreBundle, CoreModule}
 import freechips.rocketchip.tilelink.TLEdgeOut
 import freechips.rocketchip.util.InOrderArbiter
-
 import Util._
+import midas.targetutils.FpgaDebug
 
 class DecoupledTLBReq(val lgMaxSize: Int)(implicit p: Parameters) extends CoreBundle {
   val tlb_req = new TLBReq(lgMaxSize)
@@ -61,6 +60,13 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   }
 
   assert(!io.exp.flush_retry || !io.exp.flush_skip, "TLB: flushing with both retry and skip at same time")
+
+  FpgaDebug(io.exp.interrupt)
+  FpgaDebug(tlb.io.resp.pf.ld)
+  FpgaDebug(tlb.io.resp.ae.ld)
+  FpgaDebug(tlb.io.resp.pf.st)
+  FpgaDebug(tlb.io.resp.ae.st)
+  FpgaDebug(io.req.bits.tlb_req.cmd)
 }
 
 class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {

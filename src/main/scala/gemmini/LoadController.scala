@@ -5,6 +5,7 @@ import chisel3.util._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
+import midas.targetutils.FpgaDebug
 
 // TODO we need to check for WAW errors here
 // TODO deal with errors when reading scratchpad responses
@@ -156,4 +157,10 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
       }
     }
   }
+
+  FpgaDebug(io.cmd.valid)
+  FpgaDebug(io.cmd.ready)
+  FpgaDebug(cmd.valid)
+  FpgaDebug(cmd.ready)
+  FpgaDebug(control_state)
 }

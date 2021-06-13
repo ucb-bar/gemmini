@@ -288,7 +288,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       state := s_req_new_block
     }
 
-    // FpgaDebug(state)
+    FpgaDebug(state)
     // FpgaDebug(io.req.valid)
     // FpgaDebug(io.req.ready)
     // FpgaDebug(io.req.bits.len)
@@ -546,7 +546,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       }
     }
 
-    // FpgaDebug(state)
+    FpgaDebug(state)
     // FpgaDebug(io.req.valid)
     // FpgaDebug(io.req.ready)
     // FpgaDebug(io.req.bits.len)

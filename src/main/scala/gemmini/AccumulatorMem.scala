@@ -71,6 +71,12 @@ class AccumulatorMem[T <: Data, U <: Data](
   // TODO unify this with TwoPortSyncMemIO
   val io = IO(new AccumulatorMemIO(n, t, scale_args.multiplicand_t))
 
+  FpgaDebug(io.read.req.valid)
+  FpgaDebug(io.read.req.ready)
+  FpgaDebug(io.read.resp.valid)
+  FpgaDebug(io.read.resp.ready)
+  FpgaDebug(io.write.valid)
+  FpgaDebug(io.write.ready)
 
   // For any write operation, we spend 2 cycles reading the existing address out, buffering it in a register, and then
   // accumulating on top of it (if necessary)

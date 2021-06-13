@@ -105,6 +105,11 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean) ex
     val write = Flipped(new ScratchpadWriteIO(n, w, mask_len))
   })
 
+  FpgaDebug(io.read.req.valid)
+  FpgaDebug(io.read.req.ready)
+  FpgaDebug(io.read.resp.valid)
+  FpgaDebug(io.read.resp.ready)
+
   val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
 
   // When the scratchpad is single-ported, the writes take precedence
@@ -207,6 +212,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val flush = Input(Bool())
     })
 
+    FpgaDebug(io.dma.read.req.valid)
+    FpgaDebug(io.dma.read.req.ready)
+    FpgaDebug(io.dma.read.resp.valid)
+
+    FpgaDebug(io.dma.write.req.valid)
+    FpgaDebug(io.dma.write.req.ready)
+    FpgaDebug(io.dma.write.resp.valid)
+
     val write_dispatch_q = Queue(io.dma.write.req)
     write_dispatch_q.ready := false.B
     // Write scale queue is necessary to maintain in-order requests to accumulator scale unit
@@ -216,13 +229,30 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t), mem_pipeline+1, pipe=true))
     val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), mem_pipeline+1, pipe=true)) // TODO can't this just be a normal queue?
 
+    FpgaDebug(write_dispatch_q.valid)
+    FpgaDebug(write_dispatch_q.ready)
+
+    FpgaDebug(write_scale_q.io.enq.valid)
+    FpgaDebug(write_scale_q.io.enq.ready)
+    FpgaDebug(write_scale_q.io.deq.valid)
+    FpgaDebug(write_scale_q.io.deq.ready)
+
+    FpgaDebug(write_issue_q.io.enq.valid)
+    FpgaDebug(write_issue_q.io.enq.ready)
+    FpgaDebug(write_issue_q.io.deq.valid)
+    FpgaDebug(write_issue_q.io.deq.ready)
+
+    FpgaDebug(read_issue_q.io.enq.valid)
+    FpgaDebug(read_issue_q.io.enq.ready)
+    FpgaDebug(read_issue_q.io.deq.valid)
+    FpgaDebug(read_issue_q.io.deq.ready)
+
     write_scale_q.io.enq.valid := false.B
     write_scale_q.io.enq.bits  := write_dispatch_q.bits
     write_scale_q.io.deq.ready := false.B
 
     write_issue_q.io.enq.valid := false.B
     write_issue_q.io.enq.bits := write_scale_q.io.deq.bits
-
 
     // Garbage can immediately fire between dispatch_q and scale_q
     when (write_dispatch_q.bits.laddr.is_garbage()) {
@@ -232,7 +262,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     when (write_scale_q.io.deq.bits.laddr.is_garbage() || !write_scale_q.io.deq.bits.laddr.is_acc_addr) {
       write_issue_q.io.enq <> write_scale_q.io.deq
     }
-
 
     val writeData = Wire(Valid(UInt((spad_w max acc_w).W)))
     writeData.valid := write_issue_q.io.deq.bits.laddr.is_garbage()
@@ -258,6 +287,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
     writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
 
+    FpgaDebug(writer.module.io.req.valid)
+    FpgaDebug(writer.module.io.req.ready)
+    FpgaDebug(writer.module.io.busy)
+
     io.dma.write.resp.valid := false.B
     io.dma.write.resp.bits.cmd_id := write_dispatch_q.bits.cmd_id
     when (write_dispatch_q.bits.laddr.is_garbage() && write_dispatch_q.fire()) {
@@ -282,6 +315,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     zero_writer.io.resp.ready := false.B
 
+    FpgaDebug(zero_writer.io.req.valid)
+    FpgaDebug(zero_writer.io.req.ready)
+    FpgaDebug(zero_writer.io.resp.valid)
+    FpgaDebug(zero_writer.io.resp.ready)
+
     reader.module.io.req.valid := read_issue_q.io.deq.valid
     read_issue_q.io.deq.ready := reader.module.io.req.ready
     reader.module.io.req.bits.vaddr := read_issue_q.io.deq.bits.vaddr
@@ -296,6 +334,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     reader.module.io.req.bits.block_stride := read_issue_q.io.deq.bits.block_stride
     reader.module.io.req.bits.status := read_issue_q.io.deq.bits.status
     reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
+
+    FpgaDebug(reader.module.io.req.valid)
+    FpgaDebug(reader.module.io.req.ready)
+    FpgaDebug(reader.module.io.resp.valid)
+    FpgaDebug(reader.module.io.resp.ready)
+    FpgaDebug(reader.module.io.busy)
 
     val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(
       config.mvin_scale_args,
@@ -355,10 +399,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       mvin_scale_finished -> mvin_scale_out.bits.tag.bytes_read,
       mvin_scale_acc_finished -> mvin_scale_acc_out.bits.tag.bytes_read))
 
-    // FpgaDebug(mvin_scale_out.valid)
-    // FpgaDebug(mvin_scale_out.ready)
-    // FpgaDebug(mvin_scale_acc_out.valid)
-    // FpgaDebug(mvin_scale_acc_out.ready)
+     FpgaDebug(mvin_scale_out.valid)
+     FpgaDebug(mvin_scale_out.ready)
+     FpgaDebug(mvin_scale_acc_out.valid)
+     FpgaDebug(mvin_scale_acc_out.ready)
 
     // FpgaDebug(mvin_scale_out.bits.tag.is_acc)
     // FpgaDebug(mvin_scale_acc_out.bits.tag.is_acc)

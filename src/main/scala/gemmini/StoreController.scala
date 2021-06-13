@@ -7,6 +7,7 @@ import chisel3.experimental._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
+import midas.targetutils.FpgaDebug
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
@@ -247,4 +248,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   }
   // assert(pool_cycles_counter <= 1000.U)
   dontTouch(pool_cycles_counter)
+
+  FpgaDebug(io.cmd.valid)
+  FpgaDebug(io.cmd.ready)
+  FpgaDebug(cmd.valid)
+  FpgaDebug(cmd.ready)
+  FpgaDebug(control_state)
 }
