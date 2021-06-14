@@ -288,9 +288,18 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       state := s_req_new_block
     }
 
+    FpgaDebug(req)
+    FpgaDebug(bytesLeft)
+    FpgaDebug(bytesRequested)
+    FpgaDebug(tl.a.valid)
+    FpgaDebug(tl.a.ready)
+    FpgaDebug(tl.d.valid)
+    FpgaDebug(tl.d.ready)
+    FpgaDebug(read_packet)
+
     FpgaDebug(state)
-    // FpgaDebug(io.req.valid)
-    // FpgaDebug(io.req.ready)
+    FpgaDebug(io.req.valid)
+    FpgaDebug(io.req.ready)
     // FpgaDebug(io.req.bits.len)
     // FpgaDebug(io.req.bits.vaddr)
   }
@@ -546,9 +555,18 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       }
     }
 
+    FpgaDebug(req)
+    FpgaDebug(bytesLeft)
+    FpgaDebug(bytesSent)
+    FpgaDebug(tl.a.valid)
+    FpgaDebug(tl.a.ready)
+    FpgaDebug(tl.d.valid)
+    FpgaDebug(tl.d.ready)
+    FpgaDebug(write_packet)
+
     FpgaDebug(state)
-    // FpgaDebug(io.req.valid)
-    // FpgaDebug(io.req.ready)
+    FpgaDebug(io.req.valid)
+    FpgaDebug(io.req.ready)
     // FpgaDebug(io.req.bits.len)
     // FpgaDebug(io.req.bits.vaddr)
 

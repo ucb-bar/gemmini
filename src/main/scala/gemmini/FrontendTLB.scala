@@ -61,12 +61,15 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
 
   assert(!io.exp.flush_retry || !io.exp.flush_skip, "TLB: flushing with both retry and skip at same time")
 
+  FpgaDebug(io.req)
+  FpgaDebug(io.resp)
+  FpgaDebug(tlb.io)
+
   FpgaDebug(io.exp.interrupt)
   FpgaDebug(tlb.io.resp.pf.ld)
   FpgaDebug(tlb.io.resp.ae.ld)
   FpgaDebug(tlb.io.resp.pf.st)
   FpgaDebug(tlb.io.resp.ae.st)
-  FpgaDebug(io.req.bits.tlb_req.cmd)
 }
 
 class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
