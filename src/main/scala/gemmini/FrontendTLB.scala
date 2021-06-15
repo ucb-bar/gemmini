@@ -51,6 +51,12 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   tlb.io.sfence.bits.addr := DontCare
   tlb.io.sfence.bits.asid := DontCare
 
+  val last_request_made = RegInit(tlb.io.req.bits)
+  when (tlb.io.req.fire()) {
+    last_request_made := tlb.io.req.bits
+  }
+  FpgaDebug(last_request_made)
+
   io.ptw <> tlb.io.ptw
   tlb.io.ptw.status := io.req.bits.status
   val exception = io.req.valid && Mux(io.req.bits.tlb_req.cmd === M_XRD, tlb.io.resp.pf.ld || tlb.io.resp.ae.ld, tlb.io.resp.pf.st || tlb.io.resp.ae.st)
@@ -66,10 +72,6 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   FpgaDebug(tlb.io)
 
   FpgaDebug(io.exp.interrupt)
-  FpgaDebug(tlb.io.resp.pf.ld)
-  FpgaDebug(tlb.io.resp.ae.ld)
-  FpgaDebug(tlb.io.resp.pf.st)
-  FpgaDebug(tlb.io.resp.ae.st)
 }
 
 class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {

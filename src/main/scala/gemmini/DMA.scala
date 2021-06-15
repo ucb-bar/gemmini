@@ -235,6 +235,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     tl.a.bits := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
 
+    FpgaDebug(translate_q.io.deq.valid)
+    FpgaDebug(io.tlb.resp.miss)
+    FpgaDebug(io.tlb.resp.paddr)
+
     io.reserve.valid := state === s_req_new_block && untranslated_a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
     io.reserve.entry.is_acc := req.is_acc
@@ -516,6 +520,10 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := RegEnableThru(io.tlb.resp.paddr, RegNext(io.tlb.req.fire()))
+
+    FpgaDebug(translate_q.io.deq.valid)
+    FpgaDebug(io.tlb.resp.miss)
+    FpgaDebug(io.tlb.resp.paddr)
 
     tl.d.ready := xactBusy.orR()
 

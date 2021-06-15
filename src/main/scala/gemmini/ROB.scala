@@ -417,16 +417,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   val issueds = VecInit(entries.map(_.bits.issued))
   val packed_deps = VecInit(entries.map(e => Cat(e.bits.deps.reverse)))
 
-  dontTouch(valids)
-  dontTouch(functs)
-  dontTouch(issueds)
-  dontTouch(packed_deps)
-
-  FpgaDebug(valids)
-  FpgaDebug(functs)
-  FpgaDebug(issueds)
-  FpgaDebug(packed_deps)
-
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
   // assert(min_pop_count < 2.U)
