@@ -42,6 +42,7 @@ class ExIUnroller[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiA
   preload_cmd_with_bounded_i.cmd.rs2 := (minOf(total_I -& I_sent, block_rows.U) << 48) |
     (q.bits(0).cmd.rs2(47, 32) << 32) |
     (q.bits(0).cmd.rs2(31, 0).asTypeOf(local_addr_t) + I_block * J_blocks).asUInt()
+  preload_cmd_with_bounded_i.rob_id.valid := last_send
 
   val compute_cmd_with_bounded_i = WireInit(q.bits(1))
   compute_cmd_with_bounded_i.cmd.rs1 := (minOf(total_I -& I_sent, block_rows.U) << 48) |
@@ -50,6 +51,7 @@ class ExIUnroller[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiA
   compute_cmd_with_bounded_i.cmd.rs2 := (minOf(total_I -& I_sent, block_rows.U) << 48) |
     (q.bits(1).cmd.rs2(47, 32) << 32) |
     (q.bits(1).cmd.rs2(31, 0).asTypeOf(local_addr_t) + I_block * J_blocks).asUInt()
+  compute_cmd_with_bounded_i.rob_id.valid := last_send
 
   when (q.bits(0).cmd.rs2(31, 0).asTypeOf(local_addr_t).is_garbage()) {
     preload_cmd_with_bounded_i.cmd.rs2 := (block_rows.U << 48) | (block_cols.U << 32) | GARBAGE_ADDR
