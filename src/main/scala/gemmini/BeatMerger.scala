@@ -138,6 +138,7 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
   FpgaDebug(io.in.ready)
   FpgaDebug(io.out.valid)
   FpgaDebug(io.out.ready)
+  FpgaDebug(req)
 
   when (reset.asBool()) {
     req.valid := false.B
