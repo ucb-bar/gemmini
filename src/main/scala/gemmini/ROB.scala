@@ -47,6 +47,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val solitary_preload = Input(Bool()) // TODO very hacky. from ExecuteController, to prevent infinite fence stalls. remove later
   })
 
+  println(s"\n\nio.alloc.bits.inst.rs1.getWidth = ${io.alloc.bits.inst.rs1.getWidth}")
+  println(s"io.alloc.bits.inst.rs2.getWidth = ${io.alloc.bits.inst.rs2.getWidth}")
+  println(s"io.alloc.bits.inst.rd.getWidth = ${io.alloc.bits.inst.rd.getWidth}")
+  println(s"io.alloc.bits.inst.opcode.getWidth = ${io.alloc.bits.inst.opcode.getWidth}\n\n")
+
   // TODO make this a ChiselEnum
   val ldq :: stq :: exq :: Nil = Enum(3)
   val q_t = ldq.cloneType
@@ -216,7 +221,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     op2.valid := funct_is_compute || funct === STORE_CMD
     op2.bits.start := cmd.rs2.asTypeOf(local_addr_t)
     when (funct_is_compute) {
-      val compute_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
+      val compute_rows = cmd.rs2(48 + log2Up(mvin_cols_bits + 1) - 1, 48)
       op2.bits.end := op2.bits.start + compute_rows
       op2.bits.wraps_around := op2.bits.start.add_with_overflow(compute_rows)._2
     }.elsewhen (pooling_is_enabled) {
@@ -246,7 +251,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
     dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
-      val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48) * c_stride
+      val preload_rows = cmd.rs2(48 + log2Up(mvin_cols_bits + 1) - 1, 48) * c_stride
       dst.bits.end := dst.bits.start + preload_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {

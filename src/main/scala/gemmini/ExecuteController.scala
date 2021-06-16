@@ -59,7 +59,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
   }
 
-  val unrolled_cmd = TransposePreloadUnroller(io.cmd, config)
+  val transpose_unrolled_cmd = TransposePreloadUnroller(io.cmd, config)
+  val unrolled_cmd = ExIUnroller(transpose_unrolled_cmd, config)
 
   val cmd_q_heads = 3
   assert(ex_queue_length >= cmd_q_heads)
