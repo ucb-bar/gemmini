@@ -211,9 +211,15 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       op1.bits.end := op1.bits.start + preload_rows
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
-      val rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48)
+      val rows = cmd.rs1(48 + log2Up(mvin_cols_bits + 1) - 1, 48)
+      val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
+
+      val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
+      val total_rows = ((mats - 1.U) * j) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
+
       val cols = cmd.rs1(32 + log2Up(block_cols + 1) - 1, 32)
-      val compute_rows = Mux(a_transpose, cols, rows) * a_stride
+      val compute_rows = Mux(a_transpose, cols, total_rows) * a_stride
+
       op1.bits.end := op1.bits.start + compute_rows
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(compute_rows)._2
     }
@@ -221,9 +227,14 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     op2.valid := funct_is_compute || funct === STORE_CMD
     op2.bits.start := cmd.rs2.asTypeOf(local_addr_t)
     when (funct_is_compute) {
-      val compute_rows = cmd.rs2(48 + log2Up(mvin_cols_bits + 1) - 1, 48)
-      op2.bits.end := op2.bits.start + compute_rows
-      op2.bits.wraps_around := op2.bits.start.add_with_overflow(compute_rows)._2
+      val rows = cmd.rs2(48 + log2Up(mvin_cols_bits + 1) - 1, 48)
+      val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
+
+      val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
+      val total_rows = ((mats - 1.U) * j) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
+
+      op2.bits.end := op2.bits.start + total_rows
+      op2.bits.wraps_around := op2.bits.start.add_with_overflow(total_rows)._2
     }.elsewhen (pooling_is_enabled) {
       // If pooling is enabled, then we assume that this command simply mvouts everything in this accumulator bank from
       // start to the end of the bank // TODO this won't work when acc_banks =/= 2
@@ -251,7 +262,14 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
     dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
-      val preload_rows = cmd.rs2(48 + log2Up(mvin_cols_bits + 1) - 1, 48) * c_stride
+      val rows = cmd.rs2(48 + log2Up(mvin_cols_bits + 1) - 1, 48)
+      val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
+
+      val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
+      val total_rows = ((mats - 1.U) * j) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
+
+      val preload_rows = total_rows * c_stride
+
       dst.bits.end := dst.bits.start + preload_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
