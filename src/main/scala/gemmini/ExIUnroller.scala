@@ -75,7 +75,7 @@ class ExIUnroller[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiA
 
   // Control I_sent
   when (io.out.fire() && must_unroll && state === compute) {
-    I_sent := floorAdd(I_sent, total_I, block_rows.U)
+    I_sent := floorAdd(I_sent, block_rows.U, total_I)
   }
 }
 
