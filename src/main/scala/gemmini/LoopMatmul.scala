@@ -431,7 +431,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
     when (state === pre) {
       state := comp
     }.otherwise {
-      val next_i = floorAdd(i, max_block_len.U, req.max_i)
+      val next_i = floorAdd(i, max_i_blocks, req.max_i)
       val next_j = floorAdd(j, 1.U, req.max_j, next_i === 0.U)
       val next_k = floorAdd(k, 1.U, req.max_k, next_j === 0.U && next_i === 0.U)
 
