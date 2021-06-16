@@ -318,13 +318,13 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val GARBAGE_ADDR = (~0.U(32.W)).asUInt()
 
   val cmd_t = new RoCCCommand
-  class j_blocks_holder_t extends Bundle {
+  class blocks_holder_t extends Bundle {
     val opcode = UInt(cmd_t.inst.opcode.getWidth.W)
     val rs1 = UInt(cmd_t.inst.rs1.getWidth.W)
     val rs2 = UInt(cmd_t.inst.rs2.getWidth.W)
     val rd = UInt(cmd_t.inst.rd.getWidth.W)
 
-    override def cloneType: j_blocks_holder_t.this.type = (new j_blocks_holder_t).asInstanceOf[this.type]
+    override def cloneType: blocks_holder_t.this.type = (new blocks_holder_t).asInstanceOf[this.type]
   }
 
   val io = IO(new Bundle {
@@ -392,17 +392,28 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val pre_addr = Mux(i === 0.U || req.ooo, b_addr, GARBAGE_ADDR)
   val out_addr = Mux(req.accumulate || k =/= 0.U, c_addr, d_addr)
 
+  val j_blocks_holder = req.max_j.asTypeOf(new blocks_holder_t)
+  val k_blocks_holder = req.max_k.asTypeOf(new blocks_holder_t)
+
   val pre_cmd = Wire(new RoCCCommand)
   pre_cmd := DontCare
   pre_cmd.inst.funct := PRELOAD_CMD
   pre_cmd.rs1 := pre_addr | (b_cols << 32).asUInt() | (b_rows << 48).asUInt()
   pre_cmd.rs2 := out_addr | (c_cols << 32).asUInt() | (c_rows << 48).asUInt()
+  pre_cmd.inst.opcode := j_blocks_holder.opcode
+  pre_cmd.inst.rs1 := j_blocks_holder.rs1
+  pre_cmd.inst.rs2 := j_blocks_holder.rs2
+  pre_cmd.inst.rd := j_blocks_holder.rd
 
   val comp_cmd = Wire(new RoCCCommand())
   comp_cmd := DontCare
   comp_cmd.inst.funct := Mux(i === 0.U || req.ooo, COMPUTE_AND_FLIP_CMD, COMPUTE_AND_STAY_CMD)
   comp_cmd.rs1 := a_addr | (a_cols << 32).asUInt() | (a_rows << 48).asUInt()
   comp_cmd.rs2 := GARBAGE_ADDR | (block_size.U << 32).asUInt() | (block_size.U << 48).asUInt()
+  comp_cmd.inst.opcode := k_blocks_holder.opcode
+  comp_cmd.inst.rs1 := k_blocks_holder.rs1
+  comp_cmd.inst.rs2 := k_blocks_holder.rs2
+  comp_cmd.inst.rd := k_blocks_holder.rd
 
   io.req.ready := state === idle
   io.k := k
@@ -418,12 +429,6 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && ld_ahead
   io.cmd.bits := Mux(state === pre, pre_cmd, comp_cmd)
-
-  val j_blocks_holder = req.max_j.asTypeOf(new j_blocks_holder_t)
-  io.cmd.bits.inst.opcode := j_blocks_holder.opcode
-  io.cmd.bits.inst.rs1 := j_blocks_holder.rs1
-  io.cmd.bits.inst.rs2 := j_blocks_holder.rs2
-  io.cmd.bits.inst.rd := j_blocks_holder.rd
 
   io.loop_id := req.loop_id
 

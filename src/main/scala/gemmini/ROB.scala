@@ -212,10 +212,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
       val rows = cmd.rs1(48 + mvin_cols_bits - 1, 48)
-      val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
+      val k = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
 
       val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
-      val total_rows = ((mats - 1.U) * j * block_rows.U) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
+      val total_rows = ((mats - 1.U) * k * block_rows.U) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
 
       val cols = cmd.rs1(32 + log2Up(block_cols + 1) - 1, 32)
       val compute_rows = Mux(a_transpose, cols, total_rows) * a_stride
@@ -228,10 +228,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     op2.bits.start := cmd.rs2.asTypeOf(local_addr_t)
     when (funct_is_compute) {
       val rows = cmd.rs2(48 + mvin_cols_bits - 1, 48)
-      val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
+      val k = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd) // TODO this needs to use J rather than K
 
       val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
-      val total_rows = ((mats - 1.U) * j * block_rows.U) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
+      val total_rows = ((mats - 1.U) * k * block_rows.U) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
 
       op2.bits.end := op2.bits.start + total_rows
       op2.bits.wraps_around := op2.bits.start.add_with_overflow(total_rows)._2
