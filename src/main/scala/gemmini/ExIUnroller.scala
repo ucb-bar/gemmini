@@ -51,7 +51,7 @@ class ExIUnroller[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiA
   compute_cmd_with_bounded_i.cmd.rs2 := (minOf(total_I -& I_sent, block_rows.U) << 48) |
     (q.bits(1).cmd.rs2(47, 32) << 32) |
     (q.bits(1).cmd.rs2(31, 0).asTypeOf(local_addr_t) + I_block * J_blocks * block_rows.U).asUInt()
-  compute_cmd_with_bounded_i.rob_id.valid := last_send && q.bits(0).rob_id.valid
+  compute_cmd_with_bounded_i.rob_id.valid := last_send && q.bits(1).rob_id.valid
 
   when (q.bits(0).cmd.rs2(31, 0).asTypeOf(local_addr_t).is_garbage()) {
     preload_cmd_with_bounded_i.cmd.rs2 := (block_rows.U << 48) | (block_cols.U << 32) | GARBAGE_ADDR
