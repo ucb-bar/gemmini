@@ -211,7 +211,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       op1.bits.end := op1.bits.start + preload_rows
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
-      val rows = cmd.rs1(48 + log2Up(mvin_cols_bits + 1) - 1, 48)
+      val rows = cmd.rs1(48 + mvin_cols_bits - 1, 48)
       val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
 
       val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
@@ -227,7 +227,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     op2.valid := funct_is_compute || funct === STORE_CMD
     op2.bits.start := cmd.rs2.asTypeOf(local_addr_t)
     when (funct_is_compute) {
-      val rows = cmd.rs2(48 + log2Up(mvin_cols_bits + 1) - 1, 48)
+      val rows = cmd.rs2(48 + mvin_cols_bits - 1, 48)
       val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
 
       val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
@@ -262,7 +262,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
     dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
-      val rows = cmd.rs2(48 + log2Up(mvin_cols_bits + 1) - 1, 48)
+      val rows = cmd.rs2(48 + mvin_cols_bits - 1, 48)
       val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
 
       val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
