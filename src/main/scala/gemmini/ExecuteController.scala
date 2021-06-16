@@ -963,15 +963,16 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   //val complete_lock = RegInit(false.B)
 
   //Seah: added for WS accumulator
-  when(mesh.io.resp.fire() && mesh.io.resp.bits.tag.rob_id.valid) {
+  when(mesh.io.resp.fire()) {
     output_counter := wrappingAdd(output_counter, 1.U, w_total_output_rows)
     val last = mesh.io.resp.bits.last
 
-    when(last) {
+    when(last && mesh.io.resp.bits.tag.rob_id.valid) {
       mesh_completed_rob_id_fire := mesh.io.resp.bits.tag.rob_id.valid
       io.completed.valid := mesh.io.resp.bits.tag.rob_id.valid
       io.completed.bits := mesh.io.resp.bits.tag.rob_id.bits
     }
+
     start_array_outputting :=  !is_garbage_addr
   }
 
