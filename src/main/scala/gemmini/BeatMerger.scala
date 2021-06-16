@@ -61,7 +61,8 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
 
   io.req.ready := !req.valid
 
-  io.in.ready := io.req.fire() || (req.valid && bytesRead =/= (1.U << req.bits.lg_len_req).asUInt())
+  // io.in.ready := io.req.fire() || (req.valid && bytesRead =/= (1.U << req.bits.lg_len_req).asUInt())
+  io.in.ready := !req.valid || (bytesRead =/= (1.U << req.bits.lg_len_req).asUInt())
 
   io.out.valid := req.valid && usefulBytesRead > bytesSent && (usefulBytesRead - bytesSent >= rowBytes ||
     usefulBytesRead === req.bits.bytes_to_read)
