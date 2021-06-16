@@ -41,16 +41,16 @@ class ExIUnroller[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiA
   val preload_cmd_with_bounded_i = WireInit(q.bits(0))
   preload_cmd_with_bounded_i.cmd.rs2 := (minOf(total_I -& I_sent, block_rows.U) << 48) |
     (q.bits(0).cmd.rs2(47, 32) << 32) |
-    (q.bits(0).cmd.rs2(31, 0).asTypeOf(local_addr_t) + I_block * J_blocks).asUInt()
+    (q.bits(0).cmd.rs2(31, 0).asTypeOf(local_addr_t) + I_block * J_blocks * block_rows.U).asUInt()
   preload_cmd_with_bounded_i.rob_id.valid := last_send && q.bits(0).rob_id.valid
 
   val compute_cmd_with_bounded_i = WireInit(q.bits(1))
   compute_cmd_with_bounded_i.cmd.rs1 := (minOf(total_I -& I_sent, block_rows.U) << 48) |
     (q.bits(1).cmd.rs1(47, 32) << 32) |
-    (q.bits(1).cmd.rs1(31, 0).asTypeOf(local_addr_t) + I_block * J_blocks).asUInt()
+    (q.bits(1).cmd.rs1(31, 0).asTypeOf(local_addr_t) + I_block * J_blocks * block_rows.U).asUInt()
   compute_cmd_with_bounded_i.cmd.rs2 := (minOf(total_I -& I_sent, block_rows.U) << 48) |
     (q.bits(1).cmd.rs2(47, 32) << 32) |
-    (q.bits(1).cmd.rs2(31, 0).asTypeOf(local_addr_t) + I_block * J_blocks).asUInt()
+    (q.bits(1).cmd.rs2(31, 0).asTypeOf(local_addr_t) + I_block * J_blocks * block_rows.U).asUInt()
   compute_cmd_with_bounded_i.rob_id.valid := last_send && q.bits(0).rob_id.valid
 
   when (q.bits(0).cmd.rs2(31, 0).asTypeOf(local_addr_t).is_garbage()) {
