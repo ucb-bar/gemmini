@@ -307,8 +307,14 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     dontTouch(tla_valid_dt)
     val tla_ready_dt = WireInit(tl.a.ready)
     dontTouch(tla_ready_dt)
-    FpgaDebug(read_packet)
 
+    FpgaDebug(tld_valid_dt)
+    FpgaDebug(tld_ready_dt)
+    FpgaDebug(tla_valid_dt)
+    FpgaDebug(tla_ready_dt)
+    FpgaDebug(io.beatData.ready)
+
+    FpgaDebug(read_packet)
     FpgaDebug(state)
     FpgaDebug(io.req.valid)
     FpgaDebug(io.req.ready)

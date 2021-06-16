@@ -2,8 +2,8 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-
 import Util._
+import midas.targetutils.FpgaDebug
 
 class BeatMergerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, val accRows: Int,
                     val alignedTo: Int) extends Bundle {
@@ -131,6 +131,13 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
       req.pop()
     }
   }
+
+  FpgaDebug(io.req.valid)
+  FpgaDebug(io.req.ready)
+  FpgaDebug(io.in.valid)
+  FpgaDebug(io.in.ready)
+  FpgaDebug(io.out.valid)
+  FpgaDebug(io.out.ready)
 
   when (reset.asBool()) {
     req.valid := false.B
