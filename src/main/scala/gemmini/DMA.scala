@@ -577,9 +577,21 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       }
     }
 
+    val tl_a_valid_probe = WireInit(tl.a.valid)
+    dontTouch(tl_a_valid_probe)
+    FpgaDebug(tl_a_valid_probe)
+
     val tl_a_ready_probe = WireInit(tl.a.ready)
     dontTouch(tl_a_ready_probe)
     FpgaDebug(tl_a_ready_probe)
+
+    val tl_d_valid_probe = WireInit(tl.d.valid)
+    dontTouch(tl_d_valid_probe)
+    FpgaDebug(tl_d_valid_probe)
+
+    val tl_d_ready_probe = WireInit(tl.d.ready)
+    dontTouch(tl_d_ready_probe)
+    FpgaDebug(tl_d_ready_probe)
 
     FpgaDebug(req)
     FpgaDebug(bytesLeft)
