@@ -215,7 +215,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
 
       val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
-      val total_rows = ((mats - 1.U) * j) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
+      val total_rows = ((mats - 1.U) * j * block_rows.U) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
 
       val cols = cmd.rs1(32 + log2Up(block_cols + 1) - 1, 32)
       val compute_rows = Mux(a_transpose, cols, total_rows) * a_stride
@@ -231,7 +231,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
 
       val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
-      val total_rows = ((mats - 1.U) * j) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
+      val total_rows = ((mats - 1.U) * j * block_rows.U) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
 
       op2.bits.end := op2.bits.start + total_rows
       op2.bits.wraps_around := op2.bits.start.add_with_overflow(total_rows)._2
@@ -266,7 +266,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
 
       val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
-      val total_rows = ((mats - 1.U) * j) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
+      val total_rows = ((mats - 1.U) * j * block_rows.U) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
 
       val preload_rows = total_rows * c_stride
 
