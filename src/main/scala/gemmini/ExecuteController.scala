@@ -968,8 +968,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val last = mesh.io.resp.bits.last
 
     when(last) {
-      mesh_completed_rob_id_fire := true.B
-      io.completed.valid := true.B
+      mesh_completed_rob_id_fire := mesh.io.resp.bits.tag.rob_id.valid
+      io.completed.valid := mesh.io.resp.bits.tag.rob_id.valid
       io.completed.bits := mesh.io.resp.bits.tag.rob_id.bits
     }
     start_array_outputting :=  !is_garbage_addr
