@@ -784,7 +784,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh_cntl_signals_q.io.enq.bits.a_transpose := a_transpose
   mesh_cntl_signals_q.io.enq.bits.bd_transpose := bd_transpose
 
-  mesh_cntl_signals_q.io.enq.bits.rob_id.valid := !performing_single_mul && !c_address_rs2.is_garbage()
+  mesh_cntl_signals_q.io.enq.bits.rob_id.valid := cmd.bits(preload_cmd_place).rob_id.valid && !performing_single_mul && !c_address_rs2.is_garbage()
   mesh_cntl_signals_q.io.enq.bits.rob_id.bits := cmd.bits(preload_cmd_place).rob_id.bits
 
   mesh_cntl_signals_q.io.enq.bits.dataflow := current_dataflow
