@@ -54,9 +54,10 @@ class ExIUnroller[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiA
     (q.bits(1).cmd.rs2(31, 0).asTypeOf(local_addr_t) + I_block * J_blocks * block_rows.U).asUInt()
   compute_cmd_with_bounded_i.rob_id.valid := last_send && q.bits(1).rob_id.valid
 
-  /*when (I_sent > 0.U) {
+  when (I_sent > 0.U) {
     preload_cmd_with_bounded_i.cmd.rs1 := (block_rows.U << 48) | (block_cols.U << 32) | GARBAGE_ADDR
-  }*/
+    compute_cmd_with_bounded_i.cmd.inst.funct := COMPUTE_AND_STAY_CMD
+  }
   when (q.bits(0).cmd.rs2(31, 0).asTypeOf(local_addr_t).is_garbage()) {
     preload_cmd_with_bounded_i.cmd.rs2 := (block_rows.U << 48) | (block_cols.U << 32) | GARBAGE_ADDR
   }
