@@ -330,6 +330,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       e.q =/= new_entry.q || (e.q === new_entry.q && !e.issued)
     }
 
+    val new_entry_is_ld_and_other_is_ex = entries.map { e =>
+      e.valid && e.bits.q === exq && new_entry.q === ldq
+    }
+
     val op1_raws_opa = VecInit((entries zip op1_matches_opa).map { case (e, m) =>
       m && op1.valid && compare_q(e.bits, new_entry) && e.bits.opa_is_dst
     })
@@ -344,7 +348,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val dst_wars_opb = VecInit((entries zip dst_matches_opb).map { case (e, m) =>
       m && dst.valid && compare_q(e.bits, new_entry)
     })
-    val wars = VecInit((dst_wars_opa zip dst_wars_opb).map { case (a, b) => a || b })
+    val wars = VecInit((dst_wars_opa, dst_wars_opb, new_entry_is_ld_and_other_is_ex).zipped.map { case (a, b, c) => (a || b) && !c })
 
     val dst_waws_opa = VecInit((entries zip dst_matches_opa_for_waws).map { case (e, m) =>
       m && dst.valid && (compare_q(e.bits, new_entry) || new_entry.q === ldq) && e.bits.opa_is_dst
