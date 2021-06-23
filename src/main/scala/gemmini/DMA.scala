@@ -235,6 +235,12 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     tl.a.bits := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
 
+    val bad_addr = WireInit(tl.a.fire() && (tl.a.bits.address < BigInt(0x80000000L).U || tl.a.bits.address > BigInt(0x480000000L).U))
+    dontTouch(bad_addr)
+    FpgaDebug(tl.a.bits.address) 
+    FpgaDebug(tl.a.ready) 
+    FpgaDebug(tl.a.valid) 
+    FpgaDebug(bad_addr) 
     FpgaDebug(translate_q.io.deq.valid)
     FpgaDebug(io.tlb.resp.miss)
     FpgaDebug(io.tlb.resp.paddr)
@@ -535,6 +541,11 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     tl.a.bits := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := RegEnableThru(io.tlb.resp.paddr, RegNext(io.tlb.req.fire()))
 
+    val bad_addr = WireInit(tl.a.fire() && (tl.a.bits.address < BigInt(0x80000000L).U || tl.a.bits.address > BigInt(0x480000000L).U))
+    dontTouch(bad_addr)
+    FpgaDebug(tl.a.bits.address)
+    FpgaDebug(tl.a.ready)       
+    FpgaDebug(tl.a.valid)  
     FpgaDebug(translate_q.io.deq.valid)
     FpgaDebug(io.tlb.resp.miss)
     FpgaDebug(io.tlb.resp.paddr)
