@@ -74,26 +74,31 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
                  (implicit edge: TLEdgeOut, p: Parameters) extends CoreModule {
   val io = IO(new Bundle {
     val clients = Flipped(Vec(nClients, new FrontendTLBIO))
-    val ptw = new TLBPTWIO
-    val exp = new TLBExceptionIO
+    val ptw = Vec(nClients, new TLBPTWIO)
+    val exp = Vec(nClients, new TLBExceptionIO)
   })
 
   val lgMaxSize = log2Ceil(coreDataBytes)
-  val tlbArb = Module(new RRArbiter(new DecoupledTLBReq(lgMaxSize), nClients))
-  val tlb = Module(new DecoupledTLB(entries, maxSize))
-  tlb.io.req.valid := tlbArb.io.out.valid
-  tlb.io.req.bits := tlbArb.io.out.bits
-  tlbArb.io.out.ready := true.B
 
-  io.ptw <> tlb.io.ptw
-  io.exp <> tlb.io.exp
+  val tlbs = Seq.fill(nClients)(Module(new DecoupledTLB(entries, maxSize)))
 
-  io.clients.zip(tlbArb.io.in).foreach { case (client, req) =>
+  // val tlbArb = Module(new RRArbiter(new DecoupledTLBReq(lgMaxSize), nClients))
+  // val tlb = Module(new DecoupledTLB(entries, maxSize))
+  // tlb.io.req.valid := tlbArb.io.out.valid
+  // tlb.io.req.bits := tlbArb.io.out.bits
+  // tlbArb.io.out.ready := true.B
+
+  io.ptw <> VecInit(tlbs.map(_.io.ptw))
+  io.exp <> VecInit(tlbs.map(_.io.exp))
+
+  (io.clients, tlbs, io.exp).zipped.foreach { case (client, tlb, exp) =>
+    val req = tlb.io.req
+
     val last_translated_valid = RegInit(false.B)
     val last_translated_vpn = RegInit(0.U(vaddrBits.W))
     val last_translated_ppn = RegInit(0.U(paddrBits.W))
 
-    val l0_tlb_hit = last_translated_valid && ((client.req.bits.tlb_req.vaddr >> pgIdxBits) === (last_translated_vpn >> pgIdxBits))
+    val l0_tlb_hit = last_translated_valid && ((client.req.bits.tlb_req.vaddr >> pgIdxBits).asUInt() === (last_translated_vpn >> pgIdxBits).asUInt())
     val l0_tlb_paddr = Cat(last_translated_ppn >> pgIdxBits, client.req.bits.tlb_req.vaddr(pgIdxBits-1,0))
 
     when (req.fire() && !tlb.io.resp.miss) {
@@ -101,7 +106,7 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
       last_translated_vpn := req.bits.tlb_req.vaddr
       last_translated_ppn := tlb.io.resp.paddr
     }
-    when (io.exp.flush()) {
+    when (exp.flush()) {
       last_translated_valid := false.B
     }
 
