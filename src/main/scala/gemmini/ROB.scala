@@ -211,8 +211,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       op1.bits.end := op1.bits.start + preload_rows
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
-      val start = cmd.rs1.asTypeOf(local_addr_t)
-
       val rows = cmd.rs1(48 + mvin_cols_bits - 1, 48)
       val k = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
 
@@ -222,15 +220,13 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val cols = cmd.rs1(32 + log2Up(block_cols + 1) - 1, 32)
       val compute_rows = Mux(a_transpose, cols, total_rows) * a_stride
 
-      op1.bits.start := start + (mats - 1.U) * k * block_rows.U
-      op1.bits.end := start + compute_rows
-      op1.bits.wraps_around := start.add_with_overflow(compute_rows)._2
+      op1.bits.end := op1.bits.start + compute_rows
+      op1.bits.wraps_around := op1.bits.start.add_with_overflow(compute_rows)._2
     }
 
     op2.valid := funct_is_compute || funct === STORE_CMD
     op2.bits.start := cmd.rs2.asTypeOf(local_addr_t)
     when (funct_is_compute) {
-      /*
       val rows = cmd.rs2(48 + mvin_cols_bits - 1, 48)
       val k = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd) // TODO this needs to use J rather than K
 
@@ -239,9 +235,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
       op2.bits.end := op2.bits.start + total_rows
       op2.bits.wraps_around := op2.bits.start.add_with_overflow(total_rows)._2
-      */
-      op2.bits.end := GARBAGE_ADDR.asTypeOf(local_addr_t)
-      op2.bits.wraps_around := false.B
     }.elsewhen (pooling_is_enabled) {
       // If pooling is enabled, then we assume that this command simply mvouts everything in this accumulator bank from
       // start to the end of the bank // TODO this won't work when acc_banks =/= 2
@@ -310,7 +303,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val opa_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits) })
     // This can be WAW dst <- dst
     val opa_matches_opa_for_waws = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits, check_accumulates=true) })
-    val opa_matches_opa_for_waws_for_ex = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.start === e.bits.opa.bits.start })
     // This can be WAR dst <- op1/op2
     val opa_matches_opb = VecInit(entries.map { e => e.valid && e.bits.opb.valid && new_entry.opa.bits.overlaps(e.bits.opb.bits) })
     // This can be RAW op2 <- dst
@@ -325,13 +317,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val dst_matches_opa = VecInit((entries zip opa_matches_opa).map { case (e, a) =>
       e.valid && dst.valid && a
     })
-    /*
     val dst_matches_opa_for_waws = VecInit((entries zip opa_matches_opa_for_waws).map { case (e, a) =>
       e.valid && dst.valid && a
-    })
-    */
-    val dst_matches_opa_for_waws = VecInit((entries, opa_matches_opa_for_waws, opa_matches_opa_for_waws_for_ex).zipped.map { case (e, a, b) =>
-      e.valid && dst.valid && Mux(new_entry.q === exq && e.bits.q === exq, b, a)
     })
     val dst_matches_opb = VecInit((entries zip opa_matches_opb).map { case (e, b) =>
       e.valid && dst.valid && b
