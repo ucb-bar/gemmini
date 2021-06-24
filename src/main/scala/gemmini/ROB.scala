@@ -22,14 +22,14 @@ class ROBIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
 }
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
-class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: RoCCCommand) extends Module {
+class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: RoCCCommand, gemmini_cmd_t: GemminiCmd) extends Module {
   import config._
 
   val block_rows = tileRows * meshRows
   val block_cols = tileColumns * meshColumns
 
   val io = IO(new Bundle {
-    val alloc = Flipped(Decoupled(cmd_t.cloneType))
+    val alloc = Flipped(Decoupled(gemmini_cmd_t.cloneType))
 
     val completed = Flipped(Valid(UInt(log2Up(rob_entries).W)))
 
@@ -48,11 +48,6 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val solitary_preload = Input(Bool()) // TODO very hacky. from ExecuteController, to prevent infinite fence stalls. remove later
   })
 
-  println(s"\n\nio.alloc.bits.inst.rs1.getWidth = ${io.alloc.bits.inst.rs1.getWidth}")
-  println(s"io.alloc.bits.inst.rs2.getWidth = ${io.alloc.bits.inst.rs2.getWidth}")
-  println(s"io.alloc.bits.inst.rd.getWidth = ${io.alloc.bits.inst.rd.getWidth}")
-  println(s"io.alloc.bits.inst.opcode.getWidth = ${io.alloc.bits.inst.opcode.getWidth}\n\n")
-
   // TODO make this a ChiselEnum
   val ldq :: stq :: exq :: Nil = Enum(3)
   val q_t = ldq.cloneType
@@ -62,12 +57,41 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val end = local_addr_t.cloneType
     val wraps_around = Bool()
 
-    def overlaps(other: OpT, check_accumulates: Boolean=false): Bool = {
-      ((other.start <= start && (start < other.end || other.wraps_around)) ||
+    val i = UInt(16.W)
+    val j = UInt(16.W)
+    val k = UInt(16.W)
+    val i_len = UInt(16.W)
+    val j_len = UInt(16.W)
+    val k_len = UInt(16.W)
+    val use_iterators = Bool()
+
+    def overlaps(other: OpT, check_accumulates: Boolean=false, compare_i_and_k: Bool=false.B, compare_i_and_j: Bool=false.B): Bool = {
+      val without_iterators = ((other.start <= start && (start < other.end || other.wraps_around)) ||
         (start <= other.start && (other.start < end || wraps_around))) &&
         (!check_accumulates.B ||
           !(start.is_acc_addr && start.accumulate && other.start.is_acc_addr && other.start.accumulate)) &&
         !(start.is_garbage() || other.start.is_garbage()) // TODO the "is_garbage" check might not really be necessary
+
+      val with_iterators_ik = ((other.i <= i && (i < other.i + other.i_len)) ||
+        (i <= other.i && other.i < i + i_len)) &&
+        ((other.k <= k && (k < other.k + other.k_len)) ||
+          (k <= other.k && other.k < k + k_len)) &&
+        (!check_accumulates.B ||
+          !(start.is_acc_addr && start.accumulate && other.start.is_acc_addr && other.start.accumulate)) &&
+        !(start.is_garbage() || other.start.is_garbage()) // TODO the "is_garbage" check might not really be necessary
+
+      val with_iterators_ij = ((other.i <= i && (i < other.i + other.i_len)) ||
+        (i <= other.i && other.i < i + i_len)) &&
+        ((other.j <= j && (j < other.j + other.j_len)) ||
+          (j <= other.j && other.j < j + j_len)) &&
+        (!check_accumulates.B ||
+          !(start.is_acc_addr && start.accumulate && other.start.is_acc_addr && other.start.accumulate)) &&
+        !(start.is_garbage() || other.start.is_garbage()) // TODO the "is_garbage" check might not really be necessary
+
+      assert(!(compare_i_and_j && compare_i_and_k))
+      assert(!compare_i_and_j || !compare_i_and_k || (use_iterators && other.use_iterators))
+
+      Mux(compare_i_and_k, with_iterators_ik, Mux(compare_i_and_j, with_iterators_ij, without_iterators))
     }
   }
 
@@ -174,7 +198,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   io.alloc.ready := false.B
   when (io.alloc.valid) {
     val spAddrBits = 32
-    val cmd = io.alloc.bits
+    val gemmini_cmd = io.alloc.bits
+    val cmd = io.alloc.bits.cmd
     val funct = cmd.inst.funct
     val funct_is_compute = funct === COMPUTE_AND_STAY_CMD || funct === COMPUTE_AND_FLIP_CMD
     val config_cmd_type = cmd.rs1(1,0) // TODO magic numbers
@@ -187,12 +212,33 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val op1 = Wire(UDValid(new OpT))
     op1.valid := false.B
     op1.bits := DontCare
+    op1.bits.i := gemmini_cmd.i
+    op1.bits.j := gemmini_cmd.j
+    op1.bits.k := gemmini_cmd.k
+    op1.bits.i_len := 1.U
+    op1.bits.j_len := 1.U
+    op1.bits.k_len := 1.U
+    op1.bits.use_iterators := gemmini_cmd.use_iterators
     val op2 = Wire(UDValid(new OpT))
     op2.valid := false.B
     op2.bits := DontCare
+    op2.bits.i := gemmini_cmd.i
+    op2.bits.j := gemmini_cmd.j
+    op2.bits.k := gemmini_cmd.k
+    op2.bits.i_len := 1.U
+    op2.bits.j_len := 1.U
+    op2.bits.k_len := 1.U
+    op2.bits.use_iterators := gemmini_cmd.use_iterators
     val dst = Wire(UDValid(new OpT))
     dst.valid := false.B
     dst.bits := DontCare
+    dst.bits.i := gemmini_cmd.i
+    dst.bits.j := gemmini_cmd.j
+    dst.bits.k := gemmini_cmd.k
+    dst.bits.i_len := 1.U
+    dst.bits.j_len := 1.U
+    dst.bits.k_len := 1.U
+    dst.bits.use_iterators := gemmini_cmd.use_iterators
     assert(!(op1.valid && op2.valid && dst.valid))
 
     new_entry.opa_is_dst := dst.valid
@@ -212,10 +258,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       op1.bits.end := op1.bits.start + preload_rows
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
-      val start = cmd.rs1.asTypeOf(local_addr_t)
-
       val rows = cmd.rs1(48 + mvin_cols_bits - 1, 48)
-      val k = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
+      val k = gemmini_cmd.max_k
 
       val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
       val total_rows = ((mats - 1.U) * k * block_rows.U) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
@@ -223,9 +267,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val cols = cmd.rs1(32 + log2Up(block_cols + 1) - 1, 32)
       val compute_rows = Mux(a_transpose, cols, total_rows) * a_stride
 
-      op1.bits.start := start + (mats - 1.U) * k * block_rows.U
-      op1.bits.end := start + compute_rows
-      op1.bits.wraps_around := start.add_with_overflow(compute_rows)._2
+      op1.bits.end := op1.bits.start + compute_rows
+      op1.bits.wraps_around := op1.bits.start.add_with_overflow(compute_rows)._2
+
+      op1.bits.i_len := mats
     }
 
     op2.valid := funct_is_compute || funct === STORE_CMD
@@ -233,14 +278,15 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     when (funct_is_compute) {
       /*
       val rows = cmd.rs2(48 + mvin_cols_bits - 1, 48)
-      val k = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd) // TODO this needs to use J rather than K
+      val j = gemmini_cmd.max_j
 
       val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
-      val total_rows = ((mats - 1.U) * k * block_rows.U) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
+      val total_rows = ((mats - 1.U) * j * block_rows.U) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
 
       op2.bits.end := op2.bits.start + total_rows
       op2.bits.wraps_around := op2.bits.start.add_with_overflow(total_rows)._2
       */
+
       op2.bits.end := GARBAGE_ADDR.asTypeOf(local_addr_t)
       op2.bits.wraps_around := false.B
     }.elsewhen (pooling_is_enabled) {
@@ -265,13 +311,15 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
       op2.bits.end := op2.bits.start + total_mvout_rows
       op2.bits.wraps_around := pooling_is_enabled || op2.bits.start.add_with_overflow(total_mvout_rows)._2
+
+      op2.bits.j_len := mvout_mats
     }
 
     dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
     dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
       val rows = cmd.rs2(48 + mvin_cols_bits - 1, 48)
-      val j = Cat(cmd.inst.opcode, cmd.inst.rs1, cmd.inst.rs2, cmd.inst.rd)
+      val j = gemmini_cmd.max_j
 
       val mats = rows / block_rows.U + (rows % block_rows.U =/= 0.U)
       val total_rows = ((mats - 1.U) * j * block_rows.U) + Mux(rows % block_rows.U === 0.U, block_rows.U, rows % block_rows.U)
@@ -280,6 +328,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
       dst.bits.end := dst.bits.start + preload_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(preload_rows)._2
+
+      dst.bits.i_len := mats
     }.otherwise {
       val id = MuxCase(0.U, Seq((new_entry.cmd.inst.funct === LOAD2_CMD) -> 1.U,
         (new_entry.cmd.inst.funct === LOAD3_CMD) -> 2.U))
@@ -293,6 +343,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
       dst.bits.end := dst.bits.start + total_mvin_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(total_mvin_rows)._2
+
+      dst.bits.k_len := mvin_mats
     }
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
@@ -308,14 +360,13 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     assert(is_load || is_store || is_ex)
     // This can be RAW op1/op2 <- dst
-    val opa_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits) })
+    val opa_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits, compare_i_and_k=(new_entry.q === exq && e.bits.q === ldq && new_entry.opa.bits.use_iterators)) })
     // This can be WAW dst <- dst
-    val opa_matches_opa_for_waws = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits, check_accumulates=true) })
-    val opa_matches_opa_for_waws_for_ex = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.start === e.bits.opa.bits.start })
+    val opa_matches_opa_for_waws = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits, check_accumulates=true, compare_i_and_j=(new_entry.q === exq && e.bits.q === exq && new_entry.opa.bits.use_iterators)) })
     // This can be WAR dst <- op1/op2
     val opa_matches_opb = VecInit(entries.map { e => e.valid && e.bits.opb.valid && new_entry.opa.bits.overlaps(e.bits.opb.bits) })
     // This can be RAW op2 <- dst
-    val opb_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opb.bits.overlaps(e.bits.opa.bits) })
+    val opb_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opb.bits.overlaps(e.bits.opa.bits, compare_i_and_k=(new_entry.q === exq && e.bits.q === ldq && new_entry.opa.bits.use_iterators)) })
 
     val op1_matches_opa = VecInit((entries zip (opa_matches_opa zip opb_matches_opa)).map { case (e, (a, b)) =>
       e.valid && op1.valid && Mux(dst.valid, b, a)
@@ -326,13 +377,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val dst_matches_opa = VecInit((entries zip opa_matches_opa).map { case (e, a) =>
       e.valid && dst.valid && a
     })
-    /*
     val dst_matches_opa_for_waws = VecInit((entries zip opa_matches_opa_for_waws).map { case (e, a) =>
       e.valid && dst.valid && a
-    })
-    */
-    val dst_matches_opa_for_waws = VecInit((entries, opa_matches_opa_for_waws, opa_matches_opa_for_waws_for_ex).zipped.map { case (e, a, b) =>
-      e.valid && dst.valid && Mux(new_entry.q === exq && e.bits.q === exq, b, a)
     })
     val dst_matches_opb = VecInit((entries zip opa_matches_opb).map { case (e, b) =>
       e.valid && dst.valid && b
@@ -578,7 +624,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   }
 
   val first_preload_allocated = RegInit(false.B)
-  when (io.alloc.fire() && io.alloc.bits.inst.funct === PRELOAD_CMD) {
+  when (io.alloc.fire() && io.alloc.bits.cmd.inst.funct === PRELOAD_CMD) {
     first_preload_allocated := true.B
   }
   val cycles_that_ex_stalls_due_to_dependencies = RegInit(0.U(32.W))
