@@ -359,13 +359,13 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     assert(is_load || is_store || is_ex)
     // This can be RAW op1/op2 <- dst
-    val opa_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits, compare_i_and_k=(new_entry.q === exq && e.bits.q === ldq && new_entry.opa.bits.use_iterators)) })
+    val opa_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits, compare_i_and_k=(funct_is_compute && e.bits.cmd.inst.funct === LOAD_CMD && new_entry.opa.bits.use_iterators)) })
     // This can be WAW dst <- dst
-    val opa_matches_opa_for_waws = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits, check_accumulates=true, compare_i_and_j=(new_entry.q === exq && e.bits.q === exq && new_entry.opa.bits.use_iterators)) })
+    val opa_matches_opa_for_waws = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits, check_accumulates=true, compare_i_and_j=(funct === PRELOAD_CMD && e.bits.cmd.inst.funct === PRELOAD_CMD && new_entry.opa.bits.use_iterators)) })
     // This can be WAR dst <- op1/op2
     val opa_matches_opb = VecInit(entries.map { e => e.valid && e.bits.opb.valid && new_entry.opa.bits.overlaps(e.bits.opb.bits) })
     // This can be RAW op2 <- dst
-    val opb_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opb.bits.overlaps(e.bits.opa.bits, compare_i_and_k=(new_entry.q === exq && e.bits.q === ldq && new_entry.opa.bits.use_iterators)) })
+    val opb_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opb.bits.overlaps(e.bits.opa.bits, compare_i_and_k=(funct_is_compute && e.bits.cmd.inst.funct === LOAD_CMD && new_entry.opa.bits.use_iterators)) })
 
     val op1_matches_opa = VecInit((entries zip (opa_matches_opa zip opb_matches_opa)).map { case (e, (a, b)) =>
       e.valid && op1.valid && Mux(dst.valid, b, a)
