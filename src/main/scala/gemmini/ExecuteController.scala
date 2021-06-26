@@ -64,7 +64,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val cmd_q_heads = 3
   assert(ex_queue_length >= cmd_q_heads)
   // val (cmd, _) = MultiHeadedQueue(io.cmd, ex_queue_length, cmd_q_heads)
-  val (cmd, _) = MultiHeadedQueue(unrolled_cmd, ex_queue_length, cmd_q_heads)
+  // val (cmd, _) = MultiHeadedQueue(unrolled_cmd, ex_queue_length, cmd_q_heads)
+  val (cmd, _) = MultiHeadedQueue(unrolled_cmd, rob_full_entries, cmd_q_heads) // TODO this should be ex_queue_length
   cmd.pop := 0.U
 
   io.solitary_preload := cmd.valid(0) && cmd.bits(0).cmd.inst.funct === PRELOAD_CMD && !cmd.valid(1)

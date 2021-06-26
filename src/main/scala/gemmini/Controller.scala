@@ -25,6 +25,8 @@ class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val max_k = UInt(16.W) // TODO magic numbers
   val use_iterators = Bool()
 
+  val ex_k_portion = UInt(8.W) // TODO magic numbers
+
   override def cloneType: this.type = new GemminiCmd(rob_entries).asInstanceOf[this.type]
 }
 
@@ -131,9 +133,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // val (unrolled_cmd, loop_matmul_unroller_busy) = LoopMatmul(unrolled_cmd_after_conv, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
 
-  val (loop_cmd, loop_matmul_unroller_busy) = LoopMatmul(conv_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
+  val (loop_cmd, loop_matmul_unroller_busy) = LoopMatmul(conv_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization, rob.io.ex_k_portion_utilizations,
     meshRows*tileRows, coreMaxAddrBits, rob_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
-    inputType.getWidth, accType.getWidth, dma_maxbytes, new GemminiCmd(rob_entries))
+    inputType.getWidth, accType.getWidth, dma_maxbytes, new GemminiCmd(rob_entries), ex_total_k_portions)
 
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
