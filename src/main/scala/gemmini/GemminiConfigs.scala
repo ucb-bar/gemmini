@@ -112,6 +112,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val load_states = 3
   val block_stride_bits = 16
 
+  val ex_total_k_portions = 2
+
   //==========================================================================
   // sanity check mesh size
   //==========================================================================

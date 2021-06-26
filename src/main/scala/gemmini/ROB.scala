@@ -43,6 +43,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val st_utilization = Output(UInt(log2Up(rob_entries+1).W))
     val ex_utilization = Output(UInt(log2Up(rob_entries+1).W))
 
+    val ex_k_portion_utilizations = Output(Vec(ex_total_k_portions, UInt(log2Up(rob_entries+1).W)))
+
     val busy = Output(Bool())
 
     val solitary_preload = Input(Bool()) // TODO very hacky. from ExecuteController, to prevent infinite fence stalls. remove later
@@ -123,6 +125,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     val deps = Vec(rob_entries, Bool())
     def ready(dummy: Int = 0): Bool = !deps.reduce(_ || _)
+
+    val ex_k_portion = UInt(log2Up(ex_total_k_portions).W)
 
     // Signals that are necessary for OoO operation
     val waiting_for_compute_inst = Bool()
@@ -208,6 +212,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     new_entry.cmd := cmd
 
     new_entry.is_config := funct === CONFIG_CMD
+
+    new_entry.ex_k_portion := io.alloc.bits.ex_k_portion
 
     val op1 = Wire(UDValid(new OpT))
     op1.valid := false.B
@@ -593,6 +599,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   io.ld_utilization := utilization_ld_q
   io.st_utilization := utilization_st_q
   io.ex_utilization := utilization_ex_q
+
+  io.ex_k_portion_utilizations.zipWithIndex.foreach { case (io, k) =>
+    io := PopCount(entries.map(e => e.valid && e.bits.q === exq && !e.bits.issued && e.bits.ex_k_portion === k.U))
+  }
 
   val valids = VecInit(entries.map(_.valid))
   val functs = VecInit(entries.map(_.bits.cmd.inst.funct))

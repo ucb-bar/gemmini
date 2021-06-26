@@ -35,12 +35,12 @@ object Util {
     Mux(u +& v > max, max, u + v)
   }
 
-  def floorAdd(u: UInt, n: UInt, max_plus_one: UInt, en: Bool = true.B): UInt = {
+  def floorAdd(u: UInt, n: UInt, max_plus_one: UInt, en: Bool = true.B, min: UInt = 0.U): UInt = {
     val max = max_plus_one - 1.U
 
     MuxCase(u + n, Seq(
       (!en) -> u,
-      ((u +& n) > max) -> 0.U
+      ((u +& n) > max) -> min
     ))
   }
 
