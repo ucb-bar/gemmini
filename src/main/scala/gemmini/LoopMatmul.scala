@@ -686,7 +686,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   }
 }
 
-class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
+class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_entries: Int, max_lds: Int, max_exs: Int, max_sts: Int,
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int, cmd_t: GemminiCmd, ex_total_k_portions: Int)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
@@ -778,10 +778,23 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   ldA.io.rob_overloaded := io.ld_utilization >= max_lds.U
   ldB.io.rob_overloaded := io.ld_utilization >= max_lds.U
   // ex.io.rob_overloaded := io.ex_utilization >= max_exs.U
-  (exs zip io.ex_k_portion_utilizations).foreach { case (ex, k_util) =>
+  (exs zip io.ex_k_portion_utilizations).zipWithIndex.foreach { case ((ex, k_util), id) =>
     val other_exs = exs.filter(_ != ex)
     val must_wait_for_other_compute = other_exs.map(_.io.must_send_compute).reduce(_ || _)
-    ex.io.rob_overloaded := io.ex_utilization >= max_exs.U || k_util >= 12.U || must_wait_for_other_compute
+
+    val limits = (1 to ex_total_k_portions).map(i => rob_full_entries / i)
+    val limits_uint = VecInit(limits.map(_.U))
+    val first_limits = VecInit(limits.map(l => (l * 1.5).toInt.U))
+
+    val active_exs = PopCount(exs.map(!_.io.idle))
+    val earliest_k_portion = MuxCase((ex_total_k_portions - 1).U, (0 until ex_total_k_portions).map { i =>
+      !exs(i).io.idle -> i.U
+    })
+
+    val current_limit = Mux(id.U === earliest_k_portion, first_limits(active_exs), limits_uint(active_exs))
+
+    // ex.io.rob_overloaded := io.ex_utilization >= max_exs.U || k_util >= 12.U || must_wait_for_other_compute
+    ex.io.rob_overloaded := io.ex_utilization >= max_exs.U || k_util >= current_limit || must_wait_for_other_compute
   }
   ldD.io.rob_overloaded := io.ld_utilization >= max_lds.U
   stC.io.rob_overloaded := io.st_utilization >= max_sts.U
@@ -1065,10 +1078,10 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
 
 object LoopMatmul {
   def apply(in: DecoupledIO[RoCCCommand], ld_utilization: UInt, st_utilization: UInt, ex_utilization: UInt, ex_k_utilizations: Vec[UInt],
-            block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
+            block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_entries: Int, max_lds: Int, max_exs: Int, max_sts: Int,
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int, cmd_t: GemminiCmd, ex_total_k_portions: Int)
            (implicit p: Parameters): Tuple2[DecoupledIO[GemminiCmd], Bool] = {
-    val mod = Module(new LoopMatmul(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
+    val mod = Module(new LoopMatmul(block_size, coreMaxAddrBits, rob_size, rob_full_entries, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes, cmd_t, ex_total_k_portions))
     mod.io.in <> in
     mod.io.ld_utilization := ld_utilization
