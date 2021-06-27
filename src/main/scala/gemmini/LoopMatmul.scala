@@ -375,6 +375,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
     val must_send_compute = Output(Bool())
 
+    val can_send_command = Output(Bool())
+
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
   })
 
@@ -459,6 +461,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val ldb_ahead = io.ldb_completed || io.ld_kb > k || (io.ld_ka === k && io.ld_j > j)
   val ldd_ahead = io.ldd_completed
   val ld_ahead = lda_ahead && ldb_ahead && ldd_ahead
+
+  io.can_send_command := state =/= idle && ld_ahead
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && ld_ahead
   io.cmd.bits.cmd := Mux(state === pre, pre_cmd, comp_cmd)
@@ -786,15 +790,16 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
     val limits_uint = VecInit(limits.map(_.U))
     val first_limits = VecInit(limits.map(l => (l * 1.5).toInt.U))
 
-    val active_exs = PopCount(exs.map(!_.io.idle))
+    val active_exs = PopCount(exs.map(_.io.can_send_command))
     val earliest_k_portion = MuxCase((ex_total_k_portions - 1).U, (0 until ex_total_k_portions).map { i =>
-      !exs(i).io.idle -> i.U
+      exs(i).io.can_send_command -> i.U
     })
 
-    val current_limit = Mux(id.U === earliest_k_portion, first_limits(active_exs), limits_uint(active_exs))
+    val k_util_limit = Mux(ex.io.must_send_compute, rob_size.U, // If we've just send a preload, then we should just send the next compute, without worrying about k_util
+      Mux(id.U === earliest_k_portion, first_limits(active_exs), limits_uint(active_exs)))
 
     // ex.io.rob_overloaded := io.ex_utilization >= max_exs.U || k_util >= 12.U || must_wait_for_other_compute
-    ex.io.rob_overloaded := io.ex_utilization >= max_exs.U || k_util >= current_limit || must_wait_for_other_compute
+    ex.io.rob_overloaded := io.ex_utilization >= max_exs.U || k_util >= k_util_limit || must_wait_for_other_compute
   }
   ldD.io.rob_overloaded := io.ld_utilization >= max_lds.U
   stC.io.rob_overloaded := io.st_utilization >= max_sts.U
