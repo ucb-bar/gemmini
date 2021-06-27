@@ -795,10 +795,14 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
       exs(i).io.can_send_command -> i.U
     })
 
-    val k_util_limit = Mux(ex.io.must_send_compute, rob_size.U, // If we've just send a preload, then we should just send the next compute, without worrying about k_util
-      Mux(id.U === earliest_k_portion, first_limits(active_exs), limits_uint(active_exs)))
+    val k_util_limit = WireInit(Mux(id.U === earliest_k_portion, first_limits(active_exs), limits_uint(active_exs)))
+    val max_k_util_limit = (rob_full_entries - 2).U
 
-    // ex.io.rob_overloaded := io.ex_utilization >= max_exs.U || k_util >= 12.U || must_wait_for_other_compute
+    // If we've just send a preload, then we should just send the next compute, without worrying about k_util
+    when (ex.io.must_send_compute || k_util_limit > max_k_util_limit) {
+      k_util_limit := max_k_util_limit
+    }
+
     ex.io.rob_overloaded := io.ex_utilization >= max_exs.U || k_util >= k_util_limit || must_wait_for_other_compute
   }
   ldD.io.rob_overloaded := io.ld_utilization >= max_lds.U
