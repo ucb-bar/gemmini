@@ -745,6 +745,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
   ldab_arb.io.weightA := head_loop.weightA
 
   // Create ex arbiters
+  // ALON: This is the arbiter between the k-portions. You could try out an RR arbiter instead. Right now, we're using Chisel's default arbiter which is a priority arbiter that prioritizes the earliest k-portions
   val ex_arb = Module(new Arbiter(cmd_t, ex_total_k_portions))
   (ex_arb.io.in zip exs).foreach { case (in, ex) =>
     in <> ex.io.cmd
@@ -783,12 +784,17 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
   ldB.io.rob_overloaded := io.ld_utilization >= max_lds.U
   // ex.io.rob_overloaded := io.ex_utilization >= max_exs.U
   (exs zip io.ex_k_portion_utilizations).zipWithIndex.foreach { case ((ex, k_util), id) =>
+    /*
+    A k-portion is inactive iff it has finished sending all its matmul commands, or if it can't send any matmul commands
+    currently because the loads that it needs haven't been sent out yet
+     */
+
     val other_exs = exs.filter(_ != ex)
     val must_wait_for_other_compute = other_exs.map(_.io.must_send_compute).reduce(_ || _)
 
     val limits = (1 to ex_total_k_portions).map(i => rob_full_entries / i)
     val limits_uint = VecInit(limits.map(_.U))
-    val first_limits = VecInit(limits.map(l => (l * 1.5).toInt.U))
+    val first_limits = VecInit(limits.map(l => (l * 1.5).toInt.U)) // ALON: You can scale the earliest k-portion's limit by any scalar factor (e.g. 1.25) that you would like
 
     val active_exs = PopCount(exs.map(_.io.can_send_command))
     val earliest_k_portion = MuxCase((ex_total_k_portions - 1).U, (0 until ex_total_k_portions).map { i =>
@@ -802,6 +808,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
     val k_util_limit = Mux(ex.io.must_send_compute || default_k_util_limit > max_k_util_limit, max_k_util_limit,
       default_k_util_limit)
 
+    // ALON: You can change "k_util_limit" to any limit (e.g. 12.U) that you would like
     ex.io.rob_overloaded := io.ex_utilization >= max_exs.U || k_util >= k_util_limit || must_wait_for_other_compute
   }
   ldD.io.rob_overloaded := io.ld_utilization >= max_lds.U

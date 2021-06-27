@@ -112,7 +112,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val load_states = 3
   val block_stride_bits = 16
 
-  val ex_total_k_portions = 2
+  val ex_total_k_portions = 2 // ALON: You can change this to any number of k-portions that you would like
 
   //==========================================================================
   // sanity check mesh size
