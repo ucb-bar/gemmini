@@ -134,7 +134,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // val (unrolled_cmd, loop_matmul_unroller_busy) = LoopMatmul(unrolled_cmd_after_conv, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
 
   val (loop_cmd, loop_matmul_unroller_busy) = LoopMatmul(conv_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization, rob.io.ex_k_portion_utilizations,
-    meshRows*tileRows, coreMaxAddrBits, rob_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
+    meshRows*tileRows, coreMaxAddrBits, rob_entries, rob_full_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes, new GemminiCmd(rob_entries), ex_total_k_portions)
 
   val unrolled_cmd = Queue(loop_cmd)
