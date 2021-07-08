@@ -137,7 +137,7 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 - `rs2[63:48]` = number of rows to store
 - `funct` = 3
 
-**Action:** DRAM[Translate[rs2]] <= Scratchpad[rs1]
+**Action:** DRAM[Translate[rs1]] <= Scratchpad[rs2]
 - Stores a fixed amount of data (`tileColumns x meshColumns x tileRows x meshRows x dataBytes` bytes) from the scratchpad to L2/DRAM
 - Store is sequential from the rs1/rs2 base addresses. Stride must be set by the `config_mvout` command
 
