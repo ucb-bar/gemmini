@@ -72,11 +72,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              use_preload_filter: Boolean,
 
-                                                                             val prng_seed: Int = 1, // ALON: You can change the PRNG seed here
-                                                                             val proportion_of_slow_accesses_out_of_128: Int = 10, // ALON: The number of memory accesses (out of 128) that are slow. You can also make this 0
-                                                                             val stall_delay: Int = 1000, // ALON: How many cycles should we wait for a slow memory access? You can also make this 0
-                                                                             val delay_lds: Boolean = true, // ALON: Should loads be stalled?
-                                                                             val delay_sts: Boolean = true, // ALON: Should stores be stalled?
+                                                                             prng_seed: Int = 1, // ALON: You can change the PRNG seed here
+                                                                             proportion_of_slow_accesses_out_of_128: Int = 10, // ALON: The number of memory accesses (out of 128) that are slow. You can also make this 0
+                                                                             stall_delay: Int = 1000, // ALON: How many cycles should we wait for a slow memory access? You can also make this 0
+                                                                             delay_lds: Boolean = true, // ALON: Should loads be stalled?
+                                                                             delay_sts: Boolean = true, // ALON: Should stores be stalled?
 
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
