@@ -72,6 +72,15 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              use_preload_filter: Boolean,
 
+                                                                             prng_seed: Int = 1, // ALON: You can change the PRNG seed here
+                                                                             proportion_of_slow_accesses_out_of_128: Int = 10, // ALON: The number of memory accesses (out of 128) that are slow. You can also make this 0
+                                                                             stall_delay: Int = 1000, // ALON: How many cycles should we wait for a slow memory access? You can also make this 0
+                                                                             delay_lds: Boolean = false, // ALON: Should loads be stalled?
+                                                                             delay_sts: Boolean = false, // ALON: Should stores be stalled?
+
+                                                                             ex_total_k_portions: Int = 2, // ALON: You can change this to any number of k-portions that you would like
+                                                                             ex_fine_grained_interleaving: Boolean = true, // ALON: If this is true, then we use the newer ("finer") intervleaving strategy
+
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth
@@ -111,8 +120,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
   val load_states = 3
   val block_stride_bits = 16
-
-  val ex_total_k_portions = 2
 
   //==========================================================================
   // sanity check mesh size

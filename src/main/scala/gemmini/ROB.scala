@@ -133,6 +133,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
     // Debugging signals
     val allocated_at = UInt(instructions_allocated.getWidth.W)
+    val stall_cycles_before_issue = UInt(32.W) // TODO magic number
   }
   val full_entries = Reg(Vec(rob_full_entries, UDValid(new Entry)))
   val partial_entries = Reg(Vec(rob_partial_entries, UDValid(new Entry)))
@@ -214,6 +215,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     new_entry.is_config := funct === CONFIG_CMD
 
     new_entry.ex_k_portion := io.alloc.bits.ex_k_portion
+
+    new_entry.stall_cycles_before_issue := 0.U
 
     val op1 = Wire(UDValid(new OpT))
     op1.valid := false.B
@@ -556,6 +559,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
           e.valid := !e.bits.complete_on_issue
         }
       }
+
+      val stall_limit = 5000.U // ALON: This magic number defines when a command will be considered "stalled"
+      when (issue_entry.bits.stall_cycles_before_issue > stall_limit && q === exq) {
+        printf(p"command stalled: (funct: ${issue_entry.bits.cmd.inst.funct}) (k_portion: ${issue_entry.bits.ex_k_portion})\n")
+      }
     }
   }
 
@@ -580,6 +588,13 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
           last_allocated_garbage_preload.pop()
         }
       }
+    }
+  }
+
+  // Increment stall counters
+  entries.foreach { e =>
+    when (e.valid && !e.bits.issued) {
+      e.bits.stall_cycles_before_issue := e.bits.stall_cycles_before_issue + 1.U
     }
   }
 
