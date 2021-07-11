@@ -120,7 +120,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val raw_cmd = Queue(io.cmd)
 
   val max_lds = rob_partial_entries
-  val max_exs = rob_full_entries
+  val max_exs = rob_full_entries - 2
   val max_sts = rob_partial_entries / 2
 
   // TODO replace 4,12,2 with parameters based on ROB size
