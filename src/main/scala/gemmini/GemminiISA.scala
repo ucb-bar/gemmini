@@ -71,7 +71,7 @@ object GemminiISA {
       val rows = UInt((16 min maxLocalAddrBits).W)
       val garbage2 = UInt(((16 - maxLocalAddrBits) max 0).W)
       val cols = UInt((16 min maxLocalAddrBits).W)
-      val spad_addr = local_addr_t
+      val spad_addr = local_addr_t.cloneType
 
       override def cloneType: Rs2.this.type = new Rs2(local_addr_t).asInstanceOf[this.type]
     }
@@ -90,7 +90,7 @@ object GemminiISA {
       val rows = UInt((16 min maxLocalAddrBits).W)
       val garbage2 = UInt(((16 - maxLocalAddrBits) max 0).W)
       val cols = UInt((16 min maxLocalAddrBits).W)
-      val spad_addr = local_addr_t
+      val spad_addr = local_addr_t.cloneType
 
       override def cloneType: Rs2.this.type = new Rs2(local_addr_t).asInstanceOf[this.type]
     }
@@ -104,7 +104,7 @@ object GemminiISA {
       val bd_rows = UInt(log2Up(block_size+1).W)
       val garbage2 = UInt((16 - log2Up(block_size+1)).W)
       val bd_cols = UInt(log2Up(block_size+1).W)
-      val bd = local_addr_t
+      val bd = local_addr_t.cloneType
 
       override def cloneType: Rs1.this.type = new Rs1(local_addr_t, block_size).asInstanceOf[this.type]
     }
@@ -116,7 +116,7 @@ object GemminiISA {
       val c_rows = UInt(log2Up(max_block_len*block_size+1).W)
       val garbage2 = UInt((16 - log2Up(max_block_len*block_size+1)).W)
       val c_cols = UInt(log2Up(max_block_len*block_size+1).W)
-      val c = local_addr_t
+      val c = local_addr_t.cloneType
 
       override def cloneType: Rs2.this.type = new Rs2(local_addr_t, block_size, max_block_len).asInstanceOf[this.type]
     }
@@ -130,7 +130,7 @@ object GemminiISA {
       val a_rows = UInt(log2Up(max_block_len*block_size+1).W)
       val garbage2 = UInt((16 - log2Up(max_block_len*block_size+1)).W)
       val a_cols = UInt(log2Up(max_block_len*block_size+1).W)
-      val a = local_addr_t
+      val a = local_addr_t.cloneType
 
       override def cloneType: Rs1.this.type = new Rs1(local_addr_t, block_size, max_block_len).asInstanceOf[this.type]
     }
@@ -142,7 +142,7 @@ object GemminiISA {
       val bd_rows = UInt(log2Up(block_size+1).W)
       val garbage2 = UInt((16 - log2Up(block_size+1)).W)
       val bd_cols = UInt(log2Up(block_size+1).W)
-      val bd = local_addr_t
+      val bd = local_addr_t.cloneType
 
       override def cloneType: Rs2.this.type = new Rs2(local_addr_t, block_size).asInstanceOf[this.type]
     }
