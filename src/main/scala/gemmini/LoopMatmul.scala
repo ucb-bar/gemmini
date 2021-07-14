@@ -456,10 +456,10 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val c_cols = block_size.U - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)
   val c_rows = i_blocks * block_size.U - Mux(i + max_i_blocks >= req.max_i, req.pad_i, 0.U)
 
-  val pre_addr_is_garbage = i === 0.U || req.ooo
+  val pre_addr_is_not_garbage = i === 0.U || req.ooo
   val out_addr_accumulates = req.accumulate || k =/= 0.U
 
-  val pre_addr = Mux(pre_addr_is_garbage, b_addr, GARBAGE_ADDR)
+  val pre_addr = Mux(pre_addr_is_not_garbage, b_addr, GARBAGE_ADDR)
   val out_addr = Mux(out_addr_accumulates, c_addr, d_addr)
 
   val j_blocks_holder = req.max_j.asTypeOf(new blocks_holder_t)
@@ -472,7 +472,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   pre_cmd_rs1.bd := 0.U.asTypeOf(local_addr_t)
   pre_cmd_rs1.bd.data := pre_addr
 
-  when (pre_addr_is_garbage) {
+  when (!pre_addr_is_not_garbage) {
     pre_cmd_rs1.bd.make_this_garbage()
   }
 
