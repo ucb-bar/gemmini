@@ -78,7 +78,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              delay_lds: Boolean = false, // ALON: Should loads be stalled?
                                                                              delay_sts: Boolean = false, // ALON: Should stores be stalled?
 
-                                                                             ex_total_k_portions: Int = 2, // ALON: You can change this to any number of k-portions that you would like
+                                                                             ex_total_k_portions: Int = 1, // ALON: You can change this to any number of k-portions that you would like
                                                                              ex_fine_grained_interleaving: Boolean = true, // ALON: If this is true, then we use the newer ("finer") intervleaving strategy
 
                                                                              headerFileName: String = "gemmini_params.h"
