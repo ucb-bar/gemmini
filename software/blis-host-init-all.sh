@@ -13,14 +13,21 @@ rm -rf ../overlay/root/blis/
 cd blis
 echo "Building RISCV Blis"
 # configure to build for riscv64 (single thread, static library)
-#./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --enable-cblas riscv64
-#make clean
-#make -j8
+./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --enable-cblas riscv64
+make clean
+make -j8
+
+echo "Building Hwacha Blis"
+./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --enable-cblas hwacha
+# build library
+make clean
+make -j8
 
 echo "Building Gemmini Blis"
 # configure to build for gemmini (shared library)
 #./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --enable-cblas gemmini
-#./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --disable-sup-handling --enable-cblas gemmini
+#sandbox:
+./configure CC=riscv64-unknown-linux-gnu-gcc -s gemmini --enable-shared --disable-sup-handling --enable-cblas gemmini
 # configure to build for gemmini (explicity disable threading and pools, shared library)
 #./configure CC=riscv64-unknown-linux-gnu-gcc --disable-threading --disable-pba-pools --disable-sba-pools --enable-shared --enable-cblas gemmini
 # configure to build for gemmini (openmp multithread, independant testing since statically built)
@@ -30,16 +37,14 @@ echo "Building Gemmini Blis"
 # configure to build for gemmini (openmp multithread, shared library assuming fedora - not buildroot - because of libgomp.so req)
 #./configure CC=riscv64-unknown-linux-gnu-gcc -t openmp --enable-shared --enable-cblas gemmini
 # build library
-#make clean
-#make -j8
+make clean
+make -j8
 
-./configure CC=riscv64-unknown-linux-gnu-gcc -s gemmini --enable-shared --disable-sup-handling --enable-cblas gemmini
-
+echo "Building Gemmini-Hwacha Blis"
 #./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --enable-cblas gemminihwacha
-#./configure CC=riscv64-unknown-linux-gnu-gcc --enable-shared --disable-sup-handling --enable-cblas gemminihwacha
 #sandbox:
 #./configure CC=riscv64-unknown-linux-gnu-gcc -s gemmini --enable-shared --enable-cblas gemminihwacha
-#./configure CC=riscv64-unknown-linux-gnu-gcc -s gemmini --enable-shared --disable-sup-handling --enable-cblas gemminihwacha
+./configure CC=riscv64-unknown-linux-gnu-gcc -s gemmini --enable-shared --disable-sup-handling --enable-cblas gemminihwacha
 make clean
 make -j8
 
@@ -49,7 +54,7 @@ make testsuite-bin
 make blastest-bin
 # copy to linux overlay
 echo "Copying Blis and tests to overlay"
-rm -rf ../overlay/root/blis/
+rm -rf ../overlay/root/blis
 mkdir -p ../overlay/root/blis
 echo '#!/usr/bin/env bash' > ../overlay/root/blis/make-check.sh
 echo `` >> ../overlay/root/blis/make-check.sh

@@ -1,0 +1,9 @@
+{
+  "name" : "blis-tests-hwacha",
+  "workdir" : ".",
+  "base" : "br-base.json",
+  "overlay" : "overlay",
+  "host-init" : "blis-host-init-hwacha.sh",
+  "spike-args" : "--extension=hwacha",
+  "command": "cd /root/blis && export GOMP_CPU_AFFINITY='0 1' && export BLIS_NUM_THREADS=2 && ./test_libblis.x -g ./testsuite/input.general.hwacha -o ./testsuite/input.operations.hwacha"
+}

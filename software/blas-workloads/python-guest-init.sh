@@ -12,7 +12,8 @@ dnf install -y blas
 #ln -s /usr/lib64/libblas.so.3 /usr/lib64/libblas.so
 #link the system libblas shared object to libblis shared object 
 #cp /root/blis/lib/riscv64/libblis.so.3 /usr/lib64/ 
-cp /root/blis/lib/gemmini/libblis.so.3 /usr/lib64/ 
+#cp /root/blis/lib/gemmini/libblis.so.3 /usr/lib64/ 
+cp /root/blis/lib/gemminihwacha/libblis.so.3 /usr/lib64/ 
 ln -s /usr/lib64/libblis.so.3 /usr/lib64/libblis.so
 ln -s /usr/lib64/libblis.so.3 /usr/lib64/libblas.so
 ln -s /usr/lib64/libblis.so.3 /usr/lib64/libcblas.so

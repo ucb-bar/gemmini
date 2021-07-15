@@ -1,0 +1,10 @@
+{
+  "name" : "python-data-base-fed-hwacha",
+  "workdir" : "..",
+  "base" : "python-data-base-fed.json",
+  "rootfs-size" : "16384MiB",
+  "overlay" : "overlay",
+  "host-init" : "blis-host-init-all.sh",
+  "guest-init" : "blas-workloads/python-data-base-guest-init-hwacha.sh",
+  "spike-args" : "--extension=hwacha"
+}

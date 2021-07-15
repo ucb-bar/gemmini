@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+# run the memcached experiment using the manager. optionally passing "withlaunch" will also
+# automatically launch the appropriate runfarm
+#
+# the runfarm WILL NOT be terminated upon completion
+
+trap "exit" INT
+set -e
+set -o pipefail
+
+RDIR=$(pwd)
+
+if [ "$1" == "withlaunch" ]; then
+    firesim launchrunfarm -c ${RDIR}/config_runtime-gemmini-4x4-bf16.ini
+fi
+
+
+firesim infrasetup -c ${RDIR}/config_runtime-gemmini-4x4-bf16.ini
+firesim runworkload -c ${RDIR}/config_runtime-gemmini-4x4-bf16.ini
+firesim terminaterunfarm -c ${RDIR}/config_runtime-gemmini-4x4-bf16.ini --forceterminate
+

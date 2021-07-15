@@ -1,0 +1,11 @@
+{
+  "name" : "python-data-base-fed-riscv64",
+  "workdir" : "..",
+  "base" : "python-data-base-fed.json",
+  "rootfs-size" : "16384MiB",
+  "overlay" : "overlay",
+  "host-init" : "blis-host-init-all.sh",
+  "guest-init" : "blas-workloads/python-data-base-guest-init-riscv64.sh",
+  "spike-args" : "--extension=gemmini",
+  "command": "cd /root/ && python /root/scipy-test.py && python /root/scikit-test.py && poweroff"
+}
