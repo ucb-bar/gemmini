@@ -816,7 +816,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
   io.busy := cmd.valid || loop_configured
 
   // Create ld arbiters
-  val ldab_arb = Module(new WeightedArbiter(new RoCCCommand(), maxWeightA=255, staticWeightAEnabled=true, onlyStaticWeightA=lean_weightA)) // TODO magic numbers
+  val ldab_arb = Module(new WeightedArbiter(cmd_t, maxWeightA=255, staticWeightAEnabled=true, onlyStaticWeightA=lean_weightA)) // TODO magic numbers
   ldab_arb.io.inA <> ldA.io.cmd
   ldab_arb.io.inB <> ldB.io.cmd
   val ab_loads_on_same_loop = ldA.io.loop_id === ldB.io.loop_id
