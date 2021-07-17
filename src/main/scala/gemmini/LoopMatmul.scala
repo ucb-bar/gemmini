@@ -586,7 +586,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   assert(!(state =/= idle && req.a_tranpose && req.b_tranpose))
 }
 
-class LoopMatmulExecuteAddrGenerator(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int, max_block_len: Int, concurrent_loops: Int, cmd_t: GemminiCmd, total_k_portions: Int, fine_grained_interleaving: Boolean, local_addr_t: LocalAddr)
+class LoopMatmulExecuteAddrGenerator(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int, max_block_len: Int, concurrent_loops: Int, cmd_t: GemminiCmd, total_k_portions: Int, fine_grained_interleaving: Boolean, local_addr_t: LocalAddr, no_garbage_preload: Boolean)
                        (implicit p: Parameters) extends Module {
   val GARBAGE_ADDR = (~0.U(32.W)).asUInt()
 
@@ -647,7 +647,7 @@ class LoopMatmulExecuteAddrGenerator(block_size: Int, coreMaxAddrBits: Int, iter
   val c_cols = block_size.U - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)
   val c_rows = i_blocks * block_size.U - Mux(i + max_i_blocks >= req.max_i, req.pad_i, 0.U)
 
-  val pre_addr_is_not_garbage = i === 0.U || req.ooo
+  val pre_addr_is_not_garbage = i === 0.U || req.ooo || no_garbage_preload.B
   val out_addr_accumulates = req.accumulate || k =/= 0.U
 
   val pre_addr = Mux(pre_addr_is_not_garbage, b_addr, GARBAGE_ADDR)
@@ -910,7 +910,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
 }
 
 class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_entries: Int, max_lds: Int, max_exs: Int, max_sts: Int,
-                 max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int, cmd_t: GemminiCmd, ex_total_k_portions: Int, ex_fine_grained_interleaving: Boolean, local_addr_t: LocalAddr, lean_weightA: Boolean)
+                 max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int, cmd_t: GemminiCmd, ex_total_k_portions: Int, ex_fine_grained_interleaving: Boolean, local_addr_t: LocalAddr, lean_weightA: Boolean, lean_ooo_rob: Boolean, staticWeightAEnabled: Boolean)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
   val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
@@ -955,7 +955,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
   io.busy := cmd.valid || loop_configured
 
   // Create ld arbiters
-  val ldab_arb = Module(new WeightedArbiter(cmd_t, maxWeightA=255, staticWeightAEnabled=true, onlyStaticWeightA=lean_weightA)) // TODO magic numbers
+  val ldab_arb = Module(new WeightedArbiter(cmd_t, maxWeightA=255, staticWeightAEnabled=staticWeightAEnabled, onlyStaticWeightA=lean_weightA)) // TODO magic numbers
   ldab_arb.io.inA <> ldA.io.cmd
   ldab_arb.io.inB <> ldB.io.cmd
   val ab_loads_on_same_loop = ldA.io.loop_id === ldB.io.loop_id
@@ -993,7 +993,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
     in.bits.k_portion := ex.io.cmd.bits.ex_k_portion
     k := ex.io.k
   }
-  val ex_addr_generator = Module(new LoopMatmulExecuteAddrGenerator(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, max_block_len, concurrent_loops, cmd_t, total_k_portions = ex_total_k_portions, fine_grained_interleaving = ex_fine_grained_interleaving, local_addr_t))
+  val ex_addr_generator = Module(new LoopMatmulExecuteAddrGenerator(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, max_block_len, concurrent_loops, cmd_t, total_k_portions = ex_total_k_portions, fine_grained_interleaving = ex_fine_grained_interleaving, local_addr_t, lean_ooo_rob))
   ex_addr_generator.io.req := ex_arb.io.out.bits.req
   ex_addr_generator.io.k := ex_arb.io.out.bits.k
   ex_addr_generator.io.j := ex_arb.io.out.bits.j
@@ -1151,7 +1151,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
         loop_being_configured.b_transpose := cmd.bits.rs2(1)
 
         loop_being_configured.weightA := cmd.bits.rs1(15, 8) // TODO magic numbers
-        loop_being_configured.ooo := cmd.bits.rs2(2) // TODO magic numbers
+        loop_being_configured.ooo := lean_ooo_rob.B || cmd.bits.rs2(2) // TODO magic numbers
 
         loop_being_configured.configured := true.B
 
@@ -1355,11 +1355,11 @@ object LoopMatmul {
   def apply(in: DecoupledIO[RoCCCommand], ld_utilization: UInt, st_utilization: UInt, ex_utilization: UInt, ex_k_utilizations: Vec[UInt],
             block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_entries: Int, max_lds: Int, max_exs: Int, max_sts: Int,
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int, cmd_t: GemminiCmd, ex_total_k_portions: Int, ex_fine_grained_interleaving: Boolean,
-            local_addr_t: LocalAddr, lean_weightA: Boolean)
+            local_addr_t: LocalAddr, lean_weightA: Boolean, lean_ooo_rob: Boolean, staticWeightAEnabled: Boolean)
            (implicit p: Parameters): Tuple2[DecoupledIO[GemminiCmd], Bool] = {
     val mod = Module(new LoopMatmul(block_size, coreMaxAddrBits, rob_size, rob_full_entries, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes, cmd_t, ex_total_k_portions, ex_fine_grained_interleaving,
-      local_addr_t, lean_weightA))
+      local_addr_t, lean_weightA, lean_ooo_rob, staticWeightAEnabled))
     mod.io.in <> in
     mod.io.ld_utilization := ld_utilization
     mod.io.st_utilization := st_utilization

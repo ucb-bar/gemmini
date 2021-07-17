@@ -84,6 +84,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              lean_ooo_rob: Boolean = true, // No garbage preloads
                                                                              lean_weightA: Boolean = true, // Only static weightA supported
 
+                                                                             staticWeightAEnabled: Boolean = true,
+
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth
