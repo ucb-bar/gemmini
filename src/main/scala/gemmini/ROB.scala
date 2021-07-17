@@ -428,13 +428,13 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val ooo_q = (ld_ooo.B && new_entry.q === ldq) || (ex_ooo_is_enabled && new_entry.q === exq) || (st_ooo.B && new_entry.q === stq)
 
       val is_last_preload = last_allocated_preload.valid && i.U === last_allocated_preload.bits
-      val is_last_garbage_preload = last_allocated_garbage_preload.valid && i.U === last_allocated_garbage_preload.bits
+      val is_last_garbage_preload = !lean_ooo_rob.B && last_allocated_garbage_preload.valid && i.U === last_allocated_garbage_preload.bits
 
       val new_entry_is_compute = new_entry.cmd.inst.funct === COMPUTE_AND_STAY_CMD ||
         new_entry.cmd.inst.funct === COMPUTE_AND_FLIP_CMD
       val new_entry_is_preload = new_entry.cmd.inst.funct === PRELOAD_CMD
       val preload_addr = new_entry.cmd.rs1(31, 0).asTypeOf(local_addr_t) // TODO magic number
-      val preload_garbage = preload_addr.is_garbage()
+      val preload_garbage = !lean_ooo_rob.B && preload_addr.is_garbage()
 
       e.valid && e.bits.q === new_entry.q && !e.bits.issued &&
         (!ooo_q || e.bits.is_config || new_entry.is_config ||
@@ -667,6 +667,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     printf(p"Utilization st q: $utilization_st_q\n")
     printf(p"Utilization ex q: $utilization_ex_q\n")
     printf(p"Packed deps: $packed_deps\n")
+  }
+
+  if (lean_ooo_rob) {
+    last_allocated_garbage_preload.pop()
   }
 
   when (reset.asBool()) {
