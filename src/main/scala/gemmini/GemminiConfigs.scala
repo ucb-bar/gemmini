@@ -81,8 +81,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              ex_total_k_portions: Int = 1, // ALON: You can change this to any number of k-portions that you would like
                                                                              ex_fine_grained_interleaving: Boolean = true, // ALON: If this is true, then we use the newer ("finer") intervleaving strategy
 
-                                                                             lean_ooo_rob: Boolean = true, // No garbage preloads
-                                                                             lean_weightA: Boolean = true, // Only static weightA supported
+                                                                             lean_ooo_rob: Boolean = false, // No garbage preloads
+                                                                             lean_weightA: Boolean = false, // Only static weightA supported
 
                                                                              staticWeightAEnabled: Boolean = true,
 

@@ -168,7 +168,7 @@ object GemminiConfigs {
   val leanConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true)
 
   val synthesize_for_rob_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true)
-  val synthesize_for_rob_in_order = leanConfig.copy(ld_ooo = false, ex_ooo = false, st_ooo = false)
+  val synthesize_for_rob_in_order = leanConfig.copy(ld_ooo = false, ex_ooo = false, st_ooo = false, lean_ooo_rob = false)
 
   val synthesize_for_microthreads_coarse_4_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 4, ex_fine_grained_interleaving = false)
   val synthesize_for_microthreads_coarse_2_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 2, ex_fine_grained_interleaving = false)
@@ -176,7 +176,7 @@ object GemminiConfigs {
   val synthesize_for_microthreads_fine_4_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 4, ex_fine_grained_interleaving = true)
   val synthesize_for_microthreads_fine_2_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 2, ex_fine_grained_interleaving = true)
 
-  val synthesize_for_microthreads_1_in_order = leanConfig.copy(ld_ooo = false, ex_ooo = false, st_ooo = false, ex_total_k_portions = 1, ex_fine_grained_interleaving = false)
+  val synthesize_for_microthreads_1_in_order = leanConfig.copy(ld_ooo = false, ex_ooo = false, st_ooo = false, lean_ooo_rob = true, ex_total_k_portions = 1, ex_fine_grained_interleaving = false)
 
   val synthesize_for_weightA_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, staticWeightAEnabled = true, lean_weightA = true)
   val synthesize_for_weightA_in_order = leanConfig.copy(ld_ooo = false, ex_ooo = false, st_ooo = false, staticWeightAEnabled = false, lean_weightA = false)
