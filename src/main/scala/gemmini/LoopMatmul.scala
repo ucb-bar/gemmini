@@ -391,6 +391,9 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
     val req = Flipped(Decoupled(new LoopMatmulExecuteReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops)))
     val cmd = Decoupled(Output(cmd_t))
 
+    val req_out = Output(new LoopMatmulExecuteReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops))
+    val is_pre = Output(Bool())
+
     val k = Output(UInt(iterator_bitwidth.W))
     val j = Output(UInt(iterator_bitwidth.W))
     val i = Output(UInt(iterator_bitwidth.W))
@@ -420,6 +423,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val state = RegInit(idle)
 
   val req = Reg(new LoopMatmulExecuteReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops))
+  io.req_out := req
 
   val max_i_blocks = Mux(req.a_tranpose, 1.U, Mux(req.max_i <= max_block_len.U, req.max_i, max_block_len.U))
 
@@ -528,6 +532,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   io.can_send_command := state =/= idle && ld_ahead
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && ld_ahead
+  io.cmd.bits := DontCare
+  /*
   io.cmd.bits.cmd := Mux(state === pre, pre_cmd, comp_cmd)
   io.cmd.bits.rob_id := DontCare
   io.cmd.bits.i := i
@@ -537,9 +543,12 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   io.cmd.bits.max_j := req.max_j
   io.cmd.bits.max_k := req.max_k
   io.cmd.bits.use_iterators := true.B
+  */
   io.cmd.bits.ex_k_portion := k_portion.U
 
   io.loop_id := req.loop_id
+
+  io.is_pre := state === pre
 
   when (io.cmd.fire()) {
     when (state === pre) {
@@ -576,6 +585,136 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
   assert(!(state =/= idle && req.a_tranpose && req.b_tranpose))
 }
+
+class LoopMatmulExecuteAddrGenerator(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int, max_block_len: Int, concurrent_loops: Int, cmd_t: GemminiCmd, total_k_portions: Int, fine_grained_interleaving: Boolean, local_addr_t: LocalAddr)
+                       (implicit p: Parameters) extends Module {
+  val GARBAGE_ADDR = (~0.U(32.W)).asUInt()
+
+  val rocc_cmd_t = new RoCCCommand
+  class blocks_holder_t extends Bundle {
+    val opcode = UInt(rocc_cmd_t.inst.opcode.getWidth.W)
+    val rs1 = UInt(rocc_cmd_t.inst.rs1.getWidth.W)
+    val rs2 = UInt(rocc_cmd_t.inst.rs2.getWidth.W)
+    val rd = UInt(rocc_cmd_t.inst.rd.getWidth.W)
+
+    override def cloneType: blocks_holder_t.this.type = (new blocks_holder_t).asInstanceOf[this.type]
+  }
+
+  val io = IO(new Bundle {
+    val req = Input(new LoopMatmulExecuteReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops))
+    val k = Input(UInt(iterator_bitwidth.W))
+    val j = Input(UInt(iterator_bitwidth.W))
+    val i = Input(UInt(iterator_bitwidth.W))
+    val is_pre = Input(Bool())
+    val k_portion = Input(UInt(log2Up(total_k_portions).W))
+
+    val cmd = Output(cmd_t)
+  })
+
+  val req = io.req
+  val is_pre = io.is_pre
+  val k_portion = io.k_portion
+
+  val max_i_blocks = Mux(req.a_tranpose, 1.U, Mux(req.max_i <= max_block_len.U, req.max_i, max_block_len.U))
+
+  val d_addr_start = (BigInt(1) << 31).U | req.c_addr_start
+  val c_addr_start = (BigInt(3) << 30).U | req.c_addr_start
+  val b_addr_start = req.b_addr_end - req.max_k * req.max_j * block_size.U
+
+  val k = io.k
+  val j = io.j
+  val i = io.i
+
+  val i_blocks = Mux(i + max_i_blocks <= req.max_i, max_i_blocks, req.max_i-i)
+
+  val a_row = Mux(req.a_tranpose, k, i)
+  val a_col = Mux(req.a_tranpose, i, k)
+  val b_row = Mux(req.b_tranpose, j, k)
+  val b_col = Mux(req.b_tranpose, k, j)
+
+  val a_max_col = Mux(req.a_tranpose, req.max_i, req.max_k)
+  val b_max_col = Mux(req.b_tranpose, req.max_k, req.max_j)
+
+  val a_addr = req.a_addr_start + (a_row * a_max_col + a_col) * block_size.U
+  val b_addr = b_addr_start + (b_row * b_max_col + b_col) * block_size.U
+  val d_addr = d_addr_start + (i * req.max_j + j) * block_size.U
+  val c_addr = c_addr_start + (i * req.max_j + j) * block_size.U
+
+  val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
+  val a_rows = i_blocks * block_size.U - Mux(i + max_i_blocks >= req.max_i, req.pad_i, 0.U)
+  val b_cols = block_size.U - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)
+  val b_rows = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
+  val c_cols = block_size.U - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)
+  val c_rows = i_blocks * block_size.U - Mux(i + max_i_blocks >= req.max_i, req.pad_i, 0.U)
+
+  val pre_addr_is_not_garbage = i === 0.U || req.ooo
+  val out_addr_accumulates = req.accumulate || k =/= 0.U
+
+  val pre_addr = Mux(pre_addr_is_not_garbage, b_addr, GARBAGE_ADDR)
+  val out_addr = Mux(out_addr_accumulates, c_addr, d_addr)
+
+  val j_blocks_holder = req.max_j.asTypeOf(new blocks_holder_t)
+  val k_blocks_holder = req.max_k.asTypeOf(new blocks_holder_t)
+
+  val pre_cmd_rs1 = Wire(new GemminiISA.PreloadCmd.Rs1(local_addr_t, block_size))
+  pre_cmd_rs1 := DontCare
+  pre_cmd_rs1.bd_rows := b_rows
+  pre_cmd_rs1.bd_cols := b_cols
+  pre_cmd_rs1.bd := 0.U.asTypeOf(local_addr_t)
+  pre_cmd_rs1.bd.data := pre_addr
+
+  when (!pre_addr_is_not_garbage) {
+    pre_cmd_rs1.bd.make_this_garbage()
+  }
+
+  val pre_cmd_rs2 = Wire(new GemminiISA.PreloadCmd.Rs2(local_addr_t, block_size, max_block_len))
+  pre_cmd_rs2 := DontCare
+  pre_cmd_rs2.c_rows := c_rows
+  pre_cmd_rs2.c_cols := c_cols
+  pre_cmd_rs2.c := 0.U.asTypeOf(local_addr_t)
+  pre_cmd_rs2.c.is_acc_addr := true.B
+  pre_cmd_rs2.c.accumulate := out_addr_accumulates
+  pre_cmd_rs2.c.data := out_addr
+
+  val pre_cmd = Wire(new RoCCCommand)
+  pre_cmd := DontCare
+  pre_cmd.inst.funct := PRELOAD_CMD
+  pre_cmd.rs1 := pre_cmd_rs1.asUInt()
+  pre_cmd.rs2 := pre_cmd_rs2.asUInt()
+  pre_cmd.inst.opcode := j_blocks_holder.opcode
+  pre_cmd.inst.rs1 := j_blocks_holder.rs1
+  pre_cmd.inst.rs2 := j_blocks_holder.rs2
+  pre_cmd.inst.rd := j_blocks_holder.rd
+
+  val comp_cmd_rs1 = Wire(new GemminiISA.ComputeCmd.Rs1(local_addr_t, block_size, max_block_len))
+  comp_cmd_rs1 := DontCare
+  comp_cmd_rs1.a_rows := a_rows
+  comp_cmd_rs1.a_cols := a_cols
+  comp_cmd_rs1.a := 0.U.asTypeOf(local_addr_t)
+  comp_cmd_rs1.a.data := a_addr
+
+  val comp_cmd = Wire(new RoCCCommand())
+  comp_cmd := DontCare
+  comp_cmd.inst.funct := Mux(i === 0.U || req.ooo, COMPUTE_AND_FLIP_CMD, COMPUTE_AND_STAY_CMD)
+  comp_cmd.rs1 := comp_cmd_rs1.asUInt()
+  comp_cmd.rs2 := GARBAGE_ADDR | (block_size.U << 32).asUInt() | (block_size.U << 48).asUInt()
+  comp_cmd.inst.opcode := k_blocks_holder.opcode
+  comp_cmd.inst.rs1 := k_blocks_holder.rs1
+  comp_cmd.inst.rs2 := k_blocks_holder.rs2
+  comp_cmd.inst.rd := k_blocks_holder.rd
+
+  io.cmd.cmd := Mux(is_pre, pre_cmd, comp_cmd)
+  io.cmd.rob_id := DontCare
+  io.cmd.i := i
+  io.cmd.j := j
+  io.cmd.k := k
+  io.cmd.max_i := req.max_i
+  io.cmd.max_j := req.max_j
+  io.cmd.max_k := req.max_k
+  io.cmd.use_iterators := true.B
+  io.cmd.ex_k_portion := k_portion
+}
+
 
 // StC
 
@@ -832,17 +971,51 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
 
   // Create ex arbiters
   // ALON: This is the arbiter between the k-portions. You could try out an RR arbiter instead. Right now, we're using Chisel's default arbiter which is a priority arbiter that prioritizes the earliest k-portions
+  class ExAddrGeneratorInput extends Bundle {
+    val req = exs.head.io.req_out.cloneType
+    val k = exs.head.io.k.cloneType
+    val j = exs.head.io.j.cloneType
+    val i = exs.head.io.i.cloneType
+    val is_pre = Bool()
+    val k_portion = UInt(log2Up(ex_total_k_portions).W)
+
+    override def cloneType: ExAddrGeneratorInput.this.type = new ExAddrGeneratorInput().asInstanceOf[this.type]
+  }
+  val ex_arb = Module(new ExArbiter(new ExAddrGeneratorInput, ex_total_k_portions, ex_fine_grained_interleaving))
+  (ex_arb.io.in, ex_arb.io.k, exs).zipped.foreach { case (in, k, ex) =>
+    in.valid := ex.io.cmd.valid
+    ex.io.cmd.ready := in.ready
+    in.bits.req := ex.io.req_out
+    in.bits.k := ex.io.k
+    in.bits.j := ex.io.j
+    in.bits.i := ex.io.i
+    in.bits.is_pre := ex.io.is_pre
+    in.bits.k_portion := ex.io.cmd.bits.ex_k_portion
+    k := ex.io.k
+  }
+  val ex_addr_generator = Module(new LoopMatmulExecuteAddrGenerator(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, max_block_len, concurrent_loops, cmd_t, total_k_portions = ex_total_k_portions, fine_grained_interleaving = ex_fine_grained_interleaving, local_addr_t))
+  ex_addr_generator.io.req := ex_arb.io.out.bits.req
+  ex_addr_generator.io.k := ex_arb.io.out.bits.k
+  ex_addr_generator.io.j := ex_arb.io.out.bits.j
+  ex_addr_generator.io.i := ex_arb.io.out.bits.i
+  ex_addr_generator.io.is_pre := ex_arb.io.out.bits.is_pre
+  ex_addr_generator.io.k_portion := ex_arb.io.out.bits.k_portion
+  /*
   val ex_arb = Module(new ExArbiter(cmd_t, ex_total_k_portions, ex_fine_grained_interleaving))
   (ex_arb.io.in, ex_arb.io.k, exs).zipped.foreach { case (in, k, ex) =>
     in <> ex.io.cmd
     k := ex.io.k
   }
+  */
 
   // Create global arbiter
   val arb = Module(new Arbiter(cmd_t, 4))
   arb.io.in(0) <> stC.io.cmd
   // arb.io.in(1) <> ex.io.cmd
-  arb.io.in(1) <> ex_arb.io.out
+  // arb.io.in(1) <> ex_arb.io.out
+  arb.io.in(1).valid := ex_arb.io.out.valid
+  arb.io.in(1).bits := ex_addr_generator.io.cmd
+  ex_arb.io.out.ready := arb.io.in(1).ready
   arb.io.in(2) <> ldD.io.cmd
   arb.io.in(3) <> ldab_arb.io.out
   val unrolled_cmd = arb.io.out
