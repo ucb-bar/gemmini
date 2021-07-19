@@ -59,12 +59,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
   }
 
-  val unrolled_cmd = TransposePreloadUnroller(io.cmd, config)
+  val unrolled_cmd = TransposePreloadUnroller(ExIUnroller(io.cmd, config), config)
 
   val cmd_q_heads = 3
   assert(ex_queue_length >= cmd_q_heads)
   // val (cmd, _) = MultiHeadedQueue(io.cmd, ex_queue_length, cmd_q_heads)
-  val (cmd, _) = MultiHeadedQueue(unrolled_cmd, ex_queue_length, cmd_q_heads)
+  // val (cmd, _) = MultiHeadedQueue(unrolled_cmd, ex_queue_length, cmd_q_heads)
+  val (cmd, _) = MultiHeadedQueue(unrolled_cmd, rob_full_entries, cmd_q_heads) // TODO this should be ex_queue_length
   cmd.pop := 0.U
 
   io.solitary_preload := cmd.valid(0) && cmd.bits(0).cmd.inst.funct === PRELOAD_CMD && !cmd.valid(1)
@@ -784,7 +785,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh_cntl_signals_q.io.enq.bits.a_transpose := a_transpose
   mesh_cntl_signals_q.io.enq.bits.bd_transpose := bd_transpose
 
-  mesh_cntl_signals_q.io.enq.bits.rob_id.valid := !performing_single_mul && !c_address_rs2.is_garbage()
+  mesh_cntl_signals_q.io.enq.bits.rob_id.valid := cmd.bits(preload_cmd_place).rob_id.valid && !performing_single_mul && !c_address_rs2.is_garbage()
   mesh_cntl_signals_q.io.enq.bits.rob_id.bits := cmd.bits(preload_cmd_place).rob_id.bits
 
   mesh_cntl_signals_q.io.enq.bits.dataflow := current_dataflow
@@ -963,15 +964,16 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   //val complete_lock = RegInit(false.B)
 
   //Seah: added for WS accumulator
-  when(mesh.io.resp.fire() && mesh.io.resp.bits.tag.rob_id.valid) {
+  when(mesh.io.resp.fire()) {
     output_counter := wrappingAdd(output_counter, 1.U, w_total_output_rows)
     val last = mesh.io.resp.bits.last
 
-    when(last) {
-      mesh_completed_rob_id_fire := true.B
-      io.completed.valid := true.B
+    when(last && mesh.io.resp.bits.tag.rob_id.valid) {
+      mesh_completed_rob_id_fire := mesh.io.resp.bits.tag.rob_id.valid
+      io.completed.valid := mesh.io.resp.bits.tag.rob_id.valid
       io.completed.bits := mesh.io.resp.bits.tag.rob_id.bits
     }
+
     start_array_outputting :=  !is_garbage_addr
   }
 

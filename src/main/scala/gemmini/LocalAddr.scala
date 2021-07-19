@@ -8,7 +8,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
 
   private val spAddrBits = log2Ceil(sp_banks * sp_bank_entries)
   private val accAddrBits = log2Ceil(acc_banks * acc_bank_entries)
-  private val maxAddrBits = spAddrBits max accAddrBits
+  val maxLocalAddrBits = spAddrBits max accAddrBits
 
   private val spBankBits = log2Up(sp_banks)
   private val spBankRowBits = log2Up(sp_bank_entries)
@@ -19,9 +19,9 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
   val is_acc_addr = Bool()
   val accumulate = Bool()
   val read_full_acc_row = Bool()
-  val garbage = UInt(((localAddrBits - maxAddrBits - 4) max 0).W)
-  val garbage_bit = if (localAddrBits - maxAddrBits >= 4) UInt(1.W) else UInt(0.W)
-  val data = UInt(maxAddrBits.W)
+  val garbage = UInt(((localAddrBits - maxLocalAddrBits - 4) max 0).W)
+  val garbage_bit = if (localAddrBits - maxLocalAddrBits >= 4) UInt(1.W) else UInt(0.W)
+  val data = UInt(maxLocalAddrBits.W)
 
   def sp_bank(dummy: Int = 0) = if (spAddrBits == spBankRowBits) 0.U else data(spAddrBits - 1, spBankRowBits)
   def sp_row(dummy: Int = 0) = data(spBankRowBits - 1, 0)
@@ -57,6 +57,10 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
     is_acc_addr === other.is_acc_addr &&
       Mux(is_acc_addr, full_acc_addr() > other.full_acc_addr(), full_sp_addr() > other.full_sp_addr())
 
+  def ===(other: LocalAddr) =
+    is_acc_addr === other.is_acc_addr &&
+      Mux(is_acc_addr, full_acc_addr() === other.full_acc_addr(), full_sp_addr() === other.full_sp_addr())
+
   def add_with_overflow(other: UInt): Tuple2[LocalAddr, Bool] = {
     require(isPow2(sp_bank_entries)) // TODO remove this requirement
     require(isPow2(acc_bank_entries)) // TODO remove this requirement
@@ -66,7 +70,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
     val overflow = Mux(is_acc_addr, sum(accAddrBits), sum(spAddrBits))
 
     val result = WireInit(this)
-    result.data := sum(maxAddrBits - 1, 0)
+    result.data := sum(maxLocalAddrBits - 1, 0)
 
     (result, overflow)
   }
@@ -76,7 +80,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
     accumulate := true.B
     read_full_acc_row := true.B
     garbage_bit := 1.U
-    data := ~(0.U(maxAddrBits.W))
+    data := ~(0.U(maxLocalAddrBits.W))
   }
 
   override def cloneType: LocalAddr.this.type = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries).asInstanceOf[this.type]

@@ -74,6 +74,12 @@ object DSEBaseConfig {
     max_in_flight_reqs = 16,
 
     mesh_output_delay = 1,
+
+    ld_ooo = false,
+    ex_ooo = false,
+    st_ooo = false,
+
+    use_preload_filter = true,
   )
 }
 

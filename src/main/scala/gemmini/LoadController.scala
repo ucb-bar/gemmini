@@ -77,7 +77,9 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     (block_cols * config.accType.getWidth / 8)
   val maxBytesInMatRequest = block_rows * maxBytesInRowRequest
 
-  val cmd_tracker = Module(new DMACommandTracker(nCmds, maxBytesInMatRequest, deps_t))
+  val cmd_tracker = Module(new DMACommandTracker(nCmds, maxBytesInMatRequest, deps_t, prng_seed = prng_seed,
+    proportion_of_slow_accesses_out_of_128 = if (delay_lds) proportion_of_slow_accesses_out_of_128 else 0,
+    stall_delay = stall_delay))
 
   io.busy := cmd.valid || cmd_tracker.io.busy
 

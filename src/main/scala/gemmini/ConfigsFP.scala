@@ -72,6 +72,12 @@ object GemminiFPConfigs {
     hardcode_d_to_garbage_addr = false,
 
     mesh_output_delay = 0,
+
+    ld_ooo = false,
+    ex_ooo = false,
+    st_ooo = false,
+
+    use_preload_filter = true,
   )
   
   //FP32 Single Precision Configuration

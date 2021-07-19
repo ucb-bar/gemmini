@@ -17,6 +17,16 @@ class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
 
+  val i = UInt(16.W) // TODO magic numbers
+  val j = UInt(16.W) // TODO magic numbers
+  val k = UInt(16.W) // TODO magic numbers
+  val max_i = UInt(16.W) // TODO magic numbers
+  val max_j = UInt(16.W) // TODO magic numbers
+  val max_k = UInt(16.W) // TODO magic numbers
+  val use_iterators = Bool()
+
+  val ex_k_portion = UInt(8.W) // TODO magic numbers
+
   override def cloneType: this.type = new GemminiCmd(rob_entries).asInstanceOf[this.type]
 }
 
@@ -105,7 +115,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   */
 
   // Incoming commands and ROB
-  val rob = Module(new ROB(outer.config, new RoCCCommand))
+  val rob = Module(new ROB(outer.config, new RoCCCommand, new GemminiCmd(rob_entries)))
 
   val raw_cmd = Queue(io.cmd)
 
@@ -123,9 +133,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // val (unrolled_cmd, loop_matmul_unroller_busy) = LoopMatmul(unrolled_cmd_after_conv, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
 
-  val (loop_cmd, loop_matmul_unroller_busy) = LoopMatmul(conv_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,
-    meshRows*tileRows, coreMaxAddrBits, rob_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
-    inputType.getWidth, accType.getWidth, dma_maxbytes)
+  val (loop_cmd, loop_matmul_unroller_busy) = LoopMatmul(conv_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization, rob.io.ex_k_portion_utilizations,
+    meshRows*tileRows, coreMaxAddrBits, rob_entries, rob_full_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
+    inputType.getWidth, accType.getWidth, dma_maxbytes, new GemminiCmd(rob_entries), ex_total_k_portions, ex_fine_grained_interleaving, local_addr_t, lean_weightA, lean_ooo_rob,
+    staticWeightAEnabled)
 
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
@@ -170,13 +181,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   tiler.io.issue.load.ready := false.B
   tiler.io.issue.store.ready := false.B
   tiler.io.issue.exec.ready := false.B
-  */
 
   rob.io.issue.ld.ready := false.B
   rob.io.issue.st.ready := false.B
   rob.io.issue.ex.ready := false.B
 
-  /*
   when (is_cisc_mode) {
     load_controller.io.cmd  <> tiler.io.issue.load
     store_controller.io.cmd <> tiler.io.issue.store
@@ -203,23 +212,28 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
   */
 
-  load_controller.io.cmd.valid := rob.io.issue.ld.valid
-  rob.io.issue.ld.ready := load_controller.io.cmd.ready
-  load_controller.io.cmd.bits.cmd := rob.io.issue.ld.cmd
-  load_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ld.cmd.inst.funct
-  load_controller.io.cmd.bits.rob_id.push(rob.io.issue.ld.rob_id)
+  val (rob_issue_ld, rob_issue_ex) = PreloadFilter(outer.config, new RoCCCommand, rob.io.issue.ld, rob.io.issue.ex)
+
+  load_controller.io.cmd.valid := rob_issue_ld.valid
+  rob_issue_ld.ready := load_controller.io.cmd.ready
+  load_controller.io.cmd.bits := DontCare
+  load_controller.io.cmd.bits.cmd := rob_issue_ld.cmd
+  load_controller.io.cmd.bits.cmd.inst.funct := rob_issue_ld.cmd.inst.funct
+  load_controller.io.cmd.bits.rob_id.push(rob_issue_ld.rob_id)
 
   store_controller.io.cmd.valid := rob.io.issue.st.valid
   rob.io.issue.st.ready := store_controller.io.cmd.ready
+  store_controller.io.cmd.bits := DontCare
   store_controller.io.cmd.bits.cmd := rob.io.issue.st.cmd
   store_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.st.cmd.inst.funct
   store_controller.io.cmd.bits.rob_id.push(rob.io.issue.st.rob_id)
 
-  ex_controller.io.cmd.valid := rob.io.issue.ex.valid
-  rob.io.issue.ex.ready := ex_controller.io.cmd.ready
-  ex_controller.io.cmd.bits.cmd := rob.io.issue.ex.cmd
-  ex_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ex.cmd.inst.funct
-  ex_controller.io.cmd.bits.rob_id.push(rob.io.issue.ex.rob_id)
+  ex_controller.io.cmd.valid := rob_issue_ex.valid
+  rob_issue_ex.ready := ex_controller.io.cmd.ready
+  ex_controller.io.cmd.bits := DontCare
+  ex_controller.io.cmd.bits.cmd := rob_issue_ex.cmd
+  ex_controller.io.cmd.bits.cmd.inst.funct := rob_issue_ex.cmd.inst.funct
+  ex_controller.io.cmd.bits.rob_id.push(rob_issue_ex.rob_id)
 
   // Wire up scratchpad to controllers
   spad.module.io.dma.read <> load_controller.io.dma
@@ -353,7 +367,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // val config_cmd_type = cmd.bits.rs1(1,0) // TODO magic numbers
 
     //val funct = unrolled_cmd.bits.inst.funct
-    val risc_funct = unrolled_cmd.bits.inst.funct
+    val risc_funct = unrolled_cmd.bits.cmd.inst.funct
 
     val is_flush = risc_funct === FLUSH_CMD
     /*
@@ -365,7 +379,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     when (is_flush) {
       // val skip = compressed_cmd.bits.rs1(0)
-      val skip = unrolled_cmd.bits.rs1(0)
+      val skip = unrolled_cmd.bits.cmd.rs1(0)
       tlb.io.exp.flush_skip := skip
       tlb.io.exp.flush_retry := !skip
 
