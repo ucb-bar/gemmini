@@ -920,8 +920,8 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
 class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_entries: Int, max_lds: Int, max_exs: Int, max_sts: Int,
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int, cmd_t: GemminiCmd, ex_total_k_portions: Int, ex_fine_grained_interleaving: Boolean, local_addr_t: LocalAddr, lean_weightA: Boolean, lean_ooo_rob: Boolean, staticWeightAEnabled: Boolean)
                 (implicit p: Parameters) extends Module {
-  // val iterator_bitwidth = 16
-  val iterator_bitwidth = 16 min (local_addr_t.maxLocalAddrBits - log2Up(block_size) + 1)
+  val iterator_bitwidth = 16
+  val iterator_bitwidth_ceiled = 16 min (local_addr_t.maxLocalAddrBits - log2Up(block_size) + 1)
   val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
   val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
 
@@ -954,7 +954,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
   val ldD = Module(new LoopMatmulLdD(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, max_block_len, max_block_len_acc, concurrent_loops, cmd_t, local_addr_t))
   // val ex = Module(new LoopMatmulExecute(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, max_block_len, concurrent_loops, cmd_t))
   val exs = (0 until ex_total_k_portions).map { i =>
-    Module(new LoopMatmulExecute(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, max_block_len, concurrent_loops, cmd_t, total_k_portions = ex_total_k_portions, k_portion = i, fine_grained_interleaving = ex_fine_grained_interleaving, local_addr_t))
+    Module(new LoopMatmulExecute(block_size, coreMaxAddrBits, iterator_bitwidth_ceiled, max_addr, max_acc_addr, max_block_len, concurrent_loops, cmd_t, total_k_portions = ex_total_k_portions, k_portion = i, fine_grained_interleaving = ex_fine_grained_interleaving, local_addr_t))
   }
   val stC = Module(new LoopMatmulStC(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, max_block_len, concurrent_loops, cmd_t, local_addr_t))
 
@@ -1002,7 +1002,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
     in.bits.k_portion := ex.io.cmd.bits.ex_k_portion
     k := ex.io.k
   }
-  val ex_addr_generator = Module(new LoopMatmulExecuteAddrGenerator(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, max_block_len, concurrent_loops, cmd_t, total_k_portions = ex_total_k_portions, fine_grained_interleaving = ex_fine_grained_interleaving, local_addr_t, lean_ooo_rob))
+  val ex_addr_generator = Module(new LoopMatmulExecuteAddrGenerator(block_size, coreMaxAddrBits, iterator_bitwidth_ceiled, max_addr, max_acc_addr, max_block_len, concurrent_loops, cmd_t, total_k_portions = ex_total_k_portions, fine_grained_interleaving = ex_fine_grained_interleaving, local_addr_t, lean_ooo_rob))
   ex_addr_generator.io.req := ex_arb.io.out.bits.req
   ex_addr_generator.io.k := ex_arb.io.out.bits.k
   ex_addr_generator.io.j := ex_arb.io.out.bits.j
