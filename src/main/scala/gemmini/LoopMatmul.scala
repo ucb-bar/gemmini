@@ -425,14 +425,17 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val req = Reg(new LoopMatmulExecuteReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops))
   io.req_out := req
 
-  val max_i_blocks = Mux(req.a_tranpose, 1.U, Mux(req.max_i <= max_block_len.U, req.max_i, max_block_len.U))
+  // val max_i_blocks = Mux(req.a_tranpose, 1.U, Mux(req.max_i <= max_block_len.U, req.max_i, max_block_len.U))
+  val max_i_blocks = Mux(req.max_i <= max_block_len.U, req.max_i, max_block_len.U)
 
   val lower_k_bound = if (fine_grained_interleaving) { (max_block_len * k_portion).U } else { (req.max_k / total_k_portions.U) * k_portion.U }
   val upper_k_bound = if (fine_grained_interleaving || k_portion == total_k_portions - 1) { req.max_k }  else { (req.max_k / total_k_portions.U) * (k_portion + 1).U }
 
+  /*
   val d_addr_start = (BigInt(1) << 31).U | req.c_addr_start
   val c_addr_start = (BigInt(3) << 30).U | req.c_addr_start
   val b_addr_start = req.b_addr_end - req.max_k * req.max_j * block_size.U
+  */
 
   val k = Reg(UInt(iterator_bitwidth.W))
   val j = Reg(UInt(iterator_bitwidth.W))
@@ -440,6 +443,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
   val i_blocks = Mux(i + max_i_blocks <= req.max_i, max_i_blocks, req.max_i-i)
 
+  /*
   val a_row = Mux(req.a_tranpose, k, i)
   val a_col = Mux(req.a_tranpose, i, k)
   val b_row = Mux(req.b_tranpose, j, k)
@@ -465,7 +469,9 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
   val pre_addr = Mux(pre_addr_is_not_garbage, b_addr, GARBAGE_ADDR)
   val out_addr = Mux(out_addr_accumulates, c_addr, d_addr)
+  */
 
+  /*
   val j_blocks_holder = req.max_j.asTypeOf(new blocks_holder_t)
   val k_blocks_holder = req.max_k.asTypeOf(new blocks_holder_t)
 
@@ -515,6 +521,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   comp_cmd.inst.rs1 := k_blocks_holder.rs1
   comp_cmd.inst.rs2 := k_blocks_holder.rs2
   comp_cmd.inst.rd := k_blocks_holder.rd
+  */
 
   io.req.ready := state === idle
   io.k := k
@@ -532,7 +539,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   io.can_send_command := state =/= idle && ld_ahead
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && ld_ahead
-  io.cmd.bits := DontCare
+  io.cmd.bits := 0.U.asTypeOf(io.cmd.bits)
   /*
   io.cmd.bits.cmd := Mux(state === pre, pre_cmd, comp_cmd)
   io.cmd.bits.rob_id := DontCare
@@ -560,14 +567,15 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
       val next_i = floorAdd(i, max_i_blocks, req.max_i)
       val next_j = floorAdd(j, 1.U, req.max_j, next_i === 0.U)
       // val next_k = floorAdd(k, 1.U, req.max_k, next_j === 0.U && next_i === 0.U)
-      val next_k = floorAdd(k, k_it, upper_k_bound, next_j === 0.U && next_i === 0.U, min=lower_k_bound)
+      // val next_k = floorAdd(k, k_it, upper_k_bound, next_j === 0.U && next_i === 0.U, min=lower_k_bound)
+      val next_k = floorAdd(k, k_it, upper_k_bound, next_j === 0.U && next_i === 0.U)
 
       k := next_k
       j := next_j
       i := next_i
 
-      // state := Mux(next_k === 0.U && next_j === 0.U && next_i === 0.U, idle, pre)
-      state := Mux(next_k === lower_k_bound && next_j === 0.U && next_i === 0.U, idle, pre)
+      state := Mux(next_k === 0.U && next_j === 0.U && next_i === 0.U, idle, pre)
+      // state := Mux(next_k === lower_k_bound && next_j === 0.U && next_i === 0.U, idle, pre)
     }
   }
 
@@ -912,7 +920,8 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
 class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_entries: Int, max_lds: Int, max_exs: Int, max_sts: Int,
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int, cmd_t: GemminiCmd, ex_total_k_portions: Int, ex_fine_grained_interleaving: Boolean, local_addr_t: LocalAddr, lean_weightA: Boolean, lean_ooo_rob: Boolean, staticWeightAEnabled: Boolean)
                 (implicit p: Parameters) extends Module {
-  val iterator_bitwidth = 16
+  // val iterator_bitwidth = 16
+  val iterator_bitwidth = 16 min (local_addr_t.maxLocalAddrBits - log2Up(block_size) + 1)
   val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
   val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
 
