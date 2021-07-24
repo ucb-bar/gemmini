@@ -6,7 +6,7 @@ import chisel3.util._
 
 // This module is meant to go inside the Load controller, where it can track which commands are currently
 // in flight and which are completed
-class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => T) extends Module {
+class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => T, prng_seed: Int, proportion_of_slow_accesses_out_of_128: Int, stall_delay: Int) extends Module {
   def cmd_id_t = UInt((log2Ceil(nCmds) max 1).W)
 
   val io = IO(new Bundle {
@@ -56,6 +56,8 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
     val tag = tag_t.cloneType
     val bytes_left = UInt(log2Up(maxBytes+1).W)
 
+    val stall_cycles = UInt(32.W) // TODO magic number
+
     def init(dummy: Int = 0): Unit = {
       valid := false.B
     }
@@ -73,9 +75,9 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
   io.busy := cmd_valids.reduce(_ || _)
 
   val cmd_completed_id = MuxCase(0.U, cmds.zipWithIndex.map { case (cmd, i) =>
-    (cmd.valid && cmd.bytes_left === 0.U) -> i.U
+    (cmd.valid && cmd.bytes_left === 0.U && cmd.stall_cycles === 0.U) -> i.U
   })
-  io.cmd_completed.valid := cmds.map(cmd => cmd.valid && cmd.bytes_left === 0.U).reduce(_ || _)
+  io.cmd_completed.valid := cmds.map(cmd => cmd.valid && cmd.bytes_left === 0.U && cmd.stall_cycles === 0.U).reduce(_ || _)
   io.cmd_completed.bits.cmd_id := cmd_completed_id
   io.cmd_completed.bits.tag := cmds(cmd_completed_id).tag
 
@@ -83,6 +85,11 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
     cmds(next_empty_alloc).valid := true.B
     cmds(next_empty_alloc).tag := io.alloc.bits.tag
     cmds(next_empty_alloc).bytes_left := io.alloc.bits.bytes_to_read
+
+    val random_number = random.GaloisLFSR.maxPeriod(width=8, seed=Some(prng_seed))
+
+    cmds(next_empty_alloc).stall_cycles := Mux(random_number < proportion_of_slow_accesses_out_of_128.U,
+      stall_delay.U, 0.U)
   }
 
   when (io.request_returned.fire()) {
@@ -95,6 +102,12 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
 
   when (io.cmd_completed.fire()) {
     cmds(io.cmd_completed.bits.cmd_id).valid := false.B
+  }
+
+  cmds.foreach { cmd =>
+    when (cmd.valid && cmd.bytes_left === 0.U && cmd.stall_cycles > 0.U) {
+      cmd.stall_cycles := cmd.stall_cycles - 1.U
+    }
   }
 
   when (reset.asBool()) {

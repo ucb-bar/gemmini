@@ -146,6 +146,12 @@ object GemminiConfigs {
     hardcode_d_to_garbage_addr = false,
 
     mesh_output_delay = 1,
+
+    ld_ooo = false,
+    ex_ooo = true,
+    st_ooo = true,
+
+    use_preload_filter = true,
   )
 
   val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
@@ -160,6 +166,24 @@ object GemminiConfigs {
   )
 
   val leanConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true)
+
+  val synthesize_for_rob_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true) // Module ROB
+  val synthesize_for_rob_in_order = leanConfig.copy(ld_ooo = false, ex_ooo = false, st_ooo = false, lean_ooo_rob = false) // Module ROB
+
+  val synthesize_for_microthreads_coarse_16_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 16, ex_fine_grained_interleaving = false) // Module LoopMatmul
+  val synthesize_for_microthreads_coarse_8_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 8, ex_fine_grained_interleaving = false) // Module LoopMatmul
+  val synthesize_for_microthreads_coarse_4_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 4, ex_fine_grained_interleaving = false) // Module LoopMatmul
+  val synthesize_for_microthreads_coarse_2_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 2, ex_fine_grained_interleaving = false) // Module LoopMatmul
+
+  val synthesize_for_microthreads_fine_16_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 16, ex_fine_grained_interleaving = true) // Module LoopMatmul
+  val synthesize_for_microthreads_fine_8_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 8, ex_fine_grained_interleaving = true) // Module LoopMatmul
+  val synthesize_for_microthreads_fine_4_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 4, ex_fine_grained_interleaving = true) // Module LoopMatmul
+  val synthesize_for_microthreads_fine_2_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, lean_ooo_rob = true, ex_total_k_portions = 2, ex_fine_grained_interleaving = true) // Module LoopMatmul
+
+  val synthesize_for_microthreads_1_in_order = leanConfig.copy(ld_ooo = false, ex_ooo = false, st_ooo = false, lean_ooo_rob = true, ex_total_k_portions = 1, ex_fine_grained_interleaving = false) // Module LoopMatmul
+
+  val synthesize_for_weightA_ooo = leanConfig.copy(ld_ooo = false, ex_ooo = true, st_ooo = true, staticWeightAEnabled = true, lean_weightA = true) // Module WeightedArbiter
+  val synthesize_for_weightA_in_order = leanConfig.copy(ld_ooo = false, ex_ooo = false, st_ooo = false, staticWeightAEnabled = false, lean_weightA = false) // Module WeightedArbiterr
 }
 
 /**
