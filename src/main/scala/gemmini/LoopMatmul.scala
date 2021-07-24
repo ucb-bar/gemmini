@@ -1004,7 +1004,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
 
     override def cloneType: ExAddrGeneratorInput.this.type = new ExAddrGeneratorInput().asInstanceOf[this.type]
   }
-  val ex_arb = Module(new ExArbiter(new ExAddrGeneratorInput, ex_total_k_portions, ex_fine_grained_interleaving))
+  val ex_arb = Module(new ExArbiter(new ExAddrGeneratorInput, ex_total_k_portions, ex_fine_grained_interleaving, iterator_bitwidth_ceiled))
   (ex_arb.io.in, ex_arb.io.k, exs).zipped.foreach { case (in, k, ex) =>
     in.valid := ex.io.cmd.valid
     ex.io.cmd.ready := in.ready
@@ -1392,11 +1392,11 @@ object LoopMatmul {
   }
 }
 
-class ExArbiter[T <: Data](gen: T, n: Int, ex_fine_grained: Boolean) extends Module {
+class ExArbiter[T <: Data](gen: T, n: Int, ex_fine_grained: Boolean, iterator_bitwidth: Int) extends Module {
   val io = IO(new Bundle {
     val in = Flipped(Vec(n, Decoupled(gen)))
     val out = Decoupled(gen)
-    val k = Input(Vec(n, UInt(16.W))) // TODO magic number
+    val k = Input(Vec(n, UInt(iterator_bitwidth.W)))
   })
 
   val chosen = (io.in zip io.k).zipWithIndex.foldLeft(0.U) { case (acc, ((in, k), i)) =>
