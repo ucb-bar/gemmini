@@ -426,7 +426,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   io.req_out := req
 
   // val max_i_blocks = Mux(req.a_tranpose, 1.U, Mux(req.max_i <= max_block_len.U, req.max_i, max_block_len.U))
-  val max_i_blocks = Mux(req.max_i <= max_block_len.U, req.max_i, max_block_len.U)
+  // val max_i_blocks = Mux(req.max_i <= max_block_len.U, req.max_i, max_block_len.U)
+  val max_i_blocks = max_block_len.U
 
   val lower_k_bound = if (fine_grained_interleaving) { (max_block_len * k_portion).U } else { (req.max_k / total_k_portions.U) * k_portion.U }
   val upper_k_bound = if (fine_grained_interleaving || k_portion == total_k_portions - 1) { req.max_k }  else { (req.max_k / total_k_portions.U) * (k_portion + 1).U }
@@ -531,7 +532,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   io.must_send_compute := state === comp
 
   // The order here is k, j, i
-  val lda_ahead = io.lda_completed || io.ld_ka > k || (io.ld_ka === k && io.ld_i >= i + i_blocks)
+  // val lda_ahead = io.lda_completed || io.ld_ka > k || (io.ld_ka === k && io.ld_i >= i + i_blocks)
+  val lda_ahead = io.lda_completed || io.ld_ka > k || (io.ld_ka === k && io.ld_i >= i + max_i_blocks)
   val ldb_ahead = io.ldb_completed || io.ld_kb > k || (io.ld_ka === k && io.ld_j > j)
   val ldd_ahead = io.ldd_completed
   val ld_ahead = lda_ahead && ldb_ahead && ldd_ahead
@@ -561,7 +563,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
     when (state === pre) {
       state := comp
     }.otherwise {
-      val jump_k = fine_grained_interleaving.B && (k +& 1.U) % max_block_len.U === 0.U
+      // val jump_k = fine_grained_interleaving.B && (k +& 1.U) % max_block_len.U === 0.U
+      val jump_k = fine_grained_interleaving.B && (k % max_block_len.U) === (max_block_len-1).U
       val k_it = Mux(jump_k, (total_k_portions * max_block_len - max_block_len + 1).U, 1.U)
 
       val next_i = floorAdd(i, max_i_blocks, req.max_i)
@@ -623,7 +626,8 @@ class LoopMatmulExecuteAddrGenerator(block_size: Int, coreMaxAddrBits: Int, iter
   val is_pre = io.is_pre
   val k_portion = io.k_portion
 
-  val max_i_blocks = Mux(req.a_tranpose, 1.U, Mux(req.max_i <= max_block_len.U, req.max_i, max_block_len.U))
+  // val max_i_blocks = Mux(req.a_tranpose, 1.U, Mux(req.max_i <= max_block_len.U, req.max_i, max_block_len.U))
+  val max_i_blocks = max_block_len.U
 
   val d_addr_start = (BigInt(1) << 31).U | req.c_addr_start
   val c_addr_start = (BigInt(3) << 30).U | req.c_addr_start
@@ -635,6 +639,7 @@ class LoopMatmulExecuteAddrGenerator(block_size: Int, coreMaxAddrBits: Int, iter
 
   val i_blocks = Mux(i + max_i_blocks <= req.max_i, max_i_blocks, req.max_i-i)
 
+  /*
   val a_row = Mux(req.a_tranpose, k, i)
   val a_col = Mux(req.a_tranpose, i, k)
   val b_row = Mux(req.b_tranpose, j, k)
@@ -642,6 +647,15 @@ class LoopMatmulExecuteAddrGenerator(block_size: Int, coreMaxAddrBits: Int, iter
 
   val a_max_col = Mux(req.a_tranpose, req.max_i, req.max_k)
   val b_max_col = Mux(req.b_tranpose, req.max_k, req.max_j)
+  */
+
+  val a_row = i
+  val a_col = k
+  val b_row = k
+  val b_col = j
+
+  val a_max_col = req.max_k
+  val b_max_col = req.max_j
 
   val a_addr = req.a_addr_start + (a_row * a_max_col + a_col) * block_size.U
   val b_addr = b_addr_start + (b_row * b_max_col + b_col) * block_size.U
