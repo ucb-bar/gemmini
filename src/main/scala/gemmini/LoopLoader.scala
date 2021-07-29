@@ -36,6 +36,16 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val loop_tag_matmul = RegInit(false.B)
   val loop_tag = Mux(is_conv, loop_tag_conv, loop_tag_matmul)
 
+  val AB_count = RegInit(0.U(2.W))
+  val AB_both = RegInit(false.B)
+  when(cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_CONV_LD_CONFIG_ADDRS){
+    AB_count := AB_count + 1.U
+  } // count if 2
+  when(cmd.bits.inst.funct === LOOP_WS || cmd.bits.inst.funct === LOOP_CONV_WS){
+    AB_both := (AB_count === 2.U)
+    AB_count := 0.U
+  }
+
   when(cmd.bits.inst.funct === LOOP_LD_CONFIG_ADDRS || cmd.bits.inst.funct === LOOP_CONV_LD_CONFIG_ADDRS){
     lock_tag := true.B
   } // no need to force flip once seen LOOP_LD
@@ -200,8 +210,8 @@ class LoopLoader(block_size: Int, coreMaxAddrBits:Int, max_addr: Int, input_w: I
   val fixed_loop_cmd = Wire(new RoCCCommand())
   fixed_loop_cmd := DontCare
   fixed_loop_cmd.inst.funct := cmd.bits.inst.funct//LOOP_WS_CONFIG_ADDRS_AB
-  fixed_loop_cmd.rs1 := Mux(is_conv, Mux(cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_5 && !AB, 0.U, cmd.bits.rs1), Mux(AB, 0.U, cmd.bits.rs1)) //if conv, weight
-  fixed_loop_cmd.rs2 := Mux(is_conv, Mux(cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_6 && AB, 0.U, cmd.bits.rs2), Mux(AB, cmd.bits.rs2, 0.U)) //for now, not do input for conv
+  fixed_loop_cmd.rs1 := Mux(is_conv, Mux(cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_5 && (!AB||AB_both), 0.U, cmd.bits.rs1), Mux((AB_both||AB), 0.U, cmd.bits.rs1)) //if conv, weight
+  fixed_loop_cmd.rs2 := Mux(is_conv, Mux(cmd.bits.inst.funct === LOOP_CONV_WS_CONFIG_6 && (AB||AB_both), 0.U, cmd.bits.rs2), Mux((!AB||AB_both), 0.U, cmd.bits.rs2)) //for now, not do input for conv
 
   unlock_monitor := floorAdd(unlock_monitor, 1.U, unlock_cycle + pause_turn - 1.U, pause_req && is_loop_ws_addr & lock_tag && cmd.fire())
   when(!pause_req){
