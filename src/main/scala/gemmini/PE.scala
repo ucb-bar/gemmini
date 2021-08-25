@@ -17,7 +17,7 @@ class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
   * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
   * @param width Data width of operands
   */
-class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, latency: Int)
+class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, latency: Int, max_simultaneous_matmuls: Int)
                    (implicit ev: Arithmetic[T]) extends Module { // Debugging variables
   import ev._
 
@@ -32,8 +32,16 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
     val in_control = Input(new PEControl(accType))
     val out_control = Output(new PEControl(accType))
 
+    val in_id = Input(UInt(log2Up(max_simultaneous_matmuls).W))
+    val out_id = Output(UInt(log2Up(max_simultaneous_matmuls).W))
+
+    val in_last = Input(Bool())
+    val out_last = Output(Bool())
+
     val in_valid = Input(Bool())
     val out_valid = Output(Bool())
+
+    val bad_dataflow = Output(Bool())
   })
 
   val cType = if (df == Dataflow.WS) inputType else accType
@@ -46,12 +54,16 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   val dataflow = ShiftRegister(io.in_control.dataflow, latency)
   val prop  = ShiftRegister(io.in_control.propagate, latency)
   val shift = ShiftRegister(io.in_control.shift, latency)
+  val id = ShiftRegister(io.in_id, latency)
+  val last = ShiftRegister(io.in_last, latency)
   val valid = ShiftRegister(io.in_valid, latency) // TODO should we clockgate the rest of the ShiftRegisters based on the values in this ShiftRegisters
 
   io.out_a := a
   io.out_control.dataflow := dataflow
   io.out_control.propagate := prop
   io.out_control.shift := shift
+  io.out_id := id
+  io.out_last := last
   io.out_valid := valid
 
   val last_s = RegEnable(prop, valid)
@@ -66,6 +78,7 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   val COMPUTE = 0.U(1.W)
   val PROPAGATE = 1.U(1.W)
 
+  io.bad_dataflow := false.B
   when ((df == Dataflow.OS).B || ((df == Dataflow.BOTH).B && dataflow === OUTPUT_STATIONARY)) {
     when(prop === PROPAGATE) {
       io.out_c := (c1 >> shift_offset).clippedToWidthOf(outputType)
@@ -89,7 +102,8 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
       c2 := d
     }
   }.otherwise {
-    assert(false.B, "unknown dataflow")
+    io.bad_dataflow := true.B
+    //assert(false.B, "unknown dataflow")
     io.out_c := DontCare
     io.out_b := DontCare
   }

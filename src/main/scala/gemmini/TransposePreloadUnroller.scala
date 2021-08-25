@@ -68,7 +68,10 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
 
   when (io.out.fire()) {
     when (is_config) {
-      b_transposed_and_ws := ((dataflow == Dataflow.WS).B || cmds(0).cmd.rs1(2) === Dataflow.WS.id.U) && cmds(0).cmd.rs1(9)
+      val set_only_strides = cmds(0).cmd.rs1(7)
+      when (!set_only_strides) {
+        b_transposed_and_ws := ((dataflow == Dataflow.WS).B || cmds(0).cmd.rs1(2) === Dataflow.WS.id.U) && cmds(0).cmd.rs1(9)
+      }
     }.elsewhen (first_preload && unroll_preload) {
       state := first_compute
     }.elsewhen (state >= first_compute) {

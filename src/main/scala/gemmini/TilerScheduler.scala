@@ -440,7 +440,7 @@ class TilerScheduler[T <: Data: Arithmetic, U <: Data, V <: Data]
     printf(p"Last allocated: $last_allocated\n\n")
   }
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     entries.foreach(_.valid := false.B)
   }
 }

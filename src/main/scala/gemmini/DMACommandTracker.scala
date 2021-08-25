@@ -97,7 +97,7 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
     cmds(io.cmd_completed.bits.cmd_id).valid := false.B
   }
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     cmds.foreach(_.init())
   }
 }
