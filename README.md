@@ -1,3 +1,7 @@
+<p align="center">
+  <img width="1000" src="./img/full-logo.svg">
+</p>
+
 Gemmini
 ====================================
 
@@ -9,7 +13,7 @@ Gemmini is part of the [Chipyard](https://github.com/ucb-bar/chipyard) ecosystem
 **Developer Note**
 To track compatible versions of Chipyard and Spike, please update the CHIPYARD.hash and SPIKE.hash files with updated hashes of Chipyard and Spike commits when bumping Chipyard or Spike.
 
-![Image description](./gemmini-system.png)
+![Image description](./img/gemmini-system.png)
 
 Architecture
 ================
@@ -31,7 +35,7 @@ Major parameters of interest include:
 
 * Systolic array dimensions (``tileRows``, ``tileColumns``, ``meshRows``, ``meshColumns``): The systolic array is composed of a 2-level hierarchy, in which each tile is fully combinational, while a mesh of tiles has pipeline registers between each tile.
 
-![Image description](./gemmini-systolic-array.png)
+![Image description](./img/gemmini-systolic-array.png)
 
 * Dataflow parameters (``dataflow``): Determine whether the systolic array in Gemmini is output-stationary or weight-stationary, or whether it supports both dataflows so that programmers may choose between them at runtime.
 
@@ -133,7 +137,7 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 - `rs2[63:48]` = number of rows to store
 - `funct` = 3
 
-**Action:** DRAM[Translate[rs2]] <= Scratchpad[rs1]
+**Action:** DRAM[Translate[rs1]] <= Scratchpad[rs2]
 - Stores a fixed amount of data (`tileColumns x meshColumns x tileRows x meshRows x dataBytes` bytes) from the scratchpad to L2/DRAM
 - Store is sequential from the rs1/rs2 base addresses. Stride must be set by the `config_mvout` command
 
@@ -331,3 +335,7 @@ If Gemmini helps you in your academic research, you are encouraged to cite our p
   pages={}
 }
 ```
+
+# Acknowledgements
+
+- The Gemmini [logo](./img/full-logo.svg) was designed by Dima Nikiforov ([@CobbledSteel](https://github.com/CobbledSteel)).
