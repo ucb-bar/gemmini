@@ -166,7 +166,7 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
     // Function to take correct counter value.
     // If the highest bit of the config register is 1, it's an external counter; otherwise, take it from
     // local counter
-    val take_value = (config: UInt, counter: UInt) => {
+    val take_value = (counter: UInt, config: UInt) => {
       // Set the width
       val external = Wire(UInt(counterWidth.W))
       external := io.event_io.external_values(io.addr)
