@@ -150,6 +150,8 @@ class CounterIO(nPerfCounter: Int, counterWidth: Int) extends Bundle {
 }
 
 // A simple counter file. Every counter is incremented when the corresponding event signal is high on rising edge.
+// There are two type of counters: Built-in counters and external counters. External counters have their value
+// stored in other modules and can incremented by arbitary values. 
 class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
 {
   val io = IO(new CounterIO(nPerfCounter, counterWidth))
@@ -166,7 +168,7 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
     // Function to take correct counter value.
     // If the highest bit of the config register is 1, it's an external counter; otherwise, take it from
     // local counter
-    val take_value = (counter: UInt, config: UInt) => {
+    val take_value = (config: UInt, counter: UInt) => {
       // Set the width
       val external = Wire(UInt(counterWidth.W))
       external := io.event_io.external_values(io.addr)
@@ -196,9 +198,11 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
     }
 
     // Update signal
-    (counters zip counter_config) map { case (counter, config) => {
+    ((counters zip counter_config).zipWithIndex) map { case ((counter, config), idx) => {
       when (io.event_io.event_signal(config)) {
-        counter := counter + 1.U
+        when (!(io.config_address.valid && io.addr === idx.U)) {
+          counter := counter + 1.U
+        }
       }}
     }
   }
