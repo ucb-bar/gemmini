@@ -222,20 +222,22 @@ class CounterController(nPerfCounter: Int, counterWidth: Int)(implicit p: Parame
   val out_valid_reg = RegInit(false.B)
 
   // Decode access option
-  // rs1[2:0] = Counter index
-  // rs1[3] = Global counter value reset
-  // rs1[4] = Snapshot reset
-  // rs1[5] = Take snapshot
-  // rs1[6] = Change config
-  // rs1[12:7] = new counter address for counter with index specified in rs1[2:0]
+  // rs1[0] = Global counter value reset
+  // rs1[1] = Snapshot reset
+  // rs1[2] = Take snapshot
+  // rs1[3] = Change config
+  // rs1[6:4] = Counter index
+  // rs1[17:12] = new counter address for counter with index specified in rs1[6:4]
+  // We can change the number of physical counters up to 256 (which is really large)
+  // rs1[31] = External counter flag
 
   io.in.ready := !out_valid_reg
-  module.io.addr := io.in.bits.rs1(2, 0)
-  module.io.counter_reset := io.in.bits.rs1(3) & io.in.fire()
-  module.io.snapshot_reset := io.in.bits.rs1(4) & io.in.fire()
-  module.io.snapshot := io.in.bits.rs1(5) & io.in.fire()
-  module.io.config_address.valid := io.in.bits.rs1(6) & io.in.fire()
-  module.io.config_address.bits := io.in.bits.rs1(12, 7)
+  module.io.addr := io.in.bits.rs1(6, 4)
+  module.io.counter_reset := io.in.bits.rs1(0) & io.in.fire()
+  module.io.snapshot_reset := io.in.bits.rs1(1) & io.in.fire()
+  module.io.snapshot := io.in.bits.rs1(2) & io.in.fire()
+  module.io.config_address.valid := io.in.bits.rs1(3) & io.in.fire()
+  module.io.config_address.bits := io.in.bits.rs1(17, 12)
 
   when (io.out.fire()) {
     out_valid_reg := false.B
