@@ -146,6 +146,8 @@ object GemminiConfigs {
     hardcode_d_to_garbage_addr = false,
 
     mesh_output_delay = 1,
+
+    num_counter = 8,
   )
 
   val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
