@@ -1125,9 +1125,30 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
   */
   val exs_completed = exs.map(ex => (ex.io.loop_id =/= stC.io.loop_id) || ex.io.idle)
   stC.io.ex_completed := exs_completed.reduce(_ && _)
-  stC.io.ex_k := MuxCase(exs.last.io.k, (exs_completed zip exs).init.map { case (ex_completed, ex) => (!ex_completed) -> ex.io.k })
-  stC.io.ex_j := MuxCase(exs.last.io.j, (exs_completed zip exs).init.map { case (ex_completed, ex) => (!ex_completed) -> ex.io.j })
-  stC.io.ex_i := MuxCase(exs.last.io.i, (exs_completed zip exs).init.map { case (ex_completed, ex) => (!ex_completed) -> ex.io.i })
+  if (ex_fine_grained_interleaving) {
+    // TODO getting the index here is very inefficient
+    val max_k = exs.map(_.io.k).reduce(maxOf)
+    val ks_maxed = (exs zip exs_completed).map { case (ex, completed) => Mux(completed, max_k, ex.io.k) }
+    val min_k = ks_maxed.reduce(minOf)
+    val min_k_index = WireInit(0.U(log2Up(ex_total_k_portions).W))
+    ks_maxed.zipWithIndex.foreach { case (k, i) =>
+      when (k === min_k) {
+        min_k_index := i.U
+      }
+    }
+
+    val ks = VecInit(exs.map(_.io.k))
+    val js = VecInit(exs.map(_.io.j))
+    val is = VecInit(exs.map(_.io.i))
+
+    stC.io.ex_k := ks(min_k_index)
+    stC.io.ex_j := js(min_k_index)
+    stC.io.ex_i := is(min_k_index)
+  } else {
+    stC.io.ex_k := MuxCase(exs.last.io.k, (exs_completed zip exs).init.map { case (ex_completed, ex) => (!ex_completed) -> ex.io.k })
+    stC.io.ex_j := MuxCase(exs.last.io.j, (exs_completed zip exs).init.map { case (ex_completed, ex) => (!ex_completed) -> ex.io.j })
+    stC.io.ex_i := MuxCase(exs.last.io.i, (exs_completed zip exs).init.map { case (ex_completed, ex) => (!ex_completed) -> ex.io.i })
+  }
 
   val loops_configured = RegInit(0.U(16.W))
   dontTouch(loops_configured)
