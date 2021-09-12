@@ -10,7 +10,7 @@ The Gemmini project is developing a systolic-array based matrix multiplication a
 Gemmini is part of the [Chipyard](https://github.com/ucb-bar/chipyard) ecosystem. **For instructions on how to produce Gemmini RTL or to run Gemmini simulations, consult [this page](https://chipyard.readthedocs.io/en/latest/Generators/Gemmini.html) in the Chipyard documentation**. This document is intended to provide more in-depth information for those who might want to start hacking on Gemmini's source code.
 
 
-**Developer Note**
+**Developer Note:**
 To track compatible versions of Chipyard and Spike, please update the CHIPYARD.hash and SPIKE.hash files with updated hashes of Chipyard and Spike commits when bumping Chipyard or Spike.
 
 ![Image description](./img/gemmini-system.png)
@@ -64,6 +64,135 @@ When data is being moved in from DRAM or main memory into Gemmini's local scratc
 These parameters specify what the datatype of the scaling factor is, and how the scaling is actually done.
 If these are set to ``None``, then this optional feature will be disabled at elaboration time.
 If both the scratchpad inputs are accumulator inputs are to be scaled in the same say, then the ``mvin_scale_shared`` parameter can be set to ``true`` so that the multipliers and functional units are shared.
+
+Major Components
+----------------
+
+This subsection is aimed towards those who wish to start hacking on Gemmini's RTL.
+Here, we briefly describe Gemmini's main hardware components, and how they fit together.
+If you have no interest in changing Gemmini's hardware (besides just changing configuration parameters), then feel free to skip this section.
+
+### Decoupled Access/Execute
+
+Gemmini is a decoupled access/execute architecture, which means that "memory-access" and "execute" instructions happen concurrently, in different regions of the hardware.
+We divide the hardware broadly into three "controllers": one for "execute" instructions, another for "load" instructions, and a third for "store" instructions.
+Each of these controllers consume direct ISA commands from the programmer, decode this commands, and execute them, while sharing access to the scratchpad and acccumulator SRAMs.
+
+* `ExecuteController`: This module is responsible for executing "execute"-type ISA commands, such as matrix multiplications.
+It includes a systolic array for dot-products, and a transposer.
+
+* `LoadController`: This module is responsible for all instructions that move data from main memory into Gemmini's private scratchpad or accumulator.
+
+* `StoreController`: This module is responsible for all instructions that move data from Gemmini's private SRAMs into main memory.
+This module is also responsible for "max-pooling" instructions, because Gemmini performs pooling when moving unpooled data from the private SRAMs into main memory.
+
+### Scratchpad and Accumulator
+
+Gemmini stores inputs and outputs for the systolic array in a set of private SRAMs, which we call the "scratchpad" and the "accumulator".
+Typically, inputs are stored in the scratchpad, while partial sums and final results are stored in the the accumulator.
+
+The scratchpad and accumulator are both instantiated within `Scratchpad.scala`.
+The scratchpad banks are implemented by the `ScratchpadBank` module, and the accumulator banks are implemented by the `AccumulatorMem` module.
+
+Each row of the scratchpad and accumulator SRAMs is `DIM` "elements" wide, where `DIM` is the number of PEs along the width of the systolic array.
+Each "element" represents a single scalar value that Gemmini operates upon.
+
+Each "element" in the scratchpad is of type `inputType` (which, in the default config, is an 8-bit integer).
+Each "element" in the acccumulator is of type `accType` (which, in the default config, is a 32-bit integer).
+
+So, for example, in the default config, which has a 16x16 systolic array, the scratchpad banks have a row-width of `16*bits(inputType)=128` bits, and the accumulatorr banks have a row-width of `16*bits(accType)=512` bits.
+
+Both inputs and outputs to the scratchpad must be of type `inputType`. 
+
+Both inputs and outputs from the accumulator can be either of type `accType` _or_ `inputType`.
+If `inputType` values are input to the accumulator, they will be cast up to `accType`.
+If `inputType` values are output from the accumulator, they will first be "scaled" down to be of type `inputType`.
+The exact "scaling" function can be configured as the as the user wishes, but in the default config, the scaling function is a simple multiplication by a `float32` value that casts an `int32` down to an `int8`.
+
+The scratchpad banks are very simple, comprising little more than an SRAM and a queue.
+
+The accumulator banks are a bit more complex: in addition to the underlying SRAM, they also include a set of adders to support in-place accumulations.
+In addition, they have a set of "scalers" (described above), and activation function units.
+The scaling and activation functions are applied when the programmer wishes to transform `accType` values down to `inputType` values while reading data out of the accumulator.
+This is typically done to transform the partial-sum outputs of one layer into the low-bitwidth quantized inputs of the next layer. 
+
+### Systolic Array and Transposer
+
+`MeshWithDelays`, which is instantiated within the `ExecuteController`, contains the systolic array (`Mesh`), a transposer (`Transposer`), and a set of delay registers which shift the inputs to the systolic array.
+The `MeshWithDelays` module takes in three matrices one row at a time per cycle (`A`, `B`, and `D`), and outputs the result `C = A * B + D` one row at a time per cycle.
+
+In the weight-stationary mode, the `B` values are "preloaded" into the systolic array, and `A` and `D` values are fed through.
+In the output-stationary mode, the `D` values are "preloaded" into the systolic array, and `A` and `B` values are fed through.
+
+`A`, `B`, and `D` are all of type `inputType`, while `C` is of type `outputType`.
+If the programmer wishes to write `C` into the scratchpad, then `C` is cast down to `inputType`.
+However, if the programmer instead wishes to write `C` into the scratchpad, then `C` is cast up to `accType`.
+
+Note that in the weight-stationary mode, an `inputType` D usually has insufficient bitwidth to accurately represent partial sums.
+Therefore, in the weight-stationary mode, `D` is usually just the 0-matrix, while the `accType` accumulator SRAMs are used to accumulate partial sum outputs of the systolic array instead.
+
+The inputs (`A`, `B`, and `D`) must be delayed with shift-registers so that each input from one matrix reaches the correct PE at exactly the right time to be multiplied-and-accumulated with the correct input from another matrix.
+The diagram below shows an example of a 2x2 output-stationary matmul (ignoring `D`), with the appropriate delay registers at the inputs and outputs of the systolic array:
+
+![Image description](./img/delay-registers.png)
+
+The systolic array itself (implemented in `Mesh.scala`), is composed of a two-tier hierarchy of `Tiles` and `PEs`.
+The `Mesh` is composed of a set of `Tiles`, separated by pipeline registers.
+Every `Tile` is composed of a combinational set of `PEs`, where each PE performs a single matmul operation, with either the weight-stationary, or output-stationary dataflow.
+
+![Image description](./img/gemmini-systolic-array.png)
+
+The `MeshWithDelays` module also includes a number of counters and configuration registers.
+`MeshWithDelays` assumes that every matmul operation will be exactly of size `DIM x DIM`, where `DIM` is the number of PEs across the width of the systolic array itself (16 in the default config).
+These counters count up to `DIM`, and then update the configuration registers from the inputs to `MeshWithDelays`.
+These configuration registers control which of `A` and `B` are to be transposed before being fed into the systolic array.
+They also control whether the preloaded values in the systolic array are to be maintained for the next matmul, or whether they are to be overwritten and replaced.
+
+The transposer itself is implemented as a very simple systolic array, which transports inputs from left-to-right for `DIM` cycles, and then up-to-down for another `DIM` cycles.
+This is illustrated in the diagram below:
+
+![Image description](./img/transposer.png)
+
+Note that for output-stationary matmuls, the transposer is used even when the programmer does not request a transposition.
+This is because the systolic array expects inputs from the same row of `A` to enter the same PE in the output-stationary mode, but all values in a single row of `A` are stored within the same scratchpad SRAM row.
+Therefore, the rows have to be transposed after being read out of the scratchpad, so that elements on the same row can be fed into the same PE one-after-another, rather than being fed into adjacent PEs.
+
+### DMA
+
+Gemmini includes two DMAs, one for reading data from main memory into Gemmini's private SRAMs, and another for moving data from Gemmini's private SRAMs into main memory.
+Both these modules are implemented in `DMA.scala`.
+
+Both DMAs operate on virtual addresses, and share access to a TLB to translate these into physical main memory addresses.
+If the TLB misses, it transparently falls back to a PTW that is shared with Gemmini's host CPU.
+
+After physical addresses are obtained from Gemmini's private TLB, the DMAs break large memory requests up into smaller [TileLink](https://sifive.cdn.prismic.io/sifive%2Fcab05224-2df1-4af8-adee-8d9cba3378cd_tilelink-spec-1.8.0.pdf) read and write requests.
+To satisfy the TileLink protocol, each memory request must be aligned to the number of bytes requested from/to main memory, and the size of each memory request (in bytes) must be a power of 2.
+The DMAs generally attempt to minimize the number of TileLink requests as much as possible, even if this requires reading a larger total amount of data from main memory.
+Empirically, we have found that an excessive number TileLink requests can limit performance more than reading a small amount of extra data.
+
+The DMAWriter, which writes data from private SRAMs to main memory, also includes a set of `>` comparators that are used for max-pooling data during a memory-write operation.
+
+### ROB
+
+Due to Gemmini's decoupled access-execute architecture, instructions in the `LoadController`, `StoreController`, and `ExecuteController` may operate concurrently and out-of-order with respect to instructions in other controllers.
+Gemmini includes an ROB which is meant to detect hazards between instructions in different controllers.
+The instructions in the ROB are only issued to their respective controllers once they have no dependencies on instructions in other controllers.
+
+Note that instructions that are destined for the same controller are issued in-order.
+The ROB does not check hazards between instructions within the same controller, because each controller is obligated to handle it's own dependencies and hazards internally, assuming that it receives it's own instructions in program-order.
+
+### Matmul and Conv Loop Unrollers
+
+Gemmini's systolic array can only operate on matmuls that are up to `DIMxDIM` elements large.
+When performing matmuls and convolutions that are larger than this, programmers must tile their matmuls into a sequence of smaller `DIMxDIM` matmuls.
+
+However, tiling these operations efficiently can be difficult for programmers, due to CPU and loop overheads, and the difficulty of unrolling and pipelining software loops.
+
+To alleviate this difficulty, Gemmini's ISA includes high-level CISC-type instructions, which automatically tile and unroll large matmuls and convolutions.
+These are implemented in the `LoopMatmul` and `LoopConv` modules.
+
+These modules are implemented as FSMs, which double-buffer matmul/conv tiles to maximize performance, and which monitor the proportion of load/store/execute instructions in the ROB to maximize overlap between memory accesses and dot-product computations.
+For example, if the ROB is dominated by matmul instructions, without leaving any slots for incoming load instructions, then the FSMs will pause the issuing of matmul instructions to allow more space for concurrent load instructions in Gemmini's datapath.
 
 Software
 ==========
