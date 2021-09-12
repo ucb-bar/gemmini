@@ -13,7 +13,7 @@ Gemmini is part of the [Chipyard](https://github.com/ucb-bar/chipyard) ecosystem
 **Developer Note:**
 To track compatible versions of Chipyard and Spike, please update the CHIPYARD.hash and SPIKE.hash files with updated hashes of Chipyard and Spike commits when bumping Chipyard or Spike.
 
-![Image description](./img/gemmini-system.png)
+![Gemmini's high-level architecture](./img/gemmini-system.png)
 
 Architecture
 ================
@@ -35,7 +35,7 @@ Major parameters of interest include:
 
 * Systolic array dimensions (``tileRows``, ``tileColumns``, ``meshRows``, ``meshColumns``): The systolic array is composed of a 2-level hierarchy, in which each tile is fully combinational, while a mesh of tiles has pipeline registers between each tile.
 
-![Image description](./img/gemmini-systolic-array.png)
+![Gemmini's systolic two-tiered hierarchy](./img/gemmini-systolic-array.png)
 
 * Dataflow parameters (``dataflow``): Determine whether the systolic array in Gemmini is output-stationary or weight-stationary, or whether it supports both dataflows so that programmers may choose between them at runtime.
 
@@ -134,13 +134,13 @@ Therefore, in the weight-stationary mode, `D` is usually just the 0-matrix, whil
 The inputs (`A`, `B`, and `D`) must be delayed with shift-registers so that each input from one matrix reaches the correct PE at exactly the right time to be multiplied-and-accumulated with the correct input from another matrix.
 The diagram below shows an example of a 2x2 output-stationary matmul (ignoring `D`), with the appropriate delay registers at the inputs and outputs of the systolic array:
 
-![Image description](./img/delay-registers.png)
+![Systolic array with delay registers](./img/delay-registers.png)
 
 The systolic array itself (implemented in `Mesh.scala`), is composed of a two-tier hierarchy of `Tiles` and `PEs`.
 The `Mesh` is composed of a set of `Tiles`, separated by pipeline registers.
 Every `Tile` is composed of a combinational set of `PEs`, where each PE performs a single matmul operation, with either the weight-stationary, or output-stationary dataflow.
 
-![Image description](./img/gemmini-systolic-array.png)
+![Systolic array](./img/gemmini-systolic-array.png)
 
 The `MeshWithDelays` module also includes a number of counters and configuration registers.
 `MeshWithDelays` assumes that every matmul operation will be exactly of size `DIM x DIM`, where `DIM` is the number of PEs across the width of the systolic array itself (16 in the default config).
@@ -151,7 +151,7 @@ They also control whether the preloaded values in the systolic array are to be m
 The transposer itself is implemented as a very simple systolic array, which transports inputs from left-to-right for `DIM` cycles, and then up-to-down for another `DIM` cycles.
 This is illustrated in the diagram below:
 
-![Image description](./img/transposer.png)
+![Transposer](./img/transposer.png)
 
 Note that for output-stationary matmuls, the transposer is used even when the programmer does not request a transposition.
 This is because the systolic array expects inputs from the same row of `A` to enter the same PE in the output-stationary mode, but all values in a single row of `A` are stored within the same scratchpad SRAM row.
@@ -197,15 +197,15 @@ For example, if the ROB is dominated by matmul instructions, without leaving any
 Software
 ==========
 
-The Gemmini non-standard ISA extension is specified in the `ISA` section below.
-The ISA includes configuration instructions, data movement instructions (from main memory to the Gemmini scratchpad, and from the Gemmini accumulators to main memory), and matrix multiplication execution instructions. 
+The Gemmini ISA is specified in the `ISA` section below.
+The ISA includes configuration instructions, data movement instructions (from main memory to/from Gemmini's private memory), and matrix multiplication execution instructions.
 
 Since Gemmini instructions are not exposed through the GNU binutils assembler, several C macros are provided in order to construct the instruction encodings to call these instructions.
 
-The Gemmini generator includes a C matrix multiplication library which wraps the calls to the custom Gemmini instructions.
-The ``software`` directory of the generator includes the aforementioned library and macros, as well as bare-metal tests, and some FireMarshal workloads to run the tests in a Linux environment. In particular, the matrix multiplication C library can be found in the ``software/gemmini-rocc-tests/include/gemmini.h`` file. 
+The Gemmini generator includes a C library which wraps the calls to the custom Gemmini instructions into common DNN operators like matmuls, convolutions (with or without pooling), matrix-additions, etc.
+The ``software`` directory of the generator includes the aforementioned library and macros, as well as baremetal tests, and some FireMarshal workloads to run the tests in a Linux environment. In particular, the C library can be found in the ``software/gemmini-rocc-tests/include/gemmini.h`` file.
 
-The Gemmini generator generates a C header file based on the generator parameters. This header files gets compiled together with the matrix multiplication library to tune library performance. The generated header file can be found under ``software/gemmini-rocc-tests/include/gemmini_params.h``
+The Gemmini generator generates a C header file based on the generator parameters. This header files gets compiled together with the C library to tune library performance. The generated header file can be found under ``software/gemmini-rocc-tests/include/gemmini_params.h``
 
 Gemmini can also be used to run ONNX-specified neural-networks through a port of Microsoft's ONNX-Runtime framework. The port is included as the [onnxruntime-riscv](https://github.com/pranav-prakash/onnxruntime-riscv) repository submoduled in the `software` directory.
 To start using ONNX-Runtime, run `git submodule update --init --recursive software/onnxruntime-riscv`, and read the documentation [here](https://github.com/pranav-prakash/onnxruntime-riscv/blob/systolic/systolic_runner/docs).
@@ -219,9 +219,14 @@ cd software/gemmini-rocc-tests/
 ./build.sh
 ```
 
-Afterwards, the test binaries will be found in `software/gemmini-rocc-tests/build`. Binaries whose names end in `-baremetal` are meant to be run in a bare-metal environment, while binaries whose names end in `-linux` are meant to run in a Linux environment. You can run the tests either on a cycle-accurate RTL simulator, or on a (much faster) functional ISA simulator called Spike.
+Afterwards, the test binaries will be found in `software/gemmini-rocc-tests/build`.
+Binaries whose names end in `-baremetal` are meant to be run in a bare-metal environment, while binaries whose names end in `-linux` are meant to run in a Linux environment.
+You can run the tests either on a cycle-accurate RTL simulator, or on a (much faster) functional ISA simulator called Spike.
 
-We use a special fork of Spike, found [here](https://github.com/ucb-bar/esp-isa-sim), which has support for Gemmini instructions. If you are using Chipyard, you can easily build Spike by running `./scripts/build-toolchains.sh esp-tools` from Chipyard's root directory. Then, to run the `mvin_mvout` test, which simply moves a matrix into Gemmini's scratchpad before moving it back out into main memory, run the following commands:
+We use a special fork of Spike, found [here](https://github.com/ucb-bar/esp-isa-sim), which has support for Gemmini instructions.
+(You can find the required commit hash in `SPIKE.hash`).
+If you are using Chipyard, you can easily build Spike by running `./scripts/build-toolchains.sh esp-tools` from Chipyard's root directory.
+Then, to run the `mvin_mvout` test, which simply moves a matrix into Gemmini's scratchpad before moving it back out into main memory, run the following commands:
 
 ```shell
 cd build/bareMetalC
@@ -237,6 +242,28 @@ cp bareMetalC/template.c bareMetalC/my_test.c
 ```
 
 Then, add `my_test` to the `tests` list at the top of `bareMetalC/Makefile`. Afterwards, running `./build.sh` will install `my_test-baremetal` in `build/bareMetalC`.
+
+## DNN Tests
+
+Example DNNs, such as ResNet50, can be found in `software/gemmini-rocc-tests/imagenet` and `software/gemmini-rocc-tests/mlps`.
+These tests are built and run the same way as the other tests described above, but they typically take too long to run in a software simulator like VCS or Verilator.
+We recommend instead that you run these tests through [Firesim](https://fires.im/), an FPGA-accelerated simulation platform, which will reduce your runtime from days to minutes.
+
+Note that the DNN tests rely upon our C library of common DNN operators (found in `gemmini.h`).
+They call very few direct Gemmini ISA instructions, and mostly call the wrappers around them found in the C library.
+
+# Memory Addressing Scheme
+
+Gemmini's private memory is "row-addressed", where each row is `DIM` elements wide, where `DIM` is the number of PEs across the width of the systolic array (16 in the default config).
+These elements will be of type `inputType` in the scratchpad, and of type `accType` in the accumulator.
+
+Every private Gemmini memory address is 32 bits long.
+The three most signficant bits are reserved, and have special meanings:
+* Bit 31 (the MSB) is 0 if we are addressing the scratchpad, and 1 if we are addressing the accumulator.
+* Bit 30 is ignored if we are addressing the scratchpad, or if we are reading from the accumulator. If, instead, we are writing to the accumulator, then bit 30 is 0 if we want to overwrite the data at that address, and 1 if we want to accumulate on top of the data already at that address.
+* Bit 29 is ignored if we are addressing the scratchpad, or if we are writing to the accumulator. If, instead, we are reading from the accumulator, then bit 29 is 0 if we want to read scaled-down `inputType` data from the accumulator, and 1 if we want to read `accType` data from the accumulator.
+
+![Gemmini's memory addressing scheme](./img/memory-addressing.png)
 
 # ISA
 
