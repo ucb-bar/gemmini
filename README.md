@@ -18,11 +18,15 @@ To track compatible versions of Chipyard and Spike, please update the CHIPYARD.h
 Architecture
 ================
 
-Gemmini is implemented as a RoCC accelerator with non-standard RISC-V custom instructions. The Gemmini unit uses the RoCC port of a Rocket or BOOM _tile_, and by default connects to the memory system through the System Bus (i.e., directly to the L2 cache).
+Gemmini is implemented as a RoCC accelerator with non-standard RISC-V custom instructions.
+The Gemmini unit uses the RoCC port of a Rocket or BOOM _tile_, and by default connects to the memory system through the System Bus (i.e., directly to the L2 cache).
 
-At the heart of the accelerator lies a systolic array which performs matrix multiplications. By default, the matrix multiplication support both _output-stationary_ and _weight-stationary_ dataflows, which programmers can pick between at runtime. However, the dataflow can also be hardened at elaboration time.
+At the heart of the accelerator lies a systolic array which performs matrix multiplications.
+By default, the matrix multiplication support both _output-stationary_ and _weight-stationary_ dataflows, which programmers can pick between at runtime.
+However, the dataflow can also be hardened at elaboration time.
 
-The systolic array's inputs and outputs are stored in an explicity managed scratchpad, made up of banked SRAMs. A DMA engine facilitates the transfer of data between main memory and the scratchpad.
+The systolic array's inputs and outputs are stored in an explicity managed scratchpad, made up of banked SRAMs.
+A DMA engine facilitates the transfer of data between main memory (which is visible to the host CPU) and the scratchpad.
 
 Because weight-stationary dataflows require an accumulator outside the systolic array, we add a final SRAM bank, equipped with adder units, which can be conceptually considered an extension of the scratchpad memory space. The systolic array can store results to any address in the accumulator, and can also read new inputs from any address in the accumulator. The DMA engine can also tranfer data directly between the accumulator and main memory, which is often necessary to load in biases.
 
@@ -148,7 +152,7 @@ These counters count up to `DIM`, and then update the configuration registers fr
 These configuration registers control which of `A` and `B` are to be transposed before being fed into the systolic array.
 They also control whether the preloaded values in the systolic array are to be maintained for the next matmul, or whether they are to be overwritten and replaced.
 
-The transposer itself is implemented as a very simple systolic array, which transports inputs from left-to-right for `DIM` cycles, and then up-to-down for another `DIM` cycles.
+The transposer itself is implemented as a very simple systolic array, which transports inputs from left-to-right for `DIM` cycles, and then down-to-up for another `DIM` cycles.
 This is illustrated in the diagram below:
 
 ![Transposer](./img/transposer.png)
@@ -262,39 +266,59 @@ The three most signficant bits are reserved, and have special meanings:
 * Bit 31 (the MSB) is 0 if we are addressing the scratchpad, and 1 if we are addressing the accumulator.
 * Bit 30 is ignored if we are addressing the scratchpad, or if we are reading from the accumulator. If, instead, we are writing to the accumulator, then bit 30 is 0 if we want to overwrite the data at that address, and 1 if we want to accumulate on top of the data already at that address.
 * Bit 29 is ignored if we are addressing the scratchpad, or if we are writing to the accumulator. If, instead, we are reading from the accumulator, then bit 29 is 0 if we want to read scaled-down `inputType` data from the accumulator, and 1 if we want to read `accType` data from the accumulator.
+    - If bit 29 is 1 for an accumulator read address, then we do not apply activation functions or scaling to the output of the accumulator.
+
+The memory addressing scheme for a Gemmini config with a 2x2 systolic array is illustrated below:
 
 ![Gemmini's memory addressing scheme](./img/memory-addressing.png)
+
+Gemmini accesses main memory addresses (which are also visible to the CPU) through their software-visible virtual addresses.
+Physical translation addresses are handled by Gemmini, transparently to the programmer.
 
 # ISA
 
 This section describes Gemmini's assembly-level ISA which is made up of custom RISC-V instructions.
 
 ## Data Movement
-### `mvin` Move Data From L2/DRAM to Scratchpad
+### `mvin` Move Data From Main Memory to Scratchpad
 **Format:** `mvin rs1, rs2`
 - `rs1` = virtual DRAM address (byte addressed) to load into scratchpad
-- `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
-    - if the 32nd (Most Significant) bit is set to logical 1, `rs2[31:0]` refers to an address in the accumulator memory space. In this case, the bitwidth of the elements is `tileColumns x meshColumns x accumulated result bitwidth`.
+- `rs2[31:0]` = local scratchpad or accumulator address
 - `rs2[47:32]` = number of columns to load in
-- `rs2[63:48]` = number of rows to load in
+- `rs2[63:48]` = number of rows to load in. Must be less than or equal to `DIM`.
 - `funct` = 2
 
 **Action:** Scratchpad[rs2] <= DRAM[Translate[rs1]]
-- Loads a fixed amount of data (`tileColumns x meshColumns x tileRows x meshRows x dataBytes` bytes) into the scratchpad
-- Load is sequential from the rs1/rs2 base addresses. Stride must be set by the `config_mvin` command
+- Loads a 2D matrix from main memory into Gemmini's private memory.
+- Load is sequential from the rs1/rs2 base addresses.
+- Main memory stride must be set by the `config_mvin` command.
+- If the number of columns we load in are greater than `DIM`, then multiple submatrices will be moved in.
+The private-memory stride between these submatrices is set by the `config_mvin` command.
+
+The figure below illustrates how the `mvin` command works:
+
+![Gemmini's mvin command](./img/mvin.png)
+
+In addition, the figure below illustrates the special case where the number of columns moved-in is greater than `DIM`:
+
+![Gemmini's mvin command with many cols](./img/block-mvin.png)
+
+**Notes:**
+* There are actually **three** `mvin` instructions in Gemmini: `mvin`, `mvin2`, and `mvin3`.
+`mvin2` and `mvin3` are completely identical to `mvin`, except that they have their own independent set of configuration registers.
+When calling `config_mvin` (described below), the programmer can choose which `mvin` instruction they want to configure.
+* The reason we have three `mvin` instructions is so that the programmer can overlap loads for A, B, and D matrices (for a `A*B+D` matmul), where A, B, and D may all have different main-memory-strides. 
 
 ### `mvout` Move Data from Scratchpad to L2/DRAM
 **Format:** `mvout rs1, rs2`
 - `rs1` = virtual DRAM address (byte addressed) to write to from scratchpad
-- `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed; i.e. `tileColumns x meshColumns x dataBytes` bytes of data are captured in 1 address)
-    - if the 32nd (Most Significant) bit is set to logical 1, `rs2[31:0]` refers to an address in the the accumulator memory space. In this case, the bitwidth of the elements is `tileColumns x meshColumns x accumulated result bitwidth`.
-    - if the 30th bit is set to logical 1, the `mvout` command will store the full accumulator row in main memory, rather than scaling it down to the input type. Activation functions and accumulator scaling will not be applied in this case
+- `rs2[31:0]` = local scratchpad address
 - `rs2[47:32]` = number of columns to store
 - `rs2[63:48]` = number of rows to store
 - `funct` = 3
 
 **Action:** DRAM[Translate[rs1]] <= Scratchpad[rs2]
-- Stores a fixed amount of data (`tileColumns x meshColumns x tileRows x meshRows x dataBytes` bytes) from the scratchpad to L2/DRAM
+- Stores a 2D matrix from the scratchpad to main-memory
 - Store is sequential from the rs1/rs2 base addresses. Stride must be set by the `config_mvout` command
 
 ## Configuration
@@ -309,9 +333,12 @@ This section describes Gemmini's assembly-level ISA which is made up of custom R
 "A" in this context refers to the left-hand matrix A in the matmul represented by A * B = C.
 If this stride is 1, then we feed consecutive rows in the scratchpad, starting from the starting address of A, into the systolic array as the A matrix.
 If the stride is 2, then we feed every other row into the systolic array instead.
-- `rs1[63:32]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the accumulator
+- `rs1[63:32]` = the scalar value by which we scale the `accType` output of the accumulator down to `inputType` values when reading from the accumulator.
+    - In the default config, `rs1[63:32]` is of type `float32`
 - `rs2[31:0]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the systolic array
+    - This parameter is only relevant in output-stationary mode, when partial sums must be accumulated within the systolic array itself, and scaled-down when leaving the systolic array and being written into the scratchpad.
 - `rs2[63:32]` = the number of bits by which 6 should be left-shifted before applying relu6
+    - This parameter is ignored if the relu6 activation function is not being used.
 - `funct` = 0
 
 **Action:** mode <= rs1(2); shift <= rs2; A_stride <= rs1[31:16]
@@ -334,9 +361,9 @@ This limitation may be lifted in the future.
 ### `config_mvin` configures the Load pipeline
 **Format:** `config_mvin rs1 rs2`
 - `rs1[0:1]` must be `01`
-- `rs1[2]` is 0 if `mvin`s to the accumulator have the same bitwidth as accumulator types, and 1 if they have the same bitwidth as inputs to the systolic array
+- `rs1[2]` is 0 if `mvin`s to the accumulator are of type `accType`, and 1 if they are `inputType`
 - `rs1[4:3]` is 0 if the stride is being set for `mvin`, 1 if the stride is being set for `mvin2`, and 2 if the stride is being set for `mvin3`
-- `rs1[63:32]` is the "scale" by which to multiply data as it's being moved in to the scratchpad. This is ignored if Gemmini isn't built with the capability to scale values during `mvin`s.
+- `rs1[63:32]` is the "scale" by which to multiply data as it's being moved in to the scratchpad. This is ignored if Gemmini isn't configured to have the ability to scale values during `mvin`s.
 - `rs2` = the stride in bytes
 - `funct` = 0
 
@@ -367,23 +394,26 @@ The parameters controlling this feature are:
 
 ### `flush` flushes the TLB
 **Format:** `flush rs1`
-- `rs1` = If `rs1[0]` is 1, then the current TLB request is skipped (if its waiting for an interrupt). Otherwise, the current TLB request is repeated.
+- `rs1` = If `rs1[0]` is 1, then the current TLB request is skipped (if it has hit a page-fault and is waiting for an interrupt).
+Otherwise, the current TLB request is repeated.
 
 **Notes:**
 
-- This instruction executes _as soon as it is received_ without waiting for other instructions which may be queued up. It is the programmer's responsibility to insert fences if necessary.
+- This instruction executes _as soon as it is received_ without waiting for other instructions which may be queued up.
+It is the programmer's responsibility to insert fences if necessary.
 
 ## Core Matmul Sequences
-Every single matrix multiply operation is a combination of `matmul.preload` and `matmul.compute` (due to the length of a single instruction it was split into two instructions). `matmul.preload` should precede the `matmul.compute`.
+Every single matrix multiply operation is a combination of `matmul.preload` and `matmul.compute` (due to the length of a single instruction, it was split into two instructions).
+`matmul.preload` should precede the `matmul.compute`.
 
 Example:
 ```
-//// first matmul ////
+//// OS matmul example ////
 // rs1 = InputD
 // rs2 = OutputC
 // rs3 = InputA
 // rs4 = InputB
-//matmul InputA InputB OutputC InputD
+// matmul InputA InputB OutputC InputD
 1. matmul.preload $rs1 $rs2
 2. matmul.compute $rs3 $rs4
 ```
@@ -391,14 +421,15 @@ Example:
 
 **Notes on addressing:**
 - For B or D, the address can be replaced with all high bits to input a 0 matrix instead.
-- If the 32nd bit of any address is high, it will point to the accumulator's memory space.
+- For A, the address can be replaced with all high bits to input a matrix with undefined garbage data instead.
 
 ### Preloading
 **Format:** `matmul.preload rs1, rs2`
-- `rs1[31:0]` = local scratchpad address (systolic array single-axis addressed) of D matrix (when output-stationary), or B matrix (when weight-stationary)
+- `rs1[31:0]` = local scratchpad address of D matrix (when output-stationary), or B matrix (when weight-stationary)
 - `rs1[47:32]` = number of columns of D/B matrix
 - `rs1[63:48]` = number of rows of D/B matrix
-- `rs2[31:0]` = local scratchpad address (systolic array single-axis addressed) of C matrix. If this is set to all high bits, then C will not be written to the scratchpad. If the 32nd _and_ 31st bits are high, the result will be accumulated on top of the previous result pointed to by this address in the accumulator
+- `rs2[31:0]` = local scratchpad address of C matrix.
+If this is set to all high bits, then C will not be written to the scratchpad or accumulator.
 - `rs2[47:32]` = number of columns of C matrix
 - `rs2[63:48]` = number of rows of C matrix
 - `funct` = 6
@@ -417,66 +448,19 @@ Example:
 - `funct` = 4
 - This instruction will compute on the value preloaded (D if output-stationary, or B if weight-stationary)
 
-#### Accumulate on Previous Computation
+#### Re-use Previous Preloads
 **Format:** `matmul.compute.accumulated rs1, rs2`
 - `funct` = 5
 - `rs1` and `rs2` have the same encoding as the `matmul.compute.preloaded` encoding
-- If output-stationary, this instruction will compute on the previously computed result (C) in the systolic array
+- If output-stationary, this instruction will compute on the previously computed result (C) in the systolic array, accumulating on top of it
 - If weight-stationary, this instruction will compute on the previously preloaded weights (B) in the systolic array
 
-# Hardware Tiler ISA
+## Loop Instructions
 
-This section describes an additional set of RoCC instructions that configure and invoke the hardware tiler in Gemmini. From the software's perspective the original instructions and these new instructions should be seen as totally unrelated. It is easy for software to safely interleave original instructions with these hardware tiling instructions, but this comes at the cost of increased serialization latency; for example, if you issue an original `preload` and `matmul` from above, and then immediately issue a `compute_cisc`, the last RoCC instruction will not start to be processed until the `preload` and `matmul` are completely finished from the software's perspective (the same works in the opposite direction -- `compute_cisc` before a `preload` and `matmul`).
+Gemmini includes CISC-type instructions which can perform matmuls and convolutions on data that is much larger than `DIMxDIM`.
 
-## Hardware Tiler Configuration
-### `config_cisc` configures the Execute pipeline
-**Format:** `config_ex rs1 rs2`
-- `rs1[4:3]` = activation function: either relu (1), relu6 (2), or no activation function (0)
-- `rs1[63:32]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the accumulator
-- `rs2[31:0]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the systolic array
-- `rs2[63:32]` = the number of bits by which 6 should be left-shifted before applying relu6
-- `funct` = 10
+**These loop instructions are experimental and subject to change.**
 
-**Action:** semantically equivalent subset of the `config_ex` instruction fields.
-
-### `addr_ab` sets the virtual address of the A and B matrices
-**Format:** `addr_ab rs1, rs2`
-- `rs1` = the A matrix virtual address
-- `rs2` = the B matrix virtual address
-- `funct` = 11
-
-### `addr_cd` sets the virtual address of the C and D matrices
-**Format:** `addr_ab rs1, rs2`
-- `rs1` = the C matrix virtual address
-- `rs2` = the D matrix virtual address
-- `funct` = 12
-
-### `size_mn` sets the M and N dimensions in terms of elements
-**Format:** `size_mn rs1, rs2`
-- `rs1` = sets M, the number of rows in A, C, and D matrices 
-- `rs2` = sets N, the number of columns in B, C, and D matrices
-- `funct` = 13
-
-### `size_k` sets the K dimension in terms of elements
-**Format:** `size_k rs1`
-- `rs1` = sets K, the number of columns in A, and rows in B
-- `funct` = 14
-
-### `RPT_BIAS` sets whether the D is a repeating row
-**Format:** `rpt_bias rs1`
-- `rs1[0]` = set to 1 if D is not a 2D matrix, but really a 1D row that should be duplicated by the hardware
-- `funct` = 15
-
-### `reset` resets the hardware tiler input processing engine
-**Format:** `reset`
-- `funct` = 16
-
-**Action:** this is only used if Gemmini has entered an error state while in the hardware-tiler mode due to invalid RoCC commands. Using this command will reset Gemmini. However, right now, there is no way for the software to check for these errors. 
-
-
-### `COMPUTE_CISC` runs a complete hardware tiling sequence with the configured A, B, C, D, M, N, K, RPT_BIAS values
-**Format:** `compute_cisc`
-- `funct` = 17
 
 # Citing Gemmini
 If Gemmini helps you in your academic research, you are encouraged to cite our paper. Here is an example bibtex:
