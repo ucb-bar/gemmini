@@ -459,8 +459,44 @@ If this is set to all high bits, then C will not be written to the scratchpad or
 
 Gemmini includes CISC-type instructions which can perform matmuls and convolutions on data that is much larger than `DIMxDIM`.
 
+There's nothing these CISC instructions do which a programmer couldn't do by tiling and looping through the other ISA instructions described above;
+however, these CISC instructions may achieve higher throughput than such tiled loops written by non-expert programmers.
+The CISC instructions should be considered performance enhancers; they do not give the accelerator any new functionality that it wouldn't have otherwise.
+
+The CISC instructions have too many operands to fit into a single RISC-V custom instruction.
+Therefore, they are implemented as a sequence of many RISC-V custom instructions which must be called consecutively by the programmer.
+
+These instructions can be found `software/gemmini-rocc-tests/include/gemmini.h`, together with example usages.
+We list below their arguments.
+
 **These loop instructions are experimental and subject to change.**
 
+### `gemmini_loop_ws` Matmul Loop (WS Dataflow)
+
+This instruction calculates `A * B + D = C`, but `A`, `B`, `D`, and `C` can all be larger than `DIMxDIM`.
+`A`, and `B` must be of type `inputType`, but both `D` and `C` can be _either_ `inputType` or `accType`.
+
+The sizes of these matrices are represented by `I`, `J`, and `K`:
+
+```
+scratchpad rows of A = I * K * DIM
+scratchpad rows of B = K * J * DIM
+accumulator rows of D = I * J * DIM
+accumulator rows of C = I * J * DIM
+```
+
+However, the total number of scratchpad rows taken up by a single `gemmini_loop_ws` must be at most **half** of the total scratchpad size, because Gemmini performs double-buffering during CISC instructions.
+To compute larger matrix multiplies, the loop instructions must also be tiled within an outer loop.
+
+To support outer-tiling of the `gemmini_loop_ws` instruction, we include an argument called `ex_accumulate`, which determines whether to perform a matmul on top of the partial sums that already exist within the accumulator (from previous calls to `gemmini_loop_ws` within the same outer-loop).
+
+### `gemmini_loop_conv_ws` Conv Loop (WS Dataflow)
+
+Gemmini also includes a CISC instruction for convolutions, implemented similarly to the matmul CISC instruction.
+`gemmini_loop_conv_ws` will perform a convolution with the WS dataflow, and also supports features such as max-pooling, transpose convolutions, and various preprocessing transformations on the weight and input data.
+
+Like `gemmini_loop_ws`, the inputs to a single `gemmini_loop_conv_ws` call must fit within half of Gemmini's private memory, to support double-buffering.
+If the programmer would like to perform larger convolutions, they must tile and wrap `gemmini_loop_conv_ws` within an outer-loop.
 
 # Citing Gemmini
 If Gemmini helps you in your academic research, you are encouraged to cite our paper. Here is an example bibtex:
