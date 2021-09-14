@@ -555,8 +555,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }.otherwise {
           bio.read.req.bits := DontCare
         }
-        bio.read.resp.ready          := false.B
-
+        bio.read.resp.ready := false.B
 
         when (write_scale_q.io.deq.valid &&
               acc_scale_unit.io.in.ready &&
@@ -567,10 +566,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
               write_scale_q.io.deq.bits.laddr.acc_bank() === i.U) {
           write_scale_q.io.deq.ready   := true.B
           acc_scale_unit.io.in.valid := true.B
-          bio.read.resp.ready          := true.B
-          write_issue_q.io.enq.valid   := true.B
+          bio.read.resp.ready := true.B
+          write_issue_q.io.enq.valid := true.B
 
-          acc_scale_unit.io.in.bits  := bio.read.resp.bits
+          acc_scale_unit.io.in.bits := bio.read.resp.bits
           acc_scale_unit.io.in.bits.acc_bank_id := i.U
         }
 
