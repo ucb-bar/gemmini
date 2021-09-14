@@ -80,7 +80,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val cols = cmd.bits.cmd.rs2(32 + mvout_cols_bits - 1, 32) // TODO magic numbers
   val rows = cmd.bits.cmd.rs2(48 + mvout_rows_bits - 1, 48) // TODO magic numbers
   val blocks = (cols / block_cols.U) + (cols % block_cols.U =/= 0.U)
-  val config_stride = cmd.bits.cmd.rs2(32, 0) // TODO magic numbers
+  val config_stride = cmd.bits.cmd.rs2(31, 0) // TODO magic numbers
   val config_activation = cmd.bits.cmd.rs1(3, 2) // TODO magic numbers
   val config_acc_scale = cmd.bits.cmd.rs2(63, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic numbers
   val config_pool_stride = cmd.bits.cmd.rs1(5, 4) // TODO magic numbers
