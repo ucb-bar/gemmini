@@ -40,6 +40,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
 
   val activation = Reg(UInt(2.W)) // TODO magic number
+  val acc_scale = Reg(acc_scale_args.multiplicand_t)
 
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
   val row_counter = RegInit(0.U(12.W)) // TODO magic number
@@ -79,8 +80,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val cols = cmd.bits.cmd.rs2(32 + mvout_cols_bits - 1, 32) // TODO magic numbers
   val rows = cmd.bits.cmd.rs2(48 + mvout_rows_bits - 1, 48) // TODO magic numbers
   val blocks = (cols / block_cols.U) + (cols % block_cols.U =/= 0.U)
-  val config_stride = cmd.bits.cmd.rs2
-  val config_activation = cmd.bits.cmd.rs1(3, 2)
+  val config_stride = cmd.bits.cmd.rs2(32, 0) // TODO magic numbers
+  val config_activation = cmd.bits.cmd.rs1(3, 2) // TODO magic numbers
+  val config_acc_scale = cmd.bits.cmd.rs2(63, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic numbers
   val config_pool_stride = cmd.bits.cmd.rs1(5, 4) // TODO magic numbers
   val config_pool_size = cmd.bits.cmd.rs1(7, 6) // TODO magic numbers
   val config_pool_out_dim = cmd.bits.cmd.rs1(31, 24) // TODO magic numbers
@@ -132,7 +134,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.vaddr := Mux(pooling_is_enabled || mvout_1d_enabled, pool_vaddr, current_vaddr)
   io.dma.req.bits.laddr := Mux(pooling_is_enabled, pool_row_addr, current_localaddr) //Todo: laddr for 1D?
 
-  io.dma.req.bits.act := activation
+  io.dma.req.bits.acc_act := activation
+  io.dma.req.bits.acc_scale := acc_scale
 
   io.dma.req.bits.len := Mux(block_counter === blocks - 1.U, ((cols - 1.U) % block_cols.U) + 1.U, block_cols.U)
   io.dma.req.bits.block := block_counter
@@ -189,6 +192,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
         when(DoConfig) {
           stride := config_stride
           activation := config_activation
+          acc_scale := config_acc_scale
           pool_size := config_pool_size
           pool_stride := config_pool_stride
           when (config_pool_stride =/= 0.U) {

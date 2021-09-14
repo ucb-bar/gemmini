@@ -741,7 +741,7 @@ class LoopConvStReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: Int, 
 }
 
 class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, concurrent_loops: Int, latency: Int)(implicit p: Parameters) extends Module {
-  val MVIN_SCALE_IDENTITY = 0x3f800000.U // TODO get this from configs somehow
+  val ACC_SCALE_IDENTITY = 0x3f800000.U // TODO get this from configs somehow
 
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new LoopConvStReq(coreMaxAddrBits, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth: Int, max_acc_addr, concurrent_loops)))
@@ -817,13 +817,13 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   pre_pool_config_cmd.rs1 := (ocols << 56) | (orows << 48) | (pocols << 40) | (porows << 32) | (pool_out_dim << 24) |
     (plpad << 10) | (pupad << 8) | (pool_size << 6) | (pool_stride << 4) | // TODO magic numbers
     CONFIG_STORE
-  pre_pool_config_cmd.rs2 := out_channels * (input_w / 8).U
+  pre_pool_config_cmd.rs2 := (ACC_SCALE_IDENTITY << 32) | (out_channels * (input_w / 8).U)
 
   val post_pool_config_cmd = Wire(new RoCCCommand)
   post_pool_config_cmd := DontCare
   post_pool_config_cmd.inst.funct := CONFIG_CMD
   post_pool_config_cmd.rs1 := CONFIG_STORE
-  post_pool_config_cmd.rs2 := out_channels * (input_w / 8).U
+  post_pool_config_cmd.rs2 := (ACC_SCALE_IDENTITY << 32) | (out_channels * (input_w / 8).U)
 
   val pool_cmd = Wire(new RoCCCommand)
   pool_cmd := DontCare
