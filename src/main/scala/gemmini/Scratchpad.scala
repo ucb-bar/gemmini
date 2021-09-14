@@ -32,6 +32,8 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr)
   val vaddr = UInt(coreMaxAddrBits.W)
   val laddr = local_addr_t.cloneType
 
+  val act = UInt(2.W) // TODO don't use a magic number for the width here
+
   val len = UInt(16.W) // TODO don't use a magic number for the width here
   val block = UInt(8.W) // TODO don't use a magic number for the width here
 
@@ -528,17 +530,18 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.read.req.valid := exread || dmawrite
         bio.read.req.bits.scale := ex_read_req.bits.scale
         bio.read.req.bits.relu6_shift := ex_read_req.bits.relu6_shift
-        bio.read.req.bits.act := ex_read_req.bits.act
         ex_read_req.ready := bio.read.req.ready
 
         // The ExecuteController gets priority when reading from accumulator banks
         when (exread) {
           bio.read.req.bits.addr := ex_read_req.bits.addr
+          bio.read.req.bits.act := ex_read_req.bits.act
           bio.read.req.bits.full := false.B
           bio.read.req.bits.fromDMA := false.B
         }.elsewhen (dmawrite) {
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.acc_row()
           bio.read.req.bits.full := write_dispatch_q.bits.laddr.read_full_acc_row
+          bio.read.req.bits.act := write_dispatch_q.bits.act
           bio.read.req.bits.fromDMA := true.B
 
           when (bio.read.req.fire()) {

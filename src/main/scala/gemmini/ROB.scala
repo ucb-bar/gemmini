@@ -312,6 +312,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     })
 
     val is_ex_config_and_must_wait_for_prior_st = VecInit(entries.map { e =>
+      // TODO when acc reads no longer rely upon config-ex's relu6, this dependency can be broken
       e.valid && new_entry.q === exq && new_entry.is_config && e.bits.q === stq && !e.bits.is_config
     })
 

@@ -116,7 +116,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val acc_scale = Reg(acc_scale_args.multiplicand_t)
   val relu6_shift = Reg(UInt(log2Up(accType.getWidth).W))
-  val activation = Reg(UInt(2.W))
+  val activation = Reg(UInt(2.W)) // TODO magic number
   val a_transpose = Reg(Bool())
   val bd_transpose = Reg(Bool())
   val config_initialized = RegInit(false.B)
@@ -488,7 +488,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.read_req(i).bits.scale := acc_scale
       io.acc.read_req(i).bits.full := false.B
       io.acc.read_req(i).bits.relu6_shift := relu6_shift
-      io.acc.read_req(i).bits.act := activation
+      io.acc.read_req(i).bits.act := DontCare
       io.acc.read_req(i).bits.fromDMA := false.B
       io.acc.read_req(i).bits.addr := DontCare
     }
