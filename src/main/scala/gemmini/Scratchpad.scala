@@ -543,7 +543,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.acc_row()
           bio.read.req.bits.full := write_dispatch_q.bits.laddr.read_full_acc_row
           bio.read.req.bits.act := write_dispatch_q.bits.acc_act
-          bio.read.req.bits.scale := write_dispatch_q.bits.acc_scale
+          bio.read.req.bits.scale := write_dispatch_q.bits.acc_scale.asTypeOf(bio.read.req.bits.scale)
           bio.read.req.bits.fromDMA := true.B
 
           when (bio.read.req.fire()) {
