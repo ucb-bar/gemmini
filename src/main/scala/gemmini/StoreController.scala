@@ -191,8 +191,12 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
       when (cmd.valid) {
         when(DoConfig) {
           stride := config_stride
+
           activation := config_activation
-          acc_scale := config_acc_scale
+          when (config_acc_scale.asUInt() =/= 0.U) {
+            acc_scale := config_acc_scale
+          }
+
           pool_size := config_pool_size
           pool_stride := config_pool_stride
           when (config_pool_stride =/= 0.U) {
