@@ -485,7 +485,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       }
     } else {
       io.acc.read_req(i).valid := false.B
-      io.acc.read_req(i).bits.scale := acc_scale
+      io.acc.read_req(i).bits.scale := DontCare
       io.acc.read_req(i).bits.full := false.B
       io.acc.read_req(i).bits.relu6_shift := relu6_shift
       io.acc.read_req(i).bits.act := DontCare
