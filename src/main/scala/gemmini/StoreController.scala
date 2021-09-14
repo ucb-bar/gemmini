@@ -82,7 +82,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val blocks = (cols / block_cols.U) + (cols % block_cols.U =/= 0.U)
   val config_stride = cmd.bits.cmd.rs2(31, 0) // TODO magic numbers
   val config_activation = cmd.bits.cmd.rs1(3, 2) // TODO magic numbers
-  val config_acc_scale = cmd.bits.cmd.rs2(63, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic numbers
+  val config_acc_scale = cmd.bits.cmd.rs2(63, 32) // TODO magic numbers
   val config_pool_stride = cmd.bits.cmd.rs1(5, 4) // TODO magic numbers
   val config_pool_size = cmd.bits.cmd.rs1(7, 6) // TODO magic numbers
   val config_pool_out_dim = cmd.bits.cmd.rs1(31, 24) // TODO magic numbers
@@ -193,8 +193,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
           stride := config_stride
 
           activation := config_activation
-          when (config_acc_scale.asUInt().andR()) {
-            acc_scale := config_acc_scale
+          when (!config_acc_scale.asUInt().andR()) {
+            acc_scale := config_acc_scale.asTypeOf(acc_scale_args.multiplicand_t)
           }
 
           pool_size := config_pool_size
