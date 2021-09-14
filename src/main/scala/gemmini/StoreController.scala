@@ -17,7 +17,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(rob_entries)))
 
-    val dma = new ScratchpadWriteMemIO(local_addr_t)
+    val dma = new ScratchpadWriteMemIO(local_addr_t, acc_scale_t_bits)
 
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
