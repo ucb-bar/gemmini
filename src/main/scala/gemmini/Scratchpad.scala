@@ -27,10 +27,13 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   override def cloneType: this.type = new ScratchpadMemReadRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
-class ScratchpadMemWriteRequest(local_addr_t: LocalAddr)
+class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, scale_t_bits: Int)
                               (implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val laddr = local_addr_t.cloneType
+
+  val acc_act = UInt(2.W) // TODO don't use a magic number for the width here
+  val acc_scale = UInt(scale_t_bits.W)
 
   val len = UInt(16.W) // TODO don't use a magic number for the width here
   val block = UInt(8.W) // TODO don't use a magic number for the width here
@@ -42,7 +45,7 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr)
   val pool_en = Bool()
   val store_en = Bool()
 
-  override def cloneType: this.type = new ScratchpadMemWriteRequest(local_addr_t).asInstanceOf[this.type]
+  override def cloneType: this.type = new ScratchpadMemWriteRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadMemWriteResponse extends Bundle {
@@ -63,12 +66,12 @@ class ScratchpadReadMemIO[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
 }
 
 // class ScratchpadWriteMemIO(val nBanks: Int, val nRows: Int, val acc_rows: Int)
-class ScratchpadWriteMemIO(local_addr_t: LocalAddr)
+class ScratchpadWriteMemIO(local_addr_t: LocalAddr, scale_t_bits: Int)
                          (implicit p: Parameters) extends CoreBundle {
-  val req = Decoupled(new ScratchpadMemWriteRequest(local_addr_t))
+  val req = Decoupled(new ScratchpadMemWriteRequest(local_addr_t, scale_t_bits))
   val resp = Flipped(Valid(new ScratchpadMemWriteResponse))
 
-  override def cloneType: this.type = new ScratchpadWriteMemIO(local_addr_t).asInstanceOf[this.type]
+  override def cloneType: this.type = new ScratchpadWriteMemIO(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadReadReq(val n: Int) extends Bundle {
@@ -176,7 +179,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // DMA ports
       val dma = new Bundle {
         val read = Flipped(new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits))
-        val write = Flipped(new ScratchpadWriteMemIO(local_addr_t))
+        val write = Flipped(new ScratchpadWriteMemIO(local_addr_t, acc_scale_t_bits))
       }
 
       // SRAM ports
@@ -213,8 +216,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     // Write scale queue is necessary to maintain in-order requests to accumulator scale unit
     // Writes from main SPAD just flow directly between scale_q and issue_q, while writes
     // From acc are ordered
-    val write_scale_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t), mem_pipeline))
-    val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t), mem_pipeline+1, pipe=true))
+    val write_scale_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, acc_scale_t_bits), mem_pipeline))
+    val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, acc_scale_t_bits), mem_pipeline+1, pipe=true))
     val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), mem_pipeline+1, pipe=true)) // TODO can't this just be a normal queue?
 
     write_scale_q.io.enq.valid := false.B
@@ -527,19 +530,21 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.acc_bank() === i.U
 
         bio.read.req.valid := exread || dmawrite
-        bio.read.req.bits.scale := ex_read_req.bits.scale
         bio.read.req.bits.relu6_shift := ex_read_req.bits.relu6_shift
-        bio.read.req.bits.act := ex_read_req.bits.act
         ex_read_req.ready := bio.read.req.ready
 
         // The ExecuteController gets priority when reading from accumulator banks
         when (exread) {
           bio.read.req.bits.addr := ex_read_req.bits.addr
+          bio.read.req.bits.act := ex_read_req.bits.act
+          bio.read.req.bits.scale := ex_read_req.bits.scale
           bio.read.req.bits.full := false.B
           bio.read.req.bits.fromDMA := false.B
         }.elsewhen (dmawrite) {
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.acc_row()
           bio.read.req.bits.full := write_dispatch_q.bits.laddr.read_full_acc_row
+          bio.read.req.bits.act := write_dispatch_q.bits.acc_act
+          bio.read.req.bits.scale := write_dispatch_q.bits.acc_scale.asTypeOf(bio.read.req.bits.scale)
           bio.read.req.bits.fromDMA := true.B
 
           when (bio.read.req.fire()) {
@@ -551,8 +556,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }.otherwise {
           bio.read.req.bits := DontCare
         }
-        bio.read.resp.ready          := false.B
-
+        bio.read.resp.ready := false.B
 
         when (write_scale_q.io.deq.valid &&
               acc_scale_unit.io.in.ready &&
@@ -563,10 +567,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
               write_scale_q.io.deq.bits.laddr.acc_bank() === i.U) {
           write_scale_q.io.deq.ready   := true.B
           acc_scale_unit.io.in.valid := true.B
-          bio.read.resp.ready          := true.B
-          write_issue_q.io.enq.valid   := true.B
+          bio.read.resp.ready := true.B
+          write_issue_q.io.enq.valid := true.B
 
-          acc_scale_unit.io.in.bits  := bio.read.resp.bits
+          acc_scale_unit.io.in.bits := bio.read.resp.bits
           acc_scale_unit.io.in.bits.acc_bank_id := i.U
         }
 
