@@ -66,6 +66,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              mesh_output_delay: Int,
 
+                                                                             num_counter: Int,
+
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth
@@ -186,6 +188,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   //==========================================================================
   // other stuff
   //==========================================================================
+
+  require(num_counter < 256, "Number of counters cannot exceed 256")
 
   require(isPow2(sp_bank_entries), "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement
   require(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
