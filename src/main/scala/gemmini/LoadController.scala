@@ -20,6 +20,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
     val busy = Output(Bool())
+
+    val counter = new CounterEventIO()
   })
 
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -155,4 +157,10 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
       }
     }
   }
+
+  // Performance counter
+  CounterEventIO.init(io.counter)
+  io.counter.connectEventSignal(CounterEvent.LOAD_ACTIVE_CYCLE, control_state === sending_rows)
+  io.counter.connectEventSignal(CounterEvent.LOAD_DMA_WAIT_CYCLE, control_state === waiting_for_dma_req_ready)
+  io.counter.connectEventSignal(CounterEvent.LOAD_SCRATCHPAD_WAIT_CYCLE, io.dma.req.valid && !io.dma.req.ready)
 }

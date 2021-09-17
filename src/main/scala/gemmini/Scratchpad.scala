@@ -205,6 +205,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // Misc. ports
       val busy = Output(Bool())
       val flush = Input(Bool())
+      val counter = new CounterEventIO()
     })
 
     val write_dispatch_q = Queue(io.dma.write.req)
@@ -668,5 +669,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }
       }
     }
+
+    // Counter connection
+    io.counter.collect(reader.module.io.counter)
+    io.counter.collect(writer.module.io.counter)
   }
 }
