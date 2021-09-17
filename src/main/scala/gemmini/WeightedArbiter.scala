@@ -26,7 +26,7 @@ class WeightedArbiter[T <: Data](t: T, maxWeightA: Int, staticWeightAEnabled: Bo
   val B_chosen = WireInit(false.B)
 
   val staticWeightA = io.weightA === 0.U && staticWeightAEnabled.B
-  val weightA = if (staticWeightAEnabled) { io.weightA } else { Mux(io.weightA === 0.U, 3.U, io.weightA)) }
+  val weightA = if (staticWeightAEnabled) { io.weightA } else { Mux(io.weightA === 0.U, 3.U, io.weightA) }
 
   io.inA.ready := false.B
   io.inB.ready := false.B
