@@ -9,7 +9,7 @@ class AccumulatorReadReq[T <: Data](n: Int, shift_width: Int, scale_t: T) extend
   val addr = UInt(log2Ceil(n).W)
   val scale = scale_t
   val relu6_shift = UInt(shift_width.W)
-  val act = UInt(2.W)
+  val act = UInt(2.W) // TODO magic number
   val full = Bool() // Whether or not we return the full bitwidth output
 
   val fromDMA = Bool()
@@ -22,7 +22,7 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val fromDMA = Bool()
   val scale = scale_t.cloneType
   val relu6_shift = UInt(shift_width.W)
-  val act = UInt(2.W)
+  val act = UInt(2.W) // TODO magic number
   val acc_bank_id = UInt(2.W) // TODO don't hardcode
   override def cloneType: this.type = new AccumulatorReadResp(fullDataType.cloneType, scale_t, shift_width).asInstanceOf[this.type]
 }
