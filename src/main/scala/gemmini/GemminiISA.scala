@@ -56,4 +56,25 @@ object GemminiISA {
   // dataflow configuration
   //==========================================================================
   val GARBAGE_ADDR      = "hffffffff".U(32.W)
+
+  val MVIN_RS2_ADDR_WIDTH = 32.W
+  val MVIN_RS2_COLS_WIDTH = 16.W
+  val MVIN_RS2_ROWS_WIDTH = 16.W
+
+  val MVOUT_RS2_ADDR_WIDTH = 32.W
+  val MVOUT_RS2_COLS_WIDTH = 16.W
+  val MVOUT_RS2_ROWS_WIDTH = 16.W
+  
+  val MvinRs2 = new Bundle {
+    val num_rows = UInt(MVIN_RS2_ROWS_WIDTH)
+    val num_cols = UInt(MVIN_RS2_COLS_WIDTH)
+    val local_addr = UInt(MVIN_RS2_ADDR_WIDTH)
+  }
+
+  val MvoutRs2 = new Bundle {
+    val num_rows = UInt(MVOUT_RS2_ROWS_WIDTH)
+    val num_cols = UInt(MVOUT_RS2_COLS_WIDTH)
+    val local_addr = UInt(MVOUT_RS2_ADDR_WIDTH)
+  }
 }
+

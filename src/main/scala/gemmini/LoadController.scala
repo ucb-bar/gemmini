@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -8,7 +9,8 @@ import freechips.rocketchip.config.Parameters
 
 // TODO we need to check for WAW errors here
 // TODO deal with errors when reading scratchpad responses
-class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
+class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int,
+                                                      local_addr_t: LocalAddr)
                                (implicit p: Parameters) extends Module {
   import config._
 
@@ -37,9 +39,10 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
   val cmd = Queue(io.cmd, ld_queue_length)
   val vaddr = cmd.bits.cmd.rs1
-  val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
-  val cols = cmd.bits.cmd.rs2(32 + mvin_cols_bits - 1, 32) // TODO magic numbers
-  val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits - 1, 48) // TODO magic numbers
+  val mvin_rs2 = cmd.bits.cmd.rs2.asTypeOf(GemminiISA.MvinRs2)
+  val localaddr = mvin_rs2.local_addr.asTypeOf(local_addr_t)
+  val cols = mvin_rs2.num_cols
+  val rows = mvin_rs2.num_rows
   val config_stride = cmd.bits.cmd.rs2
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
   val config_shrink = cmd.bits.cmd.rs1(2) // TODO magic numbers

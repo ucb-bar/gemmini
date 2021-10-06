@@ -78,9 +78,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   // Commands
   val cmd = Queue(io.cmd, st_queue_length)
   val vaddr = cmd.bits.cmd.rs1
-  val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
-  val cols = cmd.bits.cmd.rs2(32 + mvout_cols_bits - 1, 32) // TODO magic numbers
-  val rows = cmd.bits.cmd.rs2(48 + mvout_rows_bits - 1, 48) // TODO magic numbers
+  val mvout_rs2 = cmd.bits.cmd.rs2.asTypeOf(GemminiISA.MvoutRs2)
+  val localaddr = mvout_rs2.local_addr.asTypeOf(local_addr_t)
+  val cols = mvout_rs2.num_cols
+  val rows = mvout_rs2.num_rows
   val blocks = (cols / block_cols.U) + (cols % block_cols.U =/= 0.U)
   val config_stride = cmd.bits.cmd.rs2(31, 0) // TODO magic numbers
   val config_activation = cmd.bits.cmd.rs1(3, 2) // TODO magic numbers
