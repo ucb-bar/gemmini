@@ -2,6 +2,11 @@
   <img width="1000" src="./img/full-logo.svg">
 </p>
 
+IISWC Tutorial
+==============
+
+We will be presenting a Gemmini tutorial at IISWC 2021! [More info here.](https://sites.google.com/berkeley.edu/gemminitutorialiiswc2021/)
+
 Gemmini
 ====================================
 
