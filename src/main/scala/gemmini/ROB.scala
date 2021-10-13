@@ -45,6 +45,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val busy = Output(Bool())
 
     val solitary_preload = Input(Bool()) // TODO very hacky. from ExecuteController, to prevent infinite fence stalls. remove later
+
+    val counter = new CounterEventIO()
   })
 
   // TODO make this a ChiselEnum
@@ -312,6 +314,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     })
 
     val is_ex_config_and_must_wait_for_prior_st = VecInit(entries.map { e =>
+      // TODO when acc reads no longer rely upon config-ex's relu6, this dependency can be broken
       e.valid && new_entry.q === exq && new_entry.is_config && e.bits.q === stq && !e.bits.is_config
     })
 
@@ -465,4 +468,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   when (reset.asBool()) {
     entries.foreach(_.valid := false.B)
   }
+
+  CounterEventIO.init(io.counter)
+  io.counter.connectExternalCounter(CounterExternal.ROB_LD_COUNT, utilization_ld_q)
+  io.counter.connectExternalCounter(CounterExternal.ROB_ST_COUNT, utilization_st_q)
+  io.counter.connectExternalCounter(CounterExternal.ROB_EX_COUNT, utilization_ex_q)
+  io.counter.connectEventSignal(CounterEvent.ROB_ACTIVE_CYCLES, io.busy)
+  io.counter.connectEventSignal(CounterEvent.ROB_FULL_CYCLES, !io.alloc.ready)
 }

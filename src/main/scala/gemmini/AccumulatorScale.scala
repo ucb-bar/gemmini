@@ -34,7 +34,7 @@ class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U, scale_
   val shift_width = log2Ceil(t.getWidth)
 
   val scale = u.cloneType
-  val act = UInt(2.W)
+  val act = UInt(2.W) // TODO magic number
   val relu6_shift = UInt(shift_width.W)
   val data = t.cloneType
   val full_data = t.cloneType

@@ -23,7 +23,7 @@ object GemminiISA {
   val LOAD3_CMD = 14.U
 
   // TODO add orows and ocols to this as well
-  val LOOP_CONV_WS = 15.U // no_bias, wrot180, trans_output_1203, trans_weight_1203, trans_input_3120 | no_pool, downsample
+  val LOOP_CONV_WS = 15.U // no_bias, wrot180, trans_output_1203, trans_weight_1203, trans_input_3120 | no_pool, downsample, input_dilated, act
   val LOOP_CONV_WS_CONFIG_1 = 16.U // batch_size, in_dim, in_channels, out_channels | out_dim, pool_out_dim, stride, padding
   val LOOP_CONV_WS_CONFIG_2 = 17.U // kernel_dim, pool_size, pool_stride, pool_padding | batches, porows, pocols, pochs
   val LOOP_CONV_WS_CONFIG_3 = 18.U // krows, kcols, kchs, lpad | rpad, upad, dpad, plpad
@@ -49,6 +49,8 @@ object GemminiISA {
   val RPT_BIAS     = 15.U(7.W)
   val RESET        = 16.U(7.W)
   val COMPUTE_CISC = 17.U(7.W)
+
+  val COUNTER_OP   = 126.U(7.W)
 
   //==========================================================================
   // dataflow configuration
