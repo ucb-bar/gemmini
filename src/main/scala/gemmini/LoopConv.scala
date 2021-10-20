@@ -131,6 +131,13 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   val config_cmd = Wire(new RoCCCommand)
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
+//  val config_cmd_rs1 = new ConfigMvinRs1(???, ???)
+//  config_cmd_rs1.scale := MVIN_SCALE_IDENTITY
+//  config_cmd_rs1.stride := req.derived_params.bias_spad_stride
+//  config_cmd_rs1.state_id := 2.U
+//  config_cmd_rs1.shrink := 0.U
+//  config_cmd_rs1._unused := 1.U
+//  config_cmd.rs1 = config_cmd_rs1
   config_cmd.rs1 := (MVIN_SCALE_IDENTITY << 32.U) | (req.derived_params.bias_spad_stride << 16.U) | (2.U << 3) | 1.U
   config_cmd.rs2 := 0.U
 
@@ -313,6 +320,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   io.cmd.bits := command_p.io.out.bits.cmd
   when (command_p.io.out.bits.cmd.inst.funct === LOAD_CMD) {
     val o = command_p.io.out.bits
+
     io.cmd.bits.rs1 := o.dram_addr
     io.cmd.bits.rs2 := ((o.I >> req.downsample) << 48).asUInt | (o.K << 32).asUInt | o.spad_addr.asUInt
   }
