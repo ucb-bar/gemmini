@@ -157,19 +157,23 @@ object GemminiISA {
   val CONFIG_EX_RS1_CMD_TYPE_WIDTH = 2
   val CONFIG_EX_RS1_DATAFLOW_WIDTH = 1
   val CONFIG_EX_RS1_ACTIVATION_WIDTH = 2
+  val CONFIG_EX_RS1_SPACER0_WIDTH = (7 - 2 - 1 - 2)
+  val CONFIG_EX_RS1_SET_ONLY_STRIDES_WIDTH = 1
   val CONFIG_EX_RS1_A_TRANSPOSE_WIDTH = 1
   val CONFIG_EX_RS1_B_TRANSPOSE_WIDTH = 1
-  val CONFIG_EX_RS1_SPACER_WIDTH = (16 - 2 - 1 - 2 - 1 - 1)
+  val CONFIG_EX_RS1_SPACER1_WIDTH = (16 - 10)
   val CONFIG_EX_RS1_A_STRIDE_WIDTH = 16
   val CONFIG_EX_RS1_ACC_SCALE_WIDTH = 32
 
   class ConfigExRs1(acc_scale_bits: Int) extends Bundle {
-    val _spacer1 = UInt((CONFIG_EX_RS1_ACC_SCALE_WIDTH - acc_scale_bits).W)
+    val _spacer2 = UInt((CONFIG_EX_RS1_ACC_SCALE_WIDTH - acc_scale_bits).W)
     val acc_scale = UInt(acc_scale_bits.W)
     val a_stride = UInt(CONFIG_EX_RS1_A_STRIDE_WIDTH.W)
-    val _spacer0 = UInt(CONFIG_EX_RS1_SPACER_WIDTH.W)
+    val _spacer1 = UInt(CONFIG_EX_RS1_SPACER1_WIDTH.W)
     val b_transpose = UInt(CONFIG_EX_RS1_B_TRANSPOSE_WIDTH.W)
     val a_transpose = UInt(CONFIG_EX_RS1_A_TRANSPOSE_WIDTH.W)
+    val set_only_strides = UInt(CONFIG_EX_RS1_SET_ONLY_STRIDES_WIDTH.W)
+    val _spacer0 = UInt(CONFIG_EX_RS1_SPACER0_WIDTH.W)
     val activation = UInt(CONFIG_EX_RS1_ACTIVATION_WIDTH.W)
     val dataflow = UInt(CONFIG_EX_RS1_DATAFLOW_WIDTH.W)
     val cmd_type = UInt(CONFIG_EX_RS1_CMD_TYPE_WIDTH.W)

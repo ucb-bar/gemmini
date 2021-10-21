@@ -541,10 +541,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           val config_ex_rs1 = rs1s(0).asTypeOf(new ConfigExRs1(acc_scale_t_bits))
           val config_ex_rs2 = rs2s(0).asTypeOf(new ConfigExRs2)
 
-          val config_cmd_type = config_ex_rs1.cmd_type
+          val config_cmd_type = rs1s(0)(1,0) // TODO magic numbers
 
           when (config_cmd_type === CONFIG_EX) {
-            val set_only_strides = rs1s(0)(7) // TODO magic number
+            val set_only_strides = config_ex_rs1.set_only_strides
 
             when (!set_only_strides) {
               activation := config_ex_rs1.activation
@@ -561,7 +561,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
             a_addr_stride := config_ex_rs1.a_stride // TODO this needs to be kept in sync with ROB.scala
             c_addr_stride := config_ex_rs2.c_stride // TODO this needs to be kept in sync with ROB.scala
-
             config_initialized := true.B
           }.otherwise { // config_cmd_type === CONFIG_IM2COL
             ocol := cmd.bits(0).cmd.rs2(63, 56)
