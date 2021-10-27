@@ -147,16 +147,8 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
   mvin_cmd.inst.funct := LOAD3_CMD
-
-  mvin_cmd.rs1 := dram_addr
-
-  val mvin_cmd_rs2 = Wire(mvin_rs2_t.cloneType)
-  mvin_cmd_rs2 := DontCare
-  mvin_cmd_rs2.num_rows := I.asUInt()
-  mvin_cmd_rs2.num_cols := J.asUInt()
-  mvin_cmd_rs2.local_addr := spad_addr.asTypeOf(mvin_cmd_rs2.local_addr)
-
-  mvin_cmd.rs2 := mvin_cmd_rs2.asUInt()
+  mvin_cmd.rs1 := 0.U
+  mvin_cmd.rs2 := 0.U
 
   // Inputs and outputs
   io.req.ready := state === idle && !command_p.io.busy
@@ -176,9 +168,12 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   when (command_p.io.out.bits.cmd.inst.funct === LOAD3_CMD) {
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := o.dram_addr
+    val mvin_cmd_rs2 = Wire(mvin_rs2_t.cloneType)
+    mvin_cmd_rs2 := DontCare
+    mvin_cmd_rs2.num_rows := o.I.asUInt()
+    mvin_cmd_rs2.num_cols := o.J.asUInt()
+    mvin_cmd_rs2.local_addr := o.spad_addr.asTypeOf(mvin_cmd_rs2.local_addr)
     io.cmd.bits.rs2 := mvin_cmd_rs2.asUInt()
-  }.otherwise {
-    io.cmd.bits.rs1 := config_cmd_rs1.asUInt()
   }
 
   // Sending outputs
@@ -322,14 +317,6 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
   mvin_cmd.inst.funct := LOAD_CMD
-
-  mvin_cmd.rs1 := dram_addr
-
-  val mvin_cmd_rs2 = Wire(mvin_rs2_t.cloneType)
-  mvin_cmd_rs2 := DontCare
-  mvin_cmd_rs2.num_rows := (I >> req.downsample).asUInt()
-  mvin_cmd_rs2.num_cols := K.asUInt()
-  mvin_cmd_rs2.local_addr := spad_addr.asTypeOf(mvin_cmd_rs2.local_addr)
   mvin_cmd.rs1 := 0.U // dram_addr
   mvin_cmd.rs2 := 0.U // mvin_cmd_rs2
 
@@ -350,11 +337,13 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   io.cmd.bits := command_p.io.out.bits.cmd
   when (command_p.io.out.bits.cmd.inst.funct === LOAD_CMD) {
     val o = command_p.io.out.bits
-
     io.cmd.bits.rs1 := o.dram_addr
+    val mvin_cmd_rs2 = Wire(mvin_rs2_t.cloneType)
+    mvin_cmd_rs2 := DontCare
+    mvin_cmd_rs2.num_rows := (o.I >> req.downsample).asUInt()
+    mvin_cmd_rs2.num_cols := o.K.asUInt()
+    mvin_cmd_rs2.local_addr := o.spad_addr.asTypeOf(mvin_cmd_rs2.local_addr)
     io.cmd.bits.rs2 := mvin_cmd_rs2.asUInt()
-  }.otherwise {
-    io.cmd.bits.rs1 := config_cmd_rs1.asUInt()
   }
 
   // Sending outputs
@@ -498,12 +487,6 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
   mvin_cmd.inst.funct := LOAD2_CMD
-
-  val mvin_cmd_rs2 = Wire(mvin_rs2_t.cloneType)
-  mvin_cmd_rs2 := DontCare
-  mvin_cmd_rs2.num_rows := K
-  mvin_cmd_rs2.num_cols := J
-  mvin_cmd_rs2.local_addr := spad_addr.asTypeOf(mvin_cmd_rs2.local_addr)
   mvin_cmd.rs1 := 0.U // dram_addr
   mvin_cmd.rs2 := 0.U // mvin_cmd_rs2
 
@@ -525,9 +508,12 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   when (command_p.io.out.bits.cmd.inst.funct === LOAD2_CMD) {
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := o.dram_addr
+    val mvin_cmd_rs2 = Wire(mvin_rs2_t.cloneType)
+    mvin_cmd_rs2 := DontCare
+    mvin_cmd_rs2.num_rows := o.K
+    mvin_cmd_rs2.num_cols := o.J
+    mvin_cmd_rs2.local_addr := o.spad_addr.asTypeOf(mvin_cmd_rs2.local_addr)
     io.cmd.bits.rs2 := mvin_cmd_rs2.asUInt()
-  }.otherwise {
-    io.cmd.bits.rs1 := config_cmd_rs1.asUInt()
   }
 
   // Sending outputs
@@ -698,38 +684,12 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   val pre_cmd = Wire(new RoCCCommand) // preload
   pre_cmd := DontCare
   pre_cmd.inst.funct := PRELOAD_CMD
-
-  val pre_cmd_rs1 = Wire(preload_rs1_t.cloneType)
-  pre_cmd_rs1 := DontCare
-  pre_cmd_rs1.num_rows := K.asUInt()
-  pre_cmd_rs1.num_cols := J.asUInt()
-  pre_cmd_rs1.local_addr := pre_addr.asTypeOf(pre_cmd_rs1.local_addr)
-
-  val pre_cmd_rs2 = Wire(preload_rs2_t.cloneType)
-  pre_cmd_rs2 := DontCare
-  pre_cmd_rs2.num_rows := I.asUInt()
-  pre_cmd_rs2.num_cols := J.asUInt()
-  pre_cmd_rs2.local_addr := c_addr.asTypeOf(pre_cmd_rs2.local_addr)
-
   pre_cmd.rs1 := 0.U//(K << 48) | (J << 32) | pre_addr
   pre_cmd.rs2 := 0.U//(I << 48) | (J << 32) | c_addr
 
   val comp_cmd = Wire(new RoCCCommand()) // compute.preloaded
   comp_cmd := DontCare
   comp_cmd.inst.funct := Mux(new_weights, COMPUTE_AND_FLIP_CMD, COMPUTE_AND_STAY_CMD)
-
-  val comp_cmd_rs1 = Wire(compute_rs1_t.cloneType)
-  comp_cmd_rs1 := DontCare
-  comp_cmd_rs1.num_rows := I.asUInt()
-  comp_cmd_rs1.num_cols := K.asUInt()
-  comp_cmd_rs1.local_addr := a_addr.asTypeOf(comp_cmd_rs1.local_addr)
-
-  val comp_cmd_rs2 = Wire(compute_rs2_t.cloneType)
-  comp_cmd_rs2 := DontCare
-  comp_cmd_rs2.num_rows := I.asUInt()
-  comp_cmd_rs2.num_cols := J.asUInt()
-  comp_cmd_rs2.local_addr := GARBAGE_ADDR.asTypeOf(comp_cmd_rs2.local_addr)
-
   comp_cmd.rs1 := 0.U//(I << 48) | (K << 32) | a_addr
   comp_cmd.rs2 := 0.U//(I << 48) | (J << 32) | GARBAGE_ADDR
 
@@ -754,10 +714,34 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   io.cmd.bits := command_p.io.out.bits.cmd
   when (command_p.io.out.bits.cmd.inst.funct === PRELOAD_CMD) {
     val o = command_p.io.out.bits
+    val pre_cmd_rs1 = Wire(preload_rs1_t.cloneType)
+    pre_cmd_rs1 := DontCare
+    pre_cmd_rs1.num_rows := o.K.asUInt()
+    pre_cmd_rs1.num_cols := o.J.asUInt()
+    pre_cmd_rs1.local_addr := o.pre_addr.asTypeOf(pre_cmd_rs1.local_addr)
+
+    val pre_cmd_rs2 = Wire(preload_rs2_t.cloneType)
+    pre_cmd_rs2 := DontCare
+    pre_cmd_rs2.num_rows := o.I.asUInt()
+    pre_cmd_rs2.num_cols := o.J.asUInt()
+    pre_cmd_rs2.local_addr := o.c_addr.asTypeOf(pre_cmd_rs2.local_addr)
+
     io.cmd.bits.rs1 := pre_cmd_rs1.asUInt()
     io.cmd.bits.rs2 := pre_cmd_rs2.asUInt()
   }.elsewhen(command_p.io.out.bits.cmd.inst.funct =/= CONFIG_CMD) {
     val o = command_p.io.out.bits
+    val comp_cmd_rs1 = Wire(compute_rs1_t.cloneType)
+    comp_cmd_rs1 := DontCare
+    comp_cmd_rs1.num_rows := o.I.asUInt()
+    comp_cmd_rs1.num_cols := o.K.asUInt()
+    comp_cmd_rs1.local_addr := o.a_addr.asTypeOf(comp_cmd_rs1.local_addr)
+
+    val comp_cmd_rs2 = Wire(compute_rs2_t.cloneType)
+    comp_cmd_rs2 := DontCare
+    comp_cmd_rs2.num_rows := o.I.asUInt()
+    comp_cmd_rs2.num_cols := o.J.asUInt()
+    comp_cmd_rs2.local_addr := GARBAGE_ADDR.asTypeOf(comp_cmd_rs2.local_addr)
+
     io.cmd.bits.rs1 := comp_cmd_rs1.asUInt()
     io.cmd.bits.rs2 := comp_cmd_rs2.asUInt()
   }
@@ -904,18 +888,6 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val mvout_cmd = Wire(new RoCCCommand)
   mvout_cmd := DontCare
   mvout_cmd.inst.funct := STORE_CMD
-
-  val mvout_cmd_rs2 = Wire(mvout_rs2_t.cloneType)
-  mvout_cmd_rs2 := DontCare
-  mvout_cmd_rs2.num_rows := I.asUInt()
-  mvout_cmd_rs2.num_cols := J.asUInt()
-  mvout_cmd_rs2.local_addr := spad_addr.asTypeOf(mvout_cmd_rs2.local_addr)
-
-  val pool_mvout_cmd_rs2 = Wire(mvout_rs2_t.cloneType)
-  pool_mvout_cmd_rs2 := DontCare
-  pool_mvout_cmd_rs2.num_cols := channels
-  pool_mvout_cmd_rs2.local_addr := spad_addr.asTypeOf(pool_mvout_cmd_rs2.local_addr)
-
   mvout_cmd.rs1 := 0.U // dram_addr
   mvout_cmd.rs2 := 0.U // mvout_cmd_rs2
 
@@ -991,9 +963,20 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   when (command_p.io.out.bits.cmd.inst.funct === STORE_CMD) {
     val o = command_p.io.out.bits
     when (o.is_pool) {
+      val pool_mvout_cmd_rs2 = Wire(mvout_rs2_t.cloneType)
+      pool_mvout_cmd_rs2 := DontCare
+      pool_mvout_cmd_rs2.num_cols := o.channels
+      pool_mvout_cmd_rs2.local_addr := o.pool_spad_addr.asTypeOf(pool_mvout_cmd_rs2.local_addr)
+
       io.cmd.bits.rs1 := o.pool_dram_addr
       io.cmd.bits.rs2 := pool_mvout_cmd_rs2.asUInt()
     } .otherwise {
+      val mvout_cmd_rs2 = Wire(mvout_rs2_t.cloneType)
+      mvout_cmd_rs2 := DontCare
+      mvout_cmd_rs2.num_rows := o.I.asUInt()
+      mvout_cmd_rs2.num_cols := o.J.asUInt()
+      mvout_cmd_rs2.local_addr := o.spad_addr.asTypeOf(mvout_cmd_rs2.local_addr)
+
       io.cmd.bits.rs1 := o.dram_addr
       io.cmd.bits.rs2 := mvout_cmd_rs2.asUInt()
     }
