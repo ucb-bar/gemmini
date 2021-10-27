@@ -193,5 +193,37 @@ object GemminiISA {
 
     override def cloneType: ConfigExRs2.this.type = (new ConfigExRs2).asInstanceOf[this.type]
   }
+
+  val PRELOAD_RS_ADDR_WIDTH = 32
+  val PRELOAD_RS_COLS_WIDTH = 16
+  val PRELOAD_RS_ROWS_WIDTH = 16
+
+  class PreloadRs(preload_rows_bits: Int, preload_cols_bits: Int, local_addr_t: LocalAddr) extends Bundle {
+    val _spacer2 = UInt((PRELOAD_RS_ROWS_WIDTH - preload_rows_bits).W)
+    val num_rows = UInt(preload_rows_bits.W)
+    val _spacer1 = UInt((PRELOAD_RS_COLS_WIDTH - preload_cols_bits).W)
+    val num_cols = UInt(preload_cols_bits.W)
+    val _spacer0 = UInt((PRELOAD_RS_ADDR_WIDTH - local_addr_t.getWidth).W)
+    val local_addr = local_addr_t.cloneType
+
+    override def cloneType: PreloadRs.this.type =
+      (new PreloadRs(preload_rows_bits, preload_cols_bits, local_addr_t)).asInstanceOf[this.type]
+  }
+
+  val COMPUTED_RS_ADDR_WIDTH = 32
+  val COMPUTED_RS_COLS_WIDTH = 16
+  val COMPUTED_RS_ROWS_WIDTH = 16
+
+  class ComputeRs(compute_rows_bits: Int, compute_cols_bits: Int, local_addr_t: LocalAddr) extends Bundle {
+    val _spacer2 = UInt((COMPUTED_RS_ROWS_WIDTH - compute_rows_bits).W)
+    val num_rows = UInt(compute_rows_bits.W)
+    val _spacer1 = UInt((COMPUTED_RS_COLS_WIDTH - compute_cols_bits).W)
+    val num_cols = UInt(compute_cols_bits.W)
+    val _spacer0 = UInt((COMPUTED_RS_ADDR_WIDTH - local_addr_t.getWidth).W)
+    val local_addr = local_addr_t.cloneType
+
+    override def cloneType: ComputeRs.this.type =
+      (new ComputeRs(compute_rows_bits, compute_cols_bits, local_addr_t)).asInstanceOf[this.type]
+  }
 }
 
