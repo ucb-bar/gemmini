@@ -105,6 +105,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val load_states = 3
   val block_stride_bits = 16
 
+  val hasIm2Col = false
+
   //==========================================================================
   // sanity check mesh size
   //==========================================================================
@@ -181,8 +183,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   })
 
   val BYTE_ROWS_PER_TILE = DIM
-
-  val hasIm2Col = false
 
   //==========================================================================
   // other stuff
