@@ -177,7 +177,7 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
       when (reset.asBool) {
         arbOut.valid := false.B
       }
-      val pipe = Module(new AccScalePipe(t, rDataType, scale_args)(ev, ev))
+      val pipe = Module(new AccScalePipe(t, rDataType, scale_args, has_nonlinear_activations)(ev, ev))
       pipe.io.in := arbOut
       val pipe_out = pipe.io.out
 
