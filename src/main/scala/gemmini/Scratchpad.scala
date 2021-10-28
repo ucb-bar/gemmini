@@ -482,7 +482,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       log2Up(accType.getWidth),
       acc_read_small_width,
       acc_read_full_width,
-      acc_scale_args
+      acc_scale_args,
+      has_nonlinear_activations,
     ))
 
     acc_scale_unit.io.in.valid := false.B

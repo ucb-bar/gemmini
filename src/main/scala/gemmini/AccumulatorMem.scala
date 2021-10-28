@@ -228,8 +228,6 @@ class AccumulatorMem[T <: Data, U <: Data](
       !block_read_req
   )
 
-  // io.write.current_waddr.valid := mem.io.wen
-  // io.write.current_waddr.bits := mem.io.waddr
   io.write.ready := !io.write.bits.acc || (!(io.write.bits.addr === waddr_buf && w_buf_valid) &&
     !(io.write.bits.addr === RegNext(io.write.bits.addr) && RegNext(io.write.fire())))
 

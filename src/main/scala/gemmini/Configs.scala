@@ -41,6 +41,12 @@ object GemminiConfigs {
     sp_singleported = true,
     acc_singleported = false,
 
+    // DNN options
+    has_training_convs = true,
+    has_max_pool = true,
+    has_nonlinear_activations = true,
+    has_relu6 = true,
+
     // Reservation station entries
     reservation_station_full_entries = 16,
     reservation_station_partial_entries = 8,

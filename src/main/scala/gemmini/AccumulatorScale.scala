@@ -43,7 +43,7 @@ class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U, scale_
   override def cloneType: this.type = new AccScaleDataWithIndex(t, u, scale_args: ScaleArguments[T, U]).asInstanceOf[this.type]
 }
 
-class AccScalePipe[T <: Data : Arithmetic, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_args: ScaleArguments[T, U])(implicit ev: Arithmetic[T]) extends Module {
+class AccScalePipe[T <: Data : Arithmetic, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_args: ScaleArguments[T, U], has_nonlinear_activations: Boolean)(implicit ev: Arithmetic[T]) extends Module {
   val u = scale_args.multiplicand_t
   val io = IO(new Bundle {
     val in = Input(Valid(new AccScaleDataWithIndex(t, u, scale_args)(ev)))
@@ -56,8 +56,8 @@ class AccScalePipe[T <: Data : Arithmetic, U <: Data](t: T, rDataType: Vec[Vec[T
   val e_scaled = scale_args.scale_func(io.in.bits.data, io.in.bits.scale)
   val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
   val e_act = MuxCase(e_clipped, Seq(
-    (io.in.bits.act === Activation.RELU) -> e_clipped.relu,
-    (io.in.bits.act === Activation.RELU6) -> e_clipped.relu6(io.in.bits.relu6_shift)))
+    (has_nonlinear_activations.B && io.in.bits.act === Activation.RELU) -> e_clipped.relu,
+    (has_nonlinear_activations.B && io.in.bits.act === Activation.RELU6) -> e_clipped.relu6(io.in.bits.relu6_shift)))
 
   out.bits.data := e_act
   io.out := Pipe(out, latency)
@@ -68,7 +68,8 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
   fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]],
   scale_t: U, shift_width: Int,
   read_small_data: Boolean, read_full_data: Boolean,
-  scale_args: ScaleArguments[T, U])(implicit ev: Arithmetic[T]) extends Module {
+  scale_args: ScaleArguments[T, U],
+  has_nonlinear_activations: Boolean)(implicit ev: Arithmetic[T]) extends Module {
 
   import ev._
   val io = IO(new AccumulatorScaleIO[T,U](
@@ -91,7 +92,6 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
     val pipe_out = Pipeline(in, acc_scale_latency, Seq.fill(acc_scale_latency)((x: AccumulatorReadRespWithFullData[T,U]) => x) :+ {
       x: AccumulatorReadRespWithFullData[T,U] =>
       val activated_rdata = VecInit(x.resp.data.map(v => VecInit(v.map { e =>
-        // val e_scaled = e >> x.shiftls
         val e_scaled = scale_args.scale_func(e, x.resp.scale)
         val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
         val e_act = MuxCase(e_clipped, Seq(

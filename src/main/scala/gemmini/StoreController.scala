@@ -64,7 +64,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val wrow_counter = RegInit(0.U(pool_size.getWidth.W))
   val wcol_counter = RegInit(0.U(pool_size.getWidth.W))
 
-  val pooling_is_enabled = pool_stride =/= 0.U
+  val pooling_is_enabled = has_max_pool.B && pool_stride =/= 0.U
   val mvout_1d_enabled = pool_size =/= 0.U && !pooling_is_enabled //1-D move out enabled (no pooling)
 
   val orow = porow_counter * pool_stride +& wrow_counter - pool_upad // TODO get rid of this multiplication

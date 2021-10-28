@@ -118,7 +118,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val acc_scale = Reg(acc_scale_args.multiplicand_t)
   val relu6_shift = Reg(UInt(log2Up(accType.getWidth).W))
-  val activation = Reg(UInt(2.W)) // TODO magic number
+  val activation = if (has_nonlinear_activations) Reg(UInt(2.W)) else Activation.NONE // TODO magic number
   val a_transpose = Reg(Bool())
   val bd_transpose = Reg(Bool())
   val config_initialized = RegInit(false.B)
@@ -544,7 +544,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
             val set_only_strides = rs1s(0)(7) // TODO magic number
 
             when (!set_only_strides) {
-              activation := rs1s(0)(4, 3) // TODO magic number
+              if (has_nonlinear_activations) {
+                activation := rs1s(0)(4, 3) // TODO magic number
+              }
               in_shift := rs2s(0)(31, 0) // TODO magic number
               acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
               relu6_shift := rs2s(0)(47, 32) // TODO magic number

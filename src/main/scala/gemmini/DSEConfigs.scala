@@ -74,6 +74,10 @@ object DSEBaseConfig {
 
     mesh_output_delay = 1,
 
+    has_training_convs = false,
+    has_max_pool = true,
+    has_nonlinear_activations = true,
+
     num_counter = 8,
   )
 }

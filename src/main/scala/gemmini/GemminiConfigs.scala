@@ -65,6 +65,10 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              num_counter: Int,
 
+                                                                             has_training_convs: Boolean,
+                                                                             has_max_pool: Boolean,
+                                                                             has_nonlinear_activations: Boolean,
+
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth

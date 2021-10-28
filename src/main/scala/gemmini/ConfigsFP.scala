@@ -71,6 +71,10 @@ object GemminiFPConfigs {
 
     mesh_output_delay = 0,
 
+    has_training_convs = false,
+    has_max_pool = true,
+    has_nonlinear_activations = true,
+
     num_counter = 8,
   )
   
