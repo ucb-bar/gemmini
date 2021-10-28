@@ -69,7 +69,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   cmd.ready := false.B
 
   // Command tracker instantiation
-  val nCmds = (max_in_flight_reqs / block_rows) + 1
+  val nCmds = (max_in_flight_mem_reqs / block_rows) + 1
 
   val deps_t = new Bundle {
     val rob_id = UInt(log2Up(rob_entries).W)

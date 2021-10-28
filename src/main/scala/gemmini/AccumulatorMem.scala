@@ -53,8 +53,8 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
 }
 
 class AccumulatorMem[T <: Data, U <: Data](
-  n: Int, t: Vec[Vec[T]], scale_args: ScaleArguments[T, U],
-  acc_singleported: Boolean, num_acc_sub_banks: Int
+                                            n: Int, t: Vec[Vec[T]], scale_args: ScaleArguments[T, U],
+                                            acc_singleported: Boolean, acc_sub_banks: Int
 )
   (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
@@ -109,10 +109,10 @@ class AccumulatorMem[T <: Data, U <: Data](
     reads(1).bits  := io.read.req.bits.addr
     reads(1).ready := true.B
     block_read_req := !reads(1).ready
-    for (i <- 0 until num_acc_sub_banks) {
-      def isThisBank(addr: UInt) = addr(log2Ceil(num_acc_sub_banks)-1,0) === i.U
-      def getBankIdx(addr: UInt) = addr >> log2Ceil(num_acc_sub_banks)
-      val mem = SyncReadMem(n / num_acc_sub_banks, Vec(mask_len, mask_elem))
+    for (i <- 0 until acc_sub_banks) {
+      def isThisBank(addr: UInt) = addr(log2Ceil(acc_sub_banks)-1,0) === i.U
+      def getBankIdx(addr: UInt) = addr >> log2Ceil(acc_sub_banks)
+      val mem = SyncReadMem(n / acc_sub_banks, Vec(mask_len, mask_elem))
 
       val ren = WireInit(false.B)
       val raddr = WireInit(getBankIdx(reads(0).bits))
@@ -123,7 +123,7 @@ class AccumulatorMem[T <: Data, U <: Data](
         val valid = Bool()
         val data = Vec(mask_len, mask_elem)
         val mask = Vec(mask_len, Bool())
-        val addr = UInt(log2Ceil(n/num_acc_sub_banks).W)
+        val addr = UInt(log2Ceil(n/acc_sub_banks).W)
         override def cloneType: this.type = new W_Q_Entry(mask_len, mask_elem).asInstanceOf[this.type]
       }
       val w_q = Reg(Vec(nEntries, new W_Q_Entry(mask_len, mask_elem)))

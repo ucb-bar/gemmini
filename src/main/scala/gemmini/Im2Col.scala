@@ -135,7 +135,7 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
 
   val im2col_en_d = RegNext(im2col_en)
 
-  val sram_read_signals_q = Module(new Queue(new im2colRowSignals, mem_pipeline+1,
+  val sram_read_signals_q = Module(new Queue(new im2colRowSignals, spad_read_delay+1,
     pipe=true))
 
   io.sram_reads.foreach { sr =>

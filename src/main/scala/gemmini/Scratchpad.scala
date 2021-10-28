@@ -160,9 +160,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val id_node = TLIdentityNode()
   val xbar_node = TLXbar()
 
-  val reader = LazyModule(new StreamReader(config, max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
+  val reader = LazyModule(new StreamReader(config, max_in_flight_mem_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter))
-  val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes,
+  val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
     if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter))
 
   // TODO make a cross-bar vs two separate ports a config option
@@ -216,9 +216,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     // Write scale queue is necessary to maintain in-order requests to accumulator scale unit
     // Writes from main SPAD just flow directly between scale_q and issue_q, while writes
     // From acc are ordered
-    val write_scale_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, acc_scale_t_bits), mem_pipeline))
-    val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, acc_scale_t_bits), mem_pipeline+1, pipe=true))
-    val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), mem_pipeline+1, pipe=true)) // TODO can't this just be a normal queue?
+    val write_scale_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, acc_scale_t_bits), spad_read_delay))
+    val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, acc_scale_t_bits), spad_read_delay+1, pipe=true))
+    val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), spad_read_delay+1, pipe=true)) // TODO can't this just be a normal queue?
 
     write_scale_q.io.enq.valid := false.B
     write_scale_q.io.enq.bits  := write_dispatch_q.bits
@@ -409,8 +409,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         ex_read_resp.valid := bio.read.resp.valid && !bio.read.resp.bits.fromDMA
         ex_read_resp.bits := bio.read.resp.bits
 
-        val dma_read_pipe = Pipeline(dma_read_resp, mem_pipeline)
-        val ex_read_pipe = Pipeline(ex_read_resp, mem_pipeline)
+        val dma_read_pipe = Pipeline(dma_read_resp, spad_read_delay)
+        val ex_read_pipe = Pipeline(ex_read_resp, spad_read_delay)
 
 
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
@@ -512,7 +512,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(
         acc_bank_entries, acc_row_t, acc_scale_args,
-        acc_singleported, num_acc_sub_banks
+        acc_singleported, acc_sub_banks
       )) }
       val bank_ios = VecInit(banks.map(_.io))
 
@@ -610,13 +610,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           !((mvin_scale_out.valid && mvin_scale_out.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
         val consecutive_write_block = RegInit(false.B)
         if (acc_singleported) {
-          val consecutive_write_sub_bank = RegInit(0.U((1 max log2Ceil(num_acc_sub_banks)).W))
+          val consecutive_write_sub_bank = RegInit(0.U((1 max log2Ceil(acc_sub_banks)).W))
           when (bio.write.fire() && bio.write.bits.acc &&
-            (bio.write.bits.addr(log2Ceil(num_acc_sub_banks)-1,0) === consecutive_write_sub_bank)) {
+            (bio.write.bits.addr(log2Ceil(acc_sub_banks)-1,0) === consecutive_write_sub_bank)) {
             consecutive_write_block := true.B
           } .elsewhen (bio.write.fire() && bio.write.bits.acc) {
             consecutive_write_block := false.B
-            consecutive_write_sub_bank := bio.write.bits.addr(log2Ceil(num_acc_sub_banks)-1,0)
+            consecutive_write_sub_bank := bio.write.bits.addr(log2Ceil(acc_sub_banks)-1,0)
           } .otherwise {
             consecutive_write_block := false.B
           }

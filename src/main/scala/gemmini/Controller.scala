@@ -115,14 +115,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   */
 
   // Incoming commands and ROB
-  val rob = Module(new ROB(outer.config, new RoCCCommand))
+  val rob = Module(new ReservationStation(outer.config, new RoCCCommand))
   counters.io.event_io.collect(rob.io.counter)
 
   val raw_cmd = Queue(io.cmd)
 
-  val max_lds = rob_partial_entries
-  val max_exs = rob_full_entries
-  val max_sts = rob_partial_entries / 2
+  val max_lds = reservation_station_partial_entries
+  val max_exs = reservation_station_full_entries
+  val max_sts = reservation_station_partial_entries / 2
 
   // TODO replace 4,12,2 with parameters based on ROB size
   val (conv_cmd, loop_conv_unroller_busy) = LoopConv(raw_cmd, rob.io.ld_utilization, rob.io.st_utilization, rob.io.ex_utilization,

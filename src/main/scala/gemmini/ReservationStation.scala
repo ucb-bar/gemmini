@@ -9,7 +9,7 @@ import GemminiISA._
 import Util._
 
 // TODO unify this class with GemminiCmdWithDeps
-class ROBIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
+class ReservationStationIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
   val valid = Output(Bool())
   val ready = Input(Bool())
   val cmd = Output(cmd_t.cloneType)
@@ -17,11 +17,11 @@ class ROBIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
 
   def fire(dummy: Int=0) = valid && ready
 
-  override def cloneType: this.type = new ROBIssue(cmd_t, rob_entries).asInstanceOf[this.type]
+  override def cloneType: this.type = new ReservationStationIssue(cmd_t, rob_entries).asInstanceOf[this.type]
 }
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
-class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: RoCCCommand) extends Module {
+class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: RoCCCommand) extends Module {
   import config._
 
   val block_rows = tileRows * meshRows
@@ -33,9 +33,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val completed = Flipped(Valid(UInt(log2Up(rob_entries).W)))
 
     val issue = new Bundle {
-      val ld = new ROBIssue(cmd_t, rob_entries)
-      val st = new ROBIssue(cmd_t, rob_entries)
-      val ex = new ROBIssue(cmd_t, rob_entries)
+      val ld = new ReservationStationIssue(cmd_t, rob_entries)
+      val st = new ReservationStationIssue(cmd_t, rob_entries)
+      val ex = new ReservationStationIssue(cmd_t, rob_entries)
     }
 
     val ld_utilization = Output(UInt(log2Up(rob_entries+1).W))
@@ -97,8 +97,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     // Debugging signals
     val allocated_at = UInt(instructions_allocated.getWidth.W)
   }
-  val full_entries = Reg(Vec(rob_full_entries, UDValid(new Entry)))
-  val partial_entries = Reg(Vec(rob_partial_entries, UDValid(new Entry)))
+  val full_entries = Reg(Vec(reservation_station_full_entries, UDValid(new Entry)))
+  val partial_entries = Reg(Vec(reservation_station_partial_entries, UDValid(new Entry)))
 
   val entries = full_entries ++ partial_entries
 
@@ -122,9 +122,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
-  val new_full_allocs = Wire(Vec(rob_full_entries, Bool()))
+  val new_full_allocs = Wire(Vec(reservation_station_full_entries, Bool()))
   new_full_allocs.foreach(_ := false.B)
-  val new_partial_allocs = Wire(Vec(rob_partial_entries, Bool()))
+  val new_partial_allocs = Wire(Vec(reservation_station_partial_entries, Bool()))
   new_partial_allocs.foreach(_ := false.B)
   val new_entry_oh = new_full_allocs ++ new_partial_allocs
   val alloc_fire = io.alloc.fire()
@@ -333,8 +333,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
     val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
-    val full_alloc_id = MuxCase((rob_full_entries-1).U, full_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
-    val partial_alloc_id = MuxCase((rob_partial_entries-1).U, partial_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+    val full_alloc_id = MuxCase((reservation_station_full_entries-1).U, full_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+    val partial_alloc_id = MuxCase((reservation_station_partial_entries-1).U, partial_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
 
     when (!is_full && !partial_entries(partial_alloc_id).valid) {
       io.alloc.ready := true.B

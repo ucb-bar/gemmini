@@ -23,39 +23,36 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              ld_queue_length: Int,
                                                                              st_queue_length: Int,
                                                                              ex_queue_length: Int,
-                                                                             rob_full_entries: Int,
-                                                                             rob_partial_entries: Int,
+                                                                             reservation_station_full_entries: Int,
+                                                                             reservation_station_partial_entries: Int,
                                                                              sp_banks: Int, // TODO support one-bank designs
                                                                              sp_singleported: Boolean,
                                                                              sp_capacity: GemminiMemCapacity,
                                                                              acc_banks: Int,
                                                                              acc_singleported: Boolean,
-                                                                             num_acc_sub_banks: Int,
+                                                                             acc_sub_banks: Int,
                                                                              acc_capacity: GemminiMemCapacity,
-                                                                             shifter_banks: Int,
+                                                                             shifter_banks: Int, // TODO add separate parameters for left and up shifter banks
                                                                              dataflow: Dataflow.Value,
-                                                                             mem_pipeline: Int,
-                                                                             dma_maxbytes: Int,
-                                                                             dma_buswidth: Int,
+                                                                             spad_read_delay: Int,
+                                                                             dma_maxbytes: Int, // TODO get this from cacheblockbytes
+                                                                             dma_buswidth: Int, // TODO get this from SystemBusKey
                                                                              aligned_to: Int, // TODO we should align to inputType and accType instead
                                                                              inputType: T,
-                                                                             outputType: T,
+                                                                             spatialArrayOutputType: T,
                                                                              accType: T,
                                                                              mvin_scale_args: Option[ScaleArguments[T, U]],
                                                                              mvin_scale_acc_args: Option[ScaleArguments[T, U]],
                                                                              mvin_scale_shared: Boolean,
                                                                              acc_scale_args: ScaleArguments[T, V],
-                                                                             hasIm2col: Boolean,
                                                                              pe_latency: Int,
                                                                              acc_read_full_width: Boolean,
                                                                              acc_read_small_width: Boolean,
                                                                              use_dedicated_tl_port: Boolean,
-                                                                             // enable_a_transpose: Boolean,
-                                                                             // enable_b_transpose: Boolean,
 
                                                                              tlb_size: Int,
                                                                              use_tlb_register_filter: Boolean,
-                                                                             max_in_flight_reqs: Int,
+                                                                             max_in_flight_mem_reqs: Int,
 
                                                                              ex_read_from_spad: Boolean,
                                                                              ex_read_from_acc: Boolean,
@@ -79,7 +76,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (acc_banks * meshColumns * tileColumns * accType.getWidth)
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / acc_banks
   }
-  require (!acc_singleported || (num_acc_sub_banks <= 4 && isPow2(num_acc_sub_banks)))
+  require (!acc_singleported || (acc_sub_banks <= 4 && isPow2(acc_sub_banks)))
 
   val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries)
 
@@ -123,7 +120,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   //==========================================================================
   // cisc-gemmini miscellaneous constants (some redundant with above)
   //==========================================================================
-  val rob_entries      = rob_full_entries + rob_partial_entries
+  val rob_entries      = reservation_station_full_entries + reservation_station_partial_entries
   val ROB_ENTRIES      = rob_entries
   val LOG2_ROB_ENTRIES = log2Up(rob_entries)
 
@@ -184,6 +181,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   })
 
   val BYTE_ROWS_PER_TILE = DIM
+
+  val hasIm2Col = false
 
   //==========================================================================
   // other stuff
