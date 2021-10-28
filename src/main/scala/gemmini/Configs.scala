@@ -45,7 +45,6 @@ object GemminiConfigs {
     has_training_convs = true,
     has_max_pool = true,
     has_nonlinear_activations = true,
-    has_relu6 = true,
 
     // Reservation station entries
     reservation_station_full_entries = 16,
