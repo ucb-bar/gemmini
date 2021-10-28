@@ -27,8 +27,6 @@ object GemminiFPConfigs {
     reservation_station_full_entries = 16,
     reservation_station_partial_entries = 8,
 
-    hasIm2col = false,
-
     sp_banks = 4,
     sp_singleported = true,
     acc_banks = 1,
