@@ -1,4 +1,5 @@
-package gemmini
+/*
+package chipyard
 
 import boom.common._
 import freechips.rocketchip.subsystem._
@@ -13,3 +14,4 @@ object CustomCPUConfigs {
   type BoomMedCores = WithNMediumBooms
   type BoomSmallCores = WithNMediumBooms
 }
+*/
