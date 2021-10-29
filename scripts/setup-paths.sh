@@ -17,6 +17,8 @@ if [ ! -f configs/CPUConfigs.scala ]; then
     ln -s $PWD/../chipyard/src/main/scala/config/GemminiCPUConfigs.scala configs/CPUConfigs.scala
 fi
 
-# if [ ! -f configs/L2Configs.scala ]; then
-# fi
+if [ ! -f configs/SoCConfigs.scala ]; then
+    sed '1,1d; $d' $PWD/src/main/scala/gemmini/CustomSoCConfigs.scala > ../chipyard/src/main/scala/config/GemminiSoCConfigs.scala
+    ln -s $PWD/../chipyard/src/main/scala/config/GemminiSoCConfigs.scala configs/SoCConfigs.scala
+fi
 
