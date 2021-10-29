@@ -159,7 +159,7 @@ object GemminiConfigs {
   )
 
   val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
-    acc_scale_args=defaultConfig.acc_scale_args.copy(latency=4),
+    acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=4)),
     acc_singleported=true,
     acc_sub_banks=2,
     ex_read_from_acc=false,
