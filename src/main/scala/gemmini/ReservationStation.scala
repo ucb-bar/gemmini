@@ -470,9 +470,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   CounterEventIO.init(io.counter)
-  io.counter.connectExternalCounter(CounterExternal.ROB_LD_COUNT, utilization_ld_q)
-  io.counter.connectExternalCounter(CounterExternal.ROB_ST_COUNT, utilization_st_q)
-  io.counter.connectExternalCounter(CounterExternal.ROB_EX_COUNT, utilization_ex_q)
-  io.counter.connectEventSignal(CounterEvent.ROB_ACTIVE_CYCLES, io.busy)
-  io.counter.connectEventSignal(CounterEvent.ROB_FULL_CYCLES, !io.alloc.ready)
+  io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_LD_COUNT, utilization_ld_q)
+  io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_ST_COUNT, utilization_st_q)
+  io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_EX_COUNT, utilization_ex_q)
+  io.counter.connectEventSignal(CounterEvent.RESERVATION_STATION_ACTIVE_CYCLES, io.busy)
+  io.counter.connectEventSignal(CounterEvent.RESERVATION_STATION_FULL_CYCLES, !io.alloc.ready)
 }

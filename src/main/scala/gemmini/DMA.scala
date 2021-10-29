@@ -102,6 +102,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.last := beatPacker.io.out.bits.last
 
     io.counter.collect(core.module.io.counter)
+    io.counter.collect(xactTracker.io.counter)
   }
 }
 
@@ -290,19 +291,21 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       state := s_req_new_block
     }
 
-
     // Performance counter
     CounterEventIO.init(io.counter)
     io.counter.connectEventSignal(CounterEvent.RDMA_ACTIVE_CYCLE, state =/= s_idle)
-    val bytes_read = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
-    io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, bytes_read)
-    when (io.counter.external_reset) {
-      bytes_read := 0.U
-    } .elsewhen (tl.d.fire()) {
-      bytes_read := bytes_read + 1.U << tl.d.bits.size
-    }
     io.counter.connectEventSignal(CounterEvent.RDMA_TLB_WAIT_CYCLES, io.tlb.resp.miss)
     io.counter.connectEventSignal(CounterEvent.RDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
+
+    // External counters
+    val bytes_read = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
+    when (io.counter.external_reset) {
+      bytes_read := 0.U
+    }.elsewhen (tl.d.fire()) {
+      bytes_read := bytes_read + 1.U << tl.d.bits.size
+    }
+
+    io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, bytes_read)
   }
 }
 
@@ -584,14 +587,24 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     // Performance counter
     CounterEventIO.init(io.counter)
     io.counter.connectEventSignal(CounterEvent.WDMA_ACTIVE_CYCLE, state =/= s_idle)
-    val bytes_sent = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
-    io.counter.connectExternalCounter(CounterExternal.WDMA_BYTES_SENT, bytes_sent)
-    when (io.counter.external_reset) {
-      bytes_sent := 0.U
-    } .elsewhen (tl.d.fire()) {
-      bytes_sent := bytes_sent + 1.U << tl.d.bits.size
-    }
     io.counter.connectEventSignal(CounterEvent.WDMA_TLB_WAIT_CYCLES, io.tlb.resp.miss)
     io.counter.connectEventSignal(CounterEvent.WDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
+
+    // External counters
+    val total_bytes_sent = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
+    when (tl.d.fire()) {
+      total_bytes_sent := total_bytes_sent + 1.U << tl.d.bits.size
+    }
+
+    val total_latency = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
+    total_latency := PopCount(xactBusy)
+
+    when (io.counter.external_reset) {
+      total_bytes_sent := 0.U
+      total_latency := 0.U
+    }
+
+    io.counter.connectExternalCounter(CounterExternal.WDMA_BYTES_SENT, total_bytes_sent)
+    io.counter.connectExternalCounter(CounterExternal.WDMA_TOTAL_LATENCY, total_latency)
   }
 }
