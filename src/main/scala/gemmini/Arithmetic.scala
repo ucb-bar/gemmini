@@ -405,13 +405,15 @@ object Arithmetic {
       }
 
       override def zero = Complex(self.w, 0.S, 0.S)
+
       override def identity: Complex = self
 
       override def withWidthOf(other: Complex) = Complex(other.w, self.real, self.imag)
+
       def clippedToWidthOf(other: Complex): Complex = {
         // Like "withWidthOf", except that it saturates
-        val maxsat = ((1 << (other.w-1))-1).S
-        val minsat = (-(1 << (other.w-1))).S
+        val maxsat = ((1 << (other.w - 1)) - 1).S
+        val minsat = (-(1 << (other.w - 1))).S
 
         Complex(other.w,
           Mux(self.real > maxsat, maxsat, Mux(self.real < minsat, minsat, self.real)),
@@ -421,8 +423,12 @@ object Arithmetic {
 
       // Not implemented because not necessary for this tutorial
       override def >>(u: UInt) = self
+
       override def >(t: Complex) = false.B
-      def relu6(shift: UInt) = self
-      def relu = self
+
+      override def relu6(shift: UInt) = self
+
+      override def relu = self
     }
+  }
 }
