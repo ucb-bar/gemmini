@@ -1,5 +1,5 @@
 #!/bin/bash
 
 cd ../../sims/verilator/
-make CONFIG=CustomGemminiSoCConfig
+make $@ CONFIG=CustomGemminiSoCConfig
 
