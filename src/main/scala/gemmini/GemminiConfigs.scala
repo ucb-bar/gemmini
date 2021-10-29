@@ -141,8 +141,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
   val acc_scale_latency = acc_scale_args match {
     case Some(args) => args.latency
-    case None => 0
+    case None => 1
   }
+  assert(acc_scale_latency > 0)
 
   val mvin_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
@@ -252,7 +253,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       assert(dataType.getWidth <= 32) // Above 32 bits, we need to append UL to the number, which isn't done yet
 
       dataType match {
-        case dt: UInt => ("0", BigInt(2).pow(dt.getWidth).-(1).toString)
         case dt: SInt => ("-" + BigInt(2).pow(dt.getWidth - 1).toString, BigInt(2).pow(dt.getWidth - 1).-(1).toString)
         case dt: Float =>
           (dt.expWidth, dt.sigWidth) match {
@@ -260,13 +260,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
             case (11, 53) => (scala.Double.MinValue.toString, scala.Double.MaxValue.toString)
             case _ => (((Range(-1,-(dt.sigWidth),-1).map(-Math.pow(2, _)).foldLeft(-1.0)(_ + _)) * Math.pow(2, Math.pow(2, dt.expWidth - 1) - 1)).toString, ((Range(-1,-(dt.sigWidth),-1).map(Math.pow(2, _)).foldLeft(1.0)(_ + _)) * Math.pow(2, Math.pow(2, dt.expWidth - 1) - 1)).toString)
           }
-        case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
+        case dt => ("0", BigInt(2).pow(dt.getWidth).-(1).toString)
+        // case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
       }
     }
 
     def c_type(dataType: Data): String = {
       dataType match {
-        case dt: UInt => s"uint${dt.getWidth}_t"
         case dt: SInt => s"int${dt.getWidth}_t"
         case dt: Float =>
           (dt.expWidth, dt.sigWidth) match {
@@ -274,16 +274,17 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
             case (11, 53) => "double"
             case _ => s"uint" + (Math.pow(2, Math.ceil(Math.log(dt.expWidth + dt.sigWidth)/Math.log(2.0)))).toInt.toString + s"_t"
           }
-        case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
+        case dt => s"uint${dt.getWidth}_t"
       }
     }
 
     def full_c_type(dataType: Data): String = {
       dataType match {
-        case dt: UInt => "uint64_t"
-        case dt: SInt => "int64_t"
-        case dt: Float => "double"
-        case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
+        case _: UInt => "uint64_t"
+        case _: SInt => "int64_t"
+        case _: Float => "double"
+        case _ => "uint64_t"
+        // case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
       }
     }
 
@@ -291,7 +292,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     assert(Set(8, 16, 32, 64).contains(inputType.getWidth))
     // assert(Set(8, 16, 32, 64).contains(outputType.getWidth))
     assert(Set(8, 16, 32, 64).contains(accType.getWidth))
-
 
     val header = new StringBuilder()
     header ++= s"#ifndef $guard\n"
@@ -357,7 +357,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       header ++= "#define HAS_MVIN_SCALE\n"
       header ++= s"typedef ${c_type(mvin_scale_args.get.multiplicand_t)} scale_t;\n"
       header ++= s"typedef ${c_type(UInt(mvin_scale_args.get.multiplicand_t.getWidth.W))} scale_t_bits;\n\n"
-
     } else {
       header ++= s"typedef int32_t scale_t;\n"
       header ++= s"typedef uint32_t scale_t_bits;\n\n"
@@ -367,7 +366,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       header ++= "#define HAS_MVIN_ACC_SCALE\n"
       header ++= s"typedef ${c_type(mvin_scale_acc_args.get.multiplicand_t)} scale_acc_t;\n"
       header ++= s"typedef ${c_type(UInt(mvin_scale_acc_args.get.multiplicand_t.getWidth.W))} scale_acc_t_bits;\n\n"
-
     } else {
       header ++= s"typedef int32_t scale_acc_t;\n"
       header ++= s"typedef uint32_t scale_acc_t_bits;\n\n"
@@ -434,12 +432,20 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
         s"""#define MVIN_SCALE(x, scale) \\
     ${mvin_scale_args.get.c_str}"""
       header ++= "\n\n"
+    } else {
+      header ++=
+        s"""#define MVIN_SCALE(x, scale) (x)"""
+      header ++= "\n\n"
     }
 
     if (mvin_scale_acc_args.isDefined) {
       header ++=
         s"""#define MVIN_SCALE_ACC(x, scale) \\
     ${mvin_scale_acc_args.get.c_str}"""
+      header ++= "\n\n"
+    } else {
+      header ++=
+        s"""#define MVIN_SCALE_ACC(x, scale) (x)"""
       header ++= "\n\n"
     }
 
