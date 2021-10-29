@@ -131,7 +131,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
   val acc_scale_func = acc_scale_args match {
     case Some(args) => args.scale_func
-    case None => (t: T, v: V) => t
+    case None => (t: T, _: V) => t
   }
 
   val acc_scale_num_units = acc_scale_args match {
