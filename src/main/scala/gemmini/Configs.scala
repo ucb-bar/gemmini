@@ -29,7 +29,6 @@ object GemminiConfigs {
 
     // Spatial array PE options
     dataflow = Dataflow.BOTH,
-    pe_latency = 0,
 
     // Scratchpad and accumulator
     sp_capacity = CapacityInKilobytes(256),
@@ -107,7 +106,7 @@ object GemminiConfigs {
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
 
-    acc_scale_args = ScaleArguments(
+    acc_scale_args = Some(ScaleArguments(
       (t: SInt, f: Float) => {
         val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)
 
@@ -144,7 +143,7 @@ object GemminiConfigs {
       1, Float(8, 24), -1,
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
-    ),
+    )),
 
     // SoC counters options
     num_counter = 8,
@@ -157,24 +156,6 @@ object GemminiConfigs {
     ex_read_from_acc = true,
     ex_write_to_spad = true,
     ex_write_to_acc = true,
-
-    // Misc
-    opcodes = OpcodeSet.custom3,
-
-    mesh_output_delay = 1,
-
-    hardcode_d_to_garbage_addr = false,
-
-    acc_sub_banks = -1,
-
-    shifter_banks = 1,
-
-    aligned_to = 1,
-
-    use_tlb_register_filter = true,
-    use_dedicated_tl_port = false,
-
-    spad_read_delay = 4,
   )
 
   val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,

@@ -53,7 +53,7 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
 }
 
 class AccumulatorMem[T <: Data, U <: Data](
-                                            n: Int, t: Vec[Vec[T]], scale_args: ScaleArguments[T, U],
+                                            n: Int, t: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U,
                                             acc_singleported: Boolean, acc_sub_banks: Int
 )
   (implicit ev: Arithmetic[T]) extends Module {
@@ -69,7 +69,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   import ev._
 
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t, scale_args.multiplicand_t))
+  val io = IO(new AccumulatorMemIO(n, t, scale_t))
 
 
   // For any write operation, we spend 2 cycles reading the existing address out, buffering it in a register, and then
@@ -111,7 +111,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     block_read_req := !reads(1).ready
     for (i <- 0 until acc_sub_banks) {
       def isThisBank(addr: UInt) = addr(log2Ceil(acc_sub_banks)-1,0) === i.U
-      def getBankIdx(addr: UInt) = addr >> log2Ceil(acc_sub_banks)
+      def getBankIdx(addr: UInt): UInt = (addr >> log2Ceil(acc_sub_banks)).asUInt()
       val mem = SyncReadMem(n / acc_sub_banks, Vec(mask_len, mask_elem))
 
       val ren = WireInit(false.B)
@@ -134,6 +134,7 @@ class AccumulatorMem[T <: Data, U <: Data](
             isThisBank(io.write.bits.addr) && getBankIdx(io.write.bits.addr) === e.addr &&
             ((io.write.bits.mask.asUInt & e.mask.asUInt) =/= 0.U)
           ))
+
           when (io.read.req.valid && isThisBank(io.read.req.bits.addr) && getBankIdx(io.read.req.bits.addr) === e.addr) {
             reads(1).ready := false.B
           }
@@ -149,7 +150,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       val wmask = Mux1H(w_q_head.asBools, w_q.map(_.mask))
       val waddr = Mux1H(w_q_head.asBools, w_q.map(_.addr))
       when (wen) {
-        w_q_head := w_q_head << 1 | w_q_head(nEntries-1)
+        w_q_head := (w_q_head << 1).asUInt() | w_q_head(nEntries-1)
         for (i <- 0 until nEntries) {
           when (w_q_head(i)) {
             w_q(i).valid := false.B
@@ -159,7 +160,7 @@ class AccumulatorMem[T <: Data, U <: Data](
 
       when (w_buf_valid && isThisBank(waddr_buf)) {
         assert(!((w_q_tail.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_)))
-        w_q_tail := w_q_tail << 1 | w_q_tail(nEntries-1)
+        w_q_tail := (w_q_tail << 1).asUInt() | w_q_tail(nEntries-1)
         for (i <- 0 until nEntries) {
           when (w_q_tail(i)) {
             w_q(i).valid := true.B
@@ -198,7 +199,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
   }
 
-  val q = Module(new Queue(new AccumulatorReadResp(t, scale_args.multiplicand_t, log2Ceil(t.head.head.getWidth)),  1, true, true))
+  val q = Module(new Queue(new AccumulatorReadResp(t, scale_t, log2Ceil(t.head.head.getWidth)),  1, true, true))
   q.io.enq.bits.data := read_rdata
   q.io.enq.bits.scale := RegNext(io.read.req.bits.scale)
   q.io.enq.bits.relu6_shift := RegNext(io.read.req.bits.relu6_shift)

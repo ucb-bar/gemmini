@@ -43,7 +43,7 @@ object DSEBaseConfig {
     mvin_scale_args = None,
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
-    acc_scale_args = ScaleArguments(
+    acc_scale_args = Some(ScaleArguments(
       (t: SInt, u: UInt) => {
         // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
 
@@ -55,7 +55,7 @@ object DSEBaseConfig {
         val r = (point_five & (zeros | ones_digit)).asBool()
 
         (t >> u).asSInt() + Mux(r, 1.S, 0.S)
-      }, 0, UInt(8.W), -1),
+      }, 0, UInt(8.W), -1)),
     acc_read_full_width = true,
     acc_read_small_width = true,
     use_dedicated_tl_port = false,

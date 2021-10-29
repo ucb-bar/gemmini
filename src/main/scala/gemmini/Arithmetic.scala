@@ -423,11 +423,8 @@ object Arithmetic {
 
       // Not implemented because not necessary for this tutorial
       override def >>(u: UInt) = self
-
       override def >(t: Complex) = false.B
-
       override def relu6(shift: UInt) = self
-
       override def relu = self
     }
   }

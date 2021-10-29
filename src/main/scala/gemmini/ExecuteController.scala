@@ -28,7 +28,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val acc = new Bundle {
       val read_req = Vec(acc_banks, Decoupled(new AccumulatorReadReq(
-          acc_bank_entries, log2Up(accType.getWidth), acc_scale_args.multiplicand_t
+          acc_bank_entries, log2Up(accType.getWidth), acc_scale_t
       )))
 
       val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
@@ -116,7 +116,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val im2col_turn = WireInit(0.U(9.W))
 
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
-  val acc_scale = Reg(acc_scale_args.multiplicand_t)
+  val acc_scale = Reg(acc_scale_t)
   val relu6_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val activation = if (has_nonlinear_activations) Reg(UInt(2.W)) else Activation.NONE // TODO magic number
   val a_transpose = Reg(Bool())
@@ -548,7 +548,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
                 activation := rs1s(0)(4, 3) // TODO magic number
               }
               in_shift := rs2s(0)(31, 0) // TODO magic number
-              acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
+              acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_t) // TODO magic number
               relu6_shift := rs2s(0)(47, 32) // TODO magic number
               a_transpose := rs1s(0)(8) // TODO magic number
               bd_transpose := rs1s(0)(9) // TODO magic number

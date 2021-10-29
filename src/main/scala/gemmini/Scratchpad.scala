@@ -191,7 +191,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // Accumulator ports
       val acc = new Bundle {
         val read_req = Flipped(Vec(acc_banks, Decoupled(new AccumulatorReadReq(
-          acc_bank_entries, log2Up(accType.getWidth), acc_scale_args.multiplicand_t
+          acc_bank_entries, log2Up(accType.getWidth), acc_scale_t
         ))))
         val read_resp = Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
           Vec(meshColumns, Vec(tileColumns, inputType)),
