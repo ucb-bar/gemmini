@@ -439,5 +439,4 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       s"$default_directory/$headerFileName"
     }
   }
-
 }

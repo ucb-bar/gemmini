@@ -27,6 +27,9 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     nPTWPorts = 1) {
 
   Files.write(Paths.get(config.headerFilePath), config.generateHeader().getBytes(StandardCharsets.UTF_8))
+  if (System.getenv("GEMMINI_ONLY_GENERATE_GEMMINI_H") == "1") {
+    System.exit(0)
+  }
 
   val xLen = p(XLen)
   val spad = LazyModule(new Scratchpad(config))
