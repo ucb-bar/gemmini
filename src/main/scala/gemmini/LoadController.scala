@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -8,7 +9,8 @@ import freechips.rocketchip.config.Parameters
 
 // TODO we need to check for WAW errors here
 // TODO deal with errors when reading scratchpad responses
-class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
+class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int,
+                                                      local_addr_t: LocalAddr)
                                (implicit p: Parameters) extends Module {
   import config._
 
@@ -36,20 +38,25 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
 
   val cmd = Queue(io.cmd, ld_queue_length)
+
   val vaddr = cmd.bits.cmd.rs1
-  val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
-  val cols = cmd.bits.cmd.rs2(32 + mvin_cols_bits - 1, 32) // TODO magic numbers
-  val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits - 1, 48) // TODO magic numbers
+  val mvin_rs2 = cmd.bits.cmd.rs2.asTypeOf(new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t))
+  val localaddr = mvin_rs2.local_addr
+  val cols = mvin_rs2.num_cols
+  val rows = mvin_rs2.num_rows
+
   val config_stride = cmd.bits.cmd.rs2
-  val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
-  val config_shrink = cmd.bits.cmd.rs1(2) // TODO magic numbers
-  val config_block_stride = cmd.bits.cmd.rs1(31, 16) // TODO magic numbers
+  val config_mvin_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigMvinRs1(mvin_scale_t_bits, block_stride_bits))
+
+  val config_scale = config_mvin_rs1.scale // maybe limit width to `mvin_scale_t_bits`?
+  val config_shrink = config_mvin_rs1.shrink
+  val config_block_stride = config_mvin_rs1.stride
 
   val mstatus = cmd.bits.cmd.status
 
   val load_state_id = MuxCase(0.U, Seq((cmd.bits.cmd.inst.funct === LOAD2_CMD) -> 1.U,
     (cmd.bits.cmd.inst.funct === LOAD3_CMD) -> 2.U))
-  val config_state_id = cmd.bits.cmd.rs1(4,3) // TODO magic numbers
+  val config_state_id = config_mvin_rs1.state_id
   val state_id = Mux(cmd.bits.cmd.inst.funct === CONFIG_CMD, config_state_id, load_state_id)
 
   val stride = strides(state_id)
