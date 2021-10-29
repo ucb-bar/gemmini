@@ -41,10 +41,10 @@ object GemminiCustomConfigs {
   )
 
   val complexConfig = GemminiArrayConfig[Complex, Float, Float](
-    inputType = new Complex(32),
-    accType = new Complex(32),
+    inputType = new Complex(16),
+    accType = new Complex(16),
 
-    spatialArrayOutputType = new Complex(32),
+    spatialArrayOutputType = new Complex(16),
   )
 
   // Specify which of your custom configs you want to build here
