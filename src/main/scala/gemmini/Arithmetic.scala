@@ -7,6 +7,28 @@ import chisel3._
 import chisel3.util._
 import hardfloat._
 
+// Bundles that represent the raw bits of custom datatypes
+case class Float(expWidth: Int, sigWidth: Int) extends Bundle {
+  val bits = UInt((expWidth + sigWidth).W)
+
+  val bias: Int = (1 << (expWidth-1)) - 1
+}
+
+class Complex(val w: Int) extends Bundle {
+  val real = SInt(w.W)
+  val imag = SInt(w.W)
+}
+
+object Complex {
+  def apply(w: Int, real: SInt, imag: SInt): Complex = {
+    val result = Wire(new Complex(w))
+    result.real := real
+    result.imag := imag
+    result
+  }
+}
+
+// The Arithmetic typeclass which implements various arithmetic operations on custom datatypes
 abstract class Arithmetic[T <: Data] {
   implicit def cast(t: T): ArithmeticOps[T]
 }
@@ -248,30 +270,6 @@ object Arithmetic {
         val result = Wire(Float(self.expWidth, self.sigWidth))
         result.bits := fNFromRecFN(self.expWidth, self.sigWidth, muladder.io.out)
         result
-
-        /*
-        val raw = rawFloatFromFN(self.expWidth, self.sigWidth, self.bits)
-
-        val shifted_raw = WireInit(raw)
-
-        when (!raw.isZero) {
-          shifted_raw.sExp := raw.sExp - u.asSInt()
-        }
-
-        val raw_to_rec_fn_converter = Module(new RoundRawFNToRecFN(self.expWidth, self.sigWidth, options = 0)) // TODO add correct options here so that efficiency may be improved
-
-        raw_to_rec_fn_converter.io.invalidExc := false.B
-        raw_to_rec_fn_converter.io.infiniteExc := false.B
-
-        raw_to_rec_fn_converter.io.in := shifted_raw
-
-        raw_to_rec_fn_converter.io.roundingMode := consts.round_near_maxMag
-        raw_to_rec_fn_converter.io.detectTininess := consts.tininess_afterRounding
-
-        val result = Wire(Float(self.expWidth, self.sigWidth))
-        result.bits := fNFromRecFN(self.expWidth, self.sigWidth, raw_to_rec_fn_converter.io.out)
-        result
-        */
       }
 
       override def >(t: Float): Bool = {
@@ -357,25 +355,6 @@ object Arithmetic {
 
         val shifted_rec = muladder.io.out
 
-        /*
-        val six_raw = rawFloatFromIN(signedIn = false.B, in = 6.U(3.W))
-
-        val shifted_raw = WireInit(six_raw)
-
-        when (!six_raw.isZero) {
-          shifted_raw.sExp := six_raw.sExp + shift.asSInt()
-        }
-
-        val raw_to_rec_fn_converter = Module(new RoundRawFNToRecFN(self.expWidth, self.sigWidth, options = 0)) // TODO add correct options here so that efficiency may be improved
-        raw_to_rec_fn_converter.io.in := shifted_raw
-        raw_to_rec_fn_converter.io.roundingMode := consts.round_near_maxMag
-        raw_to_rec_fn_converter.io.detectTininess := consts.tininess_afterRounding
-        raw_to_rec_fn_converter.io.invalidExc := false.B
-        raw_to_rec_fn_converter.io.infiniteExc := false.B
-
-        val shifted_rec = raw_to_rec_fn_converter.io.out
-        */
-
         // Now, compare self and 6*(2^shift) to calculate the activation function
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
         val self_raw = rawFloatFromFN(self.expWidth, self.sigWidth, self.bits)
@@ -399,10 +378,51 @@ object Arithmetic {
       override def identity: Float = Cat(0.U(2.W), ~(0.U((self.expWidth-1).W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
     }
   }
-}
 
-case class Float(expWidth: Int, sigWidth: Int) extends Bundle {
-  val bits = UInt((expWidth + sigWidth).W)
+  implicit object ComplexArithmetic extends Arithmetic[Complex] {
+    override implicit def cast(self: Complex) = new ArithmeticOps(self) {
+      override def *(other: Complex): Complex = {
+        val w = self.w max other.w
 
-  val bias: Int = (1 << (expWidth-1)) - 1
+        Complex(w,
+          self.real * other.real - self.imag * other.imag,
+          self.real * other.imag + self.imag * other.real
+        )
+      }
+
+      override def +(other: Complex): Complex = {
+        val w = self.w max other.w
+
+        Complex(w,
+          self.real + other.real,
+          self.imag + other.imag,
+        )
+      }
+
+      def mac(m1: Complex, m2: Complex): Complex = {
+        // Returns (m1 * m2 + self)
+        self + (m1 * m2)
+      }
+
+      override def zero = Complex(self.w, 0.S, 0.S)
+      override def identity: Complex = self
+
+      override def withWidthOf(other: Complex) = Complex(other.w, self.real, self.imag)
+      def clippedToWidthOf(other: Complex): Complex = {
+        // Like "withWidthOf", except that it saturates
+        val maxsat = ((1 << (other.w-1))-1).S
+        val minsat = (-(1 << (other.w-1))).S
+
+        Complex(other.w,
+          Mux(self.real > maxsat, maxsat, Mux(self.real < minsat, minsat, self.real)),
+          Mux(self.imag > maxsat, maxsat, Mux(self.imag < minsat, minsat, self.imag)),
+        )
+      }
+
+      // Not implemented because not necessary for this tutorial
+      override def >>(u: UInt) = self
+      override def >(t: Complex) = false.B
+      def relu6(shift: UInt) = self
+      def relu = self
+    }
 }
