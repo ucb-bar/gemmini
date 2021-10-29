@@ -42,7 +42,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
 
   val activation = Reg(UInt(2.W)) // TODO magic number
-  val acc_scale = Reg(acc_scale_args.multiplicand_t)
+  val acc_scale = Reg(acc_scale_t)
 
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
   val row_counter = RegInit(0.U(12.W)) // TODO magic number
@@ -196,7 +196,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
           activation := config_activation
           when (!config_acc_scale.asUInt().andR()) {
-            acc_scale := config_acc_scale.asTypeOf(acc_scale_args.multiplicand_t)
+            acc_scale := config_acc_scale.asTypeOf(acc_scale_t)
           }
 
           pool_size := config_pool_size
