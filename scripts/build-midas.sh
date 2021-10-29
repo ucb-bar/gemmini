@@ -10,6 +10,9 @@ elif [ "$1" == "" ]; then
     echo DRAM model must be provided
 fi
 
-cd ../../sims/firesim/sim
+cd ../../sims/firesim/
+source sourceme-f1-manager.sh &> build.log
+
+cd sim/
 make verilator TARGET_CONFIG=${1}_WithDefaultFireSimBridges_WithFireSimConfigTweaks_chipyard.CustomGemminiSoCConfig
 
