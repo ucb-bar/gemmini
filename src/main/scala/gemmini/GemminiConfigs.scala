@@ -134,6 +134,16 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     case None => (t: T, v: V) => t
   }
 
+  val acc_scale_num_units = acc_scale_args match {
+    case Some(args) => args.num_scale_units
+    case None => -1
+  }
+
+  val acc_scale_latency = acc_scale_args match {
+    case Some(args) => args.latency
+    case None => 0
+  }
+
   val mvin_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
   val mvout_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)

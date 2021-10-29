@@ -68,10 +68,13 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
   fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]],
   scale_t: U, shift_width: Int,
   read_small_data: Boolean, read_full_data: Boolean,
-  scale_args: ScaleArguments[T, U],
+  scale_func: (T, U) => T,
+  num_scale_units: Int,
+  latency: Int,
   has_nonlinear_activations: Boolean)(implicit ev: Arithmetic[T]) extends Module {
 
   import ev._
+
   val io = IO(new AccumulatorScaleIO[T,U](
     fullDataType, scale_t, shift_width, rDataType
   )(ev))
@@ -79,8 +82,8 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
   val out = Wire(Decoupled(new AccumulatorScaleResp[T](
     fullDataType, rDataType)(ev)))
 
-  val num_scale_units = scale_args.num_scale_units
-  val acc_scale_latency = scale_args.latency
+  val num_scale_units = num_scale_units
+  val acc_scale_latency = latency
 
   if (num_scale_units == -1) {
     val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, shift_width)(ev)))
@@ -92,7 +95,7 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
     val pipe_out = Pipeline(in, acc_scale_latency, Seq.fill(acc_scale_latency)((x: AccumulatorReadRespWithFullData[T,U]) => x) :+ {
       x: AccumulatorReadRespWithFullData[T,U] =>
       val activated_rdata = VecInit(x.resp.data.map(v => VecInit(v.map { e =>
-        val e_scaled = scale_args.scale_func(e, x.resp.scale)
+        val e_scaled = scale_func(e, x.resp.scale)
         val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
         val e_act = MuxCase(e_clipped, Seq(
           (x.resp.act === Activation.RELU) -> e_clipped.relu,

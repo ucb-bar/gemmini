@@ -478,11 +478,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val acc_scale_unit = Module(new AccumulatorScale(
       acc_row_t,
       spad_row_t,
-      acc_scale_args.multiplicand_t,
+      acc_scale_t,
       log2Up(accType.getWidth),
       acc_read_small_width,
       acc_read_full_width,
-      acc_scale_args,
+      acc_scale_func,
+      acc_scale_num_units,
+      acc_scale_latency,
       has_nonlinear_activations,
     ))
 
@@ -512,7 +514,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     {
 
       val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(
-        acc_bank_entries, acc_row_t, acc_scale_args,
+        acc_bank_entries, acc_row_t, acc_scale_func, acc_scale_t,
         acc_singleported, acc_sub_banks
       )) }
       val bank_ios = VecInit(banks.map(_.io))
