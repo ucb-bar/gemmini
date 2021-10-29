@@ -88,6 +88,8 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
 
 
   // Performance counters
+  CounterEventIO.init(io.counter)
+
   val total_latency = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
   total_latency := total_latency + PopCount(entries.map(_.valid))
 
