@@ -41,7 +41,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val block_cols = meshColumns * tileColumns
   val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
 
-  val activation = Reg(UInt(2.W)) // TODO magic number
+  val activation = Reg(UInt(GemminiISA.CONFIG_MVOUT_RS1_ACTIVATION_WIDTH.W))
   val acc_scale = Reg(acc_scale_args.multiplicand_t)
 
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
@@ -49,15 +49,15 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val block_counter = RegInit(0.U(8.W)) // TODO magic number
 
   // Pooling variables
-  val pool_stride = Reg(UInt(2.W)) // When this is 0, pooling is disabled // TODO magic number
-  val pool_size = Reg(UInt(2.W)) // TODO magic number
-  val pool_out_dim = Reg(UInt(8.W)) // TODO magic number
-  val pool_porows = Reg(UInt(8.W)) // TODO magic number
-  val pool_pocols = Reg(UInt(8.W)) // TODO magic number
-  val pool_orows = Reg(UInt(8.W)) // TODO magic number
-  val pool_ocols = Reg(UInt(8.W)) // TODO magic number
-  val pool_upad = Reg(UInt(2.W)) // TODO magic number
-  val pool_lpad = Reg(UInt(2.W)) // TODO magic number
+  val pool_stride = Reg(UInt(CONFIG_MVOUT_RS1_MAX_POOLING_STRIDE_WIDTH.W)) // When this is 0, pooling is disabled
+  val pool_size = Reg(UInt(CONFIG_MVOUT_RS1_MAX_POOLING_WINDOW_SIZE_WIDTH.W))
+  val pool_out_dim = Reg(UInt(CONFIG_MVOUT_RS1_POOL_OUT_DIM_WIDTH.W))
+  val pool_porows = Reg(UInt(CONFIG_MVOUT_RS1_POOL_OUT_ROWS_WIDTH.W))
+  val pool_pocols = Reg(UInt(CONFIG_MVOUT_RS1_POOL_OUT_COLS_WIDTH.W))
+  val pool_orows = Reg(UInt(CONFIG_MVOUT_RS1_OUT_ROWS_WIDTH.W))
+  val pool_ocols = Reg(UInt(CONFIG_MVOUT_RS1_OUT_COLS_WIDTH.W))
+  val pool_upad = Reg(UInt(CONFIG_MVOUT_RS1_UPPER_ZERO_PADDING_WIDTH.W))
+  val pool_lpad = Reg(UInt(CONFIG_MVOUT_RS1_LEFT_ZERO_PADDING_WIDTH.W))
 
   val porow_counter = RegInit(0.U(pool_porows.getWidth.W))
   val pocol_counter = RegInit(0.U(pool_pocols.getWidth.W))
@@ -78,22 +78,26 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   // Commands
   val cmd = Queue(io.cmd, st_queue_length)
   val vaddr = cmd.bits.cmd.rs1
-  val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
-  val cols = cmd.bits.cmd.rs2(32 + mvout_cols_bits - 1, 32) // TODO magic numbers
-  val rows = cmd.bits.cmd.rs2(48 + mvout_rows_bits - 1, 48) // TODO magic numbers
+  val mvout_rs2 = cmd.bits.cmd.rs2.asTypeOf(new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t))
+  val localaddr = mvout_rs2.local_addr
+  val cols = mvout_rs2.num_cols
+  val rows = mvout_rs2.num_rows
   val blocks = (cols / block_cols.U) + (cols % block_cols.U =/= 0.U)
-  val config_stride = cmd.bits.cmd.rs2(31, 0) // TODO magic numbers
-  val config_activation = cmd.bits.cmd.rs1(3, 2) // TODO magic numbers
-  val config_acc_scale = cmd.bits.cmd.rs2(63, 32) // TODO magic numbers
-  val config_pool_stride = cmd.bits.cmd.rs1(5, 4) // TODO magic numbers
-  val config_pool_size = cmd.bits.cmd.rs1(7, 6) // TODO magic numbers
-  val config_pool_out_dim = cmd.bits.cmd.rs1(31, 24) // TODO magic numbers
-  val config_porows = cmd.bits.cmd.rs1(39, 32) // TODO magic numbers
-  val config_pocols = cmd.bits.cmd.rs1(47, 40) // TODO magic numbers
-  val config_orows = cmd.bits.cmd.rs1(55, 48) // TODO magic numbers
-  val config_ocols = cmd.bits.cmd.rs1(63, 56) // TODO magic numbers
-  val config_upad = cmd.bits.cmd.rs1(9, 8) // TODO magic numbers
-  val config_lpad = cmd.bits.cmd.rs1(11, 10) // TODO magic numbers
+
+  val config_mvout_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigMvoutRs1)
+  val config_mvout_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigMvoutRs2(acc_scale_t_bits, 32))
+  val config_stride = config_mvout_rs2.stride
+  val config_activation = config_mvout_rs1.activation
+  val config_acc_scale = config_mvout_rs2.acc_scale
+  val config_pool_stride = config_mvout_rs1.pool_stride
+  val config_pool_size = config_mvout_rs1.pool_size
+  val config_pool_out_dim = config_mvout_rs1.pool_out_dim
+  val config_porows = config_mvout_rs1.porows
+  val config_pocols = config_mvout_rs1.pocols
+  val config_orows = config_mvout_rs1.orows
+  val config_ocols = config_mvout_rs1.ocols
+  val config_upad = config_mvout_rs1.upad
+  val config_lpad = config_mvout_rs1.lpad
 
   val mstatus = cmd.bits.cmd.status
 
