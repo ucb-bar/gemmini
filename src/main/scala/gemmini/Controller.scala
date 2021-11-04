@@ -130,7 +130,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new ConfigExRs1(acc_scale_t_bits), new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
-    has_training_convs)
+    has_training_convs, has_max_pool)
 
   val (loop_cmd, loop_matmul_unroller_busy) = LoopMatmul(conv_cmd, reservation_station.io.ld_utilization, reservation_station.io.st_utilization, reservation_station.io.ex_utilization,
     meshRows*tileRows, coreMaxAddrBits, rob_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
