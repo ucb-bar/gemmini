@@ -4,6 +4,10 @@ if [ ! -d configs ]; then
     mkdir configs/
 fi
 
+if [ ! -d generated-src ]; then
+    mkdir generated-src/
+fi
+
 if [ ! -f configs/GemminiDefaultConfigs.scala ]; then
     ln -s $PWD/src/main/scala/gemmini/Configs.scala configs/GemminiDefaultConfigs.scala
 fi
@@ -20,5 +24,13 @@ fi
 if [ ! -f configs/SoCConfigs.scala ]; then
     sed '1,1d; $d' $PWD/src/main/scala/gemmini/CustomSoCConfigs.scala > ../chipyard/src/main/scala/config/GemminiSoCConfigs.scala
     ln -s $PWD/../chipyard/src/main/scala/config/GemminiSoCConfigs.scala configs/SoCConfigs.scala
+fi
+
+if [ ! -d generated-src/verilator ]; then
+    ln -s $PWD/../../sims/verilator/generated-src/ generated-src/verilator
+fi
+
+if [ ! -d generated-src/vcs ]; then
+    ln -s $PWD/../../sims/vcs/generated-src/ generated-src/vcs
 fi
 

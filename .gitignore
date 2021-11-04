@@ -340,4 +340,5 @@ hs_err_pid*
 
 # Gemmini specific
 configs/
+generated-src/
 
