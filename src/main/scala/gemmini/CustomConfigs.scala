@@ -40,6 +40,7 @@ object GemminiCustomConfigs {
     acc_capacity = CapacityInKilobytes(128),
   )
 
+  /* Complex number config for Gemmini tutorial */
   val complexConfig = GemminiArrayConfig[Complex, Float, Float](
     inputType = new Complex(16),
     accType = new Complex(16),
