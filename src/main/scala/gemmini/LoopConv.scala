@@ -274,8 +274,9 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
     req.trans_input_3120 -> (req.dram_addr +& (((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U).asUInt())
   ))
   val spad_addr = Mux(req.trans_input_3120,
-    req.addr_start.zext() +& (b / block_size.S) * input_spad_stride +& ich * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample),
-    req.addr_start.zext() +& (ich / block_size.S) * input_spad_stride +& b * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample))
+    // To prevent Verilator errors, we replace some "/ block_size.U" calls here with ">> log2Up(block_size)"
+    req.addr_start.zext() +& (b >> log2Up(block_size)) * input_spad_stride +& ich * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample),
+    req.addr_start.zext() +& (ich >> log2Up(block_size)) * input_spad_stride +& b * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample))
 
   // Sizes
   val block_size_downsampled = (block_size.U << req.downsample).asUInt().zext()
