@@ -8,6 +8,7 @@ if [ "$1" == "--help" ]; then
     exit
 elif [ "$1" == "" ]; then
     echo DRAM model must be provided
+    exit 1
 fi
 
 gemminidir="$PWD"
