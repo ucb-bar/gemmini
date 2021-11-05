@@ -28,7 +28,8 @@ object GemminiCustomConfigs {
   )
 
   val trainingConfig = defaultFpConfig.copy(
-    inputType = Float(expWidth = 8, sigWidth = 8),
+    inputType = Float(expWidth = 8, sigWidth = 24),
+    accType = Float(expWidth = 8, sigWidth = 24),
 
     meshRows = 8,
     meshColumns = 8,
