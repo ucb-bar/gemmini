@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [ "$1" == "--help" ]; then
-    echo usage: $0 DRAM_CONTROLLER_MODEL
+    echo usage: $0 DRAM_CONTROLLER_MODEL binary
     echo " " DRAM_CONTROLLER_MODEL: Either DDR3FCFS or DDR3FRFCFS or DDR3FRFCFSLLC4MB
     echo "   " FCFS is "first come, first serve"
     echo "   " FRFCFS is "first ready, first come, first serve"
