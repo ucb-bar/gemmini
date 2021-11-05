@@ -7,6 +7,8 @@ class CustomGemminiSoCConfig extends Config(
   new gemmini.GemminiCustomConfig ++
 
   // Set your custom L2 configs
+  new chipyard.config.WithL2TLBs(1024) ++
+
   new freechips.rocketchip.subsystem.WithInclusiveCache(
     nBanks = 1,
     nWays = 8,
