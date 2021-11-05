@@ -20,7 +20,7 @@ elif [ $checkpoint == "build-complex" ]; then
     cp -r /root/builds/$rtl /root/chipyard/sims/verilator/generated-src
 elif [ $checkpoint == "build-midas" ]; then
     build=/root/builds/DDR3FCFS-MIDAS
-    target=/root/chipyard/sims/firesim/sim/f1/FireSim-DDR3FCFS_WithDefaultFireSimBridges_WithFireSimConfigTweaks_chipyard.CustomGemminiSoCConfig-BaseF1Config
+    target=/root/chipyard/sims/firesim/sim/generated-src/f1/FireSim-DDR3FCFS_WithDefaultFireSimBridges_WithFireSimConfigTweaks_chipyard.CustomGemminiSoCConfig-BaseF1Config
 
     rm -rf $target
     cp -r $build $target
