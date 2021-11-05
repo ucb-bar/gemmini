@@ -26,11 +26,11 @@ if [ ! -f configs/SoCConfigs.scala ]; then
     ln -s $PWD/../chipyard/src/main/scala/config/GemminiSoCConfigs.scala configs/SoCConfigs.scala
 fi
 
-if [ ! -d generated-src/verilator ]; then
+if [ ! -f generated-src/verilator ] && [ ! -d generated-src/verilator ]; then
     ln -s $PWD/../../sims/verilator/generated-src/ generated-src/verilator
 fi
 
-if [ ! -d generated-src/vcs ]; then
+if [ ! -f generated-src/vcs ] && [ ! -d generated-src/vcs ]; then
     ln -s $PWD/../../sims/vcs/generated-src/ generated-src/vcs
 fi
 
