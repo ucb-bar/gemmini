@@ -14,6 +14,9 @@ import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
 import Util._
 
+import midas.targetutils.PerfCounter
+import midas.targetutils.SynthesizePrintf
+
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W) // TODO use LocalAddr in DMA
@@ -298,14 +301,23 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.counter.connectEventSignal(CounterEvent.RDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
 
     // External counters
-    val bytes_read = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
+    val total_bytes_read = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
     when (io.counter.external_reset) {
-      bytes_read := 0.U
+      total_bytes_read := 0.U
     }.elsewhen (tl.d.fire()) {
-      bytes_read := bytes_read + 1.U << tl.d.bits.size
+      total_bytes_read := total_bytes_read + 1.U << tl.d.bits.size
     }
 
-    io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, bytes_read)
+    io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, total_bytes_read)
+
+    PerfCounter(state =/= s_idle, "rdma_active_cycles", "cycles during which the read dma is active")
+    PerfCounter(tl.a.ready && io.tlb.resp.miss, "rdma_tlb_wait_cycles", "cycles during which the read dma is stalling as it waits for a TLB response")
+    PerfCounter(tl.a.valid && !tl.a.ready, "rdma_tl_wait_cycles", "cycles during which the read dma is stalling as it waits for the TileLink port to be available")
+
+    val cntr = Counter(2000000)
+    when (cntr.inc()) {
+      printf(SynthesizePrintf("RDMA bytes rec: %d\n", total_bytes_read))
+    }
   }
 }
 
@@ -606,5 +618,15 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     io.counter.connectExternalCounter(CounterExternal.WDMA_BYTES_SENT, total_bytes_sent)
     io.counter.connectExternalCounter(CounterExternal.WDMA_TOTAL_LATENCY, total_latency)
+
+    PerfCounter(state =/= s_idle, "wdma_active_cycles", "cycles during which write read dma is active")
+    PerfCounter(tl.a.ready && io.tlb.resp.miss, "wdma_tlb_wait_cycles", "cycles during which the write dma is stalling as it waits for a TLB response")
+    PerfCounter(tl.a.valid && !tl.a.ready, "wdma_tl_wait_cycles", "cycles during which the write dma is stalling as it waits for the TileLink port to be available")
+
+    val cntr = Counter(2000000)
+    when (cntr.inc()) {
+      printf(SynthesizePrintf("WDMA bytes sent: %d\n", total_bytes_sent))
+      printf(SynthesizePrintf("WDMA total latency: %d\n", total_latency))
+    }
   }
 }

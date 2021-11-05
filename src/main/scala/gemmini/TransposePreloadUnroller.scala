@@ -5,6 +5,7 @@ import chisel3.util._
 import chisel3.experimental.ChiselEnum
 import chipsalliance.rocketchip.config.Parameters
 import Util._
+import midas.targetutils.PerfCounter
 
 class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V])
                                                                  (implicit p: Parameters) extends Module {

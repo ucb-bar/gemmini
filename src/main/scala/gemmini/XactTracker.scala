@@ -3,6 +3,7 @@ package gemmini
 import chisel3._
 import chisel3.util._
 import gemmini.Util.UDValid
+import midas.targetutils.SynthesizePrintf
 
 class XactTrackerEntry[U <: Data](maxShift: Int, spadWidth: Int, accWidth: Int,
                                   spadRows: Int, accRows: Int, maxReqBytes: Int, mvin_scale_t_bits: Int,
@@ -86,7 +87,6 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
     entries.foreach(_.valid := false.B)
   }
 
-
   // Performance counters
   CounterEventIO.init(io.counter)
 
@@ -94,4 +94,9 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
   total_latency := total_latency + PopCount(entries.map(_.valid))
 
   io.counter.connectExternalCounter(CounterExternal.RDMA_TOTAL_LATENCY, total_latency)
+
+  val cntr = Counter(2000000)
+  when (cntr.inc()) {
+    printf(SynthesizePrintf("rdma_total_latency: %d\n", total_latency))
+  }
 }

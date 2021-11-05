@@ -6,6 +6,7 @@ import chisel3.util._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
+import midas.targetutils.PerfCounter
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
@@ -1027,4 +1028,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     !(!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) && !cntl.b_read_from_acc)
   io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_D_WAIT_CYCLE, 
     !(!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready) && !cntl.d_read_from_acc)
+
+  PerfCounter(control_state === flushing || control_state === flush, "ex_flush_cycle", "cycles during which the ex controller is flushing the spatial array")
+  PerfCounter(cmd.valid(0) && DoPreloads(0) && cmd.valid(1) && raw_hazard_pre, "ex_preload_haz_cycle", "cycles during which the execute controller is stalling preloads due to hazards")
+  PerfCounter(cmd.valid(0) && DoPreloads(1) && cmd.valid(1) && DoComputes(0) && cmd.valid(2) && raw_hazard_mulpre, "ex_mulpre_haz_cycle", "cycles during which the execute controller is stalling matmuls due to hazards")
 }

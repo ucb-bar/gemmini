@@ -7,6 +7,7 @@ import chisel3.experimental._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
+import midas.targetutils.PerfCounter
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
@@ -265,4 +266,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.counter.connectEventSignal(CounterEvent.STORE_POOLING_CYCLE, pooling_is_enabled)
   io.counter.connectEventSignal(CounterEvent.STORE_DMA_WAIT_CYCLE, control_state === waiting_for_dma_req_ready)
   io.counter.connectEventSignal(CounterEvent.STORE_SCRATCHPAD_WAIT_CYCLE, io.dma.req.valid && !io.dma.req.ready)
+
+  PerfCounter(pooling_is_enabled, "pooling_cycles", "cycles during which store controller is max-pooling")
+  PerfCounter(io.dma.req.valid && !io.dma.req.ready, "st_dma_wait_cycle", "cycles during which store controller is stalling for the DMA to be ready")
 }
