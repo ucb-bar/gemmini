@@ -82,7 +82,7 @@ class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
   val resp = Flipped(new TLBResp)
 }
 
-class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
+class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_filter: Boolean)
                  (implicit edge: TLEdgeOut, p: Parameters) extends CoreModule {
   val io = IO(new Bundle {
     val clients = Flipped(Vec(nClients, new FrontendTLBIO))
@@ -127,6 +127,11 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int)
       client.resp.miss := !RegNext(l0_tlb_hit)
     } .otherwise {
       client.resp := tlb.io.resp
+    }
+
+    // If we're not using the TLB filter register, then we set this value to always be false
+    if (!use_tlb_register_filter) {
+      last_translated_valid := false.B
     }
   }
 
