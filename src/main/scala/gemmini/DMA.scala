@@ -619,9 +619,9 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     io.counter.connectExternalCounter(CounterExternal.WDMA_BYTES_SENT, total_bytes_sent)
     io.counter.connectExternalCounter(CounterExternal.WDMA_TOTAL_LATENCY, total_latency)
 
-//    PerfCounter(state =/= s_idle, "wdma_active_cycles", "cycles during which write read dma is active")
-//    PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "wdma_tlb_wait_cycles", "cycles during which the write dma is stalling as it waits for a TLB response")
-//    PerfCounter(tl.a.valid && !tl.a.ready, "wdma_tl_wait_cycles", "cycles during which the write dma is stalling as it waits for the TileLink port to be available")
+    PerfCounter(state =/= s_idle, "wdma_active_cycles", "cycles during which write read dma is active")
+    PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "wdma_tlb_wait_cycles", "cycles during which the write dma is stalling as it waits for a TLB response")
+    PerfCounter(tl.a.valid && !tl.a.ready, "wdma_tl_wait_cycles", "cycles during which the write dma is stalling as it waits for the TileLink port to be available")
 
     val cntr = Counter(500000)
     when (cntr.inc()) {
