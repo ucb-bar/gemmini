@@ -467,19 +467,19 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     printf(p"Utilization st q: $utilization_st_q\n")
     printf(p"Utilization ex q: $utilization_ex_q\n")
 
-//    printf(SynthesizePrintf("Utilization: %d\n", utilization))
-//    printf(SynthesizePrintf("Utilization ld q (incomplete): %d\n", utilization_ld_q_unissued))
-//    printf(SynthesizePrintf("Utilization st q (incomplete): %d\n", utilization_st_q_unissued))
-//    printf(SynthesizePrintf("Utilization ex q (incomplete): %d\n", utilization_ex_q_unissued))
-//    printf(SynthesizePrintf("Utilization ld q: %d\n", utilization_ld_q))
-//    printf(SynthesizePrintf("Utilization st q: %d\n", utilization_st_q))
-//    printf(SynthesizePrintf("Utilization ex q: %d\n", utilization_ex_q))
+    printf(SynthesizePrintf("Utilization: %d\n", utilization))
+    printf(SynthesizePrintf("Utilization ld q (incomplete): %d\n", utilization_ld_q_unissued))
+    printf(SynthesizePrintf("Utilization st q (incomplete): %d\n", utilization_st_q_unissued))
+    printf(SynthesizePrintf("Utilization ex q (incomplete): %d\n", utilization_ex_q_unissued))
+    printf(SynthesizePrintf("Utilization ld q: %d\n", utilization_ld_q))
+    printf(SynthesizePrintf("Utilization st q: %d\n", utilization_st_q))
+    printf(SynthesizePrintf("Utilization ex q: %d\n", utilization_ex_q))
 
     printf(p"Packed deps: $packed_deps\n")
   }
 
-//  PerfCounter(io.busy, "reservation_station_busy", "cycles where reservation station has entries")
-//  PerfCounter(!io.alloc.ready, "reservation_station_full", "cycles where reservation station is full")
+  PerfCounter(io.busy, "reservation_station_busy", "cycles where reservation station has entries")
+  PerfCounter(!io.alloc.ready, "reservation_station_full", "cycles where reservation station is full")
 
   when (reset.asBool()) {
     entries.foreach(_.valid := false.B)
