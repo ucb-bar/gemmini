@@ -97,6 +97,6 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
 
   val cntr = Counter(2000000)
   when (cntr.inc()) {
-    printf(SynthesizePrintf("rdma_total_latency: %d\n", total_latency))
+//    printf(SynthesizePrintf("rdma_total_latency: %d\n", total_latency))
   }
 }
