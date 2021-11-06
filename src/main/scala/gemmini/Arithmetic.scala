@@ -391,17 +391,23 @@ object Arithmetic {
       }
 
       override def +(other: Complex): Complex = {
-        val w = self.w max other.w
+        /*
+        TUTORIAL:
+          Implement the addition operator over here.
+         */
 
-        Complex(w,
-          self.real + other.real,
-          self.imag + other.imag,
+        Complex(???,
+          ???,
+          ???,
         )
       }
 
       def mac(m1: Complex, m2: Complex): Complex = {
-        // Returns (m1 * m2 + self)
-        self + (m1 * m2)
+        /*
+        TUTORIAL:
+          Implement the multiply-accumulate operation (self + m1 * m2) over here.
+         */
+        ???
       }
 
       override def zero = Complex(self.w, 0.S, 0.S)
