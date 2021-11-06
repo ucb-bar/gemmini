@@ -310,13 +310,13 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, total_bytes_read)
 
-    PerfCounter(state =/= s_idle, "rdma_active_cycles", "cycles during which the read dma is active")
-    PerfCounter(tl.a.ready && io.tlb.resp.miss, "rdma_tlb_wait_cycles", "cycles during which the read dma is stalling as it waits for a TLB response")
-    PerfCounter(tl.a.valid && !tl.a.ready, "rdma_tl_wait_cycles", "cycles during which the read dma is stalling as it waits for the TileLink port to be available")
+//    PerfCounter(state =/= s_idle, "rdma_active_cycles", "cycles during which the read dma is active")
+//    PerfCounter(tl.a.ready && io.tlb.resp.miss, "rdma_tlb_wait_cycles", "cycles during which the read dma is stalling as it waits for a TLB response")
+//    PerfCounter(tl.a.valid && !tl.a.ready, "rdma_tl_wait_cycles", "cycles during which the read dma is stalling as it waits for the TileLink port to be available")
 
     val cntr = Counter(2000000)
     when (cntr.inc()) {
-      printf(SynthesizePrintf("RDMA bytes rec: %d\n", total_bytes_read))
+//      printf(SynthesizePrintf("RDMA bytes rec: %d\n", total_bytes_read))
     }
   }
 }
@@ -625,8 +625,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     val cntr = Counter(2000000)
     when (cntr.inc()) {
-      printf(SynthesizePrintf("WDMA bytes sent: %d\n", total_bytes_sent))
-      printf(SynthesizePrintf("WDMA total latency: %d\n", total_latency))
+//      printf(SynthesizePrintf("WDMA bytes sent: %d\n", total_bytes_sent))
+//      printf(SynthesizePrintf("WDMA total latency: %d\n", total_latency))
     }
   }
 }

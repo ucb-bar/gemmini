@@ -70,9 +70,9 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_TOTAL_REQ, io.req.fire())
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_MISS_CYCLE, tlb.io.resp.miss)
 
-  PerfCounter(RegNext(io.req.fire()) && !tlb.io.resp.miss, "tlb_hits", "total number of tlb hits")
-  PerfCounter(io.req.fire(), "tlb_reqs", "total number of tlb reqs")
-  PerfCounter(tlb.io.resp.miss, "tlb_miss_cycles", "total number of cycles where the tlb is resolving a miss")
+//  PerfCounter(RegNext(io.req.fire()) && !tlb.io.resp.miss, "tlb_hits", "total number of tlb hits")
+//  PerfCounter(io.req.fire(), "tlb_reqs", "total number of tlb reqs")
+//  PerfCounter(tlb.io.resp.miss, "tlb_miss_cycles", "total number of cycles where the tlb is resolving a miss")
 }
 
 class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
