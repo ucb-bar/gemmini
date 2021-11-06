@@ -27,10 +27,10 @@ if [ ! -f configs/SoCConfigs.scala ]; then
 fi
 
 if [ ! -f generated-src/verilator ] && [ ! -d generated-src/verilator ]; then
-    ln -s $PWD/../../sims/verilator/generated-src/ generated-src/verilator
+    ln -s $PWD/../../sims/verilator/generated-src/ generated-src/verilator 2>/dev/null
 fi
 
 if [ ! -f generated-src/vcs ] && [ ! -d generated-src/vcs ]; then
-    ln -s $PWD/../../sims/vcs/generated-src/ generated-src/vcs
+    ln -s $PWD/../../sims/vcs/generated-src/ generated-src/vcs 2>/dev/null
 fi
 
