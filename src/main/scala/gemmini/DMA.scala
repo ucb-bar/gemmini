@@ -305,7 +305,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     when (io.counter.external_reset) {
       total_bytes_read := 0.U
     }.elsewhen (tl.d.fire()) {
-      total_bytes_read := total_bytes_read + 1.U << tl.d.bits.size
+      total_bytes_read := total_bytes_read + (1.U << tl.d.bits.size)
     }
 
     io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, total_bytes_read)
@@ -314,7 +314,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 //    PerfCounter(tl.a.ready && io.tlb.resp.miss, "rdma_tlb_wait_cycles", "cycles during which the read dma is stalling as it waits for a TLB response")
 //    PerfCounter(tl.a.valid && !tl.a.ready, "rdma_tl_wait_cycles", "cycles during which the read dma is stalling as it waits for the TileLink port to be available")
 
-    val cntr = Counter(2000000)
+    val cntr = Counter(500000)
     when (cntr.inc()) {
 //      printf(SynthesizePrintf("RDMA bytes rec: %d\n", total_bytes_read))
     }
@@ -605,11 +605,11 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     // External counters
     val total_bytes_sent = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
     when (tl.d.fire()) {
-      total_bytes_sent := total_bytes_sent + 1.U << tl.d.bits.size
+      total_bytes_sent := total_bytes_sent + (1.U << tl.d.bits.size)
     }
 
     val total_latency = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
-    total_latency := PopCount(xactBusy)
+    total_latency := total_latency + PopCount(xactBusy)
 
     when (io.counter.external_reset) {
       total_bytes_sent := 0.U
@@ -623,7 +623,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 //    PerfCounter(tl.a.ready && io.tlb.resp.miss, "wdma_tlb_wait_cycles", "cycles during which the write dma is stalling as it waits for a TLB response")
 //    PerfCounter(tl.a.valid && !tl.a.ready, "wdma_tl_wait_cycles", "cycles during which the write dma is stalling as it waits for the TileLink port to be available")
 
-    val cntr = Counter(2000000)
+    val cntr = Counter(500000)
     when (cntr.inc()) {
 //      printf(SynthesizePrintf("WDMA bytes sent: %d\n", total_bytes_sent))
 //      printf(SynthesizePrintf("WDMA total latency: %d\n", total_latency))
