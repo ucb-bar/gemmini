@@ -148,6 +148,7 @@ class CounterIO(nPerfCounter: Int, counterWidth: Int) extends Bundle {
   val addr = Input(UInt(log2Ceil(nPerfCounter).W))
   val data = Output(UInt(counterWidth.W))
   val config_address = Flipped(Valid(UInt(log2Ceil(CounterEvent.n).W)))
+  val external = Input(Bool())
 
   val event_io = Flipped(new CounterEventIO)
 }
@@ -159,8 +160,9 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
 {
   val io = IO(new CounterIO(nPerfCounter, counterWidth))
 
-  val config_width = log2Ceil(scala.math.max(CounterEvent.n, CounterExternal.n)) + 1;
+  val config_width = log2Ceil(scala.math.max(CounterEvent.n, CounterExternal.n)) + 1
   val counter_config = RegInit(VecInit.tabulate(nPerfCounter)(_ => 0.U(config_width.W)))
+  val counter_is_external = Reg(Vec(nPerfCounter, Bool()))
 
   io.event_io.external_reset := io.counter_reset
   withReset(reset.asBool || io.counter_reset) {
@@ -173,9 +175,10 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
     // local counter
     val take_value = (config: UInt, counter: UInt) => {
       // Set the width
-      val external = Wire(UInt(counterWidth.W))
-      external := io.event_io.external_values(io.addr)
-      Mux(config(config_width - 1), external, counter)
+      val external = io.event_io.external_values(config)
+      val is_external = counter_is_external(io.addr)
+
+      Mux(is_external, external, counter)
     }
     // Snapshot: In case a sequence of access instructions get interrupted (i.e. preempted by OS), it is possible
     // to take a snapshot when reading counter value by setting a bit in the instruction. All subsequent readings
@@ -197,6 +200,7 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
     // Write configuration reg
     when (io.config_address.valid) {
       counter_config(io.addr) := io.config_address.bits
+      counter_is_external(io.addr) := io.external
       counters(io.addr) := 0.U
     }
 
@@ -244,6 +248,7 @@ class CounterController(nPerfCounter: Int, counterWidth: Int)(implicit p: Parame
     module.io.snapshot := io.in.bits.rs1(2) & io.in.fire()
     module.io.config_address.valid := io.in.bits.rs1(3) & io.in.fire()
     module.io.config_address.bits := io.in.bits.rs1(17, 12)
+    module.io.external := io.in.bits.rs1(31)
 
     when (io.out.fire()) {
       out_valid_reg := false.B

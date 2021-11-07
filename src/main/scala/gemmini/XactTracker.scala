@@ -91,7 +91,11 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
   CounterEventIO.init(io.counter)
 
   val total_latency = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
-  total_latency := total_latency + PopCount(entries.map(_.valid))
+  when (io.counter.external_reset) {
+    total_latency := 0.U
+  }.otherwise {
+    total_latency := total_latency + PopCount(entries.map(_.valid))
+  }
 
   io.counter.connectExternalCounter(CounterExternal.RDMA_TOTAL_LATENCY, total_latency)
 
