@@ -26,7 +26,7 @@ class TLBExceptionIO extends Bundle {
 }
 
 // TODO can we make TLB hits only take one cycle?
-class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Parameters)
+class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: Boolean)(implicit edge: TLEdgeOut, p: Parameters)
   extends CoreModule {
 
   val lgMaxSize = log2Ceil(maxSize)
@@ -70,9 +70,11 @@ class DecoupledTLB(entries: Int, maxSize: Int)(implicit edge: TLEdgeOut, p: Para
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_TOTAL_REQ, io.req.fire())
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_MISS_CYCLE, tlb.io.resp.miss)
 
-  PerfCounter(RegNext(io.req.fire()) && !tlb.io.resp.miss, "tlb_hits", "total number of tlb hits")
-  PerfCounter(io.req.fire(), "tlb_reqs", "total number of tlb reqs")
-  PerfCounter(tlb.io.resp.miss, "tlb_miss_cycles", "total number of cycles where the tlb is resolving a miss")
+  if (use_firesim_simulation_counters) {
+    PerfCounter(RegNext(io.req.fire()) && !tlb.io.resp.miss, "tlb_hits", "total number of tlb hits")
+    PerfCounter(io.req.fire(), "tlb_reqs", "total number of tlb reqs")
+    PerfCounter(tlb.io.resp.miss, "tlb_miss_cycles", "total number of cycles where the tlb is resolving a miss")
+  }
 }
 
 class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
@@ -82,7 +84,7 @@ class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
   val resp = Flipped(new TLBResp)
 }
 
-class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_filter: Boolean)
+class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_filter: Boolean, use_firesim_simulation_counters: Boolean)
                  (implicit edge: TLEdgeOut, p: Parameters) extends CoreModule {
   val io = IO(new Bundle {
     val clients = Flipped(Vec(nClients, new FrontendTLBIO))
@@ -93,7 +95,7 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_fi
 
   val lgMaxSize = log2Ceil(coreDataBytes)
   val tlbArb = Module(new RRArbiter(new DecoupledTLBReq(lgMaxSize), nClients))
-  val tlb = Module(new DecoupledTLB(entries, maxSize))
+  val tlb = Module(new DecoupledTLB(entries, maxSize, use_firesim_simulation_counters))
   tlb.io.req.valid := tlbArb.io.out.valid
   tlb.io.req.bits := tlbArb.io.out.bits
   tlbArb.io.out.ready := true.B

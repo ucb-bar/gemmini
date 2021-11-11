@@ -172,5 +172,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.counter.connectEventSignal(CounterEvent.LOAD_DMA_WAIT_CYCLE, control_state === waiting_for_dma_req_ready)
   io.counter.connectEventSignal(CounterEvent.LOAD_SCRATCHPAD_WAIT_CYCLE, io.dma.req.valid && !io.dma.req.ready)
 
-  PerfCounter(io.dma.req.valid && !io.dma.req.ready, "load_dma_wait_cycle", "cycles during which load controller is waiting for DMA to be available")
+  if (use_firesim_simulation_counters) {
+    PerfCounter(io.dma.req.valid && !io.dma.req.ready, "load_dma_wait_cycle", "cycles during which load controller is waiting for DMA to be available")
+  }
 }

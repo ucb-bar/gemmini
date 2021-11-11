@@ -54,7 +54,8 @@ class XactTrackerPeekIO[U <: Data](val nXacts: Int, val maxShift: Int, val spadW
     maxMatrices: the maximum number of rows from different matrices which can be packed into one request
  */
 class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidth: Int,
-                             spadRows: Int, accRows: Int, maxReqBytes: Int, mvin_scale_t_bits: Int, nCmds: Int) extends Module {
+                             spadRows: Int, accRows: Int, maxReqBytes: Int, mvin_scale_t_bits: Int, nCmds: Int,
+                             use_firesim_simulation_counters: Boolean) extends Module {
   val io = IO(new Bundle {
     val alloc = Flipped(new XactTrackerAllocIO(nXacts, maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds))
     val peek = new XactTrackerPeekIO(nXacts, maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds)
@@ -99,8 +100,10 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
 
   io.counter.connectExternalCounter(CounterExternal.RDMA_TOTAL_LATENCY, total_latency)
 
-  val cntr = Counter(500000)
-  when (cntr.inc()) {
-    printf(SynthesizePrintf("RDMA total latency: %d\n", total_latency))
+  if (use_firesim_simulation_counters) {
+    val cntr = Counter(500000)
+    when(cntr.inc()) {
+      printf(SynthesizePrintf("RDMA total latency: %d\n", total_latency))
+    }
   }
 }

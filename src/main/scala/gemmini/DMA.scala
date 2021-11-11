@@ -51,9 +51,9 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
 }
 
 class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
-                   spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean)
+                   spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean, use_firesim_simulation_counters: Boolean)
                   (implicit p: Parameters) extends LazyModule {
-  val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows, use_tlb_register_filter))
+  val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows, use_tlb_register_filter, use_firesim_simulation_counters))
   val node = core.node
 
   lazy val module = new LazyModuleImp(this) {
@@ -70,7 +70,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
 
     val nCmds = (nXacts / meshRows) + 1
 
-    val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits, nCmds))
+    val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits, nCmds, use_firesim_simulation_counters))
 
     val beatPacker = Module(new BeatMerger(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows, config.mvin_scale_t_bits, nCmds))
 
@@ -119,7 +119,8 @@ class StreamReadBeat (val nXacts: Int, val beatBits: Int, val maxReqBytes: Int) 
 // TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
 class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int,
                                   spadWidth: Int, accWidth: Int, aligned_to: Int,
-                                  spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean)
+                                  spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean,
+                                  use_firesim_simulation_counters: Boolean)
                                  (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-reader", sourceId = IdRange(0, nXacts))
@@ -310,13 +311,15 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, total_bytes_read)
 
-    PerfCounter(state =/= s_idle, "rdma_active_cycles", "cycles during which the read dma is active")
-    PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "rdma_tlb_wait_cycles", "cycles during which the read dma is stalling as it waits for a TLB response")
-    PerfCounter(tl.a.valid && !tl.a.ready, "rdma_tl_wait_cycles", "cycles during which the read dma is stalling as it waits for the TileLink port to be available")
+    if (use_firesim_simulation_counters) {
+      PerfCounter(state =/= s_idle, "rdma_active_cycles", "cycles during which the read dma is active")
+      PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "rdma_tlb_wait_cycles", "cycles during which the read dma is stalling as it waits for a TLB response")
+      PerfCounter(tl.a.valid && !tl.a.ready, "rdma_tl_wait_cycles", "cycles during which the read dma is stalling as it waits for the TileLink port to be available")
 
-    val cntr = Counter(500000)
-    when (cntr.inc()) {
-      printf(SynthesizePrintf("RDMA bytes rec: %d\n", total_bytes_read))
+      val cntr = Counter(500000)
+      when (cntr.inc()) {
+        printf(SynthesizePrintf("RDMA bytes rec: %d\n", total_bytes_read))
+      }
     }
   }
 }
@@ -334,7 +337,8 @@ class StreamWriteRequest(val dataWidth: Int, val maxBytes: Int)(implicit p: Para
 }
 
 class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int,
-                                          inputType: T, block_cols: Int, use_tlb_register_filter: Boolean)
+                                          inputType: T, block_cols: Int, use_tlb_register_filter: Boolean,
+                                          use_firesim_simulation_counters: Boolean)
                   (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-writer", sourceId = IdRange(0, nXacts))
@@ -619,14 +623,16 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     io.counter.connectExternalCounter(CounterExternal.WDMA_BYTES_SENT, total_bytes_sent)
     io.counter.connectExternalCounter(CounterExternal.WDMA_TOTAL_LATENCY, total_latency)
 
-    PerfCounter(state =/= s_idle, "wdma_active_cycles", "cycles during which write read dma is active")
-    PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "wdma_tlb_wait_cycles", "cycles during which the write dma is stalling as it waits for a TLB response")
-    PerfCounter(tl.a.valid && !tl.a.ready, "wdma_tl_wait_cycles", "cycles during which the write dma is stalling as it waits for the TileLink port to be available")
+    if (use_firesim_simulation_counters) {
+      PerfCounter(state =/= s_idle, "wdma_active_cycles", "cycles during which write read dma is active")
+      PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "wdma_tlb_wait_cycles", "cycles during which the write dma is stalling as it waits for a TLB response")
+      PerfCounter(tl.a.valid && !tl.a.ready, "wdma_tl_wait_cycles", "cycles during which the write dma is stalling as it waits for the TileLink port to be available")
 
-    val cntr = Counter(500000)
-    when (cntr.inc()) {
-      printf(SynthesizePrintf("WDMA bytes sent: %d\n", total_bytes_sent))
-      printf(SynthesizePrintf("WDMA total latency: %d\n", total_latency))
+      val cntr = Counter(500000)
+      when(cntr.inc()) {
+        printf(SynthesizePrintf("WDMA bytes sent: %d\n", total_bytes_sent))
+        printf(SynthesizePrintf("WDMA total latency: %d\n", total_latency))
+      }
     }
   }
 }

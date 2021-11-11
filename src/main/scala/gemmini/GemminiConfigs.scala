@@ -82,6 +82,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_max_pool: Boolean = true,
                                                                              has_nonlinear_activations: Boolean = true,
 
+                                                                             use_firesim_simulation_counters: Boolean = false,
+
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   val sp_width = meshColumns * tileColumns * inputType.getWidth
