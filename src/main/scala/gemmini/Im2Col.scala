@@ -135,7 +135,7 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
 
   val im2col_en_d = RegNext(im2col_en)
 
-  val sram_read_signals_q = Module(new Queue(new im2colRowSignals, mem_pipeline+1,
+  val sram_read_signals_q = Module(new Queue(new im2colRowSignals, spad_read_delay+1,
     pipe=true))
 
   io.sram_reads.foreach { sr =>
@@ -444,7 +444,7 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
   sram_read_signals_q.io.enq.bits.sram_bank := im2col_spad_bank
 
   sram_read_signals_q.io.deq.ready := true.B//sram_resp_valid
-  if(!hasIm2col){ //to default values
+  if(!config.hasIm2Col){ //to default values
     io.resp.valid := false.B
     io.req.ready := true.B
     io.sram_reads.foreach(_.req.valid := false.B)
