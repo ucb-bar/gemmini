@@ -7,6 +7,7 @@ import chisel3.experimental._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
+import midas.targetutils.PerfCounter
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
@@ -42,7 +43,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
 
   val activation = Reg(UInt(GemminiISA.CONFIG_MVOUT_RS1_ACTIVATION_WIDTH.W))
-  val acc_scale = Reg(acc_scale_args.multiplicand_t)
+  val acc_scale = Reg(acc_scale_t)
 
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
   val row_counter = RegInit(0.U(12.W)) // TODO magic number
@@ -64,7 +65,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val wrow_counter = RegInit(0.U(pool_size.getWidth.W))
   val wcol_counter = RegInit(0.U(pool_size.getWidth.W))
 
-  val pooling_is_enabled = pool_stride =/= 0.U
+  val pooling_is_enabled = has_max_pool.B && pool_stride =/= 0.U
   val mvout_1d_enabled = pool_size =/= 0.U && !pooling_is_enabled //1-D move out enabled (no pooling)
 
   val orow = porow_counter * pool_stride +& wrow_counter - pool_upad // TODO get rid of this multiplication
@@ -118,7 +119,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val mvout_1d_rows = pool_orows * pool_ocols //for 1D mvout
   // Command tracker instantiation
-  val nCmds = (max_in_flight_reqs / block_rows) + 1
+  val nCmds = (max_in_flight_mem_reqs / block_rows) + 1
 
   val deps_t = new Bundle {
     val rob_id = UInt(log2Up(rob_entries).W)
@@ -200,7 +201,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
           activation := config_activation
           when (!config_acc_scale.asUInt().andR()) {
-            acc_scale := config_acc_scale.asTypeOf(acc_scale_args.multiplicand_t)
+            acc_scale := config_acc_scale.asTypeOf(acc_scale_t)
           }
 
           pool_size := config_pool_size
@@ -265,4 +266,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.counter.connectEventSignal(CounterEvent.STORE_POOLING_CYCLE, pooling_is_enabled)
   io.counter.connectEventSignal(CounterEvent.STORE_DMA_WAIT_CYCLE, control_state === waiting_for_dma_req_ready)
   io.counter.connectEventSignal(CounterEvent.STORE_SCRATCHPAD_WAIT_CYCLE, io.dma.req.valid && !io.dma.req.ready)
+
+  if (use_firesim_simulation_counters) {
+    PerfCounter(pooling_is_enabled, "pooling_cycles", "cycles during which store controller is max-pooling")
+    PerfCounter(io.dma.req.valid && !io.dma.req.ready, "st_dma_wait_cycle", "cycles during which store controller is stalling for the DMA to be ready")
+  }
 }

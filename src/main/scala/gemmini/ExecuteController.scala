@@ -6,6 +6,7 @@ import chisel3.util._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
+import midas.targetutils.PerfCounter
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
@@ -28,7 +29,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val acc = new Bundle {
       val read_req = Vec(acc_banks, Decoupled(new AccumulatorReadReq(
-          acc_bank_entries, log2Up(accType.getWidth), acc_scale_args.multiplicand_t
+          acc_bank_entries, log2Up(accType.getWidth), acc_scale_t
       )))
 
       val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
@@ -116,9 +117,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val im2col_turn = WireInit(0.U(9.W))
 
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
-  val acc_scale = Reg(acc_scale_args.multiplicand_t)
+  val acc_scale = Reg(acc_scale_t)
   val relu6_shift = Reg(UInt(log2Up(accType.getWidth).W))
-  val activation = Reg(UInt(2.W)) // TODO magic number
+  val activation = if (has_nonlinear_activations) Reg(UInt(2.W)) else Activation.NONE // TODO magic number
   val a_transpose = Reg(Bool())
   val bd_transpose = Reg(Bool())
   val config_initialized = RegInit(false.B)
@@ -136,7 +137,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     "Too many inputs are being fed into the single transposer we have")
 
   //fix by input
-  val im2col_en = hasIm2col.B && weight_stride =/= 0.U
+  val im2col_en = config.hasIm2Col.B && weight_stride =/= 0.U
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = rs1s(a_address_place).asTypeOf(local_addr_t)
@@ -178,7 +179,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val pending_completed_rob_ids = Reg(Vec(2, UDValid(UInt(log2Up(rob_entries).W))))
 
   // Instantiate a queue which queues up signals which must be fed into the mesh
-  val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, mem_pipeline+1,
+  val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, spad_read_delay+1,
     pipe=true))
 
   val cntl_ready = mesh_cntl_signals_q.io.enq.ready
@@ -186,7 +187,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val cntl = mesh_cntl_signals_q.io.deq.bits
 
   // Instantiate the actual mesh
-  val mesh = Module(new MeshWithDelays(inputType, outputType, accType, mesh_tag, dataflow, pe_latency, mesh_output_delay,
+  val mesh = Module(new MeshWithDelays(inputType, spatialArrayOutputType, accType, mesh_tag, dataflow, pe_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
 
   mesh.io.a.valid := false.B
@@ -547,9 +548,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
             val set_only_strides = config_ex_rs1.set_only_strides
 
             when (!set_only_strides) {
-              activation := config_ex_rs1.activation
+              if (has_nonlinear_activations) {
+                activation := config_ex_rs1.activation
+              }
               in_shift := config_ex_rs2.in_shift
-              acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
+              acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_t) // TODO magic number
               relu6_shift := config_ex_rs2.relu6_shift
               a_transpose := config_ex_rs1.a_transpose
               bd_transpose := config_ex_rs1.b_transpose
@@ -1025,4 +1028,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     !(!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) && !cntl.b_read_from_acc)
   io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_D_WAIT_CYCLE, 
     !(!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready) && !cntl.d_read_from_acc)
+
+  if (use_firesim_simulation_counters) {
+    val ex_flush_cycle = control_state === flushing || control_state === flush
+    val ex_preload_haz_cycle = cmd.valid(0) && DoPreloads(0) && cmd.valid(1) && raw_hazard_pre
+    val ex_mulpre_haz_cycle = cmd.valid(0) && DoPreloads(1) && cmd.valid(1) && DoComputes(0) && cmd.valid(2) && raw_hazard_mulpre
+
+    PerfCounter(ex_flush_cycle, "ex_flush_cycle", "cycles during which the ex controller is flushing the spatial array")
+    PerfCounter(ex_preload_haz_cycle, "ex_preload_haz_cycle", "cycles during which the execute controller is stalling preloads due to hazards")
+    PerfCounter(ex_mulpre_haz_cycle, "ex_mulpre_haz_cycle", "cycles during which the execute controller is stalling matmuls due to hazards")
+  }
 }
