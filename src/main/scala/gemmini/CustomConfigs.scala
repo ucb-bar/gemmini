@@ -41,14 +41,6 @@ object GemminiCustomConfigs {
     acc_capacity = CapacityInKilobytes(128),
   )
 
-  /* Complex number config for Gemmini tutorial */
-  val complexConfig = GemminiArrayConfig[Complex, Float, Float](
-    inputType = new Complex(16),
-    accType = new Complex(16),
-
-    spatialArrayOutputType = new Complex(16),
-  )
-
   // Specify which of your custom configs you want to build here
   val customConfig = baselineInferenceConfig
 }
