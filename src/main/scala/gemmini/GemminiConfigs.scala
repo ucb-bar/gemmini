@@ -73,6 +73,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              ex_write_to_acc: Boolean = true,
 
                                                                              hardcode_d_to_garbage_addr: Boolean = false,
+                                                                             use_shared_tlb: Boolean = true,
 
                                                                              mesh_output_delay: Int = 1,
 
@@ -83,7 +84,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_nonlinear_activations: Boolean = true,
 
                                                                              use_firesim_simulation_counters: Boolean = false,
-                                                                             use_shared_tlb: Boolean = true,
 
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
