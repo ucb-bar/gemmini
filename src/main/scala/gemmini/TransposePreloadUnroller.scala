@@ -5,6 +5,7 @@ import chisel3.util._
 import chisel3.experimental.ChiselEnum
 import chipsalliance.rocketchip.config.Parameters
 import Util._
+import midas.targetutils.PerfCounter
 
 class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V])
                                                                  (implicit p: Parameters) extends Module {
@@ -14,6 +15,7 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new GemminiCmd(rob_entries)))
     val out = Decoupled(new GemminiCmd(rob_entries))
+    val counter = new CounterEventIO()
   })
 
   object State extends ChiselEnum {
@@ -77,12 +79,16 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
       state := state.next
     }
   }
+
+  CounterEventIO.init(io.counter)
+  io.counter.connectEventSignal(CounterEvent.TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES, state =/= idle)
 }
 
 object TransposePreloadUnroller {
-  def apply[T <: Data, U <: Data, V <: Data](in: ReadyValidIO[GemminiCmd], config: GemminiArrayConfig[T, U, V])(implicit p: Parameters): DecoupledIO[GemminiCmd] = {
+  def apply[T <: Data, U <: Data, V <: Data](in: ReadyValidIO[GemminiCmd], config: GemminiArrayConfig[T, U, V], counter: CounterEventIO)(implicit p: Parameters): DecoupledIO[GemminiCmd] = {
     val mod = Module(new TransposePreloadUnroller(config))
     mod.io.in <> in
+    counter.collect(mod.io.counter)
     mod.io.out
   }
 }
