@@ -14,20 +14,6 @@ case class Float(expWidth: Int, sigWidth: Int) extends Bundle {
   val bias: Int = (1 << (expWidth-1)) - 1
 }
 
-class Complex(val w: Int) extends Bundle {
-  val real = SInt(w.W)
-  val imag = SInt(w.W)
-}
-
-object Complex {
-  def apply(w: Int, real: SInt, imag: SInt): Complex = {
-    val result = Wire(new Complex(w))
-    result.real := real
-    result.imag := imag
-    result
-  }
-}
-
 // The Arithmetic typeclass which implements various arithmetic operations on custom datatypes
 abstract class Arithmetic[T <: Data] {
   implicit def cast(t: T): ArithmeticOps[T]
@@ -376,62 +362,6 @@ object Arithmetic {
 
       override def zero: Float = 0.U.asTypeOf(self)
       override def identity: Float = Cat(0.U(2.W), ~(0.U((self.expWidth-1).W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
-    }
-  }
-
-  implicit object ComplexArithmetic extends Arithmetic[Complex] {
-    override implicit def cast(self: Complex) = new ArithmeticOps(self) {
-      override def *(other: Complex): Complex = {
-        val w = self.w max other.w
-
-        Complex(w,
-          self.real * other.real - self.imag * other.imag,
-          self.real * other.imag + self.imag * other.real
-        )
-      }
-
-      override def +(other: Complex): Complex = {
-        /*
-        TUTORIAL:
-          Implement the addition operator over here.
-         */
-
-        Complex(???,
-          ???,
-          ???,
-        )
-      }
-
-      def mac(m1: Complex, m2: Complex): Complex = {
-        /*
-        TUTORIAL:
-          Implement the multiply-accumulate operation (self + m1 * m2) over here.
-         */
-        ???
-      }
-
-      override def zero = Complex(self.w, 0.S, 0.S)
-
-      override def identity: Complex = self
-
-      override def withWidthOf(other: Complex) = Complex(other.w, self.real, self.imag)
-
-      def clippedToWidthOf(other: Complex): Complex = {
-        // Like "withWidthOf", except that it saturates
-        val maxsat = ((1 << (other.w - 1)) - 1).S
-        val minsat = (-(1 << (other.w - 1))).S
-
-        Complex(other.w,
-          Mux(self.real > maxsat, maxsat, Mux(self.real < minsat, minsat, self.real)),
-          Mux(self.imag > maxsat, maxsat, Mux(self.imag < minsat, minsat, self.imag)),
-        )
-      }
-
-      // Not implemented because not necessary for this tutorial
-      override def >>(u: UInt) = self
-      override def >(t: Complex) = false.B
-      override def relu6(shift: UInt) = self
-      override def relu = self
     }
   }
 }
