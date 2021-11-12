@@ -130,7 +130,7 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_fi
 
     when (tlbReqFire && !tlb.io.resp.miss) {
       last_translated_valid := true.B
-      last_translated_vpn := tlb.io.req.bits.tlb_req.vaddr
+      last_translated_vpn := tlbReq.tlb_req.vaddr
       last_translated_ppn := tlb.io.resp.paddr
     }
 
@@ -154,6 +154,6 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_fi
 
   // TODO Return the sum of the TLB counters, rather than just the counters of the first TLB. This only matters if we're
   // not using the shared TLB
+  tlbs.foreach(_.io.counter.external_reset := false.B)
   io.counter.collect(tlbs.head.io.counter)
 }
-
