@@ -73,6 +73,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              ex_write_to_acc: Boolean = true,
 
                                                                              hardcode_d_to_garbage_addr: Boolean = false,
+                                                                             use_shared_tlb: Boolean = true,
 
                                                                              mesh_output_delay: Int = 1,
 

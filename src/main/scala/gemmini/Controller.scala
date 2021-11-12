@@ -24,7 +24,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
                                      (implicit p: Parameters)
   extends LazyRoCC (
     opcodes = config.opcodes,
-    nPTWPorts = 1) {
+    nPTWPorts = if (config.use_shared_tlb) 1 else 2) {
 
   Files.write(Paths.get(config.headerFilePath), config.generateHeader().getBytes(StandardCharsets.UTF_8))
   if (System.getenv("GEMMINI_ONLY_GENERATE_GEMMINI_H") == "1") {
@@ -62,15 +62,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // TLB
   implicit val edge = outer.node.edges.out.head
-  val tlb = Module(new FrontendTLB(2, tlb_size, dma_maxbytes, use_tlb_register_filter, use_firesim_simulation_counters))
+  val tlb = Module(new FrontendTLB(2, tlb_size, dma_maxbytes, use_tlb_register_filter, use_firesim_simulation_counters, use_shared_tlb))
   (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
-  tlb.io.exp.flush_skip := false.B
-  tlb.io.exp.flush_retry := false.B
+
+  tlb.io.exp.foreach(_.flush_skip := false.B)
+  tlb.io.exp.foreach(_.flush_retry := false.B)
+
+  io.ptw <> tlb.io.ptw
+
   counters.io.event_io.collect(tlb.io.counter)
 
-  io.ptw.head <> tlb.io.ptw
-
-  spad.module.io.flush := tlb.io.exp.flush()
+  spad.module.io.flush := tlb.io.exp.map(_.flush()).reduce(_ || _)
 
   /*
   //=========================================================================
@@ -311,7 +313,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // Wire up global RoCC signals
   io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || reservation_station.io.busy || spad.module.io.busy || unrolled_cmd.valid || loop_cmd.valid || conv_cmd.valid
-  io.interrupt := tlb.io.exp.interrupt
+  io.interrupt := tlb.io.exp.map(_.interrupt).reduce(_ || _)
 
   reservation_station.io.solitary_preload := ex_controller.io.solitary_preload
 
@@ -356,8 +358,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     when (is_flush) {
       val skip = unrolled_cmd.bits.rs1(0)
-      tlb.io.exp.flush_skip := skip
-      tlb.io.exp.flush_retry := !skip
+      tlb.io.exp.foreach(_.flush_skip := skip)
+      tlb.io.exp.foreach(_.flush_retry := !skip)
 
       unrolled_cmd.ready := true.B // TODO should we wait for an acknowledgement from the TLB?
     }
