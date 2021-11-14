@@ -303,8 +303,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
   }
 
-  io.write.ready := !io.write.bits.acc || (!(io.write.bits.addr === waddr_buf && w_buf_valid) &&
-    !(io.write.bits.addr === RegNext(io.write.bits.addr) && RegNext(io.write.fire())))
+  io.write.ready := false.B
   for (r <- pipe_regs) {
     when (r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc) {
       io.write.ready := false.B
