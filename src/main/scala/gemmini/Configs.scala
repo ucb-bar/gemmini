@@ -20,46 +20,55 @@ import hardfloat._
 
 object GemminiConfigs {
   val defaultConfig = GemminiArrayConfig[SInt, Float, Float](
-    opcodes = OpcodeSet.custom3,
+    // Datatypes
+    inputType = SInt(8.W),
+    accType = SInt(32.W),
 
+    spatialArrayOutputType = SInt(20.W),
+
+    // Spatial array size options
     tileRows = 1,
     tileColumns = 1,
     meshRows = 16,
     meshColumns = 16,
 
+    // Spatial array PE options
+    dataflow = Dataflow.BOTH,
+
+    // Scratchpad and accumulator
+    sp_capacity = CapacityInKilobytes(256),
+    acc_capacity = CapacityInKilobytes(64),
+
+    sp_banks = 4,
+    acc_banks = 2,
+
+    sp_singleported = true,
+    acc_singleported = false,
+
+    // DNN options
+    has_training_convs = true,
+    has_max_pool = true,
+    has_nonlinear_activations = true,
+
+    // Reservation station entries
+    reservation_station_full_entries = 16,
+    reservation_station_partial_entries = 8,
+
+    // Ld/Ex/St instruction queue lengths
     ld_queue_length = 8,
     st_queue_length = 2,
     ex_queue_length = 8,
 
-    rob_full_entries = 16,
-    rob_partial_entries = 8,
+    // DMA options
+    max_in_flight_mem_reqs = 16,
 
-    hasIm2col = false, //declare im2col block
+    dma_maxbytes = 64,
+    dma_buswidth = 128,
 
-    sp_banks = 4,
-    sp_singleported = true,
-    acc_banks = 2,
-    acc_latency = 2,
-    acc_singleported = false,
-    num_acc_sub_banks = -1,
-
-    sp_capacity = CapacityInKilobytes(256),
-    shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
-    dataflow = Dataflow.BOTH,
-    acc_capacity = CapacityInKilobytes(64),
-    mem_pipeline = 4,
-    dma_maxbytes = 64, // TODO get this from cacheblockbytes
-    dma_buswidth = 128, // TODO get this from SystemBusKey
-    aligned_to = 1,
+    // TLB options
     tlb_size = 4,
-    use_tlb_register_filter = true,
-    max_in_flight_reqs = 16,
-    use_dedicated_tl_port = false,
-    use_shared_ext_mem = false,
-    inputType = SInt(8.W),
-    outputType = SInt(20.W),
-    accType = SInt(32.W),
 
+    // Mvin and Accumulator scalar multiply options
     mvin_scale_args = Some(ScaleArguments(
       (t: SInt, f: Float) => {
         val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)
@@ -98,10 +107,11 @@ object GemminiConfigs {
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (elem_t)y);})"
     )),
+
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
 
-    acc_scale_args = ScaleArguments(
+    acc_scale_args = Some(ScaleArguments(
       (t: SInt, f: Float) => {
         val f_rec = recFNFromFN(f.expWidth, f.sigWidth, f.bits)
 
@@ -135,41 +145,39 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      1, Float(8, 24), -1, // TODO pipelining should be 5
+      1, Float(8, 24), -1,
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
-    ),
+    )),
 
+    // SoC counters options
+    num_counter = 8,
+
+    // Scratchpad and Accumulator input/output options
     acc_read_full_width = true,
     acc_read_small_width = true,
-
-    pe_latency = 0,
 
     ex_read_from_spad = true,
     ex_read_from_acc = true,
     ex_write_to_spad = true,
     ex_write_to_acc = true,
-
-    hardcode_d_to_garbage_addr = false,
-
-    mesh_output_delay = 1,
-    clock_gate = false,
   )
 
   val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
-    acc_scale_args=defaultConfig.acc_scale_args.copy(latency=4),
+    acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=4)),
     acc_singleported=true,
-    num_acc_sub_banks=2,
+    acc_sub_banks=2,
     mesh_output_delay = 2,
     ex_read_from_acc=false,
     ex_write_to_spad=false,
     hardcode_d_to_garbage_addr = true
   )
+
   val largeChipConfig = chipConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64),
     meshRows=32, meshColumns=32
   )
 
-  val leanConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true)
+  val leanConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_mem_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true)
 }
 
 /**
@@ -189,6 +197,9 @@ class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
+
+// This Gemmini config has both an Int and an FP Gemmini side-by-side, sharing
+// the same scratchpad.
 class DualGemminiConfig extends Config((site, here, up) => {
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
   case BuildRoCC => {
@@ -209,7 +220,7 @@ class DualGemminiConfig extends Config((site, here, up) => {
         opcodes = OpcodeSet.custom2,
         sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32),
         meshColumns = 8, meshRows = 8,
-        acc_singleported = true, acc_banks = 2, num_acc_sub_banks = 2,
+        acc_singleported = true, acc_banks = 2, acc_sub_banks = 2,
         use_shared_ext_mem = true,
         ex_read_from_acc=false,
         ex_write_to_spad=false,
@@ -223,7 +234,7 @@ class DualGemminiConfig extends Config((site, here, up) => {
       InModuleBody {
         require(int_gemmini.config.sp_banks == fp_gemmini.config.sp_banks)
         require(int_gemmini.config.acc_banks == fp_gemmini.config.acc_banks)
-        require(int_gemmini.config.num_acc_sub_banks == fp_gemmini.config.num_acc_sub_banks)
+        require(int_gemmini.config.acc_sub_banks == fp_gemmini.config.acc_sub_banks)
         require(int_gemmini.config.sp_singleported && fp_gemmini.config.sp_singleported)
         require(int_gemmini.config.acc_singleported && fp_gemmini.config.acc_singleported)
 
@@ -236,7 +247,7 @@ class DualGemminiConfig extends Config((site, here, up) => {
         println(int_gemmini.spad.module.acc_mems(0).mask_elem.getWidth, fp_gemmini.spad.module.acc_mems(0).mask_elem.getWidth)
 
         require(int_gemmini.config.acc_bank_entries == fp_gemmini.config.acc_bank_entries / 2)
-        require(int_gemmini.config.num_acc_sub_banks == fp_gemmini.config.num_acc_sub_banks)
+        require(int_gemmini.config.acc_sub_banks == fp_gemmini.config.acc_sub_banks)
         require(int_gemmini.spad.module.acc_mems(0).mask_len == fp_gemmini.spad.module.acc_mems(0).mask_len * 2)
         require(int_gemmini.spad.module.acc_mems(0).mask_elem.getWidth == fp_gemmini.spad.module.acc_mems(0).mask_elem.getWidth)
 
@@ -246,9 +257,9 @@ class DualGemminiConfig extends Config((site, here, up) => {
         val acc_data_len = int_gemmini.spad.module.acc_mems(0).mask_elem.getWidth
 
         val shared_mem = Module(new SharedExtMem(
-          int_gemmini.config.sp_banks, int_gemmini.config.acc_banks, int_gemmini.config.num_acc_sub_banks,
+          int_gemmini.config.sp_banks, int_gemmini.config.acc_banks, int_gemmini.config.acc_sub_banks,
           int_gemmini.config.sp_bank_entries, spad_mask_len, spad_data_len,
-          int_gemmini.config.acc_bank_entries / int_gemmini.config.num_acc_sub_banks, acc_mask_len, acc_data_len
+          int_gemmini.config.acc_bank_entries / int_gemmini.config.acc_sub_banks, acc_mask_len, acc_data_len
         ))
         shared_mem.io.in(0) <> int_gemmini.module.ext_mem_io.get
         shared_mem.io.in(1) <> fp_gemmini.module.ext_mem_io.get

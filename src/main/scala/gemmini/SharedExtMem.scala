@@ -17,10 +17,10 @@ class ExtMemIO extends Bundle {
   val write_mask = Output(UInt())
 }
 
-class ExtSpadMemIO(sp_banks: Int, acc_banks: Int, num_acc_sub_banks: Int) extends Bundle {
+class ExtSpadMemIO(sp_banks: Int, acc_banks: Int, acc_sub_banks: Int) extends Bundle {
   val spad = Vec(sp_banks, new ExtMemIO)
-  val acc = Vec(acc_banks, Vec(num_acc_sub_banks, new ExtMemIO))
-  override def cloneType: this.type = new ExtSpadMemIO(sp_banks, acc_banks, num_acc_sub_banks).asInstanceOf[this.type]
+  val acc = Vec(acc_banks, Vec(acc_sub_banks, new ExtMemIO))
+  override def cloneType: this.type = new ExtSpadMemIO(sp_banks, acc_banks, acc_sub_banks).asInstanceOf[this.type]
 }
 
 
@@ -48,13 +48,13 @@ class SharedSyncReadMem(nSharers: Int, depth: Int, mask_len: Int, data_len: Int)
 }
 
 class SharedExtMem(
-  sp_banks: Int, acc_banks: Int, num_acc_sub_banks: Int,
+  sp_banks: Int, acc_banks: Int, acc_sub_banks: Int,
   sp_depth: Int, sp_mask_len: Int, sp_data_len: Int,
   acc_depth: Int, acc_mask_len: Int, acc_data_len: Int
 ) extends Module {
   val nSharers = 2
   val io = IO(new Bundle {
-    val in = Vec(nSharers, Flipped(new ExtSpadMemIO(sp_banks, acc_banks, num_acc_sub_banks)))
+    val in = Vec(nSharers, Flipped(new ExtSpadMemIO(sp_banks, acc_banks, acc_sub_banks)))
   })
   for (i <- 0 until sp_banks) {
     val spad_mem = Module(new SharedSyncReadMem(nSharers, sp_depth, sp_mask_len, sp_data_len))
@@ -63,7 +63,7 @@ class SharedExtMem(
     }
   }
   for (i <- 0 until acc_banks) {
-    for (s <- 0 until num_acc_sub_banks) {
+    for (s <- 0 until acc_sub_banks) {
       val acc_mem = Module(new SharedSyncReadMem(nSharers, acc_depth, acc_mask_len, acc_data_len))
 
       acc_mem.io.in(0) <> io.in(0).acc(i)(s)

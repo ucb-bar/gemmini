@@ -9,7 +9,7 @@ class AccumulatorReadReq[T <: Data](n: Int, shift_width: Int, scale_t: T) extend
   val addr = UInt(log2Ceil(n).W)
   val scale = scale_t
   val relu6_shift = UInt(shift_width.W)
-  val act = UInt(2.W)
+  val act = UInt(2.W) // TODO magic number
   val full = Bool() // Whether or not we return the full bitwidth output
 
   val fromDMA = Bool()
@@ -22,7 +22,7 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val fromDMA = Bool()
   val scale = scale_t.cloneType
   val relu6_shift = UInt(shift_width.W)
-  val act = UInt(2.W)
+  val act = UInt(2.W) // TODO magic number
   val acc_bank_id = UInt(2.W) // TODO don't hardcode
   override def cloneType: this.type = new AccumulatorReadResp(fullDataType.cloneType, scale_t, shift_width).asInstanceOf[this.type]
 }
@@ -46,13 +46,13 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
 
 
 class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U,
-  num_acc_sub_banks: Int, use_shared_ext_mem: Boolean
+  acc_sub_banks: Int, use_shared_ext_mem: Boolean
 ) extends Bundle {
   val read = Flipped(new AccumulatorReadIO(n, log2Ceil(t.head.head.getWidth), t, scale_t))
   // val write = Flipped(new AccumulatorWriteIO(n, t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
 
-  val ext_mem = if (use_shared_ext_mem) Some(Vec(num_acc_sub_banks, new ExtMemIO)) else None
+  val ext_mem = if (use_shared_ext_mem) Some(Vec(acc_sub_banks, new ExtMemIO)) else None
 
   val acc = new Bundle {
     val valid = Output(Bool())
@@ -61,7 +61,7 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
     val out = Input(t.cloneType)
   }
 
-  override def cloneType: this.type = new AccumulatorMemIO(n, t, scale_t, num_acc_sub_banks, use_shared_ext_mem).asInstanceOf[this.type]
+  override def cloneType: this.type = new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem).asInstanceOf[this.type]
 }
 
 class AccPipe[T <: Data : Arithmetic](latency: Int, t: T)(implicit ev: Arithmetic[T]) extends Module {
@@ -94,8 +94,8 @@ class AccPipeShared[T <: Data : Arithmetic](latency: Int, t: Vec[Vec[T]], banks:
 }
 
 class AccumulatorMem[T <: Data, U <: Data](
-  n: Int, t: Vec[Vec[T]], scale_args: ScaleArguments[T, U],
-  acc_singleported: Boolean, num_acc_sub_banks: Int,
+  n: Int, t: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U,
+  acc_singleported: Boolean, acc_sub_banks: Int,
   use_shared_ext_mem: Boolean,
   acc_latency: Int, acc_type: T
 )
@@ -112,7 +112,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   import ev._
 
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t, scale_args.multiplicand_t, num_acc_sub_banks, use_shared_ext_mem))
+  val io = IO(new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem))
 
   require (acc_latency >= 2)
 
@@ -159,9 +159,9 @@ class AccumulatorMem[T <: Data, U <: Data](
     reads(1).bits  := io.read.req.bits.addr
     reads(1).ready := true.B
     block_read_req := !reads(1).ready
-    for (i <- 0 until num_acc_sub_banks) {
-      def isThisBank(addr: UInt) = addr(log2Ceil(num_acc_sub_banks)-1,0) === i.U
-      def getBankIdx(addr: UInt) = addr >> log2Ceil(num_acc_sub_banks)
+    for (i <- 0 until acc_sub_banks) {
+      def isThisBank(addr: UInt) = addr(log2Ceil(acc_sub_banks)-1,0) === i.U
+      def getBankIdx(addr: UInt) = addr >> log2Ceil(acc_sub_banks)
       val (read, write) = if (use_shared_ext_mem) {
         def read(addr: UInt, ren: Bool): Data = {
           io.ext_mem.get(i).read_en := ren
@@ -180,7 +180,7 @@ class AccumulatorMem[T <: Data, U <: Data](
         }
         (read _, write _)
       } else {
-        val mem = SyncReadMem(n / num_acc_sub_banks, Vec(mask_len, mask_elem))
+        val mem = SyncReadMem(n / acc_sub_banks, Vec(mask_len, mask_elem))
         def read(addr: UInt, ren: Bool): Data = mem.read(addr, ren)
         def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = mem.write(addr, wdata, wmask)
         (read _, write _)
@@ -195,7 +195,7 @@ class AccumulatorMem[T <: Data, U <: Data](
         val valid = Bool()
         val data = Vec(mask_len, mask_elem)
         val mask = Vec(mask_len, Bool())
-        val addr = UInt(log2Ceil(n/num_acc_sub_banks).W)
+        val addr = UInt(log2Ceil(n/acc_sub_banks).W)
         override def cloneType: this.type = new W_Q_Entry(mask_len, mask_elem).asInstanceOf[this.type]
       }
       val w_q = Reg(Vec(nEntries, new W_Q_Entry(mask_len, mask_elem)))
@@ -206,6 +206,7 @@ class AccumulatorMem[T <: Data, U <: Data](
             isThisBank(io.write.bits.addr) && getBankIdx(io.write.bits.addr) === e.addr &&
             ((io.write.bits.mask.asUInt & e.mask.asUInt) =/= 0.U)
           ))
+
           when (io.read.req.valid && isThisBank(io.read.req.bits.addr) && getBankIdx(io.read.req.bits.addr) === e.addr) {
             reads(1).ready := false.B
           }
@@ -221,7 +222,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       val wmask = Mux1H(w_q_head.asBools, w_q.map(_.mask))
       val waddr = Mux1H(w_q_head.asBools, w_q.map(_.addr))
       when (wen) {
-        w_q_head := w_q_head << 1 | w_q_head(nEntries-1)
+        w_q_head := (w_q_head << 1).asUInt() | w_q_head(nEntries-1)
         for (i <- 0 until nEntries) {
           when (w_q_head(i)) {
             w_q(i).valid := false.B
@@ -231,7 +232,7 @@ class AccumulatorMem[T <: Data, U <: Data](
 
       when (pipe_out.valid && isThisBank(pipe_out.bits.addr)) {
         assert(!((w_q_tail.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_)))
-        w_q_tail := w_q_tail << 1 | w_q_tail(nEntries-1)
+        w_q_tail := (w_q_tail << 1).asUInt() | w_q_tail(nEntries-1)
         for (i <- 0 until nEntries) {
           when (w_q_tail(i)) {
             w_q(i).valid := true.B
@@ -270,7 +271,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
   }
 
-  val q = Module(new Queue(new AccumulatorReadResp(t, scale_args.multiplicand_t, log2Ceil(t.head.head.getWidth)),  1, true, true))
+  val q = Module(new Queue(new AccumulatorReadResp(t, scale_t, log2Ceil(t.head.head.getWidth)),  1, true, true))
   q.io.enq.bits.data := read_rdata
   q.io.enq.bits.scale := RegNext(io.read.req.bits.scale)
   q.io.enq.bits.relu6_shift := RegNext(io.read.req.bits.relu6_shift)
@@ -302,15 +303,13 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
   }
 
-  // io.write.current_waddr.valid := mem.io.wen
-  // io.write.current_waddr.bits := mem.io.waddr
-  io.write.ready := true.B
+  io.write.ready := !io.write.bits.acc || (!(io.write.bits.addr === waddr_buf && w_buf_valid) &&
+    !(io.write.bits.addr === RegNext(io.write.bits.addr) && RegNext(io.write.fire())))
   for (r <- pipe_regs) {
     when (r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc) {
       io.write.ready := false.B
     }
   }
-
 
   // assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
   assert(!(io.read.req.fire() && io.write.fire() && io.read.req.bits.addr === io.write.bits.addr), "reading from and writing to same address is not supported")
