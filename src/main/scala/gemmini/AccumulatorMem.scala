@@ -189,6 +189,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       val ren = WireInit(false.B)
       val raddr = WireInit(getBankIdx(reads(0).bits))
       val nEntries = 3
+
       // Writes coming 2 cycles after read leads to bad bank behavior
       // Add another buffer here
       class W_Q_Entry[T <: Data](mask_len: Int, mask_elem: T) extends Bundle {
@@ -202,16 +203,17 @@ class AccumulatorMem[T <: Data, U <: Data](
       for (e <- w_q) {
         when (e.valid) {
           assert(!(
-            io.write.valid && io.write.bits.acc &&
+            io.write.fire() && io.write.bits.acc &&
             isThisBank(io.write.bits.addr) && getBankIdx(io.write.bits.addr) === e.addr &&
             ((io.write.bits.mask.asUInt & e.mask.asUInt) =/= 0.U)
-          ))
+          ), "you cannot accumulate to an AccumulatorMem address until previous writes to that address have completed")
 
           when (io.read.req.valid && isThisBank(io.read.req.bits.addr) && getBankIdx(io.read.req.bits.addr) === e.addr) {
             reads(1).ready := false.B
           }
         }
       }
+
       val w_q_head = RegInit(1.U(nEntries.W))
       val w_q_tail = RegInit(1.U(nEntries.W))
       when (reset.asBool) {
