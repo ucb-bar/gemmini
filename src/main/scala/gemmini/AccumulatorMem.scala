@@ -303,7 +303,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
   }
 
-  io.write.ready := false.B
+  io.write.ready := true.B
   for (r <- pipe_regs) {
     when (r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc) {
       io.write.ready := false.B
