@@ -208,6 +208,10 @@ class AccumulatorMem[T <: Data, U <: Data](
             ((io.write.bits.mask.asUInt & e.mask.asUInt) =/= 0.U)
           ), "you cannot accumulate to an AccumulatorMem address until previous writes to that address have completed")
 
+          when (io.write.valid && io.write.bits.acc && isThisBank(io.write.bits.addr) && getBankIdx(io.write.bits.addr) === e.addr) {
+            io.write.ready := false.B
+          }
+
           when (io.read.req.valid && isThisBank(io.read.req.bits.addr) && getBankIdx(io.read.req.bits.addr) === e.addr) {
             reads(1).ready := false.B
           }
