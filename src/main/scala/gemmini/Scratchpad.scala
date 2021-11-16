@@ -567,10 +567,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           io.ext_mem.get.acc(i) <> bio.ext_mem.get
         }
 
-        acc_adders.io.in_sel(i) := bio.acc.valid
-        acc_adders.io.ina(i) := bio.acc.ina
-        acc_adders.io.inb(i) := bio.acc.inb
-        bio.acc.out := acc_adders.io.out
+        acc_adders.io.in_sel(i) := bio.adder.valid
+        acc_adders.io.ina(i) := bio.adder.op1
+        acc_adders.io.inb(i) := bio.adder.op2
+        bio.adder.sum := acc_adders.io.out
 
         val ex_read_req = io.acc.read_req(i)
         val exread = ex_read_req.valid
