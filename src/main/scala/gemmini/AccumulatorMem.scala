@@ -49,7 +49,6 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   acc_sub_banks: Int, use_shared_ext_mem: Boolean
 ) extends Bundle {
   val read = Flipped(new AccumulatorReadIO(n, log2Ceil(t.head.head.getWidth), t, scale_t))
-  // val write = Flipped(new AccumulatorWriteIO(n, t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
 
   val ext_mem = if (use_shared_ext_mem) Some(Vec(acc_sub_banks, new ExtMemIO)) else None
@@ -137,8 +136,11 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.acc.ina := acc_rdata
   io.acc.inb := pipe_regs(0).bits.data
 
+  io.write.ready := !pipe_regs.map(r => r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc).reduce(_||_)
+
   val mask_len = t.getWidth / 8
   val mask_elem = UInt((t.getWidth / mask_len).W)
+
   if (!acc_singleported) {
     require(!use_shared_ext_mem)
     val mem = TwoPortSyncMem(n, t, mask_len) // TODO We assume byte-alignment here. Use aligned_to instead
@@ -306,13 +308,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   for (r <- pipe_regs) {
     when (r.valid && r.bits.addr === io.read.req.bits.addr) {
       io.read.req.ready := false.B
-    }
-  }
-
-  io.write.ready := true.B
-  for (r <- pipe_regs) {
-    when (r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc) {
-      io.write.ready := false.B
     }
   }
 
