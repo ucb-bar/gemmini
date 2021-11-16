@@ -228,6 +228,9 @@ class AccumulatorMem[T <: Data, U <: Data](
       val w_q_head = RegInit(1.U(nEntries.W))
       val w_q_tail = RegInit(1.U(nEntries.W))
 
+      val w_q_full = (w_q_tail.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_)
+      val w_q_empty = !(w_q_head.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_)
+
       val wen = WireInit(false.B)
       val wdata = Mux1H(w_q_head.asBools, w_q.map(_.data))
       val wmask = Mux1H(w_q_head.asBools, w_q.map(_.mask))
@@ -241,8 +244,11 @@ class AccumulatorMem[T <: Data, U <: Data](
         }
       }
 
-      when (oldest_pipelined_write.valid && isThisBank(oldest_pipelined_write.bits.addr)) {
-        assert(!((w_q_tail.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_)))
+      val w_q_push = oldest_pipelined_write.valid && isThisBank(oldest_pipelined_write.bits.addr)
+
+      when (w_q_push) {
+        assert(!w_q_full || wen, "we ran out of acc-sub-bank write q entries")
+
         w_q_tail := (w_q_tail << 1).asUInt() | w_q_tail(nEntries-1)
         for (i <- 0 until nEntries) {
           when (w_q_tail(i)) {
@@ -266,13 +272,16 @@ class AccumulatorMem[T <: Data, U <: Data](
       }
 
       // Three requestors, 1 slot
-      // Priority is incoming reads for RMW > writes from RMW > incoming reads
+      // Priority is (in descending order):
+      //   1. incoming reads for RMW
+      //   2. writes from RMW
+      //   3. incoming reads
       when (rmw_req.fire() && isThisBank(rmw_req.bits)) {
         ren := true.B
         when (isThisBank(only_read_req.bits)) {
           only_read_req.ready := false.B
         }
-      } .elsewhen ((w_q_head.asBools zip w_q.map(_.valid)).map({ case (h,v) => h && v }).reduce(_||_)) {
+      } .elsewhen (!w_q_empty) {
         wen := true.B
         when (isThisBank(only_read_req.bits)) {
           only_read_req.ready := false.B
