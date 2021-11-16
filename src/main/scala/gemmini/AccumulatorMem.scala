@@ -161,7 +161,6 @@ class AccumulatorMem[T <: Data, U <: Data](
     reads(1).bits  := io.read.req.bits.addr
     reads(1).ready := true.B
     block_read_req := !reads(1).ready
-
     for (i <- 0 until acc_sub_banks) {
       def isThisBank(addr: UInt) = addr(log2Ceil(acc_sub_banks)-1,0) === i.U
       def getBankIdx(addr: UInt) = addr >> log2Ceil(acc_sub_banks)
@@ -171,19 +170,16 @@ class AccumulatorMem[T <: Data, U <: Data](
           io.ext_mem.get(i).read_addr := addr
           io.ext_mem.get(i).read_data
         }
-
         io.ext_mem.get(i).write_en := false.B
         io.ext_mem.get(i).write_addr := DontCare
         io.ext_mem.get(i).write_data := DontCare
         io.ext_mem.get(i).write_mask := DontCare
-
         def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = {
           io.ext_mem.get(i).write_en := true.B
           io.ext_mem.get(i).write_addr := addr
           io.ext_mem.get(i).write_data := wdata.asUInt
           io.ext_mem.get(i).write_mask := wmask.asUInt
         }
-
         (read _, write _)
       } else {
         val mem = SyncReadMem(n / acc_sub_banks, Vec(mask_len, mask_elem))
@@ -205,7 +201,6 @@ class AccumulatorMem[T <: Data, U <: Data](
         val addr = UInt(log2Ceil(n/acc_sub_banks).W)
         override def cloneType: this.type = new W_Q_Entry(mask_len, mask_elem).asInstanceOf[this.type]
       }
-
       val w_q = Reg(Vec(nEntries, new W_Q_Entry(mask_len, mask_elem)))
       for (e <- w_q) {
         when (e.valid) {
@@ -254,22 +249,20 @@ class AccumulatorMem[T <: Data, U <: Data](
             w_q(i).addr  := getBankIdx(pipe_out.bits.addr)
           }
         }
-      }
 
+      }
       val bank_rdata = read(raddr, ren && !wen).asTypeOf(t)
       when (RegNext(ren && reads(0).valid && isThisBank(reads(0).bits))) {
         acc_rdata := bank_rdata
       } .elsewhen (RegNext(ren)) {
         read_rdata := bank_rdata
       }
-
       when (wen) {
         write(waddr, wdata, wmask)
       }
-
       // Three requestors, 1 slot
       // Priority is incoming reads for RMW > writes from RMW > incoming reads
-      when (reads(0).valid && isThisBank(reads(0).bits) && !block_read_req) {
+      when (reads(0).valid && isThisBank(reads(0).bits)) {
         ren := true.B
         when (isThisBank(reads(1).bits)) {
           reads(1).ready := false.B
