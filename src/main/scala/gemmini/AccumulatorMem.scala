@@ -124,7 +124,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   }
 
   val rdata_for_adder = Wire(t)
-  rdata_for_adder := 0.U
+  rdata_for_adder := DontCare
   val rdata_for_read_resp = Wire(t)
   rdata_for_read_resp := DontCare
 
