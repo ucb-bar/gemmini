@@ -21,7 +21,6 @@ class ReservationStationIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bun
 
   def fire(dummy: Int=0) = valid && ready
 
-  override def cloneType: this.type = new ReservationStationIssue(cmd_t, rob_entries).asInstanceOf[this.type]
 }
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably

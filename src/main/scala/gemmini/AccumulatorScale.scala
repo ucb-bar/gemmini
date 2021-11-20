@@ -8,7 +8,6 @@ import Util._
 class AccumulatorReadRespWithFullData[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U, shift_width: Int) extends Bundle {
   val resp = new AccumulatorReadResp(fullDataType, scale_t, shift_width)
   val full_data = fullDataType.cloneType
-  override def cloneType: this.type = new AccumulatorReadRespWithFullData(fullDataType.cloneType, scale_t, shift_width).asInstanceOf[this.type]
 }
 
 
@@ -17,7 +16,6 @@ class AccumulatorScaleResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDa
   val data = rDataType.cloneType
   val acc_bank_id = UInt(2.W)
   val fromDMA = Bool()
-  override def cloneType: this.type = new AccumulatorScaleResp(fullDataType, rDataType).asInstanceOf[this.type]
 }
 
 class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
@@ -26,8 +24,6 @@ class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
 ) extends Bundle {
   val in = Flipped(Decoupled(new AccumulatorReadResp[T,U](fullDataType, scale_t, shift_width)))
   val out = Decoupled(new AccumulatorScaleResp[T](fullDataType, rDataType))
-  override def cloneType: this.type = new AccumulatorScaleIO(fullDataType, scale_t,
-    shift_width, rDataType).asInstanceOf[this.type]
 }
 
 class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extends Bundle {
@@ -40,7 +36,6 @@ class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extend
   val full_data = t.cloneType
   val id = UInt(2.W) // TODO hardcoded
   val index = UInt()
-  override def cloneType: this.type = new AccScaleDataWithIndex(t, u).asInstanceOf[this.type]
 }
 
 class AccScalePipe[T <: Data : Arithmetic, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U, latency: Int, has_nonlinear_activations: Boolean)(implicit ev: Arithmetic[T]) extends Module {

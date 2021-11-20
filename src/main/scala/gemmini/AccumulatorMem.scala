@@ -14,7 +14,6 @@ class AccumulatorReadReq[T <: Data](n: Int, shift_width: Int, scale_t: T) extend
 
   val fromDMA = Bool()
 
-  override def cloneType: this.type = new AccumulatorReadReq(n, shift_width, scale_t.cloneType).asInstanceOf[this.type]
 }
 
 class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U, shift_width: Int) extends Bundle {
@@ -24,14 +23,12 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val relu6_shift = UInt(shift_width.W)
   val act = UInt(2.W) // TODO magic number
   val acc_bank_id = UInt(2.W) // TODO don't hardcode
-  override def cloneType: this.type = new AccumulatorReadResp(fullDataType.cloneType, scale_t, shift_width).asInstanceOf[this.type]
 }
 
 class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, shift_width: Int, fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
   val req = Decoupled(new AccumulatorReadReq[U](n, shift_width, scale_t))
   val resp = Flipped(Decoupled(new AccumulatorReadResp[T, U](fullDataType, scale_t, shift_width)))
 
-  override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, fullDataType.cloneType, scale_t.cloneType).asInstanceOf[this.type]
 }
 
 class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
@@ -41,7 +38,6 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
   val mask = Vec(t.getWidth / 8, Bool()) // TODO Use aligned_to here
   // val current_waddr = Flipped(Valid(UInt(log2Ceil(n).W))) // This is the raddr that is being fed into the SRAM right now
 
-  override def cloneType: this.type = new AccumulatorWriteReq(n, t).asInstanceOf[this.type]
 }
 
 
@@ -60,7 +56,6 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
     val sum = Input(t.cloneType)
   }
 
-  override def cloneType: this.type = new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem).asInstanceOf[this.type]
 }
 
 class AccPipe[T <: Data : Arithmetic](latency: Int, t: T)(implicit ev: Arithmetic[T]) extends Module {
@@ -203,7 +198,6 @@ class AccumulatorMem[T <: Data, U <: Data](
         val data = Vec(mask_len, mask_elem)
         val mask = Vec(mask_len, Bool())
         val addr = UInt(log2Ceil(n/acc_sub_banks).W)
-        override def cloneType: this.type = new W_Q_Entry(mask_len, mask_elem).asInstanceOf[this.type]
       }
 
       val w_q = Reg(Vec(nEntries, new W_Q_Entry(mask_len, mask_elem)))
