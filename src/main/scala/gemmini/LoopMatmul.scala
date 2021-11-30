@@ -122,7 +122,7 @@ class LoopMatmulLdBReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val dram_addr = UInt(coreMaxAddrBits.W)
   val dram_stride = UInt(coreMaxAddrBits.W)
   val transpose = Bool()
-  val addr_end = UInt(log2Up(max_addr).W)
+  val addr_end = UInt(log2Up(max_addr+1).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -325,7 +325,7 @@ class LoopMatmulExecuteReq(val block_size: Int, val coreMaxAddrBits: Int, val it
   val b_tranpose = Bool()
   val accumulate = Bool()
   val a_addr_start = UInt(log2Up(max_addr).W)
-  val b_addr_end = UInt(log2Up(max_addr).W)
+  val b_addr_end = UInt(log2Up(max_addr+1).W)
   val c_addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
@@ -636,7 +636,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   def all_completed(dummy: Int=0): Bool = lda_completed && ldb_completed && ldd_completed && ex_completed && st_completed
 
   val a_addr_start = UInt(log2Up(max_addr).W)
-  val b_addr_end = UInt(log2Up(max_addr).W)
+  val b_addr_end = UInt(log2Up(max_addr+1).W)
 
   def reset(): Unit = {
     configured := false.B
@@ -958,7 +958,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
     loops.zipWithIndex.foreach { case (l, i) =>
       l.reset()
       l.a_addr_start := (i * (max_addr / concurrent_loops)).U
-      l.b_addr_end := ((i+1) * (max_addr / concurrent_loops) - block_size).U
+      l.b_addr_end := ((i+1) * (max_addr / concurrent_loops)).U
     }
   }
 }

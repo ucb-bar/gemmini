@@ -388,7 +388,7 @@ class LoopConvLdWeightReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth:
   val outer_bounds = new LoopConvOuterBounds(large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth)
   val inner_bounds = new LoopConvInnerBounds(large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth)
   val derived_params = new LoopConvDerivedParams(large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth)
-  val addr_end = UInt(log2Up(max_addr).W)
+  val addr_end = UInt(log2Up(max_addr+1).W)
   val dram_addr = UInt(coreMaxAddrBits.W)
   val trans_weight_1203 = Bool()
   val trans_weight_0132 = Bool()
@@ -556,7 +556,7 @@ class LoopConvExecuteReq(val large_iterator_bitwidth: Int, val small_iterator_bi
   val inner_bounds = new LoopConvInnerBounds(large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth)
   val derived_params = new LoopConvDerivedParams(large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth)
   val a_addr_start = UInt(log2Up(max_addr).W)
-  val b_addr_end = UInt(log2Up(max_addr).W)
+  val b_addr_end = UInt(log2Up(max_addr+1).W)
   val c_addr_start = UInt(log2Up(max_acc_addr).W)
   val wrot180 = Bool()
   val downsample = Bool()
@@ -1067,7 +1067,7 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   def all_completed(dummy: Int=0): Bool = ld_bias_completed && ld_input_completed && ld_weights_completed && ex_completed && st_completed
 
   val a_addr_start = UInt(log2Up(max_addr).W)
-  val b_addr_end = UInt(log2Up(max_addr).W)
+  val b_addr_end = UInt(log2Up(max_addr+1).W)
 
   def derived_params(dummy: Int=0): LoopConvDerivedParams = {
     import outer_bounds.{stride, kernel_dilation}
@@ -1453,7 +1453,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
     loops.zipWithIndex.foreach { case (l, i) =>
       l.reset()
       l.a_addr_start := (i * (max_addr / concurrent_loops)).U
-      l.b_addr_end := ((i+1) * (max_addr / concurrent_loops) - block_size).U
+      l.b_addr_end := ((i+1) * (max_addr / concurrent_loops)).U
     }
   }
 }
