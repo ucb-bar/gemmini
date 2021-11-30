@@ -6,6 +6,7 @@ import chisel3.experimental._
 import freechips.rocketchip.tile.RoCCCommand
 import freechips.rocketchip.config.Parameters
 import GemminiISA._
+import LocalAddr.cast_to_local_addr
 import Util._
 
 class LoopConvOuterBounds(val large_iterator_bitwidth: Int, val small_iterator_bitwidth: Int, val tiny_iterator_bitwidth: Int) extends Bundle {
@@ -172,7 +173,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
     mvin_cmd_rs2 := DontCare
     mvin_cmd_rs2.num_rows := o.I.asUInt()
     mvin_cmd_rs2.num_cols := o.J.asUInt()
-    mvin_cmd_rs2.local_addr := o.spad_addr.asTypeOf(mvin_cmd_rs2.local_addr)
+    mvin_cmd_rs2.local_addr := cast_to_local_addr(mvin_cmd_rs2.local_addr, o.spad_addr)
     io.cmd.bits.rs2 := mvin_cmd_rs2.asUInt()
   }
 
@@ -343,7 +344,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
     mvin_cmd_rs2 := DontCare
     mvin_cmd_rs2.num_rows := (o.I >> req.downsample).asUInt()
     mvin_cmd_rs2.num_cols := o.K.asUInt()
-    mvin_cmd_rs2.local_addr := o.spad_addr.asTypeOf(mvin_cmd_rs2.local_addr)
+    mvin_cmd_rs2.local_addr := cast_to_local_addr(mvin_cmd_rs2.local_addr, o.spad_addr)
     io.cmd.bits.rs2 := mvin_cmd_rs2.asUInt()
   }
 
@@ -513,7 +514,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
     mvin_cmd_rs2 := DontCare
     mvin_cmd_rs2.num_rows := o.K
     mvin_cmd_rs2.num_cols := o.J
-    mvin_cmd_rs2.local_addr := o.spad_addr.asTypeOf(mvin_cmd_rs2.local_addr)
+    mvin_cmd_rs2.local_addr := cast_to_local_addr(mvin_cmd_rs2.local_addr, o.spad_addr)
     io.cmd.bits.rs2 := mvin_cmd_rs2.asUInt()
   }
 
@@ -719,13 +720,13 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     pre_cmd_rs1 := DontCare
     pre_cmd_rs1.num_rows := o.K.asUInt()
     pre_cmd_rs1.num_cols := o.J.asUInt()
-    pre_cmd_rs1.local_addr := o.pre_addr.asTypeOf(pre_cmd_rs1.local_addr)
+    pre_cmd_rs1.local_addr := cast_to_local_addr(pre_cmd_rs1.local_addr, o.pre_addr)
 
     val pre_cmd_rs2 = Wire(preload_rs2_t.cloneType)
     pre_cmd_rs2 := DontCare
     pre_cmd_rs2.num_rows := o.I.asUInt()
     pre_cmd_rs2.num_cols := o.J.asUInt()
-    pre_cmd_rs2.local_addr := o.c_addr.asTypeOf(pre_cmd_rs2.local_addr)
+    pre_cmd_rs2.local_addr := cast_to_local_addr(pre_cmd_rs2.local_addr, o.c_addr)
 
     io.cmd.bits.rs1 := pre_cmd_rs1.asUInt()
     io.cmd.bits.rs2 := pre_cmd_rs2.asUInt()
@@ -735,13 +736,13 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     comp_cmd_rs1 := DontCare
     comp_cmd_rs1.num_rows := o.I.asUInt()
     comp_cmd_rs1.num_cols := o.K.asUInt()
-    comp_cmd_rs1.local_addr := o.a_addr.asTypeOf(comp_cmd_rs1.local_addr)
+    comp_cmd_rs1.local_addr := cast_to_local_addr(comp_cmd_rs1.local_addr, o.a_addr)
 
     val comp_cmd_rs2 = Wire(compute_rs2_t.cloneType)
     comp_cmd_rs2 := DontCare
     comp_cmd_rs2.num_rows := o.I.asUInt()
     comp_cmd_rs2.num_cols := o.J.asUInt()
-    comp_cmd_rs2.local_addr := GARBAGE_ADDR.asTypeOf(comp_cmd_rs2.local_addr)
+    comp_cmd_rs2.local_addr := cast_to_local_addr(comp_cmd_rs2.local_addr, GARBAGE_ADDR)
 
     io.cmd.bits.rs1 := comp_cmd_rs1.asUInt()
     io.cmd.bits.rs2 := comp_cmd_rs2.asUInt()
@@ -967,7 +968,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
       val pool_mvout_cmd_rs2 = Wire(mvout_rs2_t.cloneType)
       pool_mvout_cmd_rs2 := DontCare
       pool_mvout_cmd_rs2.num_cols := o.channels
-      pool_mvout_cmd_rs2.local_addr := o.pool_spad_addr.asTypeOf(pool_mvout_cmd_rs2.local_addr)
+      pool_mvout_cmd_rs2.local_addr := cast_to_local_addr(pool_mvout_cmd_rs2.local_addr, o.pool_spad_addr)
 
       io.cmd.bits.rs1 := o.pool_dram_addr
       io.cmd.bits.rs2 := pool_mvout_cmd_rs2.asUInt()
@@ -976,7 +977,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
       mvout_cmd_rs2 := DontCare
       mvout_cmd_rs2.num_rows := o.I.asUInt()
       mvout_cmd_rs2.num_cols := o.J.asUInt()
-      mvout_cmd_rs2.local_addr := o.spad_addr.asTypeOf(mvout_cmd_rs2.local_addr)
+      mvout_cmd_rs2.local_addr := cast_to_local_addr(mvout_cmd_rs2.local_addr, o.spad_addr)
 
       io.cmd.bits.rs1 := o.dram_addr
       io.cmd.bits.rs2 := mvout_cmd_rs2.asUInt()
