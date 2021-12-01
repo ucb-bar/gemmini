@@ -81,3 +81,13 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
 
   override def cloneType: LocalAddr.this.type = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries).asInstanceOf[this.type]
 }
+
+object LocalAddr {
+  def cast_to_local_addr[T <: Data](local_addr_t: LocalAddr, t: T): LocalAddr = {
+    // This convenience function is basically the same as calling "asTypeOf(local_addr_t)". However, this convenience
+    // function will also cast unnecessary garbage bits to 0, which may help reduce multiplier/adder bitwidths
+    val result = WireInit(t.asTypeOf(local_addr_t))
+    if (result.garbage_bit.getWidth > 0) result.garbage := 0.U
+    result
+  }
+}

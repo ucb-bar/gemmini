@@ -9,6 +9,7 @@ import chisel3.util._
 import freechips.rocketchip.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
+import freechips.rocketchip.util.ClockGate
 import freechips.rocketchip.tilelink.TLIdentityNode
 import GemminiISA._
 import Util._
@@ -49,6 +50,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   import outer.config._
   import outer.spad
 
+  val ext_mem_io = if (use_shared_ext_mem) Some(IO(new ExtSpadMemIO(sp_banks, acc_banks, acc_sub_banks))) else None
+  ext_mem_io.foreach(_ <> outer.spad.module.io.ext_mem.get)
+
   val tagWidth = 32
 
   // Counters
@@ -73,6 +77,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   counters.io.event_io.collect(tlb.io.counter)
 
   spad.module.io.flush := tlb.io.exp.map(_.flush()).reduce(_ || _)
+
+  val clock_en_reg = RegInit(true.B)
+  val gated_clock = if (clock_gate) ClockGate(clock, clock_en_reg, "gemmini_clock_gate") else clock
+  outer.spad.module.clock := gated_clock
 
   /*
   //=========================================================================
@@ -113,10 +121,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val unrolled_cmd = LoopUnroller(raw_risc_cmd, outer.config.meshRows * outer.config.tileRows)
   */
 
-  // Incoming commands and reservation station
-  val reservation_station = Module(new ReservationStation(outer.config, new RoCCCommand))
+  val reservation_station = withClock (gated_clock) { Module(new ReservationStation(outer.config, new RoCCCommand)) }
   counters.io.event_io.collect(reservation_station.io.counter)
 
+  when (io.cmd.valid && io.cmd.bits.inst.funct === CLKGATE_EN && !io.busy) {
+    clock_en_reg := io.cmd.bits.rs1(0)
+  }
   val raw_cmd = Queue(io.cmd)
 
   val max_lds = reservation_station_partial_entries
@@ -124,7 +134,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val max_sts = reservation_station_partial_entries / 2
 
   // TODO replace 4,12,2 with parameters based on ROB size
-  val (conv_cmd, loop_conv_unroller_busy) = LoopConv(raw_cmd, reservation_station.io.ld_utilization, reservation_station.io.st_utilization, reservation_station.io.ex_utilization,
+  val (conv_cmd, loop_conv_unroller_busy) = withClock (gated_clock) { LoopConv(raw_cmd, reservation_station.io.ld_utilization, reservation_station.io.st_utilization, reservation_station.io.ex_utilization,
     meshRows*tileRows, coreMaxAddrBits, rob_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes,
     new ConfigMvinRs1(mvin_scale_t_bits, block_stride_bits), new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
@@ -132,14 +142,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new ConfigExRs1(acc_scale_t_bits), new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
-    has_training_convs, has_max_pool)
+    has_training_convs, has_max_pool) }
 
-  val (loop_cmd, loop_matmul_unroller_busy) = LoopMatmul(conv_cmd, reservation_station.io.ld_utilization, reservation_station.io.st_utilization, reservation_station.io.ex_utilization,
+  val (loop_cmd, loop_matmul_unroller_busy) = withClock (gated_clock) { LoopMatmul(conv_cmd, reservation_station.io.ld_utilization, reservation_station.io.st_utilization, reservation_station.io.ex_utilization,
     meshRows*tileRows, coreMaxAddrBits, rob_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
-    new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t))
+    new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
 
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
@@ -167,9 +177,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   //=========================================================================
   // Controllers
   //=========================================================================
-  val load_controller = Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t))
-  val store_controller = Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t))
-  val ex_controller = Module(new ExecuteController(xLen, tagWidth, outer.config))
+  val load_controller = withClock (gated_clock) { Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t)) }
+  val store_controller = withClock (gated_clock) { Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t)) }
+  val ex_controller = withClock (gated_clock) { Module(new ExecuteController(xLen, tagWidth, outer.config)) }
 
   counters.io.event_io.collect(load_controller.io.counter)
   counters.io.event_io.collect(store_controller.io.counter)
@@ -240,7 +250,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ex_controller.io.acc.write <> spad.module.io.acc.write
 
   // Im2Col unit
-  val im2col = Module(new Im2Col(outer.config))
+  val im2col = withClock (gated_clock) { Module(new Im2Col(outer.config)) }
 
   // Wire up Im2col
   counters.io.event_io.collect(im2col.io.counter)
@@ -313,6 +323,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // Wire up global RoCC signals
   io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || reservation_station.io.busy || spad.module.io.busy || unrolled_cmd.valid || loop_cmd.valid || conv_cmd.valid
+
   io.interrupt := tlb.io.exp.map(_.interrupt).reduce(_ || _)
 
   reservation_station.io.solitary_preload := ex_controller.io.solitary_preload
@@ -349,6 +360,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     val is_flush = risc_funct === FLUSH_CMD
     val is_counter_op = risc_funct === COUNTER_OP
+    val is_clock_gate_en = risc_funct === CLKGATE_EN
+
     /*
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_store = (funct === STORE_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
@@ -367,6 +380,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     .elsewhen (is_counter_op) {
       // If this is a counter access/configuration command, execute immediately
       counters.io.in <> unrolled_cmd
+    }
+
+    .elsewhen (is_clock_gate_en) {
+      unrolled_cmd.ready := true.B
     }
 
     .otherwise {

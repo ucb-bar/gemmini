@@ -15,11 +15,11 @@ case class ScaleArguments[T <: Data, U <: Data](scale_func: (T, U) => T, latency
                                                 identity: String="0", c_str: String="ROUNDING_RIGHT_SHIFT(x, scale)")
 
 case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+                                                                             opcodes: OpcodeSet = OpcodeSet.custom3,
+
                                                                              inputType: T,
                                                                              spatialArrayOutputType: T,
                                                                              accType: T,
-
-                                                                             opcodes: OpcodeSet = OpcodeSet.custom3,
 
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
 
@@ -44,6 +44,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              acc_singleported: Boolean = false,
                                                                              acc_sub_banks: Int = -1,
                                                                              acc_capacity: GemminiMemCapacity = CapacityInKilobytes(64),
+                                                                             acc_latency: Int = 2,
 
                                                                              dma_maxbytes: Int = 64, // TODO get this from cacheblockbytes
                                                                              dma_buswidth: Int = 128, // TODO get this from SystemBusKey
@@ -85,6 +86,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_nonlinear_activations: Boolean = true,
 
                                                                              use_firesim_simulation_counters: Boolean = false,
+
+                                                                             use_shared_ext_mem: Boolean = false,
+                                                                             clock_gate: Boolean = false,
 
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
@@ -264,7 +268,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
           (dt.expWidth, dt.sigWidth) match {
             case (8, 24) => (scala.Float.MinValue.toString, scala.Float.MaxValue.toString)
             case (11, 53) => (scala.Double.MinValue.toString, scala.Double.MaxValue.toString)
-            case _ => (((Range(-1,-(dt.sigWidth),-1).map(-Math.pow(2, _)).foldLeft(-1.0)(_ + _)) * Math.pow(2, Math.pow(2, dt.expWidth - 1) - 1)).toString, ((Range(-1,-(dt.sigWidth),-1).map(Math.pow(2, _)).foldLeft(1.0)(_ + _)) * Math.pow(2, Math.pow(2, dt.expWidth - 1) - 1)).toString)
+            case (e, s) => (((Range(-1,-(s),-1).map(-Math.pow(2, _)).foldLeft(-1.0)(_ + _)) * Math.pow(2, Math.pow(2, e - 1) - 1)).toString, ((Range(-1,-(s),-1).map(Math.pow(2, _)).foldLeft(1.0)(_ + _)) * Math.pow(2, Math.pow(2, e - 1) - 1)).toString)
           }
         case dt => ("0", BigInt(2).pow(dt.getWidth).-(1).toString)
         // case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
@@ -278,7 +282,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
           (dt.expWidth, dt.sigWidth) match {
             case (8, 24) => "float"
             case (11, 53) => "double"
-            case _ => s"uint" + (Math.pow(2, Math.ceil(Math.log(dt.expWidth + dt.sigWidth)/Math.log(2.0)))).toInt.toString + s"_t"
+            case (e, s) => s"uint" + (Math.pow(2, Math.ceil(Math.log(e + s)/Math.log(2.0)))).toInt.toString + s"_t"
           }
         case dt => s"uint${dt.getWidth}_t"
       }
