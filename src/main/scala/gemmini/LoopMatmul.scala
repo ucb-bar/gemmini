@@ -6,6 +6,7 @@ import chisel3.experimental._
 import freechips.rocketchip.tile.RoCCCommand
 import freechips.rocketchip.config.Parameters
 import GemminiISA._
+import LocalAddr.cast_to_local_addr
 import Util._
 
 // LdA
@@ -75,7 +76,7 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   mvin_cmd_rs2 := DontCare
   mvin_cmd_rs2.num_rows := rows.asUInt()
   mvin_cmd_rs2.num_cols := cols.asUInt()
-  mvin_cmd_rs2.local_addr := sp_addr.asTypeOf(mvin_cmd_rs2.local_addr)
+  mvin_cmd_rs2.local_addr := cast_to_local_addr(mvin_cmd_rs2.local_addr, sp_addr)
   mvin_cmd.rs2 := mvin_cmd_rs2.asUInt()
 
   io.req.ready := state === idle
@@ -122,7 +123,7 @@ class LoopMatmulLdBReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val dram_addr = UInt(coreMaxAddrBits.W)
   val dram_stride = UInt(coreMaxAddrBits.W)
   val transpose = Bool()
-  val addr_end = UInt(log2Up(max_addr).W)
+  val addr_end = UInt(log2Up(max_addr+1).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -182,7 +183,7 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   mvin_cmd_rs2 := DontCare
   mvin_cmd_rs2.num_rows := rows.asUInt()
   mvin_cmd_rs2.num_cols := cols.asUInt()
-  mvin_cmd_rs2.local_addr := sp_addr.asTypeOf(mvin_cmd_rs2.local_addr)
+  mvin_cmd_rs2.local_addr := cast_to_local_addr(mvin_cmd_rs2.local_addr, sp_addr)
   mvin_cmd.rs2 := mvin_cmd_rs2.asUInt()
 
   io.req.ready := state === idle
@@ -278,7 +279,7 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   mvin_cmd_rs2 := DontCare
   mvin_cmd_rs2.num_rows := rows.asUInt()
   mvin_cmd_rs2.num_cols := cols.asUInt()
-  mvin_cmd_rs2.local_addr := sp_addr.asTypeOf(mvin_cmd_rs2.local_addr)
+  mvin_cmd_rs2.local_addr := cast_to_local_addr(mvin_cmd_rs2.local_addr, sp_addr)
   mvin_cmd.rs2 := mvin_cmd_rs2.asUInt()
 
   io.req.ready := state === idle
@@ -325,7 +326,7 @@ class LoopMatmulExecuteReq(val block_size: Int, val coreMaxAddrBits: Int, val it
   val b_tranpose = Bool()
   val accumulate = Bool()
   val a_addr_start = UInt(log2Up(max_addr).W)
-  val b_addr_end = UInt(log2Up(max_addr).W)
+  val b_addr_end = UInt(log2Up(max_addr+1).W)
   val c_addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
@@ -405,13 +406,13 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   pre_cmd_rs1 := DontCare
   pre_cmd_rs1.num_rows := b_rows.asUInt()
   pre_cmd_rs1.num_cols := b_cols.asUInt()
-  pre_cmd_rs1.local_addr := pre_addr.asTypeOf(pre_cmd_rs1.local_addr)
+  pre_cmd_rs1.local_addr := cast_to_local_addr(pre_cmd_rs1.local_addr, pre_addr)
 
   val pre_cmd_rs2 = Wire(preload_rs2_t.cloneType)
   pre_cmd_rs2 := DontCare
   pre_cmd_rs2.num_rows := c_rows.asUInt()
   pre_cmd_rs2.num_cols := c_cols.asUInt()
-  pre_cmd_rs2.local_addr := out_addr.asTypeOf(pre_cmd_rs2.local_addr)
+  pre_cmd_rs2.local_addr := cast_to_local_addr(pre_cmd_rs2.local_addr, out_addr)
 
   pre_cmd.rs1 := pre_cmd_rs1.asUInt()
   pre_cmd.rs2 := pre_cmd_rs2.asUInt()
@@ -424,13 +425,13 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   comp_cmd_rs1 := DontCare
   comp_cmd_rs1.num_rows := a_rows.asUInt()
   comp_cmd_rs1.num_cols := a_cols.asUInt()
-  comp_cmd_rs1.local_addr := a_addr.asTypeOf(comp_cmd_rs1.local_addr)
+  comp_cmd_rs1.local_addr := cast_to_local_addr(comp_cmd_rs1.local_addr, a_addr)
 
   val comp_cmd_rs2 = Wire(compute_rs2_t.cloneType)
   comp_cmd_rs2 := DontCare
   comp_cmd_rs2.num_rows := block_size.U
   comp_cmd_rs2.num_cols := block_size.U
-  comp_cmd_rs2.local_addr := GARBAGE_ADDR.asTypeOf(comp_cmd_rs2.local_addr)
+  comp_cmd_rs2.local_addr := cast_to_local_addr(comp_cmd_rs2.local_addr, GARBAGE_ADDR)
 
   comp_cmd.rs1 := comp_cmd_rs1.asUInt()
   comp_cmd.rs2 := comp_cmd_rs2.asUInt()
@@ -545,7 +546,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   mvout_cmd_rs2 := DontCare
   mvout_cmd_rs2.num_rows := rows.asUInt()
   mvout_cmd_rs2.num_cols := cols.asUInt()
-  mvout_cmd_rs2.local_addr := sp_addr.asTypeOf(mvout_cmd_rs2.local_addr)
+  mvout_cmd_rs2.local_addr := cast_to_local_addr(mvout_cmd_rs2.local_addr, sp_addr)
   mvout_cmd.rs2 := mvout_cmd_rs2.asUInt()
 
   io.req.ready := state === idle
@@ -636,7 +637,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   def all_completed(dummy: Int=0): Bool = lda_completed && ldb_completed && ldd_completed && ex_completed && st_completed
 
   val a_addr_start = UInt(log2Up(max_addr).W)
-  val b_addr_end = UInt(log2Up(max_addr).W)
+  val b_addr_end = UInt(log2Up(max_addr+1).W)
 
   def reset(): Unit = {
     configured := false.B
@@ -958,7 +959,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
     loops.zipWithIndex.foreach { case (l, i) =>
       l.reset()
       l.a_addr_start := (i * (max_addr / concurrent_loops)).U
-      l.b_addr_end := ((i+1) * (max_addr / concurrent_loops) - block_size).U
+      l.b_addr_end := ((i+1) * (max_addr / concurrent_loops)).U
     }
   }
 }

@@ -30,6 +30,7 @@ object GemminiFPConfigs {
     sp_banks = 4,
     sp_singleported = true,
     acc_banks = 1,
+    acc_latency = 2,
     acc_singleported = false,
     acc_sub_banks = -1,
     sp_capacity = CapacityInKilobytes(256),
@@ -45,7 +46,7 @@ object GemminiFPConfigs {
     use_tlb_register_filter = true,
     max_in_flight_mem_reqs = 16,
     use_dedicated_tl_port = false,
-
+    use_shared_ext_mem = false,
     inputType = Float(8, 24),
     spatialArrayOutputType = Float(8, 24),
     accType = Float(8, 24),
@@ -84,7 +85,7 @@ object GemminiFPConfigs {
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
-  
+ 
   //FP16 Half Precision Configuration
   val FP16DefaultConfig = defaultFPConfig.copy(inputType = Float(5, 11), spatialArrayOutputType = Float(5, 11), accType = Float(8, 24),
                                                pe_latency = 2,
