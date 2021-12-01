@@ -4,6 +4,7 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
+import Util._
 
 /**
   * A Tile is a purely combinational 2D array of passThrough PEs.
@@ -12,7 +13,7 @@ import chisel3.util._
   * @param rows Number of PEs on each row
   * @param columns Number of PEs on each column
   */
-class Tile[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T, df: Dataflow.Value, max_simultaneous_matmuls: Int, val rows: Int, val columns: Int) extends Module {
+class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, tree_reduction: Boolean, max_simultaneous_matmuls: Int, val rows: Int, val columns: Int)(implicit ev: Arithmetic[T]) extends Module {
   val io = IO(new Bundle {
     val in_a        = Input(Vec(rows, inputType))
     val in_b        = Input(Vec(columns, outputType)) // This is the output of the tile next to it
@@ -36,6 +37,8 @@ class Tile[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T, df: 
     val bad_dataflow = Output(Bool())
   })
 
+  import ev._
+
   val tile = Seq.fill(rows, columns)(Module(new PE(inputType, outputType, accType, df, max_simultaneous_matmuls)))
   val tileT = tile.transpose
 
@@ -53,7 +56,7 @@ class Tile[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T, df: 
   for (c <- 0 until columns) {
     tileT(c).foldLeft(io.in_b(c)) {
       case (in_b, pe) =>
-        pe.io.in_b := in_b
+        pe.io.in_b := (if (tree_reduction) in_b.zero else in_b)
         pe.io.out_b
     }
   }
@@ -106,11 +109,19 @@ class Tile[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T, df: 
   // Drive the Tile's bottom IO
   for (c <- 0 until columns) {
     io.out_c(c) := tile(rows-1)(c).io.out_c
-    io.out_b(c) := tile(rows-1)(c).io.out_b
     io.out_control(c) := tile(rows-1)(c).io.out_control
     io.out_id(c) := tile(rows-1)(c).io.out_id
     io.out_last(c) := tile(rows-1)(c).io.out_last
     io.out_valid(c) := tile(rows-1)(c).io.out_valid
+
+    io.out_b(c) := {
+      if (tree_reduction) {
+        val prods = tileT(c).map(_.io.out_b)
+        accumulateTree(prods :+ io.in_b(c))
+      } else {
+        tile(rows - 1)(c).io.out_b
+      }
+    }
   }
   io.bad_dataflow := tile.map(_.map(_.io.bad_dataflow).reduce(_||_)).reduce(_||_)
 

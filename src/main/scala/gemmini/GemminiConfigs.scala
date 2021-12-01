@@ -57,8 +57,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              mvin_scale_shared: Boolean = false,
                                                                              acc_scale_args: Option[ScaleArguments[T, V]] = None,
 
-                                                                             tile_latency: Int = 0,
-
                                                                              acc_read_full_width: Boolean = true,
                                                                              acc_read_small_width: Boolean = true,
                                                                              use_dedicated_tl_port: Boolean = true,
@@ -75,7 +73,10 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              hardcode_d_to_garbage_addr: Boolean = false,
                                                                              use_shared_tlb: Boolean = true,
 
+                                                                             tile_latency: Int = 0,
                                                                              mesh_output_delay: Int = 1,
+
+                                                                             use_tree_reduction_if_possible: Boolean = true,
 
                                                                              num_counter: Int = 8,
 
@@ -157,6 +158,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val block_stride_bits = 16
 
   val hasIm2Col = false
+
+  val tree_reduction = dataflow == Dataflow.WS && use_tree_reduction_if_possible
 
   //==========================================================================
   // sanity check mesh size

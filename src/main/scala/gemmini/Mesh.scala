@@ -15,7 +15,7 @@ import chisel3.experimental._
   * @param meshColumns
   */
 class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
-                                   df: Dataflow.Value, tile_latency: Int,
+                                   df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int,
                                    max_simultaneous_matmuls: Int, output_delay: Int,
                                    val tileRows: Int, val tileColumns: Int,
                                    val meshRows: Int, val meshColumns: Int) extends Module {
@@ -34,43 +34,48 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
     val out_id = Output(Vec(meshColumns, Vec(tileColumns, UInt(log2Up(max_simultaneous_matmuls).W))))
     val out_last = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
   })
+
   // mesh(r)(c) => Tile at row r, column c
-  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, tile_latency, max_simultaneous_matmuls, tileRows, tileColumns)))
+  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns)))
   val meshT = mesh.transpose
+
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
   for (r <- 0 until meshRows) {
     mesh(r).foldLeft(io.in_a(r)) {
       case (in_a, tile) =>
-        tile.io.in_a := ShiftRegister(in_a, tile_latency)
+        tile.io.in_a := ShiftRegister(in_a, tile_latency+1)
         tile.io.out_a
     }
   }
+
   // Chain tile_out_b -> tile_b_in (pipeline b across each column)
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_b(c), io.in_valid(c))) {
       case ((in_b, valid), tile) =>
-        tile.io.in_b := ShiftRegister(in_b, tile_latency, valid.head)
+        tile.io.in_b := ShiftRegister(in_b, tile_latency+1, valid.head)
         (tile.io.out_b, tile.io.out_valid)
     }
   }
+
   // Chain tile_out -> tile_propag (pipeline output across each column)
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_d(c), io.in_valid(c))) {
       case ((in_propag, valid), tile) =>
-        tile.io.in_d := ShiftRegister(in_propag, tile_latency, valid.head)
+        tile.io.in_d := ShiftRegister(in_propag, tile_latency+1, valid.head)
         (tile.io.out_c, tile.io.out_valid)
     }
   }
+
   // Chain control signals (pipeline across each column)
   assert(!(mesh.map(_.map(_.io.bad_dataflow).reduce(_||_)).reduce(_||_)))
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_control(c), io.in_valid(c))) {
       case ((in_ctrl, valid), tile) =>
         (tile.io.in_control, in_ctrl, valid).zipped.foreach { case (tile_ctrl, ctrl, v) =>
-          tile_ctrl.shift := ShiftRegister(ctrl.shift, tile_latency, v)
-          tile_ctrl.dataflow := ShiftRegister(ctrl.dataflow, tile_latency, v)
-          tile_ctrl.propagate := ShiftRegister(ctrl.propagate, tile_latency, v)
+          tile_ctrl.shift := ShiftRegister(ctrl.shift, tile_latency+1, v)
+          tile_ctrl.dataflow := ShiftRegister(ctrl.dataflow, tile_latency+1, v)
+          tile_ctrl.propagate := ShiftRegister(ctrl.propagate, tile_latency+1, v)
         }
         (tile.io.out_control, tile.io.out_valid)
     }
@@ -80,7 +85,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_valid(c)) {
       case (in_v, tile) =>
-        tile.io.in_valid := ShiftRegister(in_v, tile_latency)
+        tile.io.in_valid := ShiftRegister(in_v, tile_latency+1)
         tile.io.out_valid
     }
   }
@@ -89,7 +94,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_id(c)) {
       case (in_id, tile) =>
-        tile.io.in_id := ShiftRegister(in_id, tile_latency)
+        tile.io.in_id := ShiftRegister(in_id, tile_latency+1)
         tile.io.out_id
     }
   }
@@ -98,7 +103,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_last(c)) {
       case (in_last, tile) =>
-        tile.io.in_last := ShiftRegister(in_last, tile_latency)
+        tile.io.in_last := ShiftRegister(in_last, tile_latency+1)
         tile.io.out_last
     }
   }
