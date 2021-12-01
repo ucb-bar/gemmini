@@ -168,10 +168,10 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val mesh = Module(new Mesh(inputType, outputType, accType, df, tree_reduction, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns))
 
   // TODO wire only to *_buf here, instead of io.*.bits
-  val a_shifter_in = WireInit(Mux(a_is_from_transposer, transposer_out, a_buf))
-  val b_shifter_in = WireInit(Mux(b_is_from_transposer, transposer_out, b_buf))
+  val a_shifter_in = WireInit(Mux(a_is_from_transposer, transposer_out.asTypeOf(A_TYPE), a_buf))
+  val b_shifter_in = WireInit(Mux(b_is_from_transposer, transposer_out.asTypeOf(B_TYPE), b_buf))
   val d_shifter_in = WireInit(Mux(d_is_from_transposer,
-    VecInit(transposer_out.flatten.reverse.grouped(tileRows).map(VecInit(_)).toSeq), d_buf))
+    VecInit(transposer_out.flatten.reverse.grouped(tileRows).map(VecInit(_)).toSeq).asTypeOf(D_TYPE), d_buf))
 
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_b := shifted(b_shifter_in, upBanks)

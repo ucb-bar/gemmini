@@ -174,6 +174,7 @@ object GemminiConfigs {
   )
 
   val largeChipConfig = chipConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64),
+    tileRows=1, tileColumns=1,
     meshRows=32, meshColumns=32
   )
 
