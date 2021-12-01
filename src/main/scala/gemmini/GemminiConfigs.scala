@@ -57,7 +57,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              mvin_scale_shared: Boolean = false,
                                                                              acc_scale_args: Option[ScaleArguments[T, V]] = None,
 
-                                                                             pe_latency: Int = 0,
+                                                                             tile_latency: Int = 0,
 
                                                                              acc_read_full_width: Boolean = true,
                                                                              acc_read_small_width: Boolean = true,

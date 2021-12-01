@@ -59,7 +59,7 @@ object DSEBaseConfig {
     acc_read_full_width = true,
     acc_read_small_width = true,
     use_dedicated_tl_port = false,
-    pe_latency = 0,
+    tile_latency = 0,
 
     ex_read_from_spad = true,
     ex_read_from_acc = true,

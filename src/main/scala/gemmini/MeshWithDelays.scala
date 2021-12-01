@@ -33,7 +33,7 @@ class MeshWithDelaysResp[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](o
 
 class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   (inputType: T, val outputType: T, accType: T,
-   tagType: U, df: Dataflow.Value, pe_latency: Int, output_delay: Int,
+   tagType: U, df: Dataflow.Value, tile_latency: Int, output_delay: Int,
    tileRows: Int, tileColumns: Int, meshRows: Int, meshColumns: Int,
    leftBanks: Int, upBanks: Int, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1)
   extends Module {
@@ -48,11 +48,11 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val block_size = meshRows*tileRows
 
   val max_simultaneous_matmuls = if (n_simultaneous_matmuls == -1) {
-    5 * (pe_latency + 1)
+    5 * (tile_latency + 1)
   } else {
     n_simultaneous_matmuls
   }
-  assert(max_simultaneous_matmuls >= 5 * (pe_latency + 1))
+  assert(max_simultaneous_matmuls >= 5 * (tile_latency + 1))
 
   val tagqlen = max_simultaneous_matmuls+1
 
@@ -70,7 +70,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   def shifted[T <: Data](x: Vec[Vec[T]], banks: Int, reverse: Boolean = false) = {
     assert(x.size % banks == 0, "cannot bank without clean divisors")
-    assert(pe_latency == 0 || (tileRows == 1 && tileColumns == 1), "If tiles are larger than 1x1, then PEs must have 0 latency")
 
     val banked_len = x.size / banks
     val banked_x = x.grouped(banked_len).toSeq
@@ -79,13 +78,13 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
     (banked_x zip indexes).flatMap { case (bx, i) =>
       val bxVec = VecInit(bx)
-      val sram_shift = i * banked_len * (pe_latency+1)
+      val sram_shift = i * banked_len * (tile_latency+1)
 
       val SRAMShifted = Shifter(bxVec, sram_shift, true.B, true)
 
       val indexes = if (reverse) SRAMShifted.indices.reverse else SRAMShifted.indices
       val RegShifted = (SRAMShifted zip indexes).map { case (srs, j) =>
-        ShiftRegister(srs, j*(pe_latency+1))
+        ShiftRegister(srs, j*(tile_latency+1))
       }
 
       RegShifted
@@ -166,7 +165,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val transposer_out = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
 
   // Wire up mesh's IO to this module's IO
-  val mesh = Module(new Mesh(inputType, outputType, accType, df, pe_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns))
+  val mesh = Module(new Mesh(inputType, outputType, accType, df, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns))
 
   // TODO wire only to *_buf here, instead of io.*.bits
   val a_shifter_in = WireInit(Mux(a_is_from_transposer, transposer_out, a_buf))
@@ -179,12 +178,12 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   mesh.io.in_d := shifted(d_shifter_in, upBanks)
 
   mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>
-    ss.foreach(_.dataflow := ShiftRegister(req.bits.pe_control.dataflow, i * (pe_latency + 1)))
-    ss.foreach(_.propagate := ShiftRegister(in_prop, i * (pe_latency + 1)))
+    ss.foreach(_.dataflow := ShiftRegister(req.bits.pe_control.dataflow, i * (tile_latency + 1)))
+    ss.foreach(_.propagate := ShiftRegister(in_prop, i * (tile_latency + 1)))
   }
   val result_shift = RegNext(req.bits.pe_control.shift) // TODO will this arrive at the right time if memory isn't pipelined?
   mesh.io.in_control.zipWithIndex.foreach { case (ctrl, i) =>
-    ctrl.foreach(_.shift := ShiftRegister(result_shift, i * (pe_latency + 1)))
+    ctrl.foreach(_.shift := ShiftRegister(result_shift, i * (tile_latency + 1)))
   }
 
   val not_paused_vec = VecInit(Seq.fill(meshColumns)(VecInit(Seq.fill(tileColumns)(!pause))))
