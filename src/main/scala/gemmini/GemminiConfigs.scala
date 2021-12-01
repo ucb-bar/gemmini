@@ -163,7 +163,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
   val hasIm2Col = false
 
-  val tree_reduction = dataflow == Dataflow.WS && use_tree_reduction_if_possible
+  val tree_reduction = use_tree_reduction_if_possible && dataflow == Dataflow.WS && tileRows > 1
 
   //==========================================================================
   // sanity check mesh size
