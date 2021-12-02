@@ -39,6 +39,12 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns)))
   val meshT = mesh.transpose
 
+  def pipe[T <: Data](valid: Bool, t: T, latency: Int): T = {
+    // The default "Pipe" function apparently resets the valid signals to false.B. We would like to avoid using global
+    // signals in the Mesh, so over here, we make it clear that the reset signal will never be asserted
+    chisel3.withReset(false.B) { Pipe(valid, t, latency+1).bits }
+  }
+
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
   for (r <- 0 until meshRows) {
@@ -53,7 +59,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_b(c), io.in_valid(c))) {
       case ((in_b, valid), tile) =>
-        tile.io.in_b := Pipe(valid.head, in_b, tile_latency+1).bits
+        tile.io.in_b := pipe(valid.head, in_b, tile_latency+1)
         (tile.io.out_b, tile.io.out_valid)
     }
   }
@@ -62,7 +68,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_d(c), io.in_valid(c))) {
       case ((in_propag, valid), tile) =>
-        tile.io.in_d := Pipe(valid.head, in_propag, tile_latency+1).bits
+        tile.io.in_d := pipe(valid.head, in_propag, tile_latency+1)
         (tile.io.out_c, tile.io.out_valid)
     }
   }
@@ -73,9 +79,9 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
     meshT(c).foldLeft((io.in_control(c), io.in_valid(c))) {
       case ((in_ctrl, valid), tile) =>
         (tile.io.in_control, in_ctrl, valid).zipped.foreach { case (tile_ctrl, ctrl, v) =>
-          tile_ctrl.shift := Pipe(v, ctrl.shift, tile_latency+1).bits
-          tile_ctrl.dataflow := Pipe(v, ctrl.dataflow, tile_latency+1).bits
-          tile_ctrl.propagate := Pipe(v, ctrl.propagate, tile_latency+1).bits
+          tile_ctrl.shift := pipe(v, ctrl.shift, tile_latency+1)
+          tile_ctrl.dataflow := pipe(v, ctrl.dataflow, tile_latency+1)
+          tile_ctrl.propagate := pipe(v, ctrl.propagate, tile_latency+1)
         }
         (tile.io.out_control, tile.io.out_valid)
     }
