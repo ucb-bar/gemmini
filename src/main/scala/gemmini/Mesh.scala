@@ -39,6 +39,11 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns)))
   val meshT = mesh.transpose
 
+  // Right now, we only clock-gate the ShiftRegisters if tile_latency == 0. Otherwise, we would need to use a valid
+  // signal which has passed through a ShiftRegister as well.
+  // TODO clock-gate shift-registers even when tile-latency is not 0
+  val clock_gate = tile_latency == 0
+
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
   for (r <- 0 until meshRows) {
@@ -53,7 +58,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_b(c), io.in_valid(c))) {
       case ((in_b, valid), tile) =>
-        tile.io.in_b := ShiftRegister(in_b, tile_latency+1, valid.head)
+        tile.io.in_b := ShiftRegister(in_b, tile_latency+1, !clock_gate.B || valid.head)
         (tile.io.out_b, tile.io.out_valid)
     }
   }
@@ -62,7 +67,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_d(c), io.in_valid(c))) {
       case ((in_propag, valid), tile) =>
-        tile.io.in_d := ShiftRegister(in_propag, tile_latency+1, valid.head)
+        tile.io.in_d := ShiftRegister(in_propag, tile_latency+1, !clock_gate.B || valid.head)
         (tile.io.out_c, tile.io.out_valid)
     }
   }
@@ -73,9 +78,9 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
     meshT(c).foldLeft((io.in_control(c), io.in_valid(c))) {
       case ((in_ctrl, valid), tile) =>
         (tile.io.in_control, in_ctrl, valid).zipped.foreach { case (tile_ctrl, ctrl, v) =>
-          tile_ctrl.shift := ShiftRegister(ctrl.shift, tile_latency+1, v)
-          tile_ctrl.dataflow := ShiftRegister(ctrl.dataflow, tile_latency+1, v)
-          tile_ctrl.propagate := ShiftRegister(ctrl.propagate, tile_latency+1, v)
+          tile_ctrl.shift := ShiftRegister(ctrl.shift, tile_latency+1, !clock_gate.B || v)
+          tile_ctrl.dataflow := ShiftRegister(ctrl.dataflow, tile_latency+1, !clock_gate.B || v)
+          tile_ctrl.propagate := ShiftRegister(ctrl.propagate, tile_latency+1, !clock_gate.B || v)
         }
         (tile.io.out_control, tile.io.out_valid)
     }
