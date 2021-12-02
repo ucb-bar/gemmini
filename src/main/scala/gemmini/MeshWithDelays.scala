@@ -47,12 +47,13 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   assert(meshRows*tileRows == meshColumns*tileColumns)
   val block_size = meshRows*tileRows
 
+  val latency_per_pe = (tile_latency + 1).toFloat / (tileRows min tileColumns)
   val max_simultaneous_matmuls = if (n_simultaneous_matmuls == -1) {
-    5 * (tile_latency + 1)
+    (5 * latency_per_pe).ceil.toInt
   } else {
     n_simultaneous_matmuls
   }
-  assert(max_simultaneous_matmuls >= 5 * (tile_latency + 1))
+  assert(max_simultaneous_matmuls >= 5 * latency_per_pe)
 
   val tagqlen = max_simultaneous_matmuls+1
 
@@ -197,8 +198,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   // We want to output C when we're output-stationary, but B when we're weight-stationary
   // TODO these would actually overlap when we switch from output-stationary to weight-stationary
-  val out_pe_control = shifted(mesh.io.out_control, outBanks, reverse = true)(0)(0)
-  io.resp.bits.data := shifted(Mux(out_pe_control.dataflow === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
+  io.resp.bits.data := shifted(Mux(mesh.io.out_control(0)(0).dataflow === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
 
   io.resp.valid := shifted(mesh.io.out_valid, outBanks, reverse = true)(0)(0)
 
