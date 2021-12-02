@@ -42,7 +42,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   def pipe[T <: Data](valid: Bool, t: T, latency: Int): T = {
     // The default "Pipe" function apparently resets the valid signals to false.B. We would like to avoid using global
     // signals in the Mesh, so over here, we make it clear that the reset signal will never be asserted
-    chisel3.withReset(false.B) { Pipe(valid, t, latency+1).bits }
+    chisel3.withReset(false.B) { Pipe(valid, t, latency).bits }
   }
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
