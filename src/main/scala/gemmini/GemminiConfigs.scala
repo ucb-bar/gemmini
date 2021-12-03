@@ -475,6 +475,10 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       header ++= s"#define ACC_READ_FULL_WIDTH\n"
     header ++= s"\n"
 
+    if (has_first_layer_optimizations) {
+      header ++= "#define HAS_FIRST_LAYER_OPTIMIZATIONS\n\n"
+    }
+
     header ++= s"#endif // $guard\n"
     header.toString()
   }
