@@ -171,6 +171,10 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     }
   }
 
+  // Optimizations based on config parameters
+  if (!has_first_layer_optimizations)
+    pixel_repeats.foreach(_ := 1.U)
+
   // Performance counter
   CounterEventIO.init(io.counter)
   io.counter.connectEventSignal(CounterEvent.LOAD_ACTIVE_CYCLE, control_state === sending_rows)
@@ -183,4 +187,5 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
   // Assertions
   assert(!(cmd_tracker.io.alloc.fire() && cmd_tracker.io.alloc.bits.bytes_to_read === 0.U), "A single mvin instruction must load more than 0 bytes")
+  assert(has_first_layer_optimizations.B || !(cmd.valid && DoConfig && config_pixel_repeats > 1.U), "If first-layer optimizations are not enabled, then pixel-repeats cannot be greater than 1")
 }

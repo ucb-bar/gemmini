@@ -29,58 +29,69 @@ class PixelRepeaterResp[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_
   override def cloneType: PixelRepeaterResp.this.type = new PixelRepeaterResp(t, laddr_t, block_cols, tag_t).asInstanceOf[this.type]
 }
 
-class PixelRepeater[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols: Int, aligned_to: Int, tag_t: Tag) extends Module {
+class PixelRepeater[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols: Int, aligned_to: Int, tag_t: Tag, passthrough: Boolean) extends Module {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new PixelRepeaterReq(t, laddr_t, block_cols, tag_t)))
     val resp = Decoupled(new PixelRepeaterResp(t, laddr_t, block_cols, tag_t))
   })
 
-  val req = Reg(UDValid(io.req.bits.cloneType))
+  if (passthrough) {
+    io.resp.valid := io.req.valid
+    io.resp.bits.out := io.req.bits.in
+    io.resp.bits.mask := io.req.bits.mask
+    io.resp.bits.laddr := io.req.bits.laddr
+    io.resp.bits.last := io.req.bits.last
+    io.resp.bits.tag := io.req.bits.tag
 
-  io.req.ready := !req.valid || (io.resp.ready && req.bits.pixel_repeats === 0.U)
+    io.req.ready := io.resp.ready
+  } else {
+    val req = Reg(UDValid(io.req.bits.cloneType))
 
-  val out_shift = Wire(UInt(log2Up(block_cols / 2 + 1).W))
-  out_shift := req.bits.pixel_repeats * req.bits.len
+    io.req.ready := !req.valid || (io.resp.ready && req.bits.pixel_repeats === 0.U)
 
-  io.resp.bits.out := (req.bits.in.asUInt() << (out_shift * t.getWidth.U)).asTypeOf(io.resp.bits.out)
-  io.resp.bits.mask := (req.bits.mask.asUInt() << (out_shift * ((t.getWidth / 8) / aligned_to).U)).asTypeOf(io.resp.bits.mask)
+    val out_shift = Wire(UInt(log2Up(block_cols / 2 + 1).W))
+    out_shift := req.bits.pixel_repeats * req.bits.len
 
-  io.resp.bits.last := req.bits.last && (req.bits.pixel_repeats === 0.U)
-  io.resp.bits.tag := req.bits.tag
+    io.resp.bits.out := (req.bits.in.asUInt() << (out_shift * t.getWidth.U)).asTypeOf(io.resp.bits.out)
+    io.resp.bits.mask := (req.bits.mask.asUInt() << (out_shift * ((t.getWidth / 8) / aligned_to).U)).asTypeOf(io.resp.bits.mask)
 
-  val is_acc_addr = req.bits.laddr.is_acc_addr
-  assert(!(req.valid && is_acc_addr && req.bits.pixel_repeats > 0.U))
+    io.resp.bits.last := req.bits.last && (req.bits.pixel_repeats === 0.U)
+    io.resp.bits.tag := req.bits.tag
 
-  val sp_addr = Mux(req.bits.laddr.full_sp_addr() < (laddr_t.maxRows / 2).U,
-    req.bits.laddr.floorSub(req.bits.pixel_repeats, 0.U)._1,
-    req.bits.laddr.floorSub(req.bits.pixel_repeats, (laddr_t.maxRows / 2).U)._1,
-  )
+    val is_acc_addr = req.bits.laddr.is_acc_addr
+    assert(!(req.valid && is_acc_addr && req.bits.pixel_repeats > 0.U))
 
-  val underflow = !is_acc_addr && Mux(req.bits.laddr.full_sp_addr() < (laddr_t.maxRows / 2).U,
-    req.bits.laddr.floorSub(req.bits.pixel_repeats, 0.U)._2,
-    req.bits.laddr.floorSub(req.bits.pixel_repeats, (laddr_t.maxRows / 2).U)._2,
-  )
+    val sp_addr = Mux(req.bits.laddr.full_sp_addr() < (laddr_t.maxRows / 2).U,
+      req.bits.laddr.floorSub(req.bits.pixel_repeats, 0.U)._1,
+      req.bits.laddr.floorSub(req.bits.pixel_repeats, (laddr_t.maxRows / 2).U)._1,
+    )
 
-  io.resp.bits.laddr := Mux(is_acc_addr, req.bits.laddr, sp_addr)
+    val underflow = !is_acc_addr && Mux(req.bits.laddr.full_sp_addr() < (laddr_t.maxRows / 2).U,
+      req.bits.laddr.floorSub(req.bits.pixel_repeats, 0.U)._2,
+      req.bits.laddr.floorSub(req.bits.pixel_repeats, (laddr_t.maxRows / 2).U)._2,
+    )
 
-  io.resp.valid := req.valid && !underflow
+    io.resp.bits.laddr := Mux(is_acc_addr, req.bits.laddr, sp_addr)
 
-  assert(!(req.valid && req.bits.laddr.is_acc_addr))
+    io.resp.valid := req.valid && !underflow
 
-  when (io.resp.fire() || underflow) {
-    req.bits.pixel_repeats := req.bits.pixel_repeats - 1.U
+    assert(!(req.valid && req.bits.laddr.is_acc_addr))
 
-    when (req.bits.pixel_repeats === 0.U) {
+    when(io.resp.fire() || underflow) {
+      req.bits.pixel_repeats := req.bits.pixel_repeats - 1.U
+
+      when(req.bits.pixel_repeats === 0.U) {
+        req.pop()
+      }
+    }
+
+    when(io.req.fire()) {
+      req.push(io.req.bits)
+      req.bits.pixel_repeats := io.req.bits.pixel_repeats - 1.U
+    }
+
+    when(reset.toBool()) {
       req.pop()
     }
-  }
-
-  when (io.req.fire()) {
-    req.push(io.req.bits)
-    req.bits.pixel_repeats := io.req.bits.pixel_repeats - 1.U
-  }
-
-  when (reset.toBool()) {
-    req.pop()
   }
 }

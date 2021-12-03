@@ -313,7 +313,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     // zero_writer.io.resp.ready := false.B
 
-    val zero_writer_pixel_repeater = Module(new PixelRepeater(inputType, local_addr_t, block_cols, aligned_to, new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits)))
+    val zero_writer_pixel_repeater = Module(new PixelRepeater(inputType, local_addr_t, block_cols, aligned_to, new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), passthrough = !has_first_layer_optimizations))
     zero_writer_pixel_repeater.io.req.valid := zero_writer.io.resp.valid
     zero_writer_pixel_repeater.io.req.bits.in := 0.U.asTypeOf(Vec(block_cols, inputType))
     zero_writer_pixel_repeater.io.req.bits.mask := zero_writer.io.resp.bits.mask
@@ -365,7 +365,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     mvin_scale_in.bits.last := reader.module.io.resp.bits.last
     mvin_scale_in.bits.tag := reader.module.io.resp.bits
 
-    val mvin_scale_pixel_repeater = Module(new PixelRepeater(inputType, local_addr_t, block_cols, aligned_to, mvin_scale_out.bits.tag.cloneType))
+    val mvin_scale_pixel_repeater = Module(new PixelRepeater(inputType, local_addr_t, block_cols, aligned_to, mvin_scale_out.bits.tag.cloneType, passthrough = !has_first_layer_optimizations))
     mvin_scale_pixel_repeater.io.req.valid := mvin_scale_out.valid
     mvin_scale_pixel_repeater.io.req.bits.in := mvin_scale_out.bits.out
     mvin_scale_pixel_repeater.io.req.bits.mask := mvin_scale_out.bits.tag.mask take mvin_scale_pixel_repeater.io.req.bits.mask.size
