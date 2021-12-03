@@ -113,7 +113,7 @@ object GemminiISA {
     val _unused = UInt(CONFIG_MVIN_RS1_UNUSED_WIDTH.W)
 
     override def cloneType: ConfigMvinRs1.this.type =
-      (new ConfigMvinRs1(scale_bits, stride_bits)).asInstanceOf[this.type]
+      (new ConfigMvinRs1(scale_bits, stride_bits, pixel_repeat_bits)).asInstanceOf[this.type]
   }
 
   val CONFIG_MVOUT_RS1_UNUSED_WIDTH = 2
