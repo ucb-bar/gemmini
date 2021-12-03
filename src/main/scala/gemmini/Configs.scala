@@ -174,6 +174,7 @@ object GemminiConfigs {
   )
 
   val largeChipConfig = chipConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64),
+    tileRows=1, tileColumns=1,
     meshRows=32, meshColumns=32
   )
 
@@ -219,6 +220,7 @@ class DualGemminiConfig extends Config((site, here, up) => {
       fp_gemmini = LazyModule(new Gemmini(GemminiFPConfigs.BF16DefaultConfig.copy(
         opcodes = OpcodeSet.custom2,
         sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32),
+        tileColumns = 1, tileRows = 1,
         meshColumns = 8, meshRows = 8,
         acc_singleported = true, acc_banks = 2, acc_sub_banks = 2,
         use_shared_ext_mem = true,
@@ -226,7 +228,7 @@ class DualGemminiConfig extends Config((site, here, up) => {
         ex_write_to_spad=false,
         hardcode_d_to_garbage_addr = true,
         headerFileName = "gemmini_params_bf16.h",
-	acc_latency = 3,
+        acc_latency = 3,
         dataflow = Dataflow.WS,
         mesh_output_delay = 3,
         clock_gate = true
