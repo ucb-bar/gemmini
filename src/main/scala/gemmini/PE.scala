@@ -17,7 +17,7 @@ class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
   * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
   * @param width Data width of operands
   */
-class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, latency: Int, max_simultaneous_matmuls: Int)
+class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, max_simultaneous_matmuls: Int)
                    (implicit ev: Arithmetic[T]) extends Module { // Debugging variables
   import ev._
 
@@ -46,17 +46,17 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
 
   val cType = if (df == Dataflow.WS) inputType else accType
 
-  val a  = ShiftRegister(io.in_a, latency)
-  val b  = ShiftRegister(io.in_b, latency)
-  val d  = ShiftRegister(io.in_d, latency)
+  val a  = io.in_a
+  val b  = io.in_b
+  val d  = io.in_d
   val c1 = Reg(cType)
   val c2 = Reg(cType)
-  val dataflow = ShiftRegister(io.in_control.dataflow, latency)
-  val prop  = ShiftRegister(io.in_control.propagate, latency)
-  val shift = ShiftRegister(io.in_control.shift, latency)
-  val id = ShiftRegister(io.in_id, latency)
-  val last = ShiftRegister(io.in_last, latency)
-  val valid = ShiftRegister(io.in_valid, latency) // TODO should we clockgate the rest of the ShiftRegisters based on the values in this ShiftRegisters
+  val dataflow = io.in_control.dataflow
+  val prop  = io.in_control.propagate
+  val shift = io.in_control.shift
+  val id = io.in_id
+  val last = io.in_last
+  val valid = io.in_valid
 
   io.out_a := a
   io.out_control.dataflow := dataflow

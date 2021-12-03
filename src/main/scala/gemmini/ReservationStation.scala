@@ -4,11 +4,16 @@ package gemmini
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.tile.RoCCCommand
+import freechips.rocketchip.util.PlusArg
 import GemminiISA._
 import Util._
 
+import midas.targetutils.PerfCounter
+import midas.targetutils.SynthesizePrintf
+
+
 // TODO unify this class with GemminiCmdWithDeps
-class ROBIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
+class ReservationStationIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
   val valid = Output(Bool())
   val ready = Input(Bool())
   val cmd = Output(cmd_t.cloneType)
@@ -16,11 +21,11 @@ class ROBIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
 
   def fire(dummy: Int=0) = valid && ready
 
-  override def cloneType: this.type = new ROBIssue(cmd_t, rob_entries).asInstanceOf[this.type]
+  override def cloneType: this.type = new ReservationStationIssue(cmd_t, rob_entries).asInstanceOf[this.type]
 }
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
-class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: RoCCCommand) extends Module {
+class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: RoCCCommand) extends Module {
   import config._
 
   val block_rows = tileRows * meshRows
@@ -32,9 +37,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val completed = Flipped(Valid(UInt(log2Up(rob_entries).W)))
 
     val issue = new Bundle {
-      val ld = new ROBIssue(cmd_t, rob_entries)
-      val st = new ROBIssue(cmd_t, rob_entries)
-      val ex = new ROBIssue(cmd_t, rob_entries)
+      val ld = new ReservationStationIssue(cmd_t, rob_entries)
+      val st = new ReservationStationIssue(cmd_t, rob_entries)
+      val ex = new ReservationStationIssue(cmd_t, rob_entries)
     }
 
     val ld_utilization = Output(UInt(log2Up(rob_entries+1).W))
@@ -44,6 +49,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     val busy = Output(Bool())
 
     val solitary_preload = Input(Bool()) // TODO very hacky. from ExecuteController, to prevent infinite fence stalls. remove later
+
+    val counter = new CounterEventIO()
   })
 
   // TODO make this a ChiselEnum
@@ -94,8 +101,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     // Debugging signals
     val allocated_at = UInt(instructions_allocated.getWidth.W)
   }
-  val full_entries = Reg(Vec(rob_full_entries, UDValid(new Entry)))
-  val partial_entries = Reg(Vec(rob_partial_entries, UDValid(new Entry)))
+  val full_entries = Reg(Vec(reservation_station_full_entries, UDValid(new Entry)))
+  val partial_entries = Reg(Vec(reservation_station_partial_entries, UDValid(new Entry)))
 
   val entries = full_entries ++ partial_entries
 
@@ -109,7 +116,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   io.busy := !empty && !(solitary_preload && io.solitary_preload)
 
   // Config values set by programmer
-  val a_stride = Reg(UInt(16.W)) // TODO magic numbers // TODO we also need to check the transpose to see how many rows we're reading
+  val a_stride = Reg(UInt(16.W)) // TODO magic numbers
+  val c_stride = Reg(UInt(16.W)) // TODO magic numbers
+  val a_transpose = Reg(Bool())
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
   val st_block_stride = block_rows.U
   val pooling_is_enabled = Reg(Bool())
@@ -117,9 +126,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
-  val new_full_allocs = Wire(Vec(rob_full_entries, Bool()))
+  val new_full_allocs = Wire(Vec(reservation_station_full_entries, Bool()))
   new_full_allocs.foreach(_ := false.B)
-  val new_partial_allocs = Wire(Vec(rob_partial_entries, Bool()))
+  val new_partial_allocs = Wire(Vec(reservation_station_partial_entries, Bool()))
   new_partial_allocs.foreach(_ := false.B)
   val new_entry_oh = new_full_allocs ++ new_partial_allocs
   val alloc_fire = io.alloc.fire()
@@ -184,11 +193,14 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     op1.valid := funct === PRELOAD_CMD || funct_is_compute
     op1.bits.start := cmd.rs1.asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
+      // TODO check b_transpose here iff WS mode is enabled
       val preload_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48)
       op1.bits.end := op1.bits.start + preload_rows
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
-      val compute_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48) * a_stride
+      val rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48)
+      val cols = cmd.rs1(32 + log2Up(block_cols + 1) - 1, 32)
+      val compute_rows = Mux(a_transpose, cols, rows) * a_stride
       op1.bits.end := op1.bits.start + compute_rows
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(compute_rows)._2
     }
@@ -201,7 +213,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       op2.bits.wraps_around := op2.bits.start.add_with_overflow(compute_rows)._2
     }.elsewhen (pooling_is_enabled) {
       // If pooling is enabled, then we assume that this command simply mvouts everything in this accumulator bank from
-      // start to the end of the bank
+      // start to the end of the bank // TODO this won't work when acc_banks =/= 2
       val acc_bank = op2.bits.start.acc_bank()
 
       val next_bank_addr = WireInit(0.U.asTypeOf(local_addr_t))
@@ -224,9 +236,9 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     }
 
     dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
+    dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
-      val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
-      dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
+      val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48) * c_stride
       dst.bits.end := dst.bits.start + preload_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
@@ -242,13 +254,16 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       val total_mvin_rows = ((mvin_mats - 1.U) * block_stride) + mvin_rows
 
       // TODO We have to know how the LoopConv's internals work here. Our abstractions are leaking
-      val start = cmd.rs2(31, 0).asTypeOf(local_addr_t)
-      dst.bits.start := Mux(start.is_acc_addr, start,
-        Mux(start.full_sp_addr() > (local_addr_t.maxRows / 2).U,
-          start.floorSub(pixel_repeats, (local_addr_t.maxRows / 2).U)._1,
-          start.floorSub(pixel_repeats, 0.U)._1,
+      if (has_first_layer_optimizations) {
+        val start = cmd.rs2(31, 0).asTypeOf(local_addr_t)
+        // TODO instead of using a floor-sub that's hardcoded to the Scratchpad bank boundaries, we should find some way of letting the programmer specify the start address
+        dst.bits.start := Mux(start.is_acc_addr, start,
+          Mux(start.full_sp_addr() > (local_addr_t.maxRows / 2).U,
+            start.floorSub(pixel_repeats, (local_addr_t.maxRows / 2).U)._1,
+            start.floorSub(pixel_repeats, 0.U)._1,
+          )
         )
-      )
+      }
 
       dst.bits.end := dst.bits.start + total_mvin_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(total_mvin_rows)._2
@@ -316,6 +331,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     })
 
     val is_ex_config_and_must_wait_for_prior_st = VecInit(entries.map { e =>
+      // TODO when acc reads no longer rely upon config-ex's relu6, this dependency can be broken
       e.valid && new_entry.q === exq && new_entry.is_config && e.bits.q === stq && !e.bits.is_config
     })
 
@@ -334,8 +350,8 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
     val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
-    val full_alloc_id = MuxCase((rob_full_entries-1).U, full_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
-    val partial_alloc_id = MuxCase((rob_partial_entries-1).U, partial_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+    val full_alloc_id = MuxCase((reservation_station_full_entries-1).U, full_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+    val partial_alloc_id = MuxCase((reservation_station_partial_entries-1).U, partial_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
 
     when (!is_full && !partial_entries(partial_alloc_id).valid) {
       io.alloc.ready := true.B
@@ -354,6 +370,11 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     when (io.alloc.fire()) {
       when (new_entry.is_config && new_entry.q === exq && !is_im2col) {
         a_stride := new_entry.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
+        c_stride := new_entry.cmd.rs2(63, 48) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
+        val set_only_strides = new_entry.cmd.rs1(7) // TODO magic numbers
+        when (!set_only_strides) {
+          a_transpose := new_entry.cmd.rs1(8) // TODO magic numbers
+        }
       }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
         val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
         val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers
@@ -445,13 +466,13 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   }.elsewhen(io.busy) {
     cycles_since_issue := cycles_since_issue + 1.U
   }
-  assert(cycles_since_issue < 10000.U, "pipeline stall")
+  assert(cycles_since_issue < PlusArg("gemmini_timeout", 10000), "pipeline stall")
 
   for (e <- entries) {
     dontTouch(e.bits.allocated_at)
   }
 
-  val cntr = Counter(10000000)
+  val cntr = Counter(2000000)
   when (cntr.inc()) {
     printf(p"Utilization: $utilization\n")
     printf(p"Utilization ld q (incomplete): $utilization_ld_q_unissued\n")
@@ -460,10 +481,33 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     printf(p"Utilization ld q: $utilization_ld_q\n")
     printf(p"Utilization st q: $utilization_st_q\n")
     printf(p"Utilization ex q: $utilization_ex_q\n")
+
+    if (use_firesim_simulation_counters) {
+      printf(SynthesizePrintf("Utilization: %d\n", utilization))
+      printf(SynthesizePrintf("Utilization ld q (incomplete): %d\n", utilization_ld_q_unissued))
+      printf(SynthesizePrintf("Utilization st q (incomplete): %d\n", utilization_st_q_unissued))
+      printf(SynthesizePrintf("Utilization ex q (incomplete): %d\n", utilization_ex_q_unissued))
+      printf(SynthesizePrintf("Utilization ld q: %d\n", utilization_ld_q))
+      printf(SynthesizePrintf("Utilization st q: %d\n", utilization_st_q))
+      printf(SynthesizePrintf("Utilization ex q: %d\n", utilization_ex_q))
+    }
+
     printf(p"Packed deps: $packed_deps\n")
+  }
+
+  if (use_firesim_simulation_counters) {
+    PerfCounter(io.busy, "reservation_station_busy", "cycles where reservation station has entries")
+    PerfCounter(!io.alloc.ready, "reservation_station_full", "cycles where reservation station is full")
   }
 
   when (reset.asBool()) {
     entries.foreach(_.valid := false.B)
   }
+
+  CounterEventIO.init(io.counter)
+  io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_LD_COUNT, utilization_ld_q)
+  io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_ST_COUNT, utilization_st_q)
+  io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_EX_COUNT, utilization_ex_q)
+  io.counter.connectEventSignal(CounterEvent.RESERVATION_STATION_ACTIVE_CYCLES, io.busy)
+  io.counter.connectEventSignal(CounterEvent.RESERVATION_STATION_FULL_CYCLES, !io.alloc.ready)
 }

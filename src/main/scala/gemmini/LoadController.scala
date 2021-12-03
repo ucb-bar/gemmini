@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -5,10 +6,12 @@ import chisel3.util._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
+import midas.targetutils.PerfCounter
 
 // TODO we need to check for WAW errors here
 // TODO deal with errors when reading scratchpad responses
-class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
+class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int,
+                                                      local_addr_t: LocalAddr)
                                (implicit p: Parameters) extends Module {
   import config._
 
@@ -20,6 +23,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     val completed = Decoupled(UInt(log2Up(rob_entries).W))
 
     val busy = Output(Bool())
+
+    val counter = new CounterEventIO()
   })
 
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -35,21 +40,27 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
 
   val cmd = Queue(io.cmd, ld_queue_length)
+
   val vaddr = cmd.bits.cmd.rs1
-  val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
-  val cols = cmd.bits.cmd.rs2(32 + mvin_cols_bits - 1, 32) // TODO magic numbers
-  val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits - 1, 48) // TODO magic numbers
+  val mvin_rs2 = cmd.bits.cmd.rs2.asTypeOf(new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t))
+  val localaddr = mvin_rs2.local_addr
+  val cols = mvin_rs2.num_cols
+  val rows = mvin_rs2.num_rows
+
   val config_stride = cmd.bits.cmd.rs2
-  val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
-  val config_shrink = cmd.bits.cmd.rs1(2) // TODO magic numbers
-  val config_block_stride = cmd.bits.cmd.rs1(31, 16) // TODO magic numbers
-  val config_pixel_repeats = cmd.bits.cmd.rs1(15, 8) // TODO magic numbers
+
+  val config_mvin_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigMvinRs1(mvin_scale_t_bits, block_stride_bits, pixel_repeats_bits))
+
+  val config_scale = config_mvin_rs1.scale
+  val config_shrink = config_mvin_rs1.shrink
+  val config_block_stride = config_mvin_rs1.stride
+  val config_pixel_repeats = config_mvin_rs1.pixel_repeats
 
   val mstatus = cmd.bits.cmd.status
 
   val load_state_id = MuxCase(0.U, Seq((cmd.bits.cmd.inst.funct === LOAD2_CMD) -> 1.U,
     (cmd.bits.cmd.inst.funct === LOAD3_CMD) -> 2.U))
-  val config_state_id = cmd.bits.cmd.rs1(4,3) // TODO magic numbers
+  val config_state_id = config_mvin_rs1.state_id
   val state_id = Mux(cmd.bits.cmd.inst.funct === CONFIG_CMD, config_state_id, load_state_id)
 
   val stride = strides(state_id)
@@ -62,7 +73,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
   val localaddr_plus_row_counter = localaddr + row_counter
 
-  val actual_rows_read = Mux(stride === 0.U, 1.U, rows)
+  val actual_rows_read = Mux(stride === 0.U && !all_zeros, 1.U, rows)
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoLoad = !DoConfig // TODO change this if more commands are added
@@ -70,7 +81,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   cmd.ready := false.B
 
   // Command tracker instantiation
-  val nCmds = (max_in_flight_reqs / block_rows) + 1
+  val nCmds = (max_in_flight_mem_reqs / block_rows) + 1
 
   val deps_t = new Bundle {
     val rob_id = UInt(log2Up(rob_entries).W)
@@ -129,7 +140,6 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   switch (control_state) {
     is (waiting_for_command) {
       when (cmd.valid) {
-        // when(DoConfig && !cmd_tracker.io.cmd_completed.valid) {
         when(DoConfig) {
           stride := config_stride
           scale := config_scale
@@ -160,4 +170,17 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
       }
     }
   }
+
+  // Performance counter
+  CounterEventIO.init(io.counter)
+  io.counter.connectEventSignal(CounterEvent.LOAD_ACTIVE_CYCLE, control_state === sending_rows)
+  io.counter.connectEventSignal(CounterEvent.LOAD_DMA_WAIT_CYCLE, control_state === waiting_for_dma_req_ready)
+  io.counter.connectEventSignal(CounterEvent.LOAD_SCRATCHPAD_WAIT_CYCLE, io.dma.req.valid && !io.dma.req.ready)
+
+  if (use_firesim_simulation_counters) {
+    PerfCounter(io.dma.req.valid && !io.dma.req.ready, "load_dma_wait_cycle", "cycles during which load controller is waiting for DMA to be available")
+  }
+
+  // Assertions
+  assert(!(cmd_tracker.io.alloc.fire() && cmd_tracker.io.alloc.bits.bytes_to_read === 0.U), "A single mvin instruction must load more than 0 bytes")
 }

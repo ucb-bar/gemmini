@@ -6,6 +6,7 @@ import chisel3.util._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
+import midas.targetutils.PerfCounter
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
@@ -28,7 +29,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val acc = new Bundle {
       val read_req = Vec(acc_banks, Decoupled(new AccumulatorReadReq(
-          acc_bank_entries, log2Up(accType.getWidth), acc_scale_args.multiplicand_t
+          acc_bank_entries, log2Up(accType.getWidth), acc_scale_t
       )))
 
       val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
@@ -43,6 +44,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val completed = Valid(UInt(log2Up(rob_entries).W))
     val busy = Output(Bool())
     val solitary_preload = Output(Bool()) // TODO very hacky. for ROB, to prevent infinite fence stalls. remove later
+
+    val counter = new CounterEventIO()
   })
 
   val block_size = meshRows*tileRows
@@ -59,7 +62,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
   }
 
-  val unrolled_cmd = TransposePreloadUnroller(io.cmd, config)
+  val unrolled_cmd = TransposePreloadUnroller(io.cmd, config, io.counter)
 
   val cmd_q_heads = 3
   assert(ex_queue_length >= cmd_q_heads)
@@ -114,9 +117,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val im2col_turn = WireInit(0.U(9.W))
 
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
-  val acc_scale = Reg(acc_scale_args.multiplicand_t)
+  val acc_scale = Reg(acc_scale_t)
   val relu6_shift = Reg(UInt(log2Up(accType.getWidth).W))
-  val activation = Reg(UInt(2.W))
+  val activation = if (has_nonlinear_activations) Reg(UInt(2.W)) else Activation.NONE // TODO magic number
   val a_transpose = Reg(Bool())
   val bd_transpose = Reg(Bool())
   val config_initialized = RegInit(false.B)
@@ -134,16 +137,19 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     "Too many inputs are being fed into the single transposer we have")
 
   //fix by input
-  val im2col_en = WireInit(false.B)
-
-  //val row_turn_counter = RegInit(row_turn)
-  im2col_en := Mux(weight_stride === 0.U, false.B, true.B)
+  val im2col_en = config.hasIm2Col.B && weight_stride =/= 0.U
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = rs1s(a_address_place).asTypeOf(local_addr_t)
   val b_address_rs2 = rs2s(b_address_place).asTypeOf(local_addr_t)
   val d_address_rs1 = rs1s(preload_cmd_place).asTypeOf(local_addr_t)
   val c_address_rs2 = rs2s(preload_cmd_place).asTypeOf(local_addr_t)
+
+  if (dataflow == Dataflow.OS && hardcode_d_to_garbage_addr) {
+    d_address_rs1.make_this_garbage()
+  } else if (dataflow == Dataflow.WS && hardcode_d_to_garbage_addr) {
+    b_address_rs2.make_this_garbage()
+  }
 
   val multiply_garbage = a_address_rs1.is_garbage()
   val accumulate_zeros = b_address_rs2.is_garbage()
@@ -173,7 +179,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val pending_completed_rob_ids = Reg(Vec(2, UDValid(UInt(log2Up(rob_entries).W))))
 
   // Instantiate a queue which queues up signals which must be fed into the mesh
-  val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, mem_pipeline+1,
+  val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, spad_read_delay+1,
     pipe=true))
 
   val cntl_ready = mesh_cntl_signals_q.io.enq.ready
@@ -181,7 +187,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val cntl = mesh_cntl_signals_q.io.deq.bits
 
   // Instantiate the actual mesh
-  val mesh = Module(new MeshWithDelays(inputType, outputType, accType, mesh_tag, dataflow, pe_latency,
+  val mesh = Module(new MeshWithDelays(inputType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
 
   mesh.io.a.valid := false.B
@@ -205,12 +211,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh.io.req.bits.flush := Mux(control_state === flush && !cntl_valid, 1.U, 0.U) // We want to make sure that the mesh has absorbed all inputs before flushing
 
   // Hazards
+  val raw_hazards_are_impossible = !ex_read_from_acc && !ex_write_to_spad // Special case where RAW hazards are impossible
+
   val raw_hazard_pre = mesh.io.tags_in_progress.map { t =>
     val is_garbage = t.addr.is_garbage()
     val pre_raw_haz = t.addr.is_same_address(rs1s(0))
     val mul_raw_haz = t.addr.is_same_address(rs1s(1)) || t.addr.is_same_address(rs2s(1))
 
-    !is_garbage && (pre_raw_haz || mul_raw_haz)
+    !is_garbage && (pre_raw_haz || mul_raw_haz) && !raw_hazards_are_impossible.B
   }.reduce(_ || _)
 
   val raw_hazard_mulpre = mesh.io.tags_in_progress.map { t =>
@@ -218,10 +226,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val pre_raw_haz = t.addr.is_same_address(rs1s(1))
     val mul_raw_haz = t.addr.is_same_address(rs1s(2)) || t.addr.is_same_address(rs2s(2))
 
-    !is_garbage && (mul_raw_haz || pre_raw_haz)
+    !is_garbage && (mul_raw_haz || pre_raw_haz) && !raw_hazards_are_impossible.B
   }.reduce(_ || _)
 
-  val raw_hazards_are_impossible = !ex_read_from_acc && !ex_write_to_spad // Special case where RAW hazards are impossible
+  val third_instruction_needed = a_address_place > 1.U || b_address_place > 1.U || preload_cmd_place > 1.U || !raw_hazards_are_impossible.B
 
   val matmul_in_progress = mesh.io.tags_in_progress.map(_.rob_id.valid).reduce(_ || _)
 
@@ -239,7 +247,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // "A" stride variables
   val a_addr_offset = Reg(UInt((16 + log2Up(block_size)).W))
-  val a_addr_stride = Reg(UInt(16.W))
+  val a_addr_stride = Reg(UInt(16.W)) // TODO magic numbers
+
+  // "C" stride variables
+  val c_addr_stride = Reg(UInt(16.W)) // TODO magic numbers
 
   val a_address = a_address_rs1 + a_addr_offset
   val b_address = b_address_rs2 + b_fire_counter
@@ -477,10 +488,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       }
     } else {
       io.acc.read_req(i).valid := false.B
-      io.acc.read_req(i).bits.scale := acc_scale
+      io.acc.read_req(i).bits.scale := DontCare
       io.acc.read_req(i).bits.full := false.B
       io.acc.read_req(i).bits.relu6_shift := relu6_shift
-      io.acc.read_req(i).bits.act := activation
+      io.acc.read_req(i).bits.act := DontCare
       io.acc.read_req(i).bits.fromDMA := false.B
       io.acc.read_req(i).bits.addr := DontCare
     }
@@ -528,21 +539,31 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       when(cmd.valid(0))
       {
         when(DoConfig && !matmul_in_progress && !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) {
+          val config_ex_rs1 = rs1s(0).asTypeOf(new ConfigExRs1(acc_scale_t_bits))
+          val config_ex_rs2 = rs2s(0).asTypeOf(new ConfigExRs2)
+
           val config_cmd_type = rs1s(0)(1,0) // TODO magic numbers
 
           when (config_cmd_type === CONFIG_EX) {
-            activation := rs1s(0)(4, 3) // TODO magic number
-            in_shift := rs2s(0)(31, 0) // TODO magic number
-            acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_args.multiplicand_t) // TODO magic number
-            relu6_shift := rs2s(0)(xLen - 1, 32) // TODO magic number
-            a_addr_stride := rs1s(0)(31, 16) // TODO magic number // TODO this needs to be kept in sync with ROB.scala
-            a_transpose := rs1s(0)(8)
-            bd_transpose := rs1s(0)(9)
+            val set_only_strides = config_ex_rs1.set_only_strides
 
-            if (dataflow == Dataflow.BOTH) {
-              current_dataflow := rs1s(0)(2)
+            when (!set_only_strides) {
+              if (has_nonlinear_activations) {
+                activation := config_ex_rs1.activation
+              }
+              in_shift := config_ex_rs2.in_shift
+              acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_t) // TODO magic number
+              relu6_shift := config_ex_rs2.relu6_shift
+              a_transpose := config_ex_rs1.a_transpose
+              bd_transpose := config_ex_rs1.b_transpose
+
+              if (dataflow == Dataflow.BOTH) {
+                current_dataflow := config_ex_rs1.dataflow
+              }
             }
 
+            a_addr_stride := config_ex_rs1.a_stride // TODO this needs to be kept in sync with ROB.scala
+            c_addr_stride := config_ex_rs2.c_stride // TODO this needs to be kept in sync with ROB.scala
             config_initialized := true.B
           }.otherwise { // config_cmd_type === CONFIG_IM2COL
             ocol := cmd.bits(0).cmd.rs2(63, 56)
@@ -560,6 +581,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
           cmd.pop := 1.U
         }
+
         // Preload
         .elsewhen(DoPreloads(0) && cmd.valid(1) && (raw_hazards_are_impossible.B || !raw_hazard_pre)) {
           perform_single_preload := true.B
@@ -576,7 +598,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
         }
 
         // Overlap compute and preload
-        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && (raw_hazards_are_impossible.B || (cmd.valid(2) && !raw_hazard_mulpre))) {
+        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && (!third_instruction_needed || (cmd.valid(2) && !raw_hazard_mulpre)))
+        {
           perform_mul_pre := true.B
           performing_mul_pre := true.B
 
@@ -868,12 +891,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   when (cntl_valid && cntl.perform_single_preload) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, dataA.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
   }
 
   when (cntl_valid && cntl.perform_single_mul) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
+    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.req.bits.tag.addr.make_this_garbage()
   }
 
@@ -883,8 +906,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val w_total_output_rows = mesh.io.resp.bits.total_rows
 
-  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, mesh.io.resp.bits.tag.addr + output_counter,
-    mesh.io.resp.bits.tag.addr + (w_total_output_rows - 1.U - output_counter))
+  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, mesh.io.resp.bits.tag.addr + output_counter * c_addr_stride,
+    mesh.io.resp.bits.tag.addr + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
   val write_to_acc = w_address.is_acc_addr
 
   val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address.sp_bank())
@@ -974,8 +997,45 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
   dontTouch(complete_bits_count)
 
-  when (reset.toBool()) {
+  when (reset.asBool()) {
     // pending_completed_rob_id.valid := false.B
     pending_completed_rob_ids.foreach(_.valid := false.B)
+  }
+
+  // Performance counter
+  CounterEventIO.init(io.counter)
+  io.counter.connectEventSignal(CounterEvent.EXE_ACTIVE_CYCLE, control_state === compute)
+  io.counter.connectEventSignal(CounterEvent.EXE_FLUSH_CYCLE, 
+    control_state === flushing || control_state === flush)
+  io.counter.connectEventSignal(CounterEvent.EXE_CONTROL_Q_BLOCK_CYCLE, 
+    !mesh_cntl_signals_q.io.enq.ready && mesh_cntl_signals_q.io.enq.valid)
+  io.counter.connectEventSignal(CounterEvent.EXE_PRELOAD_HAZ_CYCLE, 
+    cmd.valid(0) && DoPreloads(0) && cmd.valid(1) && raw_hazard_pre)
+  io.counter.connectEventSignal(CounterEvent.EXE_OVERLAP_HAZ_CYCLE, 
+    cmd.valid(0) && DoPreloads(1) && cmd.valid(1) && DoComputes(0) && cmd.valid(2) && raw_hazard_mulpre)
+  io.counter.connectEventSignal(CounterEvent.A_GARBAGE_CYCLES, cntl.a_garbage)
+  io.counter.connectEventSignal(CounterEvent.B_GARBAGE_CYCLES, cntl.b_garbage)
+  io.counter.connectEventSignal(CounterEvent.D_GARBAGE_CYCLES, cntl.d_garbage)
+  io.counter.connectEventSignal(CounterEvent.ACC_A_WAIT_CYCLE, 
+    !(!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) && cntl.a_read_from_acc && !cntl.im2colling)
+  io.counter.connectEventSignal(CounterEvent.ACC_B_WAIT_CYCLE, 
+    !(!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) && cntl.b_read_from_acc)
+  io.counter.connectEventSignal(CounterEvent.ACC_D_WAIT_CYCLE, 
+    !(!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready) && cntl.d_read_from_acc)
+  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_A_WAIT_CYCLE, 
+    !(!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) && !cntl.a_read_from_acc && !cntl.im2colling)
+  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_B_WAIT_CYCLE, 
+    !(!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) && !cntl.b_read_from_acc)
+  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_D_WAIT_CYCLE, 
+    !(!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready) && !cntl.d_read_from_acc)
+
+  if (use_firesim_simulation_counters) {
+    val ex_flush_cycle = control_state === flushing || control_state === flush
+    val ex_preload_haz_cycle = cmd.valid(0) && DoPreloads(0) && cmd.valid(1) && raw_hazard_pre
+    val ex_mulpre_haz_cycle = cmd.valid(0) && DoPreloads(1) && cmd.valid(1) && DoComputes(0) && cmd.valid(2) && raw_hazard_mulpre
+
+    PerfCounter(ex_flush_cycle, "ex_flush_cycle", "cycles during which the ex controller is flushing the spatial array")
+    PerfCounter(ex_preload_haz_cycle, "ex_preload_haz_cycle", "cycles during which the execute controller is stalling preloads due to hazards")
+    PerfCounter(ex_mulpre_haz_cycle, "ex_mulpre_haz_cycle", "cycles during which the execute controller is stalling matmuls due to hazards")
   }
 }

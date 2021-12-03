@@ -7,6 +7,14 @@ import chisel3._
 import chisel3.util._
 import hardfloat._
 
+// Bundles that represent the raw bits of custom datatypes
+case class Float(expWidth: Int, sigWidth: Int) extends Bundle {
+  val bits = UInt((expWidth + sigWidth).W)
+
+  val bias: Int = (1 << (expWidth-1)) - 1
+}
+
+// The Arithmetic typeclass which implements various arithmetic operations on custom datatypes
 abstract class Arithmetic[T <: Data] {
   implicit def cast(t: T): ArithmeticOps[T]
 }
@@ -248,30 +256,6 @@ object Arithmetic {
         val result = Wire(Float(self.expWidth, self.sigWidth))
         result.bits := fNFromRecFN(self.expWidth, self.sigWidth, muladder.io.out)
         result
-
-        /*
-        val raw = rawFloatFromFN(self.expWidth, self.sigWidth, self.bits)
-
-        val shifted_raw = WireInit(raw)
-
-        when (!raw.isZero) {
-          shifted_raw.sExp := raw.sExp - u.asSInt()
-        }
-
-        val raw_to_rec_fn_converter = Module(new RoundRawFNToRecFN(self.expWidth, self.sigWidth, options = 0)) // TODO add correct options here so that efficiency may be improved
-
-        raw_to_rec_fn_converter.io.invalidExc := false.B
-        raw_to_rec_fn_converter.io.infiniteExc := false.B
-
-        raw_to_rec_fn_converter.io.in := shifted_raw
-
-        raw_to_rec_fn_converter.io.roundingMode := consts.round_near_maxMag
-        raw_to_rec_fn_converter.io.detectTininess := consts.tininess_afterRounding
-
-        val result = Wire(Float(self.expWidth, self.sigWidth))
-        result.bits := fNFromRecFN(self.expWidth, self.sigWidth, raw_to_rec_fn_converter.io.out)
-        result
-        */
       }
 
       override def >(t: Float): Bool = {
@@ -357,25 +341,6 @@ object Arithmetic {
 
         val shifted_rec = muladder.io.out
 
-        /*
-        val six_raw = rawFloatFromIN(signedIn = false.B, in = 6.U(3.W))
-
-        val shifted_raw = WireInit(six_raw)
-
-        when (!six_raw.isZero) {
-          shifted_raw.sExp := six_raw.sExp + shift.asSInt()
-        }
-
-        val raw_to_rec_fn_converter = Module(new RoundRawFNToRecFN(self.expWidth, self.sigWidth, options = 0)) // TODO add correct options here so that efficiency may be improved
-        raw_to_rec_fn_converter.io.in := shifted_raw
-        raw_to_rec_fn_converter.io.roundingMode := consts.round_near_maxMag
-        raw_to_rec_fn_converter.io.detectTininess := consts.tininess_afterRounding
-        raw_to_rec_fn_converter.io.invalidExc := false.B
-        raw_to_rec_fn_converter.io.infiniteExc := false.B
-
-        val shifted_rec = raw_to_rec_fn_converter.io.out
-        */
-
         // Now, compare self and 6*(2^shift) to calculate the activation function
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
         val self_raw = rawFloatFromFN(self.expWidth, self.sigWidth, self.bits)
@@ -399,10 +364,4 @@ object Arithmetic {
       override def identity: Float = Cat(0.U(2.W), ~(0.U((self.expWidth-1).W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
     }
   }
-}
-
-case class Float(expWidth: Int, sigWidth: Int) extends Bundle {
-  val bits = UInt((expWidth + sigWidth).W)
-
-  val bias: Int = (1 << (expWidth-1)) - 1
 }

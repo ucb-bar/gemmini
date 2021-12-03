@@ -5,6 +5,7 @@ import chisel3.util._
 import chisel3.experimental.ChiselEnum
 import chipsalliance.rocketchip.config.Parameters
 import Util._
+import midas.targetutils.PerfCounter
 
 class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V])
                                                                  (implicit p: Parameters) extends Module {
@@ -14,6 +15,7 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new GemminiCmd(rob_entries)))
     val out = Decoupled(new GemminiCmd(rob_entries))
+    val counter = new CounterEventIO()
   })
 
   object State extends ChiselEnum {
@@ -67,19 +69,26 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
 
   when (io.out.fire()) {
     when (is_config) {
-      b_transposed_and_ws := ((dataflow == Dataflow.WS).B || cmds(0).cmd.rs1(2) === Dataflow.WS.id.U) && cmds(0).cmd.rs1(9)
+      val set_only_strides = cmds(0).cmd.rs1(7)
+      when (!set_only_strides) {
+        b_transposed_and_ws := ((dataflow == Dataflow.WS).B || cmds(0).cmd.rs1(2) === Dataflow.WS.id.U) && cmds(0).cmd.rs1(9)
+      }
     }.elsewhen (first_preload && unroll_preload) {
       state := first_compute
     }.elsewhen (state >= first_compute) {
       state := state.next
     }
   }
+
+  CounterEventIO.init(io.counter)
+  io.counter.connectEventSignal(CounterEvent.TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES, state =/= idle)
 }
 
 object TransposePreloadUnroller {
-  def apply[T <: Data, U <: Data, V <: Data](in: ReadyValidIO[GemminiCmd], config: GemminiArrayConfig[T, U, V])(implicit p: Parameters): DecoupledIO[GemminiCmd] = {
+  def apply[T <: Data, U <: Data, V <: Data](in: ReadyValidIO[GemminiCmd], config: GemminiArrayConfig[T, U, V], counter: CounterEventIO)(implicit p: Parameters): DecoupledIO[GemminiCmd] = {
     val mod = Module(new TransposePreloadUnroller(config))
     mod.io.in <> in
+    counter.collect(mod.io.counter)
     mod.io.out
   }
 }

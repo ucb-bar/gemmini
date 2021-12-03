@@ -15,7 +15,8 @@ import chisel3.experimental._
   * @param meshColumns
   */
 class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
-                                   df: Dataflow.Value, pe_latency: Int, max_simultaneous_matmuls: Int,
+                                   df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int,
+                                   max_simultaneous_matmuls: Int, output_delay: Int,
                                    val tileRows: Int, val tileColumns: Int,
                                    val meshRows: Int, val meshColumns: Int) extends Module {
   val io = IO(new Bundle {
@@ -33,43 +34,54 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
     val out_id = Output(Vec(meshColumns, Vec(tileColumns, UInt(log2Up(max_simultaneous_matmuls).W))))
     val out_last = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
   })
+
   // mesh(r)(c) => Tile at row r, column c
-  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, pe_latency, max_simultaneous_matmuls, tileRows, tileColumns)))
+  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns)))
   val meshT = mesh.transpose
+
+  def pipe[T <: Data](valid: Bool, t: T, latency: Int): T = {
+    // The default "Pipe" function apparently resets the valid signals to false.B. We would like to avoid using global
+    // signals in the Mesh, so over here, we make it clear that the reset signal will never be asserted
+    chisel3.withReset(false.B) { Pipe(valid, t, latency).bits }
+  }
+
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
   for (r <- 0 until meshRows) {
     mesh(r).foldLeft(io.in_a(r)) {
       case (in_a, tile) =>
-        tile.io.in_a := RegNext(in_a)
+        tile.io.in_a := ShiftRegister(in_a, tile_latency+1)
         tile.io.out_a
     }
   }
+
   // Chain tile_out_b -> tile_b_in (pipeline b across each column)
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_b(c), io.in_valid(c))) {
       case ((in_b, valid), tile) =>
-        tile.io.in_b := RegEnable(in_b, valid.head)
+        tile.io.in_b := pipe(valid.head, in_b, tile_latency+1)
         (tile.io.out_b, tile.io.out_valid)
     }
   }
+
   // Chain tile_out -> tile_propag (pipeline output across each column)
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_d(c), io.in_valid(c))) {
       case ((in_propag, valid), tile) =>
-        tile.io.in_d := RegEnable(in_propag, valid.head)
+        tile.io.in_d := pipe(valid.head, in_propag, tile_latency+1)
         (tile.io.out_c, tile.io.out_valid)
     }
   }
+
   // Chain control signals (pipeline across each column)
   assert(!(mesh.map(_.map(_.io.bad_dataflow).reduce(_||_)).reduce(_||_)))
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_control(c), io.in_valid(c))) {
       case ((in_ctrl, valid), tile) =>
         (tile.io.in_control, in_ctrl, valid).zipped.foreach { case (tile_ctrl, ctrl, v) =>
-          tile_ctrl.shift := RegEnable(ctrl.shift, v)
-          tile_ctrl.dataflow := RegEnable(ctrl.dataflow, v)
-          tile_ctrl.propagate := RegEnable(ctrl.propagate, v)
+          tile_ctrl.shift := pipe(v, ctrl.shift, tile_latency+1)
+          tile_ctrl.dataflow := pipe(v, ctrl.dataflow, tile_latency+1)
+          tile_ctrl.propagate := pipe(v, ctrl.propagate, tile_latency+1)
         }
         (tile.io.out_control, tile.io.out_valid)
     }
@@ -79,7 +91,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_valid(c)) {
       case (in_v, tile) =>
-        tile.io.in_valid := RegNext(in_v)
+        tile.io.in_valid := ShiftRegister(in_v, tile_latency+1)
         tile.io.out_valid
     }
   }
@@ -88,7 +100,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_id(c)) {
       case (in_id, tile) =>
-        tile.io.in_id := RegNext(in_id)
+        tile.io.in_id := ShiftRegister(in_id, tile_latency+1)
         tile.io.out_id
     }
   }
@@ -97,7 +109,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_last(c)) {
       case (in_last, tile) =>
-        tile.io.in_last := RegNext(in_last)
+        tile.io.in_last := ShiftRegister(in_last, tile_latency+1)
         tile.io.out_last
     }
   }
@@ -107,11 +119,11 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (((((((b, c), v), ctrl), id), last), tile) <- io.out_b zip io.out_c zip io.out_valid zip io.out_control zip io.out_id zip io.out_last zip mesh.last) {
     // TODO we pipelined this to make physical design easier. Consider removing these if possible
     // TODO shouldn't we clock-gate these signals with "garbage" as well?
-    b := RegNext(tile.io.out_b)
-    c := RegNext(tile.io.out_c)
-    v := RegNext(tile.io.out_valid)
-    ctrl := RegNext(tile.io.out_control)
-    id := RegNext(tile.io.out_id)
-    last := RegNext(tile.io.out_last)
+    b := ShiftRegister(tile.io.out_b, output_delay)
+    c := ShiftRegister(tile.io.out_c, output_delay)
+    v := ShiftRegister(tile.io.out_valid, output_delay)
+    ctrl := ShiftRegister(tile.io.out_control, output_delay)
+    id := ShiftRegister(tile.io.out_id, output_delay)
+    last := ShiftRegister(tile.io.out_last, output_delay)
   }
 }

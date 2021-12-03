@@ -6,12 +6,11 @@ import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
-import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar}
+import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar, TLBuffer}
 
 import Util._
 
-class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
-                              (implicit p: Parameters) extends CoreBundle {
+class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val laddr = local_addr_t.cloneType
 
@@ -28,10 +27,13 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   override def cloneType: this.type = new ScratchpadMemReadRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
-class ScratchpadMemWriteRequest(local_addr_t: LocalAddr)
+class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, scale_t_bits: Int)
                               (implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val laddr = local_addr_t.cloneType
+
+  val acc_act = UInt(2.W) // TODO don't use a magic number for the width here
+  val acc_scale = UInt(scale_t_bits.W)
 
   val len = UInt(16.W) // TODO don't use a magic number for the width here
   val block = UInt(8.W) // TODO don't use a magic number for the width here
@@ -43,7 +45,7 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr)
   val pool_en = Bool()
   val store_en = Bool()
 
-  override def cloneType: this.type = new ScratchpadMemWriteRequest(local_addr_t).asInstanceOf[this.type]
+  override def cloneType: this.type = new ScratchpadMemWriteRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadMemWriteResponse extends Bundle {
@@ -55,21 +57,19 @@ class ScratchpadMemReadResponse extends Bundle {
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
 }
 
-class ScratchpadReadMemIO[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
-                         (implicit p: Parameters) extends CoreBundle {
+class ScratchpadReadMemIO[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val req = Decoupled(new ScratchpadMemReadRequest(local_addr_t, scale_t_bits))
   val resp = Flipped(Valid(new ScratchpadMemReadResponse))
 
   override def cloneType: this.type = new ScratchpadReadMemIO(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
-// class ScratchpadWriteMemIO(val nBanks: Int, val nRows: Int, val acc_rows: Int)
-class ScratchpadWriteMemIO(local_addr_t: LocalAddr)
+class ScratchpadWriteMemIO(local_addr_t: LocalAddr, scale_t_bits: Int)
                          (implicit p: Parameters) extends CoreBundle {
-  val req = Decoupled(new ScratchpadMemWriteRequest(local_addr_t))
+  val req = Decoupled(new ScratchpadMemWriteRequest(local_addr_t, scale_t_bits))
   val resp = Flipped(Valid(new ScratchpadMemWriteResponse))
 
-  override def cloneType: this.type = new ScratchpadWriteMemIO(local_addr_t).asInstanceOf[this.type]
+  override def cloneType: this.type = new ScratchpadWriteMemIO(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadReadReq(val n: Int) extends Bundle {
@@ -94,7 +94,7 @@ class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundl
   val data = Output(UInt(w.W))
 }
 
-class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean) extends Module {
+class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean) extends Module {
   // This is essentially a pipelined SRAM with the ability to stall pipeline stages
 
   require(w % aligned_to == 0 || w < aligned_to)
@@ -104,27 +104,50 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean) ex
   val io = IO(new Bundle {
     val read = Flipped(new ScratchpadReadIO(n, w))
     val write = Flipped(new ScratchpadWriteIO(n, w, mask_len))
+    val ext_mem = if (use_shared_ext_mem) Some(new ExtMemIO) else None
   })
 
-  val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
+  val (read, write) = if (use_shared_ext_mem) {
+    def read(addr: UInt, ren: Bool): Data = {
+      io.ext_mem.get.read_en := ren
+      io.ext_mem.get.read_addr := addr
+      io.ext_mem.get.read_data
+    }
+    io.ext_mem.get.write_en := false.B
+    io.ext_mem.get.write_addr := DontCare
+    io.ext_mem.get.write_data := DontCare
+    io.ext_mem.get.write_mask := DontCare
+    def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = {
+      io.ext_mem.get.write_en := true.B
+      io.ext_mem.get.write_addr := addr
+      io.ext_mem.get.write_data := wdata.asUInt
+      io.ext_mem.get.write_mask := wmask.asUInt
+    }
+    (read _, write _)
+  } else {
+    val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
+    def read(addr: UInt, ren: Bool): Data = mem.read(addr, ren)
+    def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = mem.write(addr, wdata, wmask)
+    (read _, write _)
+  }
 
   // When the scratchpad is single-ported, the writes take precedence
   val singleport_busy_with_write = single_ported.B && io.write.en
 
   when (io.write.en) {
     if (aligned_to >= w)
-      mem.write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)))
+      write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), VecInit((~(0.U(mask_len.W))).asBools))
     else
-      mem.write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), io.write.mask)
+      write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), io.write.mask)
   }
 
   val raddr = io.read.req.bits.addr
   val ren = io.read.req.fire()
   val rdata = if (single_ported) {
     assert(!(ren && io.write.en))
-    mem.read(raddr, ren && !io.write.en).asUInt()
+    read(raddr, ren && !io.write.en).asUInt()
   } else {
-    mem.read(raddr, ren).asUInt()
+    read(raddr, ren).asUInt()
   }
 
   val fromDMA = io.read.req.bits.fromDMA
@@ -140,6 +163,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean) ex
 
   io.read.resp <> q.io.deq
 }
+
 
 class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V])
     (implicit p: Parameters, ev: Arithmetic[T]) extends LazyModule {
@@ -158,18 +182,20 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val id_node = TLIdentityNode()
   val xbar_node = TLXbar()
 
-  val reader = LazyModule(new StreamReader(config, max_in_flight_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
-    sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter))
-  val writer = LazyModule(new StreamWriter(max_in_flight_reqs, dataBits, maxBytes,
-    if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter))
+  val reader = LazyModule(new StreamReader(config, max_in_flight_mem_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
+    sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter,
+    use_firesim_simulation_counters))
+  val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
+    if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter,
+    use_firesim_simulation_counters))
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node
   // id_node :=* writer.node
 
-  xbar_node := reader.node // TODO
-  xbar_node := writer.node
-  id_node := xbar_node
+  xbar_node := TLBuffer() := reader.node // TODO
+  xbar_node := TLBuffer() := writer.node
+  id_node := TLBuffer() := xbar_node
 
   lazy val module = new LazyModuleImp(this) with HasCoreParameters {
 
@@ -177,7 +203,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // DMA ports
       val dma = new Bundle {
         val read = Flipped(new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits))
-        val write = Flipped(new ScratchpadWriteMemIO(local_addr_t))
+        val write = Flipped(new ScratchpadWriteMemIO(local_addr_t, acc_scale_t_bits))
       }
 
       // SRAM ports
@@ -189,7 +215,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // Accumulator ports
       val acc = new Bundle {
         val read_req = Flipped(Vec(acc_banks, Decoupled(new AccumulatorReadReq(
-          acc_bank_entries, log2Up(accType.getWidth), acc_scale_args.multiplicand_t
+          acc_bank_entries, log2Up(accType.getWidth), acc_scale_t.asInstanceOf[V]
         ))))
         val read_resp = Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
           Vec(meshColumns, Vec(tileColumns, inputType)),
@@ -200,12 +226,19 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         ))))
       }
 
+      val ext_mem = if (use_shared_ext_mem) {
+        Some(new ExtSpadMemIO(sp_banks, acc_banks, acc_sub_banks))
+      } else {
+        None
+      }
+
       // TLB ports
       val tlb = Vec(2, new FrontendTLBIO)
 
       // Misc. ports
       val busy = Output(Bool())
       val flush = Input(Bool())
+      val counter = new CounterEventIO()
     })
 
     val write_dispatch_q = Queue(io.dma.write.req)
@@ -213,9 +246,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     // Write scale queue is necessary to maintain in-order requests to accumulator scale unit
     // Writes from main SPAD just flow directly between scale_q and issue_q, while writes
     // From acc are ordered
-    val write_scale_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t), mem_pipeline))
-    val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t), mem_pipeline+1, pipe=true))
-    val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), mem_pipeline+1, pipe=true)) // TODO can't this just be a normal queue?
+    val write_scale_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, acc_scale_t_bits), spad_read_delay))
+    val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, acc_scale_t_bits), spad_read_delay+1, pipe=true))
+    val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), spad_read_delay+1, pipe=true)) // TODO can't this just be a normal queue?
 
     write_scale_q.io.enq.valid := false.B
     write_scale_q.io.enq.bits  := write_dispatch_q.bits
@@ -398,12 +431,19 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
 
-    {
-      val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(sp_bank_entries, spad_w, aligned_to, config.sp_singleported)) }
+    val spad_mems = {
+      val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(
+        sp_bank_entries, spad_w,
+        aligned_to, config.sp_singleported,
+        use_shared_ext_mem
+      )) }
       val bank_ios = VecInit(banks.map(_.io))
-
       // Reading from the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
+        if (use_shared_ext_mem) {
+          io.ext_mem.get.spad(i) <> bio.ext_mem.get
+        }
+
         val ex_read_req = io.srams.read(i).req
         val exread = ex_read_req.valid
 
@@ -441,8 +481,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         ex_read_resp.valid := bio.read.resp.valid && !bio.read.resp.bits.fromDMA
         ex_read_resp.bits := bio.read.resp.bits
 
-        val dma_read_pipe = Pipeline(dma_read_resp, mem_pipeline)
-        val ex_read_pipe = Pipeline(ex_read_resp, mem_pipeline)
+        val dma_read_pipe = Pipeline(dma_read_resp, spad_read_delay)
+        val ex_read_pipe = Pipeline(ex_read_resp, spad_read_delay)
 
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
 
@@ -512,6 +552,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.mask := DontCare
         }
       }
+      banks
     }
 
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
@@ -520,11 +561,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val acc_scale_unit = Module(new AccumulatorScale(
       acc_row_t,
       spad_row_t,
-      acc_scale_args.multiplicand_t,
+      acc_scale_t.asInstanceOf[V],
       log2Up(accType.getWidth),
       acc_read_small_width,
       acc_read_full_width,
-      acc_scale_args
+      acc_scale_func,
+      acc_scale_num_units,
+      acc_scale_latency,
+      has_nonlinear_activations,
     ))
 
     acc_scale_unit.io.in.valid := false.B
@@ -550,10 +594,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       }
     }
 
-    {
+    val acc_adders = Module(new AccPipeShared(acc_latency-1, acc_row_t, acc_banks))
+
+    val acc_mems = {
       val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(
-        acc_bank_entries, acc_row_t, acc_scale_args,
-        acc_singleported, num_acc_sub_banks
+        acc_bank_entries, acc_row_t, acc_scale_func, acc_scale_t.asInstanceOf[V],
+        acc_singleported, acc_sub_banks,
+        use_shared_ext_mem,
+        acc_latency, accType,
       )) }
       val bank_ios = VecInit(banks.map(_.io))
 
@@ -562,6 +610,15 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       // Reading from the Accumulator banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
+        if (use_shared_ext_mem) {
+          io.ext_mem.get.acc(i) <> bio.ext_mem.get
+        }
+
+        acc_adders.io.in_sel(i) := bio.adder.valid
+        acc_adders.io.ina(i) := bio.adder.op1
+        acc_adders.io.inb(i) := bio.adder.op2
+        bio.adder.sum := acc_adders.io.out
+
         val ex_read_req = io.acc.read_req(i)
         val exread = ex_read_req.valid
 
@@ -571,19 +628,21 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.acc_bank() === i.U
 
         bio.read.req.valid := exread || dmawrite
-        bio.read.req.bits.scale := ex_read_req.bits.scale
         bio.read.req.bits.relu6_shift := ex_read_req.bits.relu6_shift
-        bio.read.req.bits.act := ex_read_req.bits.act
         ex_read_req.ready := bio.read.req.ready
 
         // The ExecuteController gets priority when reading from accumulator banks
         when (exread) {
           bio.read.req.bits.addr := ex_read_req.bits.addr
+          bio.read.req.bits.act := ex_read_req.bits.act
+          bio.read.req.bits.scale := ex_read_req.bits.scale
           bio.read.req.bits.full := false.B
           bio.read.req.bits.fromDMA := false.B
         }.elsewhen (dmawrite) {
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.acc_row()
           bio.read.req.bits.full := write_dispatch_q.bits.laddr.read_full_acc_row
+          bio.read.req.bits.act := write_dispatch_q.bits.acc_act
+          bio.read.req.bits.scale := write_dispatch_q.bits.acc_scale.asTypeOf(bio.read.req.bits.scale)
           bio.read.req.bits.fromDMA := true.B
 
           when (bio.read.req.fire()) {
@@ -595,8 +654,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }.otherwise {
           bio.read.req.bits := DontCare
         }
-        bio.read.resp.ready          := false.B
-
+        bio.read.resp.ready := false.B
 
         when (write_scale_q.io.deq.valid &&
               acc_scale_unit.io.in.ready &&
@@ -607,10 +665,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
               write_scale_q.io.deq.bits.laddr.acc_bank() === i.U) {
           write_scale_q.io.deq.ready   := true.B
           acc_scale_unit.io.in.valid := true.B
-          bio.read.resp.ready          := true.B
-          write_issue_q.io.enq.valid   := true.B
+          bio.read.resp.ready := true.B
+          write_issue_q.io.enq.valid := true.B
 
-          acc_scale_unit.io.in.bits  := bio.read.resp.bits
+          acc_scale_unit.io.in.bits := bio.read.resp.bits
           acc_scale_unit.io.in.bits.acc_bank_id := i.U
         }
 
@@ -657,13 +715,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
         val consecutive_write_block = RegInit(false.B)
         if (acc_singleported) {
-          val consecutive_write_sub_bank = RegInit(0.U((1 max log2Ceil(num_acc_sub_banks)).W))
+          val consecutive_write_sub_bank = RegInit(0.U((1 max log2Ceil(acc_sub_banks)).W))
           when (bio.write.fire() && bio.write.bits.acc &&
-            (bio.write.bits.addr(log2Ceil(num_acc_sub_banks)-1,0) === consecutive_write_sub_bank)) {
+            (bio.write.bits.addr(log2Ceil(acc_sub_banks)-1,0) === consecutive_write_sub_bank)) {
             consecutive_write_block := true.B
           } .elsewhen (bio.write.fire() && bio.write.bits.acc) {
             consecutive_write_block := false.B
-            consecutive_write_sub_bank := bio.write.bits.addr(log2Ceil(num_acc_sub_banks)-1,0)
+            consecutive_write_sub_bank := bio.write.bits.addr(log2Ceil(acc_sub_banks)-1,0)
           } .otherwise {
             consecutive_write_block := false.B
           }
@@ -727,6 +785,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.bits.mask := DontCare
         }
       }
+      banks
     }
+
+    // Counter connection
+    io.counter.collect(reader.module.io.counter)
+    io.counter.collect(writer.module.io.counter)
   }
 }

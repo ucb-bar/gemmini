@@ -21,30 +21,29 @@ object DSEBaseConfig {
     ld_queue_length = 4,
     st_queue_length = 2,
     ex_queue_length = 8,
-    rob_full_entries = 8,
-    rob_partial_entries = 1,
+    reservation_station_full_entries = 8,
+    reservation_station_partial_entries = 1,
 
     sp_banks = 4, // TODO support one-bank designs
     acc_banks = 1,
     acc_singleported = false,
-    num_acc_sub_banks = -1,
+    acc_latency = 2,
     sp_capacity = CapacityInKilobytes(64),
     sp_singleported = false,
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     dataflow = Dataflow.OS,
     acc_capacity = CapacityInKilobytes(16),
-    mem_pipeline = 1,
+    spad_read_delay = 1,
     dma_maxbytes = 128, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 16,
-    hasIm2col = false,
     inputType = SInt(8.W),
-    outputType = SInt(19.W),
+    spatialArrayOutputType = SInt(19.W),
     accType = SInt(32.W),
     mvin_scale_args = None,
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
-    acc_scale_args = ScaleArguments(
+    acc_scale_args = Some(ScaleArguments(
       (t: SInt, u: UInt) => {
         // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
 
@@ -56,20 +55,34 @@ object DSEBaseConfig {
         val r = (point_five & (zeros | ones_digit)).asBool()
 
         (t >> u).asSInt() + Mux(r, 1.S, 0.S)
-      }, 0, UInt(8.W), -1),
+      }, 0, UInt(8.W), -1)),
     acc_read_full_width = true,
     acc_read_small_width = true,
     use_dedicated_tl_port = false,
-    pe_latency = 0,
+
+    use_shared_ext_mem = true,
+    tile_latency = 0,
 
     ex_read_from_spad = true,
     ex_read_from_acc = true,
     ex_write_to_spad = true,
     ex_write_to_acc = true,
 
+    hardcode_d_to_garbage_addr = false,
+
     tlb_size = 4,
     use_tlb_register_filter = true,
-    max_in_flight_reqs = 16,
+    max_in_flight_mem_reqs = 16,
+
+    mesh_output_delay = 1,
+
+    has_training_convs = false,
+    has_max_pool = true,
+    has_nonlinear_activations = true,
+
+    num_counter = 8,
+
+    clock_gate = false,
   )
 }
 
@@ -78,9 +91,9 @@ object DSEConfigs{
   val baseConfig = base.copy(headerFileName = "gemmini_params_dse1.h")
   val wsOnlyConfig = baseConfig.copy(dataflow = Dataflow.WS, headerFileName = "gemmini_params_dse2.h")
   val bothDataflowsConfig = baseConfig.copy(dataflow = Dataflow.BOTH, headerFileName = "gemmini_params_dse3.h")
-  val highBitwidthConfig = baseConfig.copy(inputType = SInt(32.W), outputType = SInt(32.W),
+  val highBitwidthConfig = baseConfig.copy(inputType = SInt(32.W), spatialArrayOutputType = SInt(32.W),
     headerFileName = "gemmini_params_dse4.h")
-  val largerDimConfig = baseConfig.copy(meshRows = 32, meshColumns = 32, outputType = SInt(20.W),
+  val largerDimConfig = baseConfig.copy(meshRows = 32, meshColumns = 32, spatialArrayOutputType = SInt(20.W),
     headerFileName = "gemmini_params_dse5.h")
   val fullyCombinationalConfig = baseConfig.copy(tileRows = 16, tileColumns = 16, meshRows = 1, meshColumns = 1,
     headerFileName = "gemmini_params_dse6.h")
@@ -91,7 +104,7 @@ object DSEConfigs{
   val pnr16Config = baseConfig.copy(sp_capacity = CapacityInKilobytes(256), acc_capacity = CapacityInKilobytes(64),
     dataflow = Dataflow.BOTH, headerFileName = "gemmini_params_pnr16.h")
   val pnr32Config = baseConfig.copy(sp_capacity = CapacityInKilobytes(512), acc_capacity = CapacityInKilobytes(128),
-    meshRows = 32, meshColumns = 32, outputType = SInt(20.W), dataflow = Dataflow.BOTH,
+    meshRows = 32, meshColumns = 32, spatialArrayOutputType = SInt(20.W), dataflow = Dataflow.BOTH,
     headerFileName = "gemmini_params_pnr32.h")
 }
 
