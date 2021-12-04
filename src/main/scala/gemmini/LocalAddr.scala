@@ -16,7 +16,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
   private val accBankBits = log2Up(acc_banks)
   val accBankRowBits = log2Up(acc_bank_entries)
 
-  val maxRows = (1 << maxAddrBits) - 1
+  val spRows = sp_banks * sp_bank_entries
 
   val is_acc_addr = Bool()
   val accumulate = Bool()
@@ -78,7 +78,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
     require(isPow2(sp_bank_entries)) // TODO remove this requirement
     require(isPow2(acc_bank_entries)) // TODO remove this requirement
 
-    val underflow = data < floor + other
+    val underflow = data < (floor +& other)
 
     val result = WireInit(this)
     result.data := Mux(underflow, floor, data - other)

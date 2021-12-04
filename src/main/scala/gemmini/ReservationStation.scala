@@ -258,8 +258,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         val start = cmd.rs2(31, 0).asTypeOf(local_addr_t)
         // TODO instead of using a floor-sub that's hardcoded to the Scratchpad bank boundaries, we should find some way of letting the programmer specify the start address
         dst.bits.start := Mux(start.is_acc_addr, start,
-          Mux(start.full_sp_addr() > (local_addr_t.maxRows / 2).U,
-            start.floorSub(pixel_repeats, (local_addr_t.maxRows / 2).U)._1,
+          Mux(start.full_sp_addr() > (local_addr_t.spRows / 2).U,
+            start.floorSub(pixel_repeats, (local_addr_t.spRows / 2).U)._1,
             start.floorSub(pixel_repeats, 0.U)._1,
           )
         )

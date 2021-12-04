@@ -34,7 +34,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val scales = Reg(Vec(load_states, UInt(mvin_scale_t_bits.W)))
   val shrinks = Reg(Vec(load_states, Bool())) // Shrink inputs to accumulator
   val block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W))) // Spad stride during block move-ins
-  val pixel_repeats = Reg(Vec(load_states, UInt(8.W))) // TODO magic numbers
+  val pixel_repeats = Reg(Vec(load_states, UInt(pixel_repeats_bits.W)))
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))

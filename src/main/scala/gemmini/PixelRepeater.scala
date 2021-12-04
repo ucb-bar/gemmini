@@ -61,21 +61,19 @@ class PixelRepeater[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols
     val is_acc_addr = req.bits.laddr.is_acc_addr
     assert(!(req.valid && is_acc_addr && req.bits.pixel_repeats > 0.U))
 
-    val sp_addr = Mux(req.bits.laddr.full_sp_addr() < (laddr_t.maxRows / 2).U,
+    val sp_addr = Mux(req.bits.laddr.full_sp_addr() < (laddr_t.spRows / 2).U,
       req.bits.laddr.floorSub(req.bits.pixel_repeats, 0.U)._1,
-      req.bits.laddr.floorSub(req.bits.pixel_repeats, (laddr_t.maxRows / 2).U)._1,
+      req.bits.laddr.floorSub(req.bits.pixel_repeats, (laddr_t.spRows / 2).U)._1,
     )
 
-    val underflow = !is_acc_addr && Mux(req.bits.laddr.full_sp_addr() < (laddr_t.maxRows / 2).U,
+    val underflow = !is_acc_addr && Mux(req.bits.laddr.full_sp_addr() < (laddr_t.spRows / 2).U,
       req.bits.laddr.floorSub(req.bits.pixel_repeats, 0.U)._2,
-      req.bits.laddr.floorSub(req.bits.pixel_repeats, (laddr_t.maxRows / 2).U)._2,
+      req.bits.laddr.floorSub(req.bits.pixel_repeats, (laddr_t.spRows / 2).U)._2,
     )
 
     io.resp.bits.laddr := Mux(is_acc_addr, req.bits.laddr, sp_addr)
 
     io.resp.valid := req.valid && !underflow
-
-    assert(!(req.valid && req.bits.laddr.is_acc_addr))
 
     when(io.resp.fire() || underflow) {
       req.bits.pixel_repeats := req.bits.pixel_repeats - 1.U
