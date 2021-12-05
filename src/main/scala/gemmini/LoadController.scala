@@ -34,6 +34,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val scales = Reg(Vec(load_states, UInt(mvin_scale_t_bits.W)))
   val shrinks = Reg(Vec(load_states, Bool())) // Shrink inputs to accumulator
   val block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W))) // Spad stride during block move-ins
+  val pixel_repeats = Reg(Vec(load_states, UInt(pixel_repeats_bits.W)))
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
@@ -47,11 +48,13 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val rows = mvin_rs2.num_rows
 
   val config_stride = cmd.bits.cmd.rs2
-  val config_mvin_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigMvinRs1(mvin_scale_t_bits, block_stride_bits))
 
-  val config_scale = config_mvin_rs1.scale // maybe limit width to `mvin_scale_t_bits`?
+  val config_mvin_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigMvinRs1(mvin_scale_t_bits, block_stride_bits, pixel_repeats_bits))
+
+  val config_scale = config_mvin_rs1.scale
   val config_shrink = config_mvin_rs1.shrink
   val config_block_stride = config_mvin_rs1.stride
+  val config_pixel_repeats = config_mvin_rs1.pixel_repeats
 
   val mstatus = cmd.bits.cmd.status
 
@@ -64,6 +67,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val scale = scales(state_id)
   val shrink = shrinks(state_id)
   val block_stride = block_strides(state_id)
+  val pixel_repeat = pixel_repeats(state_id)
 
   val all_zeros = vaddr === 0.U
 
@@ -104,6 +108,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
   io.dma.req.bits.all_zeros := all_zeros
   io.dma.req.bits.status := mstatus
+  io.dma.req.bits.pixel_repeats := pixel_repeat
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
@@ -140,6 +145,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
           scale := config_scale
           shrink := config_shrink
           block_stride := config_block_stride
+          pixel_repeat := Mux(config_pixel_repeats === 0.U, 1.U, config_pixel_repeats) // TODO this default value was just added to maintain backwards compatibility. we should deprecate and remove it later
           cmd.ready := true.B
         }
 
@@ -165,6 +171,10 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     }
   }
 
+  // Optimizations based on config parameters
+  if (!has_first_layer_optimizations)
+    pixel_repeats.foreach(_ := 1.U)
+
   // Performance counter
   CounterEventIO.init(io.counter)
   io.counter.connectEventSignal(CounterEvent.LOAD_ACTIVE_CYCLE, control_state === sending_rows)
@@ -177,4 +187,5 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
   // Assertions
   assert(!(cmd_tracker.io.alloc.fire() && cmd_tracker.io.alloc.bits.bytes_to_read === 0.U), "A single mvin instruction must load more than 0 bytes")
+  assert(has_first_layer_optimizations.B || !(cmd.valid && DoConfig && config_pixel_repeats > 1.U), "If first-layer optimizations are not enabled, then pixel-repeats cannot be greater than 1")
 }

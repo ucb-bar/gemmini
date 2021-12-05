@@ -15,6 +15,8 @@ class XactTrackerEntry[U <: Data](maxShift: Int, spadWidth: Int, accWidth: Int,
   val has_acc_bitwidth = Bool()
   val scale = UInt(mvin_scale_t_bits.W)
   val repeats = UInt(16.W) // TODO magic number
+  val pixel_repeats = UInt(8.W) // TODO magic number
+  val len = UInt(16.W) // TODO magic number
   val block_stride = UInt(16.W) // TODO magic number
   val spad_row_offset = UInt(log2Up(spadWidth max accWidth).W)
   val lg_len_req = UInt(log2Up(log2Up(maxReqBytes+1)+1).W)

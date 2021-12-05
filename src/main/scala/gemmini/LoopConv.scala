@@ -138,6 +138,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   config_cmd_rs1 := DontCare
   config_cmd_rs1.scale := MVIN_SCALE_IDENTITY
   config_cmd_rs1.stride := req.derived_params.bias_spad_stride
+  config_cmd_rs1.pixel_repeats := 1.U
   config_cmd_rs1.state_id := 2.U
   config_cmd_rs1.shrink := 0.U
   config_cmd_rs1._unused := 1.U
@@ -217,6 +218,7 @@ class LoopConvLdInputReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: 
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val dram_addr = UInt(coreMaxAddrBits.W)
   val downsample = Bool()
+  val max_pixels_per_row = UInt(small_iterator_bitwidth.W)
   val input_dilated = Bool()
   val trans_input_3120 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
@@ -310,10 +312,12 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   config_cmd_rs1 := DontCare
   config_cmd_rs1.scale := MVIN_SCALE_IDENTITY
   config_cmd_rs1.stride := input_spad_stride
+  config_cmd_rs1.pixel_repeats := req.max_pixels_per_row
   config_cmd_rs1.state_id := 0.U
   config_cmd_rs1.shrink := 0.U
   config_cmd_rs1._unused := 1.U
   config_cmd.rs1 := config_cmd_rs1.asUInt()
+
   config_cmd.rs2 := dram_stride << req.downsample
 
   val mvin_cmd = Wire(new RoCCCommand)
@@ -476,14 +480,17 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val config_cmd = Wire(new RoCCCommand)
   config_cmd := DontCare
   config_cmd.inst.funct := CONFIG_CMD
+
   val config_cmd_rs1 = Wire(config_mvin_rs1_t.cloneType)
   config_cmd_rs1 := DontCare
   config_cmd_rs1.scale := MVIN_SCALE_IDENTITY
   config_cmd_rs1.stride := req.derived_params.weight_spad_stride
+  config_cmd_rs1.pixel_repeats := 1.U
   config_cmd_rs1.state_id := 1.U
   config_cmd_rs1.shrink := 0.U
   config_cmd_rs1._unused := 1.U
   config_cmd.rs1 := config_cmd_rs1.asUInt
+
   config_cmd.rs2 := dram_stride
 
   val mvin_cmd = Wire(new RoCCCommand)
@@ -561,6 +568,7 @@ class LoopConvExecuteReq(val large_iterator_bitwidth: Int, val small_iterator_bi
   val c_addr_start = UInt(log2Up(max_acc_addr).W)
   val wrot180 = Bool()
   val downsample = Bool()
+  val max_pixels_per_row = UInt(small_iterator_bitwidth.W)
   val input_dilated = Bool()
   val trans_weight_0132 = Bool()
   val trans_input_3120 = Bool()
@@ -623,6 +631,8 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   val skip_iteration = state >= pre && req.input_dilated && (((krow * kernel_dilation +& orow -& upad)(0) & req.input_dilated).asBool() ||
     ((kcol * kernel_dilation +& ocol -& lpad)(0) & req.input_dilated).asBool())
 
+  val pixels = Mux(kcols - kcol > req.max_pixels_per_row, req.max_pixels_per_row, kcols - kcol)
+
   val irow = undilated(orow * stride +& krow * kernel_dilation)
   val icol = undilated(ocol * stride +& kcol * kernel_dilation)
 
@@ -630,7 +640,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     Mux(batches - b > block_size.U, block_size.U, batches - b),
     undilated(Mux(ocols - ocol > (block_size.U << req.input_dilated).asUInt(), (block_size.U << req.input_dilated).asUInt(), ocols - ocol)))
   val J = Mux(ochs - och > block_size.U, block_size.U, ochs - och)
-  val K = Mux(kchs - kch > block_size.U, block_size.U, kchs - kch)
+  val K = pixels * Mux(kchs - kch > block_size.U, block_size.U, kchs - kch)
 
   // Addresses
   val a_addr = Mux(req.trans_input_3120,
@@ -768,7 +778,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
       val next_b = floorAdd(b, b_it, batches, next_orow === 0.U && next_ocol === 0.U)
       val next_kch = floorAdd(kch, block_size.U, kchs,
         next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
-      val next_kcol = floorAdd(kcol, 1.U, kcols,
+      val next_kcol = floorAdd(kcol, req.max_pixels_per_row, kcols,
         next_kch === 0.U && next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
       val next_krow = floorAdd(krow, 1.U, krows,
         next_kcol === 0.U && next_kch === 0.U && next_b === 0.U && next_orow === 0.U && next_ocol === 0.U)
@@ -1049,6 +1059,8 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val trans_weight_0132 = Bool()
   val trans_input_3120 = Bool()
 
+  val max_pixels_per_row = UInt(small_iterator_bitwidth.W)
+
   val configured = Bool()
 
   val running = Bool()
@@ -1137,7 +1149,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   config_mvin_rs1_t: ConfigMvinRs1, mvin_rs2_t: MvinRs2, config_mvout_rs2_t: ConfigMvoutRs2, mvout_rs2_t: MvoutRs2,
   config_ex_rs1_t: ConfigExRs1, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
   compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs,
-  has_training_convs: Boolean, has_max_pool: Boolean)
+  has_training_convs: Boolean, has_max_pool: Boolean, has_first_layer_optimizations: Boolean)
   (implicit p: Parameters) extends Module {
   val large_iterator_bitwidth = 16
   val small_iterator_bitwidth = 16 // 8
@@ -1289,6 +1301,12 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
       is (LOOP_CONV_WS) {
         loop_being_configured.no_bias := cmd.bits.rs1(0)
 
+        // TODO we added a default value for max_pixels_per_row just to maintain backwards compatibility. we should deprecate and remove it later
+        val config_max_pixels_per_row = cmd.bits.rs1(15, 8)
+        loop_being_configured.max_pixels_per_row := Mux(
+          !has_first_layer_optimizations.B || config_max_pixels_per_row === 0.U,
+          1.U, config_max_pixels_per_row)
+
         loop_being_configured.wrot180 := has_training_convs.B && cmd.bits.rs1(1)
         loop_being_configured.input_dilated := has_training_convs.B && cmd.bits.rs2(2)
         loop_being_configured.trans_output_1203 := has_training_convs.B && cmd.bits.rs1(2)
@@ -1344,6 +1362,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ld_input.io.req.bits.addr_start := loop_requesting_ld_input.a_addr_start
   ld_input.io.req.bits.dram_addr := loop_requesting_ld_input.input_dram_addr
   ld_input.io.req.bits.downsample := loop_requesting_ld_input.downsample
+  ld_input.io.req.bits.max_pixels_per_row := loop_requesting_ld_input.max_pixels_per_row
   ld_input.io.req.bits.input_dilated := loop_requesting_ld_input.input_dilated
   ld_input.io.req.bits.trans_input_3120 := loop_requesting_ld_input.trans_input_3120
   ld_input.io.req.bits.loop_id := loop_requesting_ld_input_id
@@ -1383,6 +1402,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ex.io.req.bits.c_addr_start := ex_c_addr_start
   ex.io.req.bits.wrot180 := loop_requesting_ex.wrot180
   ex.io.req.bits.downsample := loop_requesting_ex.downsample
+  ex.io.req.bits.max_pixels_per_row := loop_requesting_ex.max_pixels_per_row
   ex.io.req.bits.input_dilated := loop_requesting_ex.input_dilated
   ex.io.req.bits.trans_weight_0132 := loop_requesting_ex.trans_weight_0132
   ex.io.req.bits.trans_input_3120 := loop_requesting_ex.trans_input_3120
@@ -1465,13 +1485,14 @@ object LoopConv {
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
             config_mvin_rs1_t: ConfigMvinRs1, mvin_rs2_t: MvinRs2, config_mvout_rs2_t: ConfigMvoutRs2,
             mvout_rs2_t: MvoutRs2, config_ex_rs1_t: ConfigExRs1, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
-            compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, has_training_convs: Boolean, has_max_pool: Boolean)
+            compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, has_training_convs: Boolean, has_max_pool: Boolean,
+            has_first_layer_optimizations: Boolean)
            (implicit p: Parameters): Tuple2[DecoupledIO[RoCCCommand], Bool] = {
 
     val mod = Module(new LoopConv(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
       config_mvin_rs1_t, mvin_rs2_t, config_mvout_rs2_t, mvout_rs2_t, config_ex_rs1_t, preload_rs1_t, preload_rs2_t,
-      compute_rs1_t, compute_rs2_t, has_training_convs, has_max_pool))
+      compute_rs1_t, compute_rs2_t, has_training_convs, has_max_pool, has_first_layer_optimizations))
 
     mod.io.in <> in
     mod.io.ld_utilization := ld_utilization

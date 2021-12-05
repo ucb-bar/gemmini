@@ -85,6 +85,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_max_pool: Boolean = true,
                                                                              has_nonlinear_activations: Boolean = true,
 
+                                                                             has_first_layer_optimizations: Boolean = true,
+
                                                                              use_firesim_simulation_counters: Boolean = false,
 
                                                                              use_shared_ext_mem: Boolean = false,
@@ -159,7 +161,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
 
   val load_states = 3
-  val block_stride_bits = 16
+  val block_stride_bits = 16 min (log2Up(acc_banks * acc_bank_entries) max log2Up(sp_banks * sp_bank_entries))
+
+  val pixel_repeats_bits = 8 min log2Up(meshColumns * tileColumns + 1)
 
   val hasIm2Col = false
 
@@ -470,6 +474,10 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     if (acc_read_full_width)
       header ++= s"#define ACC_READ_FULL_WIDTH\n"
     header ++= s"\n"
+
+    if (has_first_layer_optimizations) {
+      header ++= "#define HAS_FIRST_LAYER_OPTIMIZATIONS\n\n"
+    }
 
     header ++= s"#endif // $guard\n"
     header.toString()
