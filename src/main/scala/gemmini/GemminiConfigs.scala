@@ -163,6 +163,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val load_states = 3
   val block_stride_bits = 16 min (log2Up(acc_banks * acc_bank_entries) max log2Up(sp_banks * sp_bank_entries))
 
+  val a_stride_bits = 16 min (log2Up(acc_banks * acc_bank_entries) max log2Up(sp_banks * sp_bank_entries))
+  val c_stride_bits = 16 min (log2Up(acc_banks * acc_bank_entries) max log2Up(sp_banks * sp_bank_entries))
+
   val pixel_repeats_bits = 8 min log2Up(meshColumns * tileColumns + 1)
 
   val hasIm2Col = false

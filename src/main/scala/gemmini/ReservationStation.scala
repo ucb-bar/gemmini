@@ -116,13 +116,13 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   io.busy := !empty && !(solitary_preload && io.solitary_preload)
 
   // Config values set by programmer
-  val a_stride = Reg(UInt(16.W)) // TODO magic numbers
-  val c_stride = Reg(UInt(16.W)) // TODO magic numbers
+  val a_stride = Reg(UInt(a_stride_bits.W))
+  val c_stride = Reg(UInt(c_stride_bits.W))
   val a_transpose = Reg(Bool())
   val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
   val st_block_stride = block_rows.U
   val pooling_is_enabled = Reg(Bool())
-  val ld_pixel_repeats = Reg(Vec(load_states, UInt(8.W))) // This is the ld_pixel_repeat MINUS ONE // TODO magic numbers
+  val ld_pixel_repeats = Reg(Vec(load_states, UInt(pixel_repeats_bits.W))) // This is the ld_pixel_repeat MINUS ONE
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
@@ -378,7 +378,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
         val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
         val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers
-        val repeat_pixels = new_entry.cmd.rs1(15, 8) // TODO magic numbers
+        val repeat_pixels = maxOf(new_entry.cmd.rs1(8 + pixel_repeats_bits - 1, 8), 1.U) // TODO we use a default value of pixel repeats here, for backwards compatibility. However, we should deprecate and remove this default value eventually
         ld_block_strides(id) := block_stride
         ld_pixel_repeats(id) := repeat_pixels - 1.U
       }.elsewhen(new_entry.is_config && new_entry.q === stq) {
