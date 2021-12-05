@@ -1300,7 +1300,12 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
 
       is (LOOP_CONV_WS) {
         loop_being_configured.no_bias := cmd.bits.rs1(0)
-        loop_being_configured.max_pixels_per_row := (if (has_first_layer_optimizations) cmd.bits.rs1(15, 8) else 1.U)
+
+        // TODO we added a default value for max_pixels_per_row just to maintain backwards compatibility. we should deprecate and remove it later
+        val config_max_pixels_per_row = cmd.bits.rs1(15, 8)
+        loop_being_configured.max_pixels_per_row := Mux(
+          !has_first_layer_optimizations.B || config_max_pixels_per_row === 0.U,
+          1.U, config_max_pixels_per_row)
 
         loop_being_configured.wrot180 := has_training_convs.B && cmd.bits.rs1(1)
         loop_being_configured.input_dilated := has_training_convs.B && cmd.bits.rs2(2)

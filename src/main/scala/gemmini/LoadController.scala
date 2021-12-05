@@ -145,7 +145,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
           scale := config_scale
           shrink := config_shrink
           block_stride := config_block_stride
-          pixel_repeat := config_pixel_repeats
+          pixel_repeat := Mux(config_pixel_repeats === 0.U, 1.U, config_pixel_repeats) // TODO this default value was just added to maintain backwards compatibility. we should deprecate and remove it later
           cmd.ready := true.B
         }
 
