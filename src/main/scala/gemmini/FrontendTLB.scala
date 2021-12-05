@@ -71,7 +71,7 @@ class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: 
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_MISS_CYCLE, tlb.io.resp.miss)
 
   if (use_firesim_simulation_counters) {
-    PerfCounter(RegNext(io.req.fire()) && !tlb.io.resp.miss, "tlb_hits", "total number of tlb hits")
+    PerfCounter(io.req.fire() && !tlb.io.resp.miss, "tlb_hits", "total number of tlb hits")
     PerfCounter(io.req.fire(), "tlb_reqs", "total number of tlb reqs")
     PerfCounter(tlb.io.resp.miss, "tlb_miss_cycles", "total number of cycles where the tlb is resolving a miss")
   }
