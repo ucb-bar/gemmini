@@ -66,7 +66,7 @@ class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: 
   assert(!io.exp.flush_retry || !io.exp.flush_skip, "TLB: flushing with both retry and skip at same time")
 
   CounterEventIO.init(io.counter)
-  io.counter.connectEventSignal(CounterEvent.DMA_TLB_HIT_REQ, RegNext(io.req.fire()) && !tlb.io.resp.miss)
+  io.counter.connectEventSignal(CounterEvent.DMA_TLB_HIT_REQ, io.req.fire() && !tlb.io.resp.miss)
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_TOTAL_REQ, io.req.fire())
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_MISS_CYCLE, tlb.io.resp.miss)
 
