@@ -329,7 +329,7 @@ When calling `config_mvin` (described below), the programmer can choose which `m
 ## Configuration
 ### `config_ex` configures the Execute pipeline
 **Format:** `config_ex rs1 rs2`
-- `rs1[0:1]` must be `00`
+- `rs1[1:0]` must be `00`
 - `rs1[2]` determines if output (0) or weight (1) stationary
 - `rs1[4:3]` = activation function: either relu (1), relu6 (2), or no activation function (0)
 - `rs1[8]` = should A be transposed?
@@ -365,7 +365,7 @@ This limitation may be lifted in the future.
 
 ### `config_mvin` configures the Load pipeline
 **Format:** `config_mvin rs1 rs2`
-- `rs1[0:1]` must be `01`
+- `rs1[1:0]` must be `01`
 - `rs1[2]` is 0 if `mvin`s to the accumulator are of type `accType`, and 1 if they are `inputType`
 - `rs1[4:3]` is 0 if the stride is being set for `mvin`, 1 if the stride is being set for `mvin2`, and 2 if the stride is being set for `mvin3`
 - `rs1[63:32]` is the "scale" by which to multiply data as it's being moved in to the scratchpad. This is ignored if Gemmini isn't configured to have the ability to scale values during `mvin`s.
@@ -376,7 +376,7 @@ This limitation may be lifted in the future.
 
 ### `config_mvout` configures the Store pipeline
 **Format:** `config_mvout rs1 rs2`
-- `rs1[0:1]` must be `10`
+- `rs1[1:0]` must be `10`
 - `rs2` = the stride in bytes 
 - `funct` = 0
 
