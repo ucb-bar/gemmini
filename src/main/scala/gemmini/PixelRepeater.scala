@@ -88,7 +88,7 @@ class PixelRepeater[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols
       req.bits.pixel_repeats := io.req.bits.pixel_repeats - 1.U
     }
 
-    when(reset.toBool()) {
+    when(reset.asBool()) {
       req.pop()
     }
   }
