@@ -24,13 +24,15 @@ object GemminiISA {
   val LOAD3_CMD = 14.U
 
   // TODO add orows and ocols to this as well
-  val LOOP_CONV_WS = 15.U // no_bias, wrot180, trans_output_1203, trans_weight_1203, trans_input_3120 | no_pool, downsample, input_dilated, act
+  val LOOP_CONV_WS = 15.U // no_bias, wrot180, trans_output_1203, trans_weight_1203, trans_input_3120, max_pixels_per_row | no_pool, downsample, input_dilated, act
   val LOOP_CONV_WS_CONFIG_1 = 16.U // batch_size, in_dim, in_channels, out_channels | out_dim, pool_out_dim, stride, padding
   val LOOP_CONV_WS_CONFIG_2 = 17.U // kernel_dim, pool_size, pool_stride, pool_padding | batches, porows, pocols, pochs
   val LOOP_CONV_WS_CONFIG_3 = 18.U // krows, kcols, kchs, lpad | rpad, upad, dpad, plpad
   val LOOP_CONV_WS_CONFIG_4 = 19.U // prad, pupad, pdpad, orows | ocols, kernel_dilation
   val LOOP_CONV_WS_CONFIG_5 = 20.U // *weights | *output
   val LOOP_CONV_WS_CONFIG_6 = 21.U // *bias, *input
+
+  val CLKGATE_EN = 22.U
 
   // rs1[2:0] values
   val CONFIG_EX = 0.U
@@ -93,22 +95,25 @@ object GemminiISA {
   val CONFIG_MVIN_RS1_UNUSED_WIDTH = 2
   val CONFIG_MVIN_RS1_SHRINK_WIDTH = 1
   val CONFIG_MVIN_RS1_STATE_ID_WIDTH = 2
-  val CONFIG_MVIN_RS1_SPACER_WIDTH = (16 - 2 - 1 - 2)
+  val CONFIG_MVIN_RS1_SPACER_WIDTH = 8 - 2 - 1 - 2
+  val CONFIG_MVIN_RS1_PIXEL_REPEAT_WIDTH = 8
   val CONFIG_MVIN_RS1_STRIDE_WIDTH = 16
   val CONFIG_MVIN_RS1_SCALE_WIDTH = 32
 
-  class ConfigMvinRs1(scale_bits: Int, stride_bits: Int) extends Bundle {
-    val _spacer2 = UInt((CONFIG_MVIN_RS1_SCALE_WIDTH - scale_bits).W)
+  class ConfigMvinRs1(scale_bits: Int, stride_bits: Int, pixel_repeat_bits: Int) extends Bundle {
+    val _spacer3 = UInt((CONFIG_MVIN_RS1_SCALE_WIDTH - scale_bits).W)
     val scale = UInt(scale_bits.W)
-    val _spacer1 = UInt((CONFIG_MVIN_RS1_STRIDE_WIDTH - stride_bits).W)
+    val _spacer2 = UInt((CONFIG_MVIN_RS1_STRIDE_WIDTH - stride_bits).W)
     val stride = UInt(stride_bits.W)
+    val _spacer1 = UInt((CONFIG_MVIN_RS1_PIXEL_REPEAT_WIDTH - pixel_repeat_bits).W)
+    val pixel_repeats = UInt(pixel_repeat_bits.W)
     val _spacer0 = UInt(CONFIG_MVIN_RS1_SPACER_WIDTH.W)
     val state_id = UInt(CONFIG_MVIN_RS1_STATE_ID_WIDTH.W)
     val shrink = UInt(CONFIG_MVIN_RS1_SHRINK_WIDTH.W)
     val _unused = UInt(CONFIG_MVIN_RS1_UNUSED_WIDTH.W)
 
     override def cloneType: ConfigMvinRs1.this.type =
-      (new ConfigMvinRs1(scale_bits, stride_bits)).asInstanceOf[this.type]
+      (new ConfigMvinRs1(scale_bits, stride_bits, pixel_repeat_bits)).asInstanceOf[this.type]
   }
 
   val CONFIG_MVOUT_RS1_UNUSED_WIDTH = 2

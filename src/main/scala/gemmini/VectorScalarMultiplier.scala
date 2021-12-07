@@ -9,6 +9,7 @@ class VectorScalarMultiplierReq[T <: Data, U <: Data, Tag <: Data](block_cols: I
   val in: Vec[T] = Vec(block_cols, t.cloneType)
   val scale: U = u.cloneType
   val repeats: UInt = UInt(16.W) // TODO magic number
+  val pixel_repeats: UInt = UInt(8.W) // TODO magic number
   val last: Bool = Bool()
   val tag: Tag = tag_t.cloneType
 
@@ -81,7 +82,6 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
     in.valid := false.B
   }
 
-
   if (num_scale_units == -1) {
     val pipe = Module(new Pipeline(
       new VectorScalarMultiplierResp(block_cols, t, tag_t),
@@ -120,7 +120,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
       head_oh := (head_oh << 1) | head_oh(nEntries-1)
     }
     in_fire := (in.valid &&
-      (!Mux1H(tail_oh.asBools, regs.map(_.valid)) || (tail_oh === head_oh && io.resp.fire()))
+      (!Mux1H(tail_oh.asBools, regs.map(_.valid)))
     )
     when (in_fire) {
       for (i <- 0 until nEntries) {
@@ -143,8 +143,6 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
       }
       tail_oh := (tail_oh << 1) | tail_oh(nEntries-1)
     }
-
-
 
     val inputs = Seq.fill(width*nEntries) { Wire(Decoupled(new DataWithIndex(t, u))) }
     for (i <- 0 until nEntries) {
@@ -172,7 +170,6 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
         arbOut.valid := false.B
       }
 
-
       val pipe = Module(new ScalePipe(t, mvin_scale_args.get))
       pipe.io.in := arbOut
       val pipe_out = pipe.io.out
@@ -187,14 +184,11 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
         }
       }
     }
+
     when (reset.asBool) {
       regs.foreach(_.valid := false.B)
     }
-
-
   }
-  
-
 }
 
 object VectorScalarMultiplier {

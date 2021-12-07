@@ -15,11 +15,11 @@ case class ScaleArguments[T <: Data, U <: Data](scale_func: (T, U) => T, latency
                                                 identity: String="0", c_str: String="ROUNDING_RIGHT_SHIFT(x, scale)")
 
 case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+                                                                             opcodes: OpcodeSet = OpcodeSet.custom3,
+
                                                                              inputType: T,
                                                                              spatialArrayOutputType: T,
                                                                              accType: T,
-
-                                                                             opcodes: OpcodeSet = OpcodeSet.custom3,
 
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
 
@@ -44,6 +44,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              acc_singleported: Boolean = false,
                                                                              acc_sub_banks: Int = -1,
                                                                              acc_capacity: GemminiMemCapacity = CapacityInKilobytes(64),
+                                                                             acc_latency: Int = 2,
 
                                                                              dma_maxbytes: Int = 64, // TODO get this from cacheblockbytes
                                                                              dma_buswidth: Int = 128, // TODO get this from SystemBusKey
@@ -56,8 +57,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              mvin_scale_acc_args: Option[ScaleArguments[T, U]] = None,
                                                                              mvin_scale_shared: Boolean = false,
                                                                              acc_scale_args: Option[ScaleArguments[T, V]] = None,
-
-                                                                             pe_latency: Int = 0,
 
                                                                              acc_read_full_width: Boolean = true,
                                                                              acc_read_small_width: Boolean = true,
@@ -73,8 +72,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              ex_write_to_acc: Boolean = true,
 
                                                                              hardcode_d_to_garbage_addr: Boolean = false,
+                                                                             use_shared_tlb: Boolean = true,
 
+                                                                             tile_latency: Int = 0,
                                                                              mesh_output_delay: Int = 1,
+
+                                                                             use_tree_reduction_if_possible: Boolean = true,
 
                                                                              num_counter: Int = 8,
 
@@ -82,7 +85,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_max_pool: Boolean = true,
                                                                              has_nonlinear_activations: Boolean = true,
 
+                                                                             has_first_layer_optimizations: Boolean = true,
+
                                                                              use_firesim_simulation_counters: Boolean = false,
+
+                                                                             use_shared_ext_mem: Boolean = false,
+                                                                             clock_gate: Boolean = false,
 
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
@@ -153,9 +161,16 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
 
   val load_states = 3
-  val block_stride_bits = 16
+  val block_stride_bits = 16 min (log2Up(acc_banks * acc_bank_entries) max log2Up(sp_banks * sp_bank_entries))
+
+  val a_stride_bits = 16 min (log2Up(acc_banks * acc_bank_entries) max log2Up(sp_banks * sp_bank_entries))
+  val c_stride_bits = 16 min (log2Up(acc_banks * acc_bank_entries) max log2Up(sp_banks * sp_bank_entries))
+
+  val pixel_repeats_bits = 8 min log2Up(meshColumns * tileColumns + 1)
 
   val hasIm2Col = false
+
+  val tree_reduction = use_tree_reduction_if_possible && dataflow == Dataflow.WS && tileRows > 1
 
   //==========================================================================
   // sanity check mesh size
@@ -260,7 +275,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
           (dt.expWidth, dt.sigWidth) match {
             case (8, 24) => (scala.Float.MinValue.toString, scala.Float.MaxValue.toString)
             case (11, 53) => (scala.Double.MinValue.toString, scala.Double.MaxValue.toString)
-            case _ => (((Range(-1,-(dt.sigWidth),-1).map(-Math.pow(2, _)).foldLeft(-1.0)(_ + _)) * Math.pow(2, Math.pow(2, dt.expWidth - 1) - 1)).toString, ((Range(-1,-(dt.sigWidth),-1).map(Math.pow(2, _)).foldLeft(1.0)(_ + _)) * Math.pow(2, Math.pow(2, dt.expWidth - 1) - 1)).toString)
+            case (e, s) => (((Range(-1,-(s),-1).map(-Math.pow(2, _)).foldLeft(-1.0)(_ + _)) * Math.pow(2, Math.pow(2, e - 1) - 1)).toString, ((Range(-1,-(s),-1).map(Math.pow(2, _)).foldLeft(1.0)(_ + _)) * Math.pow(2, Math.pow(2, e - 1) - 1)).toString)
           }
         case dt => ("0", BigInt(2).pow(dt.getWidth).-(1).toString)
         // case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")
@@ -274,7 +289,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
           (dt.expWidth, dt.sigWidth) match {
             case (8, 24) => "float"
             case (11, 53) => "double"
-            case _ => s"uint" + (Math.pow(2, Math.ceil(Math.log(dt.expWidth + dt.sigWidth)/Math.log(2.0)))).toInt.toString + s"_t"
+            case (e, s) => s"uint" + (Math.pow(2, Math.ceil(Math.log(e + s)/Math.log(2.0)))).toInt.toString + s"_t"
           }
         case dt => s"uint${dt.getWidth}_t"
       }
@@ -462,6 +477,10 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     if (acc_read_full_width)
       header ++= s"#define ACC_READ_FULL_WIDTH\n"
     header ++= s"\n"
+
+    if (has_first_layer_optimizations) {
+      header ++= "#define HAS_FIRST_LAYER_OPTIMIZATIONS\n\n"
+    }
 
     header ++= s"#endif // $guard\n"
     header.toString()
