@@ -133,7 +133,7 @@ object LocalAddr {
   }
 
   def garbage_addr(local_addr_t: LocalAddr): LocalAddr = {
-    val result = Wire(local_addr_t)
+    val result = Wire(chiselTypeOf(local_addr_t))
     result := DontCare
     result.make_this_garbage()
     result
