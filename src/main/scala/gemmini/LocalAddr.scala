@@ -114,7 +114,7 @@ object LocalAddr {
     result.accumulate := false.B
     result.read_full_acc_row := false.B
 
-    assert(!result.garbage_bit, "cast_to_sp_addr doesn't work on garbage addresses")
+    // assert(!result.garbage_bit, "cast_to_sp_addr doesn't work on garbage addresses")
 
     result
   }
@@ -127,7 +127,7 @@ object LocalAddr {
     result.accumulate := accumulate
     result.read_full_acc_row := read_full
 
-    assert(!result.garbage_bit, "cast_to_acc_addr doesn't work on garbage addresses")
+    // assert(!result.garbage_bit, "cast_to_acc_addr doesn't work on garbage addresses")
 
     result
   }
