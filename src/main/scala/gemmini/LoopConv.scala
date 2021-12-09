@@ -9,8 +9,6 @@ import GemminiISA._
 import LocalAddr._
 import Util._
 
-// TODO in many of the modules below, we could probably restrict the bitwidths of DRAM addr offsets to 32 bits, possibly reducing bitwidths further
-
 class LoopConvOuterBounds(val large_iterator_bitwidth: Int, val small_iterator_bitwidth: Int, val tiny_iterator_bitwidth: Int) extends Bundle {
   val batch_size = UInt(large_iterator_bitwidth.W)
   val in_dim = UInt(small_iterator_bitwidth.W)
@@ -115,7 +113,8 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   val och = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = Mux(req.no_bias, 0.U, req.dram_addr +& och * (acc_w/8).U)
+  val dram_offset = och * (acc_w/8).U
+  val dram_addr = Mux(req.no_bias, 0.U, req.dram_addr + LoopConv.castDramOffset(dram_offset))
   val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
   // Sizes
@@ -274,10 +273,9 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val dram_stride = Mux(req.trans_input_3120, batch_size * (input_w/8).U, in_channels * (input_w/8).U)
 
   // Addresses
-  val dram_addr = MuxCase(req.dram_addr +& (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channels +& ich) * (input_w/8).U).asUInt(), Seq(
-    is_zeros -> 0.U,
-    req.trans_input_3120 -> (req.dram_addr +& (((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U).asUInt())
-  ))
+  val dram_offset = Mux(req.trans_input_3120, (((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U).asUInt(),
+    (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channels +& ich) * (input_w/8).U).asUInt())
+  val dram_addr = Mux(is_zeros, 0.U, req.dram_addr + LoopConv.castDramOffset(dram_offset))
   val spad_addr = Mux(req.trans_input_3120,
     // To prevent Verilator errors, we replace some "/ block_size.U" calls here with ">> log2Up(block_size)"
     req.addr_start.zext() +& (b >> log2Up(block_size)) * input_spad_stride +& ich * (irows >> req.downsample) * (icols >> req.downsample) +& (irow_padded >> req.downsample) * (icols >> req.downsample) +& (icol_padded >> req.downsample),
@@ -452,10 +450,11 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val kch = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = MuxCase(req.dram_addr +& ((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U, Seq(
-    req.trans_weight_1203 -> (req.dram_addr +& ((kch*kernel_dim*kernel_dim +& krow*kernel_dim +& kcol) * out_channels +& och) * (input_w/8).U),
-    req.trans_weight_0132 -> (req.dram_addr +& ((krow*kernel_dim*out_channels +& kcol*out_channels +& och) * in_channels +& kch) * (input_w/8).U)
+  val dram_offset = MuxCase(((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U, Seq(
+    req.trans_weight_1203 -> (((kch*kernel_dim*kernel_dim +& krow*kernel_dim +& kcol) * out_channels +& och) * (input_w/8).U),
+    req.trans_weight_0132 -> (((krow*kernel_dim*out_channels +& kcol*out_channels +& och) * in_channels +& kch) * (input_w/8).U)
   ))
+  val dram_addr = req.dram_addr + LoopConv.castDramOffset(dram_offset)
 
   val spad_addr = Mux(req.trans_weight_0132,
     addr_start + (kch / block_size.U) * krows * kcols * ochs + krow * kcols * ochs + kcol * ochs + och,
@@ -871,9 +870,10 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val och = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_addr = Mux(req.trans_output_1203,
-    req.dram_addr + ((orow*out_dim*batch_size +& ocol*batch_size +& b) * out_channels +& och) * (input_w/8).U,
-    req.dram_addr + ((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_channels +& och) * (input_w/8).U)
+  val dram_offset = Mux(req.trans_output_1203,
+    ((orow*out_dim*batch_size +& ocol*batch_size +& b) * out_channels +& och) * (input_w/8).U,
+    ((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_channels +& och) * (input_w/8).U)
+  val dram_addr = req.dram_addr + LoopConv.castDramOffset(dram_offset)
   val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
   val pool_dram_addr = req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U
@@ -1500,5 +1500,10 @@ object LoopConv {
     mod.io.st_utilization := st_utilization
     mod.io.ex_utilization := ex_utilization
     (mod.io.out, mod.io.busy)
+  }
+
+  def castDramOffset(dram_offset: UInt): UInt = {
+    // Cast dram offsets to 32 bits max
+    dram_offset & "hFFFFFFFF".U
   }
 }

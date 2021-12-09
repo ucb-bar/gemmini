@@ -61,7 +61,8 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val sp_addr_start = req.addr_start
 
-  val dram_addr = req.dram_addr + (row_iterator * req.dram_stride + col_iterator) * block_size.U * (input_w/8).U
+  val dram_offset = (row_iterator * req.dram_stride + col_iterator) * block_size.U * (input_w/8).U
+  val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
   val sp_addr = sp_addr_start + (row_iterator * max_col_iterator + col_iterator) * block_size.U
   val blocks = Mux(col_iterator + max_blocks <= max_col_iterator, max_blocks, max_col_iterator-col_iterator)
   val cols = (blocks * block_size.U) - Mux(col_iterator + blocks >= max_col_iterator, col_pad, 0.U)
@@ -168,7 +169,8 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val sp_addr_start = req.addr_end - req.max_k * req.max_j * block_size.U
 
-  val dram_addr = req.dram_addr + (row_iterator * req.dram_stride + col_iterator) * block_size.U * (input_w/8).U
+  val dram_offset = (row_iterator * req.dram_stride + col_iterator) * block_size.U * (input_w/8).U
+  val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
   val sp_addr = sp_addr_start + (row_iterator * max_col_iterator + col_iterator) * block_size.U
   val blocks = Mux(col_iterator + max_blocks <= max_col_iterator, max_blocks, max_col_iterator-col_iterator)
   val cols = (blocks * block_size.U) - Mux(col_iterator + blocks >= max_col_iterator, col_pad, 0.U)
@@ -263,8 +265,9 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val acc_addr_start = req.addr_start
 
-  val dram_addr = Mux(req.low_d, req.dram_addr + (i * req.dram_stride + j) * block_size.U * (input_w/8).U,
-    req.dram_addr + (i * req.dram_stride + j) * block_size.U * (acc_w/8).U)
+  val dram_offset = Mux(req.low_d, (i * req.dram_stride + j) * block_size.U * (input_w/8).U,
+    (i * req.dram_stride + j) * block_size.U * (acc_w/8).U)
+  val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
   val sp_addr = acc_addr_start + (i * req.max_j + j) * block_size.U
   val blocks = Mux(j + max_blocks <= req.max_j, max_blocks, req.max_j-j)
   val cols = (blocks * block_size.U) - Mux(j + blocks >= req.max_j, req.pad_j, 0.U)
@@ -524,8 +527,9 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val acc_addr_start = /*(BigInt(1) << 31).U | (req.full_c << 29.U).asUInt() |*/ req.addr_start
 
-  val dram_addr = Mux(req.full_c, req.dram_addr + (i * req.dram_stride + j) * block_size.U * (acc_w/8).U,
-    req.dram_addr + (i * req.dram_stride + j) * block_size.U * (input_w/8).U)
+  val dram_offset = Mux(req.full_c, (i * req.dram_stride + j) * block_size.U * (acc_w/8).U,
+    (i * req.dram_stride + j) * block_size.U * (input_w/8).U)
+  val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
   val sp_addr = acc_addr_start + (i * req.max_j + j) * block_size.U
   val blocks = Mux(j + max_blocks <= req.max_j, max_blocks, req.max_j-j)
   val cols = (blocks * block_size.U) - Mux(j + blocks >= req.max_j, req.pad_j, 0.U)
@@ -973,5 +977,10 @@ object LoopMatmul {
     mod.io.st_utilization := st_utilization
     mod.io.ex_utilization := ex_utilization
     (mod.io.out, mod.io.busy)
+  }
+
+  def castDramOffset(dram_offset: UInt): UInt = {
+    // Cast dram offsets to 32 bits max
+    dram_offset & "hFFFFFFFF".U
   }
 }
