@@ -105,4 +105,37 @@ object LocalAddr {
     if (result.garbage_bit.getWidth > 0) result.garbage := 0.U
     result
   }
+
+  def cast_to_sp_addr[T <: Data](local_addr_t: LocalAddr, t: T): LocalAddr = {
+    // This function is a wrapper around cast_to_local_addr, but it assumes that the input will not be the garbage
+    // address
+    val result = WireInit(cast_to_local_addr(local_addr_t, t))
+    result.is_acc_addr := false.B
+    result.accumulate := false.B
+    result.read_full_acc_row := false.B
+
+    // assert(!result.garbage_bit, "cast_to_sp_addr doesn't work on garbage addresses")
+
+    result
+  }
+
+  def cast_to_acc_addr[T <: Data](local_addr_t: LocalAddr, t: T, accumulate: Bool, read_full: Bool): LocalAddr = {
+    // This function is a wrapper around cast_to_local_addr, but it assumes that the input will not be the garbage
+    // address
+    val result = WireInit(cast_to_local_addr(local_addr_t, t))
+    result.is_acc_addr := true.B
+    result.accumulate := accumulate
+    result.read_full_acc_row := read_full
+
+    // assert(!result.garbage_bit, "cast_to_acc_addr doesn't work on garbage addresses")
+
+    result
+  }
+
+  def garbage_addr(local_addr_t: LocalAddr): LocalAddr = {
+    val result = Wire(chiselTypeOf(local_addr_t))
+    result := DontCare
+    result.make_this_garbage()
+    result
+  }
 }
