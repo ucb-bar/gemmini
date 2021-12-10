@@ -31,6 +31,9 @@ commands:
         parameters:
             tools-version:
                 type: string
+            timeout:
+                type: string
+                default: "120m"
         steps:
             - checkout
             - run:
@@ -44,7 +47,7 @@ commands:
                 name: Building << parameters.tools-version >>
                 command: |
                     .circleci/build-toolchains.sh << parameters.tools-version >>
-                no_output_timeout: 180m
+                no_output_timeout: 120m
             - save_cache:
                 key: << parameters.tools-version >>-installed-<< pipeline.parameters.tools-cache-version >>-{{ checksum "../<< parameters.tools-version >>.hash" }}
                 paths:
