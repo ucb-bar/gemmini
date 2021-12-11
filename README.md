@@ -108,7 +108,13 @@ Run the instructions below to run the Gemmini RISCV binaries that we built previ
 ```shell
 cd chipyard/generators/gemmini
 
+# Run a large DNN workload in the functional simulator
 ./scripts/run-spike.sh resnet50
+
+# Run a smaller workload in baremetal mode, on a cycle-accurate simulator
+./scripts/run-verilator.sh template
+
+# Run a smaller workload with a proxy-kernel, on a cycle accurate simulator
 ./scripts/run-verilator.sh --pk template
 
 # Or, if you want to generate waveforms in `waveforms/`:
