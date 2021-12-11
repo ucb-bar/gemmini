@@ -1,8 +1,11 @@
 #!/bin/bash
 
 help () {
-  echo "Setup all the directories and symlinks that you need to use the scripts
+  echo "Setup all the directories and symlinks that you need to use the scripts"
   echo 'in `scripts/`.'
+  echo
+  echo "Usage: $0 [-h|--help]"
+  echo
   exit
 }
 
