@@ -117,7 +117,11 @@ cd chipyard/generators/gemmini
 Next steps
 --------
 
-For more information on how to program Gemmini, profile DNN workloads with Gemmini, and add custom datatypes to Gemmini, check out [our IISWC 2021 tutorial](https://sites.google.com/berkeley.edu/gemminitutorialiiswc2021/).
+Check out [our IISWC 2021 tutorial](https://sites.google.com/berkeley.edu/gemminitutorialiiswc2021/) to learn how to:
+* build different types of diverse accelerators using Gemmini.
+* add custom datatypes to Gemmini.
+* write your own Gemmini programs.
+* profile your workloads using Gemmini's performance counters.
 
 Or, continue reading the rest of this document for descriptions of Gemmini's architecture, ISA, and configuration parameters.
 
