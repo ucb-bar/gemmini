@@ -6,9 +6,10 @@ Gemmini
 ====================================
 
 The Gemmini project is developing a full-system, full-stack DNN hardware exploration and evaluation platform.
-With Gemmini, we enable architects to make useful insights into how different components of the system and software stack (outside of just the accelerator itself) interact to affect overall DNN performance.
+Gemmini enables architects to make useful insights into how different components of the system and software stack (outside of just the accelerator itself) interact to affect overall DNN performance.
 
 Gemmini is part of the [Chipyard](https://github.com/ucb-bar/chipyard) ecosystem, and developed using the [Chisel](https://www.chisel-lang.org/) hardware description language.
+
 This document is intended to provide information for both beginners wanting to try out Gemmini, as well as in-depth information for those who might want to start hacking on Gemmini's source code.
 
 ![Gemmini's high-level architecture](./img/gemmini-system.png)
