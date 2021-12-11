@@ -1,11 +1,25 @@
 #!/bin/bash
 
+help () {
+  echo "Setup all the directories and symlinks that you need to use the scripts
+  echo 'in `scripts/`.'
+  exit
+}
+
+if [ $# -gt 0 ]; then
+   help
+fi
+
 if [ ! -d configs ]; then
     mkdir configs/
 fi
 
 if [ ! -d generated-src ]; then
     mkdir generated-src/
+fi
+
+if [ ! -d waveforms ]; then
+    mkdir waveforms/
 fi
 
 if [ ! -f configs/GemminiDefaultConfigs.scala ]; then
