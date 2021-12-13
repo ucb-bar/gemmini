@@ -17,7 +17,7 @@ This document is intended to provide information for beginners wanting to try ou
 Quick Start
 ==========
 
-We provide here a quick guide to installing Gemmini's dependencies (Chipyard and Spike), building Gemmini simulators and tests, and then running those tests on the simulators.
+We provide here a quick guide to installing Gemmini's dependencies (Chipyard and Spike), building Gemmini hardware and software, and then running that software on our hardware simulators.
 
 Dependencies
 ---------
@@ -67,13 +67,21 @@ cd chipyard/generators/gemmini/software/gemmini-rocc-tests
 ./build.sh
 ```
 
-Afterwards, you'll find RISC-V binaries in `build/`, for baremetal environments, Linux environments, and "proxy-kernel" environments.
+Afterwards, you'll find RISC-V binaries in `build/`, for "baremetal" environments, Linux environments, and "proxy-kernel" environments.
 
-Linux binaries are typically only run on FPGA instances in FireSim, but baremetal and "proxy-kernel" binaries can be run on cycle-accurate simulators such as Verilator.
-Baremetal binaries have no support for virtual memory, unlike Linux and "proxy-kernel" binaries.
+Linux binaries are meant to be executed on SoCs that run Linux.
+These binaries are dynamically linked, and support all syscalls.
+Typically, our users run them on [FireSim](https://fires.im/) simulators.
 
-Building Gemmini Cycle-Accurate Simulators
--------------------------
+Baremetal binaries are meant to be run in an environment without any operating system available.
+They lack support for most syscalls, and do not support virtual memory either.
+Our users typically run them on cycle-accurate simulators like Verilator or VCS.
+
+"Proxy-kernel" binaries are meant to be run on a stripped down version of Linux, called the ["RISC-V Proxy Kernel."](https://github.com/riscv-software-src/riscv-pk)
+These binaries support virtual memory, and are typically run on cycle-accurate simulators like Verilator.
+
+Building Gemmini Hardware and Cycle-Accurate Simulators
+-----------------------------------------------
 
 Run the instructions below to build a cycle-accurate Gemmini simulator using Verilator.
 
@@ -114,7 +122,7 @@ cd chipyard/generators/gemmini
 # Run a smaller workload in baremetal mode, on a cycle-accurate simulator
 ./scripts/run-verilator.sh template
 
-# Run a smaller workload with a proxy-kernel, on a cycle accurate simulator
+# Run a smaller workload with the proxy-kernel, on a cycle accurate simulator
 ./scripts/run-verilator.sh --pk template
 
 # Or, if you want to generate waveforms in `waveforms/`:
@@ -129,6 +137,10 @@ Check out [our IISWC 2021 tutorial](https://sites.google.com/berkeley.edu/gemmin
 * add custom datatypes to Gemmini.
 * write your own Gemmini programs.
 * profile your workloads using Gemmini's performance counters.
+
+Also, consider learning about [FireSim](fires.im), a platform for FPGA-accelerated cycle-accurate simulation.
+We use FireSim to run end-to-end DNN workloads that would take too long to run on Verilator/VCS.
+FireSim also allows users to check that their Gemmini hardware/software will work when running on a Linux environment.
 
 Or, continue reading the rest of this document for descriptions of Gemmini's architecture, ISA, and configuration parameters.
 
