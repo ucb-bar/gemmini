@@ -2,23 +2,148 @@
   <img width="1000" src="./img/full-logo.svg">
 </p>
 
-IISWC Tutorial
-==============
-
-We will be presenting a Gemmini tutorial at IISWC 2021! [More info here.](https://sites.google.com/berkeley.edu/gemminitutorialiiswc2021/)
-
 Gemmini
 ====================================
 
-The Gemmini project is developing a systolic-array based matrix multiplication accelerator generator for the investigation of SoC integration of such accelerators. It is inspired by recent trends in machine learning accelerators for edge and mobile SoCs.
+The Gemmini project is developing a full-system, full-stack DNN hardware exploration and evaluation platform.
+Gemmini enables architects to make useful insights into how different components of the system and software stack (outside of just the accelerator itself) interact to affect overall DNN performance.
 
-Gemmini is part of the [Chipyard](https://github.com/ucb-bar/chipyard) ecosystem. **For instructions on how to produce Gemmini RTL or to run Gemmini simulations, consult [this page](https://chipyard.readthedocs.io/en/latest/Generators/Gemmini.html) in the Chipyard documentation**. This document is intended to provide more in-depth information for those who might want to start hacking on Gemmini's source code.
+Gemmini is part of the [Chipyard](https://github.com/ucb-bar/chipyard) ecosystem, and was developed using the [Chisel](https://www.chisel-lang.org/) hardware description language.
 
-
-**Developer Note:**
-To track compatible versions of Chipyard and Spike, please update the CHIPYARD.hash and SPIKE.hash files with updated hashes of Chipyard and Spike commits when bumping Chipyard or Spike.
+This document is intended to provide information for beginners wanting to try out Gemmini, as well as more advanced in-depth information for those who might want to start hacking on Gemmini's source code.
 
 ![Gemmini's high-level architecture](./img/gemmini-system.png)
+
+Quick Start
+==========
+
+We provide here a quick guide to installing Gemmini's dependencies (Chipyard and Spike), building Gemmini hardware and software, and then running that software on our hardware simulators.
+
+Dependencies
+---------
+
+Before beginning, install the [Chipyard dependencies](https://chipyard.readthedocs.io/en/latest/Chipyard-Basics/Initial-Repo-Setup.html#requirements) that are described here.
+
+Installing Chipyard and Spike
+-----------------------------
+
+Run these steps to install Chipyard and Spike (make sure to checkout the correct Chipyard and Spike commits as shown below):
+
+```shell
+git clone https://github.com/ucb-bar/chipyard.git
+cd chipyard
+git checkout ec1b075658fb92a624151536dd1de76bad94f51f
+./scripts/init-submodules-no-riscv-tools.sh
+./scripts/build-toolchains.sh esp-tools
+
+source env.sh
+
+cd generators/gemmini
+git fetch && git checkout dev && git pull origin dev
+git submodule update
+
+cd -
+cd toolchains/esp-tools/riscv-isa-sim/build
+git fetch && git checkout 02e2d983cc8e2c385ebe920302c427b9167bd76e
+make && make install
+```
+
+Setting Up Gemmini
+------------------
+
+Run the steps below to set up Gemmini configuration files, symlinks, and subdirectories:
+
+```shell
+cd chipyard/generators/gemmini
+./scripts/setup-paths.sh
+```
+
+Building Gemmini Software
+-------------------------
+
+Run the steps below to compile Gemmini programs, including large DNN models like ResNet50, and small matrix-multiplication tests.
+
+```shell
+cd chipyard/generators/gemmini/software/gemmini-rocc-tests
+./build.sh
+```
+
+Afterwards, you'll find RISC-V binaries in `build/`, for "baremetal" environments, Linux environments, and "proxy-kernel" environments.
+
+Linux binaries are meant to be executed on SoCs that run Linux.
+These binaries are dynamically linked, and support all syscalls.
+Typically, our users run them on [FireSim](https://fires.im/) simulators.
+
+Baremetal binaries are meant to be run in an environment without any operating system available.
+They lack support for most syscalls, and do not support virtual memory either.
+Our users typically run them on cycle-accurate simulators like Verilator or VCS.
+
+"Proxy-kernel" binaries are meant to be run on a stripped down version of Linux, called the ["RISC-V Proxy Kernel."](https://github.com/riscv-software-src/riscv-pk)
+These binaries support virtual memory, and are typically run on cycle-accurate simulators like Verilator.
+
+Building Gemmini Hardware and Cycle-Accurate Simulators
+-----------------------------------------------
+
+Run the instructions below to build a cycle-accurate Gemmini simulator using Verilator.
+
+```shell
+cd chipyard/generators/gemmini
+./scripts/build-verilator.sh
+
+# Or, if you want a simulator that can generate waveforms, run this:
+# ./scripts/build-verilator.sh --debug
+```
+
+After running this, in addition to the cycle-accurate simulator, you will be able to find the Verilog description of your SoC in `generated-src/`.
+
+Building Gemmini Functional Simulators
+---------------------------
+
+Run the instructions below to build a functional ISA simulator for Gemmini (called "Spike").
+
+```shell
+cd chipyard/generators/gemmini
+./scripts/build-spike.sh
+```
+
+Spike typically runs _much_ faster than cycle-accurate simulators like Verilator or VCS.
+However, Spike can only verify functional correctness; it cannot give accurate performance metrics or profiling information.
+
+Run Simulators
+---------------
+
+Run the instructions below to run the Gemmini RISCV binaries that we built previously, using the simulators that we built above:
+
+```shell
+cd chipyard/generators/gemmini
+
+# Run a large DNN workload in the functional simulator
+./scripts/run-spike.sh resnet50
+
+# Run a smaller workload in baremetal mode, on a cycle-accurate simulator
+./scripts/run-verilator.sh template
+
+# Run a smaller workload with the proxy-kernel, on a cycle accurate simulator
+./scripts/run-verilator.sh --pk template
+
+# Or, if you want to generate waveforms in `waveforms/`:
+# ./scripts/run-verilator.sh --pk --debug template
+```
+
+Next steps
+--------
+
+Check out [our IISWC 2021 tutorial](https://sites.google.com/berkeley.edu/gemminitutorialiiswc2021/) to learn how to:
+* build different types of diverse accelerators using Gemmini.
+* add custom datatypes to Gemmini.
+* write your own Gemmini programs.
+* profile your workloads using Gemmini's performance counters.
+
+Also, consider learning about [FireSim](fires.im), a platform for FPGA-accelerated cycle-accurate simulation.
+We use FireSim to run end-to-end DNN workloads that would take too long to run on Verilator/VCS.
+FireSim also allows users to check that their Gemmini hardware/software will work when running on a Linux environment.
+
+Or, continue reading the rest of this document for descriptions of Gemmini's architecture, ISA, and configuration parameters.
 
 Architecture
 ================
@@ -245,7 +370,7 @@ spike --extension=gemmini mvin_mvout-baremetal
 ## Writing Your Own Gemmini Tests
 `software/gemmini-rocc-tests/bareMetalC/template.c` is a template Gemmini test that you can base your own Gemmini tests off of. To write your own Gemmini test, run:
 
-```bash
+```shell
 cd software/gemmini-rocc-tests/
 cp bareMetalC/template.c bareMetalC/my_test.c
 ```
