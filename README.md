@@ -40,6 +40,7 @@ source env.sh
 
 cd generators/gemmini
 git fetch && git checkout dev && git pull origin dev
+git submodule update
 
 cd -
 cd toolchains/esp-tools/riscv-isa-sim/build
