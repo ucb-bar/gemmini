@@ -81,6 +81,8 @@ Our users typically run them on cycle-accurate simulators like Verilator or VCS.
 "Proxy-kernel" binaries are meant to be run on a stripped down version of Linux, called the ["RISC-V Proxy Kernel."](https://github.com/riscv-software-src/riscv-pk)
 These binaries support virtual memory, and are typically run on cycle-accurate simulators like Verilator.
 
+**Warning:** Proxy-kernel binaries have limited heap space, so some Gemmini programs that work correctly in baremetal or Linux environments may fail on the proxy-kernel.
+
 Building Gemmini Hardware and Cycle-Accurate Simulators
 -----------------------------------------------
 
