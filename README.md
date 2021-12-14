@@ -39,7 +39,7 @@ git checkout ec1b075658fb92a624151536dd1de76bad94f51f
 source env.sh
 
 cd generators/gemmini
-git fetch && git checkout dev && git pull origin dev
+git fetch && git checkout v0.6.1
 git submodule update
 
 cd -
