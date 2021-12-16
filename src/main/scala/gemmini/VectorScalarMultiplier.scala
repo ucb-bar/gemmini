@@ -83,7 +83,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
   }
 
   if (num_scale_units == -1) {
-    val pipe = Module(new Pipeline(
+    val pipe = Module(new Pipeline[VectorScalarMultiplierResp[T, Tag]](
       new VectorScalarMultiplierResp(block_cols, t, tag_t),
       latency
     )())

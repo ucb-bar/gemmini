@@ -5,9 +5,9 @@ import chisel3.util._
 
 import Util._
 
-class PixelRepeaterReq[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols: Int, tag_t: Tag) extends Bundle {
+class PixelRepeaterReq[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols: Int, aligned_to: Int, tag_t: Tag) extends Bundle {
   val in: Vec[T] = Vec(block_cols, t.cloneType)
-  val mask: Vec[Bool] = Vec(block_cols, Bool())
+  val mask: Vec[Bool] = Vec(block_cols * (t.getWidth/8) / aligned_to, Bool())
   val laddr: LocalAddr = laddr_t.cloneType
   val len: UInt = UInt(log2Up(block_cols+1).W) // TODO magic number
   val pixel_repeats: UInt = UInt(8.W) // TODO magic number
@@ -16,23 +16,23 @@ class PixelRepeaterReq[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_c
 
   assert(block_cols <= 255, "len must be longer")
 
-  override def cloneType: PixelRepeaterReq.this.type = new PixelRepeaterReq(t, laddr_t, block_cols, tag_t).asInstanceOf[this.type]
+  override def cloneType: PixelRepeaterReq.this.type = new PixelRepeaterReq(t, laddr_t, block_cols, aligned_to, tag_t).asInstanceOf[this.type]
 }
 
-class PixelRepeaterResp[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols: Int, tag_t: Tag) extends Bundle {
+class PixelRepeaterResp[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols: Int, aligned_to: Int, tag_t: Tag) extends Bundle {
   val out: Vec[T] = Vec(block_cols, t.cloneType)
-  val mask: Vec[Bool] = Vec(block_cols, Bool())
+  val mask: Vec[Bool] = Vec(block_cols * (t.getWidth/8) / aligned_to, Bool())
   val laddr: LocalAddr = laddr_t.cloneType
   val last: Bool = Bool()
   val tag: Tag = tag_t.cloneType
 
-  override def cloneType: PixelRepeaterResp.this.type = new PixelRepeaterResp(t, laddr_t, block_cols, tag_t).asInstanceOf[this.type]
+  override def cloneType: PixelRepeaterResp.this.type = new PixelRepeaterResp(t, laddr_t, block_cols, aligned_to, tag_t).asInstanceOf[this.type]
 }
 
 class PixelRepeater[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols: Int, aligned_to: Int, tag_t: Tag, passthrough: Boolean) extends Module {
   val io = IO(new Bundle {
-    val req = Flipped(Decoupled(new PixelRepeaterReq(t, laddr_t, block_cols, tag_t)))
-    val resp = Decoupled(new PixelRepeaterResp(t, laddr_t, block_cols, tag_t))
+    val req = Flipped(Decoupled(new PixelRepeaterReq(t, laddr_t, block_cols, aligned_to, tag_t)))
+    val resp = Decoupled(new PixelRepeaterResp(t, laddr_t, block_cols, aligned_to, tag_t))
   })
 
   if (passthrough) {

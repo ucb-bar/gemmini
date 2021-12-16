@@ -311,17 +311,20 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     zero_writer.io.req.bits.block_stride := io.dma.read.req.bits.block_stride
     zero_writer.io.req.bits.tag := io.dma.read.req.bits
 
-    // zero_writer.io.resp.ready := false.B
-
     val zero_writer_pixel_repeater = Module(new PixelRepeater(inputType, local_addr_t, block_cols, aligned_to, new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), passthrough = !has_first_layer_optimizations))
     zero_writer_pixel_repeater.io.req.valid := zero_writer.io.resp.valid
     zero_writer_pixel_repeater.io.req.bits.in := 0.U.asTypeOf(Vec(block_cols, inputType))
-    zero_writer_pixel_repeater.io.req.bits.mask := zero_writer.io.resp.bits.mask
     zero_writer_pixel_repeater.io.req.bits.laddr := zero_writer.io.resp.bits.laddr
     zero_writer_pixel_repeater.io.req.bits.len := zero_writer.io.resp.bits.tag.cols
     zero_writer_pixel_repeater.io.req.bits.pixel_repeats := zero_writer.io.resp.bits.tag.pixel_repeats
     zero_writer_pixel_repeater.io.req.bits.last := zero_writer.io.resp.bits.last
     zero_writer_pixel_repeater.io.req.bits.tag := zero_writer.io.resp.bits.tag
+    zero_writer_pixel_repeater.io.req.bits.mask := {
+      val n = inputType.getWidth / 8
+      val mask = zero_writer.io.resp.bits.mask
+      val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
+      expanded
+    }
 
     zero_writer.io.resp.ready := zero_writer_pixel_repeater.io.req.ready
     zero_writer_pixel_repeater.io.resp.ready := false.B
@@ -394,17 +397,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     reader.module.io.resp.ready := Mux(reader.module.io.resp.bits.is_acc && reader.module.io.resp.bits.has_acc_bitwidth,
       mvin_scale_acc_in.ready, mvin_scale_in.ready)
 
-    // val mvin_scale_finished = mvin_scale_out.fire() && mvin_scale_out.bits.last
     val mvin_scale_finished = mvin_scale_pixel_repeater.io.resp.fire() && mvin_scale_pixel_repeater.io.resp.bits.last
     val mvin_scale_acc_finished = mvin_scale_acc_out.fire() && mvin_scale_acc_out.bits.last
-    // val zero_writer_finished = zero_writer.io.resp.fire() && zero_writer.io.resp.bits.last
     val zero_writer_finished = zero_writer_pixel_repeater.io.resp.fire() && zero_writer_pixel_repeater.io.resp.bits.last
 
-    /*
-    val zero_writer_bytes_read = Mux(zero_writer.io.resp.bits.laddr.is_acc_addr,
-      zero_writer.io.resp.bits.tag.cols * (accType.getWidth / 8).U,
-      zero_writer.io.resp.bits.tag.cols * (inputType.getWidth / 8).U)
-    */
     val zero_writer_bytes_read = Mux(zero_writer_pixel_repeater.io.resp.bits.laddr.is_acc_addr,
       zero_writer_pixel_repeater.io.resp.bits.tag.cols * (accType.getWidth / 8).U,
       zero_writer_pixel_repeater.io.resp.bits.tag.cols * (inputType.getWidth / 8).U)
@@ -525,26 +521,15 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.mask := io.srams.write(i).mask
         }.elsewhen (dmaread) {
           bio.write.addr := laddr.sp_row()
-          // bio.write.data := mvin_scale_out.bits.out.asUInt()
-          // bio.write.mask := mvin_scale_out.bits.tag.mask take ((spad_w / (aligned_to * 8)) max 1)
           bio.write.data := mvin_scale_pixel_repeater.io.resp.bits.out.asUInt()
           bio.write.mask := mvin_scale_pixel_repeater.io.resp.bits.mask take ((spad_w / (aligned_to * 8)) max 1)
 
-          // mvin_scale_out.ready := true.B // TODO we combinationally couple valid and ready signals
           mvin_scale_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
         }.elsewhen (zerowrite) {
-          // bio.write.addr := zero_writer.io.resp.bits.laddr.sp_row()
           bio.write.addr := zero_writer_pixel_repeater.io.resp.bits.laddr.sp_row()
           bio.write.data := 0.U
-          bio.write.mask := {
-            val n = inputType.getWidth / 8
-            // val mask = zero_writer.io.resp.bits.mask
-            val mask = zero_writer_pixel_repeater.io.resp.bits.mask
-            val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
-            expanded
-          }
+          bio.write.mask := zero_writer_pixel_repeater.io.resp.bits.mask
 
-          // zero_writer.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
           zero_writer_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
         }.otherwise {
           bio.write.addr := DontCare
@@ -762,7 +747,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
               mvin_scale_acc_out.bits.tag.mask)
 
           when(from_mvin_scale) {
-            // mvin_scale_out.ready := bio.write.ready
             mvin_scale_pixel_repeater.io.resp.ready := bio.write.ready
           }.otherwise {
             mvin_scale_acc_out.ready := bio.write.ready
@@ -771,14 +755,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.valid := true.B
           bio.write.bits.data := 0.U.asTypeOf(acc_row_t)
           bio.write.bits.mask := {
-            val n = accType.getWidth / 8
-            // val mask = zero_writer.io.resp.bits.mask
+            val n = accType.getWidth / inputType.getWidth
             val mask = zero_writer_pixel_repeater.io.resp.bits.mask
             val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
             expanded
           }
 
-          // zero_writer.io.resp.ready := bio.write.ready
           zero_writer_pixel_repeater.io.resp.ready := bio.write.ready
         }.otherwise {
           bio.write.bits.data := DontCare
