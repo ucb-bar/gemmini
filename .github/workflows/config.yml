@@ -20,8 +20,8 @@ jobs:
       - name: cache esp-toolchain install
         uses: actions/cache@v2
         with:
-          - path: ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
-          - key: esp-tools-install-${{ github.ref }}-${{ github.sha }}
+          path: ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
+          key: esp-tools-install-${{ github.ref }}-${{ github.sha }}
 
   prepare-build-environment:
     name: prepare-build-environment
@@ -44,10 +44,10 @@ jobs:
       - name: cache prepare-build-environment install
         uses: actions/cache@v2
         with:
-          - path: |
+          path: |
             ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
             ${{ steps.get-paths.outputs.LOCAL_VERILATOR_DIR }}
-          - key: prepare-build-environment-${{ github.ref }}-${{ github.sha }}
+          key: prepare-build-environment-${{ github.ref }}-${{ github.sha }}
 
   prepare-gemmini-config:
     name: prepare-gemmini-config
@@ -66,16 +66,16 @@ jobs:
       - name: restore cache esp-toolchain install
         uses: actions/cache@v2
         with:
-          - path: ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
-          - key: esp-tools-install-${{ github.ref }}-${{ github.sha }}
+          path: ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
+          key: esp-tools-install-${{ github.ref }}-${{ github.sha }}
 
       - name: restore cache prepare-build-environment install
         uses: actions/cache@v2
         with:
-          - path: |
+          path: |
             ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
             ${{ steps.get-paths.outputs.LOCAL_VERILATOR_DIR }}
-          - key: prepare-build-environment-${{ github.ref }}-${{ github.sha }}
+          key: prepare-build-environment-${{ github.ref }}-${{ github.sha }}
 
       - name: create hash
         run: .github/scripts/create-hash.sh
@@ -85,11 +85,11 @@ jobs:
       - name: cache prepare-gemmini-config install
         uses: actions/cache@v2
         with:
-          - path: |
+          path: |
             ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
             ${{ steps.get-paths.outputs.LOCAL_VERILATOR_DIR }}
             ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
-          - key: prepare-gemmini-config-${{ github.ref }}-${{ github.sha }}
+          key: prepare-gemmini-config-${{ github.ref }}-${{ github.sha }}
 
   spike-run-tests:
     name: spike-run-tests
@@ -105,11 +105,11 @@ jobs:
       - name: restore cache prepare-gemmini-config install
         uses: actions/cache@v2
         with:
-          - path: |
+          path: |
             ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
             ${{ steps.get-paths.outputs.LOCAL_VERILATOR_DIR }}
             ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
-          - key: prepare-gemmini-config-${{ github.ref }}-${{ github.sha }}
+          key: prepare-gemmini-config-${{ github.ref }}-${{ github.sha }}
 
       - name: run-tests
         run: ./github/scripts/run-tests-spike.sh
@@ -128,11 +128,11 @@ jobs:
       - name: restore cache prepare-gemmini-config install
         uses: actions/cache@v2
         with:
-          - path: |
+          path: |
             ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
             ${{ steps.get-paths.outputs.LOCAL_VERILATOR_DIR }}
             ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
-          - key: prepare-gemmini-config-${{ github.ref }}-${{ github.sha }}
+          key: prepare-gemmini-config-${{ github.ref }}-${{ github.sha }}
 
       - name: run-tests
         run: ./github/scripts/run-tests-rtl.sh
