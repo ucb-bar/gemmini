@@ -41,3 +41,29 @@ jobs:
         run: .github/scripts/create-hash.sh
       - name: Building Gemmini Config using Verilator
         run: .github/scripts/do-rtl-build.sh
+
+  spike-run-tests:
+    name: spike-run-tests
+    runs-on: ubuntu-latest
+    needs: prepare-gemmini-config
+    container:
+      image: ucbbar/chipyard-ci-image:554b436
+      options: --entrypoint /bin/bash
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: run-tests
+        run: ./github/scripts/run-tests-spike.sh
+
+  rtl-run-tests:
+    name: rtl-run-tests
+    runs-on: ubuntu-latest
+    needs: prepare-gemmini-config
+    container:
+      image: ucbbar/chipyard-ci-image:554b436
+      options: --entrypoint /bin/bash
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: run-tests
+        run: ./github/scripts/run-tests-rtl.sh
