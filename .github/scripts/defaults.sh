@@ -28,5 +28,3 @@ LOCAL_ESP_DIR=$HOME/esp-tools-install
 LOCAL_CHIPYARD_DIR=$HOME/chipyard
 LOCAL_SIM_DIR=$LOCAL_CHIPYARD_DIR/sims/verilator
 LOCAL_VERILATOR_DIR=$HOME/verilator-install
-
-echo local checkout dir is $LOCAL_CHECKOUT_DIR
