@@ -22,13 +22,11 @@ VERILATOR_VERSION=v4.034
 
 # local variables (aka within the docker container)
 LOCAL_WORK_DIR=$HOME
-LOCAL_CHECKOUT_DIR=$HOME/project
+LOCAL_CHECKOUT_DIR=$GITHUB_WORKSPACE/gemmini # $HOME/project
 LOCAL_RISCV_DIR=$HOME/riscv-tools-install
 LOCAL_ESP_DIR=$HOME/esp-tools-install
 LOCAL_CHIPYARD_DIR=$HOME/chipyard
 LOCAL_SIM_DIR=$LOCAL_CHIPYARD_DIR/sims/verilator
 LOCAL_VERILATOR_DIR=$HOME/verilator-install
 
-# api url to do curls
-API_URL=https://circleci.com/api/v2
-
+echo local checkout dir is $LOCAL_CHECKOUT_DIR
