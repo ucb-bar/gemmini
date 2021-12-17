@@ -39,4 +39,4 @@ jobs:
       - name: create hash
         run: .github/scripts/create-hash.sh
       - name: Building Gemmini Config using Verilator
-        command: .github/scripts/do-rtl-build.sh
+        run: .github/scripts/do-rtl-build.sh
