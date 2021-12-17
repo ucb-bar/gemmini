@@ -5,7 +5,7 @@ jobs:
     name: install-esp-toolchain
     runs-on: ubuntu-latest
     container:
-      image: ucbbar/chipyard-image:1.0.1
+      image: ucbbar/chipyard-ci-image:554b436
       options: --entrypoint /bin/bash
     steps:
       - name: checkout
