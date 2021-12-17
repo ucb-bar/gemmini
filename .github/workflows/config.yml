@@ -10,16 +10,6 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v2
-      - name: generate-keys
-        id: genkey
-        run: |
-          echo "::set-output name=install-esp-toolchain-cache-key::esp-tools-${{ github.ref }}-${{ github.sha }}"
-      - name: cache
-        uses: actions/cache@v2
-        with:
-          path: /home/riscvuser/esp-tools-install
-          key: ${{ steps.genkey.outputs.install-esp-toolchain-cache-key }}
-          restore-keys: ${{ steps.genkey.outputs.install-esp-toolchain-cache-key }}
       - name: toolchain-build
         run: .github/scripts/build-toolchains.sh esp-tools
 
@@ -32,17 +22,21 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v2
-      - name: generate-keys
-        id: genkey
-        run: |
-          echo "::set-output name=prepare-build-environment-cache-key::build-environment-${{ github.ref }}-${{ github.sha }}"
-      - name: cache
-        uses: actions/cache@v2
-        with:
-          path: /home/riscvuser/chipyard
-          key: ${{ steps.genkey.outputs.prepare-build-environment-cache-key }}
-          restore-keys: ${{ steps.genkey.outputs.prepare-build-environment-cache-key }}
       - name: setup build environment
         run: .github/scripts/prepare-for-rtl-build.sh
       - name: intall verilator
         run: .github/scripts/install-verilator.sh
+
+  prepare-gemmini-config:
+    name: prepare-gemmini-config
+    needs: [prepare-build-environment, install-esp-toolchain]
+    container:
+      image: ucbbar/chipyard-ci-image:554b436
+      options: --entrypoint /bin/bash
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: create hash
+        run: .github/scripts/create-hash.sh
+      - name: Building Gemmini Config using Verilator
+        command: .github/scripts/do-rtl-build.sh
