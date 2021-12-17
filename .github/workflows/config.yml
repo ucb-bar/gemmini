@@ -8,8 +8,6 @@ jobs:
       image: ucbbar/chipyard-image:1.0.1
       options: --entrypoint /bin/bash
     steps:
-      - name: checkout
-        uses: actions/checkout@v2
       - name: generate-keys
         id: genkey
         run: |
