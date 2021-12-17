@@ -1,18 +1,6 @@
 name: Gemmini CI
 on: [push]
 jobs:
-  hasan:
-    name: hasan
-    runs-on: ubuntu-latest
-    container:
-      image: ucbbar/chipyard-ci-image:554b436
-      options: --entrypoint /bin/bash
-    steps:
-      - name: checkout
-        uses: actions/checkout@v2
-      - name: toolchain-build
-        run: .github/scripts/defaults.sh
-
   install-esp-toolchain:
     name: install-esp-toolchain
     runs-on: ubuntu-latest
