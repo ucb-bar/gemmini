@@ -22,7 +22,7 @@ VERILATOR_VERSION=v4.034
 
 # local variables (aka within the docker container)
 LOCAL_WORK_DIR=$HOME
-LOCAL_CHECKOUT_DIR=$GITHUB_WORKSPACE/gemmini # $HOME/project
+LOCAL_CHECKOUT_DIR=$GITHUB_WORKSPACE/
 LOCAL_RISCV_DIR=$HOME/riscv-tools-install
 LOCAL_ESP_DIR=$HOME/esp-tools-install
 LOCAL_CHIPYARD_DIR=$HOME/chipyard
