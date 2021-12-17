@@ -8,5 +8,17 @@ jobs:
       image: ucbbar/chipyard-image:1.0.1
       options: --entrypoint /bin/bash
     steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: generate-keys
+        id: genkey
+        run: |
+          echo "::set-output name=install-esp-toolchain-cache-key::extra-tests-${{ github.ref }}-${{ github.sha }}"
+      - name: cache
+        uses: actions/cache@v2
+        with:
+          path: /home/riscvuser/esp-tools-install
+          key: ${{ steps.genkey.outputs.install-esp-toolchain-cache-key }}
+          restore-keys: ${{ steps.genkey.outputs.install-esp-toolchain-cache-key }}
       - name: toolchain-build
-        run: echo hello
+        run: .github/scripts/build-toolchains.sh esp-tools
