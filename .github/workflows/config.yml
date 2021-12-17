@@ -1,0 +1,12 @@
+name: Gemmini CI
+on: [push]
+jobs:
+  install-esp-toolchain:
+    name: install-esp-toolchain
+    runs-on: ubuntu-latest
+    container:
+      image: ucbbar/chipyard-image:1.0.1
+      options: --entrypoint /bin/bash
+    steps:
+      - name: toolchain-build
+        run: echo hello
