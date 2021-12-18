@@ -22,13 +22,17 @@ VERILATOR_VERSION=v4.034
 
 # local variables (aka within the docker container)
 LOCAL_WORK_DIR=$HOME
-LOCAL_CHECKOUT_DIR=$HOME/project
+LOCAL_CHECKOUT_DIR=$GITHUB_WORKSPACE/
 LOCAL_RISCV_DIR=$HOME/riscv-tools-install
 LOCAL_ESP_DIR=$HOME/esp-tools-install
 LOCAL_CHIPYARD_DIR=$HOME/chipyard
 LOCAL_SIM_DIR=$LOCAL_CHIPYARD_DIR/sims/verilator
 LOCAL_VERILATOR_DIR=$HOME/verilator-install
 
-# api url to do curls
-API_URL=https://circleci.com/api/v2
-
+echo "::set-output name=LOCAL_WORK_DIR::$LOCAL_WORK_DIR"
+echo "::set-output name=LOCAL_CHECKOUT_DIR::$LOCAL_CHECKOUT_DIR"
+echo "::set-output name=LOCAL_RISCV_DIR::$LOCAL_RISCV_DIR"
+echo "::set-output name=LOCAL_ESP_DIR::$LOCAL_ESP_DIR"
+echo "::set-output name=LOCAL_CHIPYARD_DIR::$LOCAL_CHIPYARD_DIR"
+echo "::set-output name=LOCAL_SIM_DIR::$LOCAL_SIM_DIR"
+echo "::set-output name=LOCAL_VERILATOR_DIR::$LOCAL_VERILATOR_DIR"
