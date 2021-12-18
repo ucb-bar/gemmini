@@ -113,7 +113,7 @@ jobs:
           key: prepare-gemmini-config-${{ github.ref }}-${{ github.sha }}
 
       - name: run-tests
-        run: ./github/scripts/run-tests-spike.sh
+        run: .github/scripts/run-tests-spike.sh
 
   rtl-run-tests:
     name: rtl-run-tests
@@ -139,4 +139,4 @@ jobs:
           key: prepare-gemmini-config-${{ github.ref }}-${{ github.sha }}
 
       - name: run-tests
-        run: ./github/scripts/run-tests-rtl.sh
+        run: .github/scripts/run-tests-rtl.sh
