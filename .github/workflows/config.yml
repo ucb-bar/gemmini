@@ -99,6 +99,9 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v2
+      - name: get paths
+        run: .github/scripts/defaults.sh
+        id: get-paths
 
       - name: restore cache prepare-gemmini-config install
         uses: actions/cache@v2
@@ -122,6 +125,9 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v2
+      - name: get paths
+        run: .github/scripts/defaults.sh
+        id: get-paths
 
       - name: restore cache prepare-gemmini-config install
         uses: actions/cache@v2
