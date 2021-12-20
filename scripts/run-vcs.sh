@@ -58,7 +58,7 @@ fi
 
 if [ $pk -eq 1 ]; then
     default_suffix="-pk"
-    PK="pk"
+    PK="pk -p"
 else
     default_suffix="-baremetal"
     PK=""
