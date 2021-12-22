@@ -133,29 +133,6 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val new_entry_oh = new_full_allocs ++ new_partial_allocs
   val alloc_fire = io.alloc.fire()
 
-  val raws_probe = WireInit(0.U(rob_entries.W))
-  val waws_probe = WireInit(0.U(rob_entries.W))
-  val wars_probe = WireInit(0.U(rob_entries.W))
-  val older_in_same_q_probe = WireInit(0.U(rob_entries.W))
-  val is_st_and_must_wait_for_prior_ex_config_probe = WireInit(0.U(rob_entries.W))
-  val is_ex_config_and_must_wait_for_prior_st_probe = WireInit(0.U(rob_entries.W))
-
-  val wars_op1_probe = WireInit(0.U(rob_entries.W))
-  val wars_op2_probe = WireInit(0.U(rob_entries.W))
-  val raws_op1_probe = WireInit(0.U(rob_entries.W))
-  val raws_op2_probe = WireInit(0.U(rob_entries.W))
-
-  dontTouch(raws_probe)
-  dontTouch(waws_probe)
-  dontTouch(wars_probe)
-  dontTouch(wars_op1_probe)
-  dontTouch(wars_op2_probe)
-  dontTouch(raws_op1_probe)
-  dontTouch(raws_op2_probe)
-  dontTouch(older_in_same_q_probe)
-  dontTouch(is_st_and_must_wait_for_prior_ex_config_probe)
-  dontTouch(is_ex_config_and_must_wait_for_prior_st_probe)
-
   dontTouch(new_entry)
   io.alloc.ready := false.B
   when (io.alloc.valid) {
@@ -326,30 +303,24 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       e.valid && e.bits.q === new_entry.q && !e.bits.issued
     })
 
-    val is_st_and_must_wait_for_prior_ex_config = VecInit(entries.map { e =>
-      e.valid && new_entry.q === stq && !new_entry.is_config && e.bits.q === exq && e.bits.is_config
-    })
+//    val is_st_and_must_wait_for_prior_ex_config = VecInit(entries.map { e =>
+//      e.valid && new_entry.q === stq && !new_entry.is_config && e.bits.q === exq && e.bits.is_config
+//    })
+//
+//    val is_ex_config_and_must_wait_for_prior_st = VecInit(entries.map { e =>
+//      // TODO when acc reads no longer rely upon config-ex's relu6, this dependency can be broken
+//      e.valid && new_entry.q === exq && new_entry.is_config && e.bits.q === stq && !e.bits.is_config
+//    })
 
-    val is_ex_config_and_must_wait_for_prior_st = VecInit(entries.map { e =>
-      // TODO when acc reads no longer rely upon config-ex's relu6, this dependency can be broken
-      e.valid && new_entry.q === exq && new_entry.is_config && e.bits.q === stq && !e.bits.is_config
-    })
-
-    new_entry.deps := (Cat(raws) | Cat(wars) | Cat(waws) | Cat(older_in_same_q) |
-      Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).asBools().reverse
-
-    raws_probe := Cat(raws.reverse)
-    waws_probe := Cat(waws.reverse)
-    wars_probe := Cat(wars.reverse)
-    older_in_same_q_probe := Cat(older_in_same_q.reverse)
-    is_st_and_must_wait_for_prior_ex_config_probe := Cat(is_st_and_must_wait_for_prior_ex_config.reverse)
-    is_ex_config_and_must_wait_for_prior_st_probe := Cat(is_ex_config_and_must_wait_for_prior_st.reverse)
+    new_entry.deps := (Cat(raws) | Cat(wars) | Cat(waws) | Cat(older_in_same_q)).asBools().reverse // |
+    //  Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).asBools().reverse
 
     new_entry.allocated_at := instructions_allocated
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
     val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
+    // looking for the first invalid entry
     val full_alloc_id = MuxCase((reservation_station_full_entries-1).U, full_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
     val partial_alloc_id = MuxCase((reservation_station_partial_entries-1).U, partial_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
 
