@@ -101,13 +101,31 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     // Debugging signals
     val allocated_at = UInt(instructions_allocated.getWidth.W)
   }
-  val full_entries = Reg(Vec(reservation_station_full_entries, UDValid(new Entry)))
-  val partial_entries = Reg(Vec(reservation_station_partial_entries, UDValid(new Entry)))
+  val full_entries_ld = Reg(Vec(reservation_station_full_entries_per_type, UDValid(new Entry)))
+  val partial_entries_ld = Reg(Vec(reservation_station_partial_entries_per_type, UDValid(new Entry)))
+  val full_entries_ex = Reg(Vec(reservation_station_full_entries_per_type, UDValid(new Entry)))
+  val partial_entries_ex = Reg(Vec(reservation_station_partial_entries_per_type, UDValid(new Entry)))
+  val full_entries_st = Reg(Vec(reservation_station_full_entries_per_type, UDValid(new Entry)))
+  val partial_entries_st = Reg(Vec(reservation_station_partial_entries_per_type, UDValid(new Entry)))
 
-  val entries = full_entries ++ partial_entries
+  val full_entries = full_entries_ld ++ full_entries_ex ++ full_entries_st // TODO: remove
+  val partial_entries = partial_entries_ld ++ partial_entries_ex ++ partial_entries_st // TODO: remove
 
-  val empty = !entries.map(_.valid).reduce(_ || _)
-  val full = entries.map(_.valid).reduce(_ && _)
+  val entries_ld = full_entries_ld ++ partial_entries_ld
+  val entries_ex = full_entries_ex ++ partial_entries_ex
+  val entries_st = full_entries_st ++ partial_entries_st
+
+  val entries = full_entries ++ partial_entries // TODO: remove
+
+  val empty_ld = !entries_ld.map(_.valid).reduce(_ || _)
+  val empty_ex = !entries_ex.map(_.valid).reduce(_ || _)
+  val empty_st = !entries_st.map(_.valid).reduce(_ || _)
+  val full_ld = entries_ld.map(_.valid).reduce(_ && _)
+  val full_ex = entries_ex.map(_.valid).reduce(_ && _)
+  val full_st = entries_st.map(_.valid).reduce(_ && _)
+
+  val empty = !entries.map(_.valid).reduce(_ || _) // TODO: remove
+  val full = entries.map(_.valid).reduce(_ && _) // TODO: remove
 
   // TODO we could also check for a solitary preload by recording the last instruction that was allocated, rather than
   // reading all entries to check for preloads, which is an O(n) operation in terms of area cost
@@ -126,10 +144,23 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
-  val new_full_allocs = Wire(Vec(reservation_station_full_entries, Bool()))
+
+  val new_full_allocs_ld = Wire(Vec(reservation_station_full_entries_per_type, Bool()))
+  val new_full_allocs_ex = Wire(Vec(reservation_station_full_entries_per_type, Bool()))
+  val new_full_allocs_st = Wire(Vec(reservation_station_full_entries_per_type, Bool()))
+  // is there a cleaner way of initializing this? or perhaps different number of entries
+  // per type is beneficial?
+
+  val new_full_allocs = new_full_allocs_ld ++ new_full_allocs_ex ++ new_full_allocs_st
   new_full_allocs.foreach(_ := false.B)
-  val new_partial_allocs = Wire(Vec(reservation_station_partial_entries, Bool()))
+
+  val new_partial_allocs_ld = Wire(Vec(reservation_station_partial_entries_per_type, Bool()))
+  val new_partial_allocs_ex = Wire(Vec(reservation_station_partial_entries_per_type, Bool()))
+  val new_partial_allocs_st = Wire(Vec(reservation_station_partial_entries_per_type, Bool()))
+
+  val new_partial_allocs = new_partial_allocs_ld ++ new_partial_allocs_ex ++ new_partial_allocs_st
   new_partial_allocs.foreach(_ := false.B)
+
   val new_entry_oh = new_full_allocs ++ new_partial_allocs
   val alloc_fire = io.alloc.fire()
 
@@ -319,24 +350,37 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
-    val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
-    // looking for the first invalid entry
-    val full_alloc_id = MuxCase((reservation_station_full_entries-1).U, full_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
-    val partial_alloc_id = MuxCase((reservation_station_partial_entries-1).U, partial_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+    Seq(
+      (ldq, partial_entries_ld, full_entries_ld, new_partial_allocs_ld, new_full_allocs_ld),
+      (exq, partial_entries_ex, full_entries_ex, new_partial_allocs_ex, new_full_allocs_ex),
+      (stq, partial_entries_st, full_entries_st, new_partial_allocs_st, new_full_allocs_st))
+      .foreach { case (q, partial_entries_type, full_entries_type, new_partial_allocs_type, new_full_allocs_type) =>
+        when (new_entry.q === q) {
+          val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
 
-    when (!is_full && !partial_entries(partial_alloc_id).valid) {
-      io.alloc.ready := true.B
-      partial_entries(partial_alloc_id).valid := true.B
-      partial_entries(partial_alloc_id).bits := new_entry
-      partial_entries(partial_alloc_id).bits.opb.valid := false.B
-      partial_entries(partial_alloc_id).bits.opb.bits := DontCare
-      new_partial_allocs(partial_alloc_id) := true.B
-    } .elsewhen (!full_entries(full_alloc_id).valid) {
-      io.alloc.ready := true.B
-      full_entries(full_alloc_id).valid := true.B
-      full_entries(full_alloc_id).bits := new_entry
-      new_full_allocs(full_alloc_id) := true.B
-    }
+          // looking for the first invalid entry
+
+          //    val full_alloc_id = PriorityEncoder(Cat(full_entries.map { e => !e.valid }))
+
+          // this feels like it takes up a very large area
+          val full_alloc_id = MuxCase((reservation_station_full_entries_per_type-1).U, full_entries_type.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+          val partial_alloc_id = MuxCase((reservation_station_partial_entries_per_type-1).U, partial_entries_type.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+
+          when (!is_full && !partial_entries_type(partial_alloc_id).valid) {
+            io.alloc.ready := true.B
+            partial_entries_type(partial_alloc_id).valid := true.B
+            partial_entries_type(partial_alloc_id).bits := new_entry
+            partial_entries_type(partial_alloc_id).bits.opb.valid := false.B
+            partial_entries_type(partial_alloc_id).bits.opb.bits := DontCare
+            new_partial_allocs_type(partial_alloc_id) := true.B
+          } .elsewhen (!full_entries_type(full_alloc_id).valid) {
+            io.alloc.ready := true.B
+            full_entries_type(full_alloc_id).valid := true.B
+            full_entries_type(full_alloc_id).bits := new_entry
+            new_full_allocs_type(full_alloc_id) := true.B
+          }
+        }
+      }
 
     when (io.alloc.fire()) {
       when (new_entry.is_config && new_entry.q === exq && !is_im2col) {

@@ -34,6 +34,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              reservation_station_full_entries: Int = 16,
                                                                              reservation_station_partial_entries: Int = 8,
+                                                                             reservation_station_full_entries_per_type: Int = 5,
+                                                                             reservation_station_partial_entries_per_type: Int = 3,
 
                                                                              sp_banks: Int = 4, // TODO support one-bank designs
                                                                              sp_singleported: Boolean = false,
