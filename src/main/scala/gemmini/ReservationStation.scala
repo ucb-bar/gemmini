@@ -54,7 +54,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   })
 
   // TODO make this a ChiselEnum
-  val ldq :: stq :: exq :: Nil = Enum(3)
+  val ldq :: exq :: stq :: Nil = Enum(3)
   val q_t = ldq.cloneType
 
   class OpT extends Bundle {
@@ -139,8 +139,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val new_allocs_oh_ex = Wire(Vec(reservation_station_entries_per_type, Bool()))
   val new_allocs_oh_st = Wire(Vec(reservation_station_entries_per_type, Bool()))
 
-  Seq(new_allocs_oh_ld, new_allocs_oh_ex, new_allocs_oh_st)
-    .foreach(x => x.foreach(_ := false.B))
+  val new_entry_oh = new_allocs_oh_ld ++ new_allocs_oh_ex ++ new_allocs_oh_st
+  new_entry_oh.foreach(_ := false.B)
 
   val alloc_fire = io.alloc.fire()
 
@@ -336,6 +336,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       (stq, entries_st, new_allocs_oh_st))
       .foreach { case (q, entries_type, new_allocs_type) =>
         when (new_entry.q === q) {
+          val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
           // looking for the first invalid entry
 
           //    val full_alloc_id = PriorityEncoder(Cat(full_entries.map { e => !e.valid }))
@@ -347,6 +348,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
             io.alloc.ready := true.B
             entries_type(alloc_id).valid := true.B
             entries_type(alloc_id).bits := new_entry
+            when (!is_full) { // TODO: can this be removed?
+              entries_type(alloc_id).bits.opb.valid := false.B
+              entries_type(alloc_id).bits.opb.bits := DontCare
+            }
             new_allocs_type(alloc_id) := true.B
           }
         }
@@ -374,13 +379,14 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   // Issue commands which are ready to be issued
-  Seq((ldq, io.issue.ld, entries_ld), (stq, io.issue.st, entries_st), (exq, io.issue.ex, entries_ex))
+  Seq((ldq, io.issue.ld, entries_ld), (exq, io.issue.ex, entries_ex), (stq, io.issue.st, entries_st))
     .foreach { case (q, io, entries_type) =>
+
     val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued)
     val issue_sel = PriorityEncoderOH(issue_valids)
     val issue_id = OHToUInt(issue_sel)
     val global_issue_id = Cat(q, issue_id)
-    val issue_entry = Mux1H(issue_sel, entries)
+    val issue_entry = Mux1H(issue_sel, entries_type)
 
     io.valid := issue_valids.reduce(_||_)
     io.cmd := issue_entry.bits.cmd
@@ -388,36 +394,26 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     io.rob_id := global_issue_id // TODO: fix where this is used
 
     when (io.fire()) {
-      // Clear out all the dependency bits for instructions which depend on the same queue
-      Seq((ldq, entries_ld), (stq, entries_st), (exq, entries_ex))
-        .foreach { case (q_, entries_type_) =>
+
+      Seq((entries_ld, new_allocs_oh_ld), (entries_ex, new_allocs_oh_ex), (entries_st, new_allocs_oh_st))
+        .foreach { case (entries_type_, allocs_type_) =>
+
         entries_type_.zipWithIndex.foreach { case (e, i) =>
-          when (q === q_) { // same_q
+          val is_same_q = Mux(alloc_fire && allocs_type_(i),
+            new_entry.q === issue_entry.bits.q,
+            e.bits.q === issue_entry.bits.q)
+
+          when (is_same_q || issue_entry.bits.complete_on_issue) {
             e.bits.deps(global_issue_id) := false.B
-            when (issue_sel(i)) {
-              e.bits.issued := true.B
-              e.valid := !e.bits.complete_on_issue
-            }
-          }.otherwise {
-            when (issue_entry.bits.complete_on_issue) {
-              e.bits.deps(global_issue_id) := false.B
-            }
           }
-//          val is_same_q = Mux(alloc_fire && new_entry_oh(i),
-//            new_entry.q === issue_entry.bits.q,
-//            e.bits.q === issue_entry.bits.q)
-//
-//          when (is_same_q || issue_entry.bits.complete_on_issue) {
-//            e.bits.deps(issue_id) := false.B
-//          }
         }
       }
-//      for ((e, i) <- entries.zipWithIndex) {
-//        when (issue_sel(i)) {
-//          e.bits.issued := true.B
-//          e.valid := !e.bits.complete_on_issue
-//        }
-//      }
+      for ((e, i) <- entries_type.zipWithIndex) {
+        when (issue_sel(i)) {
+          e.bits.issued := true.B
+          e.valid := !e.bits.complete_on_issue
+        }
+      }
     }
   }
 
