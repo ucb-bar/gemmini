@@ -186,9 +186,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   //==========================================================================
   // cisc-gemmini miscellaneous constants (some redundant with above)
   //==========================================================================
-  val rob_entries      = reservation_station_entries_per_type * 3
+  val rob_entries      = pow(2, log2Up(reservation_station_entries_per_type)).toInt * 3
   val ROB_ENTRIES      = rob_entries
-  val LOG2_ROB_ENTRIES = log2Up(rob_entries)
+  val ROB_ID_WIDTH     = 2 + log2Up(reservation_station_entries_per_type)
+  val LOG2_ROB_ENTRIES = ROB_ID_WIDTH
+  // assuming 3 queues (load/store/execute), enum takes 2 bits
 
   //==========================================================================
   // cisc-gemmini hardware-specific compile-time global constants
