@@ -32,10 +32,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              st_queue_length: Int = 2,
                                                                              ex_queue_length: Int = 8,
 
-                                                                             reservation_station_full_entries: Int = 16,
-                                                                             reservation_station_partial_entries: Int = 8,
-                                                                             reservation_station_full_entries_per_type: Int = 5,
-                                                                             reservation_station_partial_entries_per_type: Int = 3,
+                                                                             reservation_station_entries_per_type: Int = 8,
 
                                                                              sp_banks: Int = 4, // TODO support one-bank designs
                                                                              sp_singleported: Boolean = false,
@@ -189,7 +186,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   //==========================================================================
   // cisc-gemmini miscellaneous constants (some redundant with above)
   //==========================================================================
-  val rob_entries      = reservation_station_full_entries + reservation_station_partial_entries
+  val rob_entries      = reservation_station_entries_per_type * 3
   val ROB_ENTRIES      = rob_entries
   val LOG2_ROB_ENTRIES = log2Up(rob_entries)
 

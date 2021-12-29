@@ -129,9 +129,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
   val raw_cmd = Queue(io.cmd)
 
-  val max_lds = reservation_station_partial_entries
-  val max_exs = reservation_station_full_entries
-  val max_sts = reservation_station_partial_entries / 2
+  val max_lds = reservation_station_entries_per_type
+  val max_exs = reservation_station_entries_per_type
+  val max_sts = reservation_station_entries_per_type
 
   // TODO replace 4,12,2 with parameters based on ROB size
   val (conv_cmd, loop_conv_unroller_busy) = withClock (gated_clock) { LoopConv(raw_cmd, reservation_station.io.ld_utilization, reservation_station.io.st_utilization, reservation_station.io.ex_utilization,

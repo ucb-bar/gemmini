@@ -51,8 +51,7 @@ object GemminiConfigs {
     has_nonlinear_activations = true,
 
     // Reservation station entries
-    reservation_station_full_entries = 16,
-    reservation_station_partial_entries = 8,
+    reservation_station_entries_per_type = 8,
 
     // Ld/Ex/St instruction queue lengths
     ld_queue_length = 8,

@@ -101,21 +101,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     // Debugging signals
     val allocated_at = UInt(instructions_allocated.getWidth.W)
   }
-  val full_entries_ld = Reg(Vec(reservation_station_full_entries_per_type, UDValid(new Entry)))
-  val partial_entries_ld = Reg(Vec(reservation_station_partial_entries_per_type, UDValid(new Entry)))
-  val full_entries_ex = Reg(Vec(reservation_station_full_entries_per_type, UDValid(new Entry)))
-  val partial_entries_ex = Reg(Vec(reservation_station_partial_entries_per_type, UDValid(new Entry)))
-  val full_entries_st = Reg(Vec(reservation_station_full_entries_per_type, UDValid(new Entry)))
-  val partial_entries_st = Reg(Vec(reservation_station_partial_entries_per_type, UDValid(new Entry)))
+  val entries_ld = Reg(Vec(reservation_station_entries_per_type, UDValid(new Entry)))
+  val entries_ex = Reg(Vec(reservation_station_entries_per_type, UDValid(new Entry)))
+  val entries_st = Reg(Vec(reservation_station_entries_per_type, UDValid(new Entry)))
 
-  val full_entries = full_entries_ld ++ full_entries_ex ++ full_entries_st // TODO: remove
-  val partial_entries = partial_entries_ld ++ partial_entries_ex ++ partial_entries_st // TODO: remove
-
-  val entries_ld = full_entries_ld ++ partial_entries_ld
-  val entries_ex = full_entries_ex ++ partial_entries_ex
-  val entries_st = full_entries_st ++ partial_entries_st
-
-  val entries = full_entries ++ partial_entries // TODO: remove
+  val entries = entries_ld ++ entries_ex ++ entries_st // TODO: remove
 
   val empty_ld = !entries_ld.map(_.valid).reduce(_ || _)
   val empty_ex = !entries_ex.map(_.valid).reduce(_ || _)
@@ -145,23 +135,13 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val new_entry = Wire(new Entry)
   new_entry := DontCare
 
-  val new_full_allocs_ld = Wire(Vec(reservation_station_full_entries_per_type, Bool()))
-  val new_full_allocs_ex = Wire(Vec(reservation_station_full_entries_per_type, Bool()))
-  val new_full_allocs_st = Wire(Vec(reservation_station_full_entries_per_type, Bool()))
-  // is there a cleaner way of initializing this? or perhaps different number of entries
-  // per type is beneficial?
+  val new_allocs_oh_ld = Wire(Vec(reservation_station_entries_per_type, Bool()))
+  val new_allocs_oh_ex = Wire(Vec(reservation_station_entries_per_type, Bool()))
+  val new_allocs_oh_st = Wire(Vec(reservation_station_entries_per_type, Bool()))
 
-  val new_full_allocs = new_full_allocs_ld ++ new_full_allocs_ex ++ new_full_allocs_st
-  new_full_allocs.foreach(_ := false.B)
+  Seq(new_allocs_oh_ld, new_allocs_oh_ex, new_allocs_oh_st)
+    .foreach(x => x.foreach(_ := false.B))
 
-  val new_partial_allocs_ld = Wire(Vec(reservation_station_partial_entries_per_type, Bool()))
-  val new_partial_allocs_ex = Wire(Vec(reservation_station_partial_entries_per_type, Bool()))
-  val new_partial_allocs_st = Wire(Vec(reservation_station_partial_entries_per_type, Bool()))
-
-  val new_partial_allocs = new_partial_allocs_ld ++ new_partial_allocs_ex ++ new_partial_allocs_st
-  new_partial_allocs.foreach(_ := false.B)
-
-  val new_entry_oh = new_full_allocs ++ new_partial_allocs
   val alloc_fire = io.alloc.fire()
 
   dontTouch(new_entry)
@@ -351,33 +331,23 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
     Seq(
-      (ldq, partial_entries_ld, full_entries_ld, new_partial_allocs_ld, new_full_allocs_ld),
-      (exq, partial_entries_ex, full_entries_ex, new_partial_allocs_ex, new_full_allocs_ex),
-      (stq, partial_entries_st, full_entries_st, new_partial_allocs_st, new_full_allocs_st))
-      .foreach { case (q, partial_entries_type, full_entries_type, new_partial_allocs_type, new_full_allocs_type) =>
+      (ldq, entries_ld, new_allocs_oh_ld),
+      (exq, entries_ex, new_allocs_oh_ex),
+      (stq, entries_st, new_allocs_oh_st))
+      .foreach { case (q, entries_type, new_allocs_type) =>
         when (new_entry.q === q) {
-          val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
-
           // looking for the first invalid entry
 
           //    val full_alloc_id = PriorityEncoder(Cat(full_entries.map { e => !e.valid }))
 
           // this feels like it takes up a very large area
-          val full_alloc_id = MuxCase((reservation_station_full_entries_per_type-1).U, full_entries_type.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
-          val partial_alloc_id = MuxCase((reservation_station_partial_entries_per_type-1).U, partial_entries_type.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+          val alloc_id = MuxCase((reservation_station_entries_per_type-1).U, entries_type.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
 
-          when (!is_full && !partial_entries_type(partial_alloc_id).valid) {
+          when (!entries_type(alloc_id).valid) {
             io.alloc.ready := true.B
-            partial_entries_type(partial_alloc_id).valid := true.B
-            partial_entries_type(partial_alloc_id).bits := new_entry
-            partial_entries_type(partial_alloc_id).bits.opb.valid := false.B
-            partial_entries_type(partial_alloc_id).bits.opb.bits := DontCare
-            new_partial_allocs_type(partial_alloc_id) := true.B
-          } .elsewhen (!full_entries_type(full_alloc_id).valid) {
-            io.alloc.ready := true.B
-            full_entries_type(full_alloc_id).valid := true.B
-            full_entries_type(full_alloc_id).bits := new_entry
-            new_full_allocs_type(full_alloc_id) := true.B
+            entries_type(alloc_id).valid := true.B
+            entries_type(alloc_id).bits := new_entry
+            new_allocs_type(alloc_id) := true.B
           }
         }
       }
@@ -404,33 +374,50 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   // Issue commands which are ready to be issued
-  Seq((ldq, io.issue.ld), (stq, io.issue.st), (exq, io.issue.ex)).foreach { case (q, io) =>
-    val issue_valids = entries.map(e => e.valid && e.bits.ready() && !e.bits.issued && e.bits.q === q)
+  Seq((ldq, io.issue.ld, entries_ld), (stq, io.issue.st, entries_st), (exq, io.issue.ex, entries_ex))
+    .foreach { case (q, io, entries_type) =>
+    val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued)
     val issue_sel = PriorityEncoderOH(issue_valids)
     val issue_id = OHToUInt(issue_sel)
+    val global_issue_id = Cat(q, issue_id)
     val issue_entry = Mux1H(issue_sel, entries)
 
     io.valid := issue_valids.reduce(_||_)
     io.cmd := issue_entry.bits.cmd
-    io.rob_id := OHToUInt(issue_sel)
+      // use the most significant 2 bits to indicate instruction type
+    io.rob_id := global_issue_id // TODO: fix where this is used
 
     when (io.fire()) {
       // Clear out all the dependency bits for instructions which depend on the same queue
-      entries.zipWithIndex.foreach { case (e, i) =>
-        val is_same_q = Mux(alloc_fire && new_entry_oh(i),
-          new_entry.q === issue_entry.bits.q,
-          e.bits.q === issue_entry.bits.q)
-
-        when (is_same_q || issue_entry.bits.complete_on_issue) {
-          e.bits.deps(issue_id) := false.B
+      Seq((ldq, entries_ld), (stq, entries_st), (exq, entries_ex))
+        .foreach { case (q_, entries_type_) =>
+        entries_type_.zipWithIndex.foreach { case (e, i) =>
+          when (q === q_) { // same_q
+            e.bits.deps(global_issue_id) := false.B
+            when (issue_sel(i)) {
+              e.bits.issued := true.B
+              e.valid := !e.bits.complete_on_issue
+            }
+          }.otherwise {
+            when (issue_entry.bits.complete_on_issue) {
+              e.bits.deps(global_issue_id) := false.B
+            }
+          }
+//          val is_same_q = Mux(alloc_fire && new_entry_oh(i),
+//            new_entry.q === issue_entry.bits.q,
+//            e.bits.q === issue_entry.bits.q)
+//
+//          when (is_same_q || issue_entry.bits.complete_on_issue) {
+//            e.bits.deps(issue_id) := false.B
+//          }
         }
       }
-      for ((e, i) <- entries.zipWithIndex) {
-        when (issue_sel(i)) {
-          e.bits.issued := true.B
-          e.valid := !e.bits.complete_on_issue
-        }
-      }
+//      for ((e, i) <- entries.zipWithIndex) {
+//        when (issue_sel(i)) {
+//          e.bits.issued := true.B
+//          e.valid := !e.bits.complete_on_issue
+//        }
+//      }
     }
   }
 
