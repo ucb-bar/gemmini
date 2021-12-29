@@ -385,7 +385,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued)
     val issue_sel = PriorityEncoderOH(issue_valids)
     val issue_id = OHToUInt(issue_sel)
-    val global_issue_id = Cat(q, issue_id)
+    val global_issue_id = Cat(q.asUInt, issue_id)
+    assert(q.getWidth == 2)
     val issue_entry = Mux1H(issue_sel, entries_type)
 
     io.valid := issue_valids.reduce(_||_)
@@ -395,23 +396,21 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     when (io.fire()) {
 
-      Seq((entries_ld, new_allocs_oh_ld), (entries_ex, new_allocs_oh_ex), (entries_st, new_allocs_oh_st))
-        .foreach { case (entries_type_, allocs_type_) =>
+      Seq((ldq, entries_ld), (exq, entries_ex), (stq, entries_st))
+        .foreach { case (q_, entries_type_) =>
 
         entries_type_.zipWithIndex.foreach { case (e, i) =>
-          val is_same_q = Mux(alloc_fire && allocs_type_(i),
-            new_entry.q === issue_entry.bits.q,
-            e.bits.q === issue_entry.bits.q)
-
-          when (is_same_q || issue_entry.bits.complete_on_issue) {
+          when (q === q_) {
             e.bits.deps(global_issue_id) := false.B
+            when (issue_sel(i)) {
+              e.bits.issued := true.B
+              e.valid := !e.bits.complete_on_issue
+            }
+          }.otherwise {
+            when (issue_entry.bits.complete_on_issue) {
+              e.bits.deps(global_issue_id) := false.B
+            }
           }
-        }
-      }
-      for ((e, i) <- entries_type.zipWithIndex) {
-        when (issue_sel(i)) {
-          e.bits.issued := true.B
-          e.valid := !e.bits.complete_on_issue
         }
       }
     }
@@ -423,12 +422,17 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     Seq((ldq, entries_ld), (stq, entries_st), (exq, entries_ex)).foreach {
       case (q, entries_type) =>
-        for ((e, i) <- entries_type.zipWithIndex) {
-          when (Cat(q, i.U) === io.completed.bits) {
-            e.valid := false.B
-            assert(e.valid)
-          }
+
+      for ((e, i) <- entries_type.zipWithIndex) {
+        assert(q.asUInt.getWidth == 2)
+        val global_issue_id = Cat(q.asUInt, i.U(log2Up(reservation_station_entries_per_type).W))
+        assert(global_issue_id.getWidth == 5) // without width cast, I's width is variable
+        assert(global_issue_id < 24.U)
+        when (global_issue_id === io.completed.bits) {
+          e.valid := false.B
+          assert(e.valid)
         }
+      }
     }
   }
 
