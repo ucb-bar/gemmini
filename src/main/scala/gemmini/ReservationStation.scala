@@ -13,15 +13,15 @@ import midas.targetutils.SynthesizePrintf
 
 
 // TODO unify this class with GemminiCmdWithDeps
-class ReservationStationIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
+class ReservationStationIssue[T <: Data](cmd_t: T, id_width: Int) extends Bundle {
   val valid = Output(Bool())
   val ready = Input(Bool())
   val cmd = Output(cmd_t.cloneType)
-  val rob_id = Output(UInt(log2Up(rob_entries).W))
+  val rob_id = Output(UInt(id_width.W))
 
   def fire(dummy: Int=0) = valid && ready
 
-  override def cloneType: this.type = new ReservationStationIssue(cmd_t, rob_entries).asInstanceOf[this.type]
+  override def cloneType: this.type = new ReservationStationIssue(cmd_t, id_width).asInstanceOf[this.type]
 }
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
@@ -34,12 +34,12 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val io = IO(new Bundle {
     val alloc = Flipped(Decoupled(cmd_t.cloneType))
 
-    val completed = Flipped(Valid(UInt(log2Up(rob_entries).W)))
+    val completed = Flipped(Valid(UInt(ROB_ID_WIDTH.W)))
 
     val issue = new Bundle {
-      val ld = new ReservationStationIssue(cmd_t, rob_entries)
-      val st = new ReservationStationIssue(cmd_t, rob_entries)
-      val ex = new ReservationStationIssue(cmd_t, rob_entries)
+      val ld = new ReservationStationIssue(cmd_t, ROB_ID_WIDTH)
+      val st = new ReservationStationIssue(cmd_t, ROB_ID_WIDTH)
+      val ex = new ReservationStationIssue(cmd_t, ROB_ID_WIDTH)
     }
 
     val ld_utilization = Output(UInt(log2Up(rob_entries+1).W))
@@ -105,7 +105,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val entries_ex = Reg(Vec(reservation_station_entries_per_type, UDValid(new Entry)))
   val entries_st = Reg(Vec(reservation_station_entries_per_type, UDValid(new Entry)))
 
-  val entries = entries_ld ++ entries_ex ++ entries_st // TODO: remove
+  val entries = entries_ld ++ entries_ex ++ entries_st
 
   val empty_ld = !entries_ld.map(_.valid).reduce(_ || _)
   val empty_ex = !entries_ex.map(_.valid).reduce(_ || _)
@@ -114,8 +114,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val full_ex = entries_ex.map(_.valid).reduce(_ && _)
   val full_st = entries_st.map(_.valid).reduce(_ && _)
 
-  val empty = !entries.map(_.valid).reduce(_ || _) // TODO: remove
-  val full = entries.map(_.valid).reduce(_ && _) // TODO: remove
+  val empty = !entries.map(_.valid).reduce(_ || _)
+  val full = entries.map(_.valid).reduce(_ && _)
 
   // TODO we could also check for a solitary preload by recording the last instruction that was allocated, rather than
   // reading all entries to check for preloads, which is an O(n) operation in terms of area cost
@@ -385,7 +385,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     io.valid := issue_valids.reduce(_||_)
     io.cmd := issue_entry.bits.cmd
       // use the most significant 2 bits to indicate instruction type
-    io.rob_id := global_issue_id // TODO: fix where this is used
+    io.rob_id := global_issue_id
 
     when (io.fire()) {
       // Clear out all the dependency bits for instructions which depend on the same queue
@@ -425,11 +425,14 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   when (io.completed.fire()) {
     entries.foreach(_.bits.deps(io.completed.bits) := false.B)
 
-    for ((e, i) <- entries.zipWithIndex) {
-      when (i.U === io.completed.bits) {
-        e.valid := false.B
-        assert(e.valid)
-      }
+    Seq((ldq, entries_ld), (stq, entries_st), (exq, entries_ex)).foreach {
+      case (q, entries_type) =>
+        for ((e, i) <- entries_type.zipWithIndex) {
+          when (Cat(q, i.U) === io.completed.bits) {
+            e.valid := false.B
+            assert(e.valid)
+          }
+        }
     }
   }
 
