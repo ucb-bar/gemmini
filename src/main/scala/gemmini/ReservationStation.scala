@@ -426,8 +426,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       for ((e, i) <- entries_type.zipWithIndex) {
         assert(q.asUInt.getWidth == 2)
         val global_issue_id = Cat(q.asUInt, i.U(log2Up(reservation_station_entries_per_type).W))
-        assert(global_issue_id.getWidth == 5) // without width cast, I's width is variable
-        assert(global_issue_id < 24.U)
+//        assert(global_issue_id.getWidth == 5) // without width cast, I's width is variable
+//        assert(global_issue_id < 24.U)
         when (global_issue_id === io.completed.bits) {
           e.valid := false.B
           assert(e.valid)
