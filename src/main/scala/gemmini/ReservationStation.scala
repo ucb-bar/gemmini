@@ -269,62 +269,46 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     ))
 
     assert(is_load || is_store || is_ex)
-    // This can be RAW op1/op2 <- dst, or WAW dst <- dst
-    val opa_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits) })
-    // This can be WAR dst <- op1/op2
-    val opa_matches_opb = VecInit(entries.map { e => e.valid && e.bits.opb.valid && new_entry.opa.bits.overlaps(e.bits.opb.bits) })
-    // This can be RAW op2 <- dst
-    val opb_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opb.bits.overlaps(e.bits.opa.bits) })
+    assert(ldq < exq && exq < stq)
 
-    val op1_matches_opa = VecInit((entries zip (opa_matches_opa zip opb_matches_opa)).map { case (e, (a, b)) =>
-      e.valid && op1.valid && Mux(dst.valid, b, a)
-    })
-    val op2_matches_opa = VecInit((entries zip (opa_matches_opa zip opb_matches_opa)).map { case (e, (a, b)) =>
-      e.valid && op2.valid && Mux(dst.valid || op1.valid, b, a)
-    })
-    val dst_matches_opa = VecInit((entries zip opa_matches_opa).map { case (e, a) =>
-      e.valid && dst.valid && a
-    })
-    val dst_matches_opb = VecInit((entries zip opa_matches_opb).map { case (e, b) =>
-      e.valid && dst.valid && b
-    })
+    val not_config = !new_entry.is_config
+    when (is_load) {
+      // war (after ex/st) | waw (after ex)
+      val ld_deps = VecInit(entries_ld.map { e => e.valid && !e.bits.issued }) // same q - can this be ignored?
 
-    val op1_raws_opa = VecInit((entries zip op1_matches_opa).map { case (e, m) =>
-      m && op1.valid && e.bits.q =/= new_entry.q && e.bits.opa_is_dst
-    })
-    val op2_raws_opa = VecInit((entries zip op2_matches_opa).map { case (e, m) =>
-      m && op2.valid && e.bits.q =/= new_entry.q && e.bits.opa_is_dst
-    })
-    val raws = VecInit((op1_raws_opa zip op2_raws_opa).map { case (a, b) => a || b })
+      val ex_deps = VecInit(entries_ex.map { e => e.valid && !new_entry.is_config && (
+        (new_entry.opa.bits.overlaps(e.bits.opa.bits) && e.bits.opa.valid) || // waw if preload, war if compute
+        (new_entry.opa.bits.overlaps(e.bits.opb.bits) && e.bits.opb.valid))}) // war
 
-    val dst_wars_opa = VecInit((entries zip dst_matches_opa).map { case (e, m) =>
-      m && dst.valid && e.bits.q =/= new_entry.q && !e.bits.opa_is_dst
-    })
-    val dst_wars_opb = VecInit((entries zip dst_matches_opb).map { case (e, m) =>
-      m && dst.valid && e.bits.q =/= new_entry.q
-    })
-    val wars = VecInit((dst_wars_opa zip dst_wars_opb).map { case (a, b) => a || b })
+      val st_deps = VecInit(entries_st.map { e => e.valid && e.bits.opa.valid && not_config &&
+        new_entry.opa.bits.overlaps(e.bits.opa.bits)})  // war
 
-    val dst_waws_opa = VecInit((entries zip dst_matches_opa).map { case (e, m) =>
-      m && dst.valid && (e.bits.q =/= new_entry.q || new_entry.q === ldq) && e.bits.opa_is_dst
-    })
-    val waws = dst_waws_opa
+      new_entry.deps := ld_deps ++ ex_deps ++ st_deps // TODO: doesn't work when entries per type isnt power of 2
+    }.elsewhen (is_ex) {
+      // raw (after ld) | war (after st) | waw (after ld)
+      val ld_deps = VecInit(entries_ld.map { e => e.valid && e.bits.opa.valid && not_config && (
+        new_entry.opa.bits.overlaps(e.bits.opa.bits) || // waw if preload, raw if compute
+        new_entry.opb.bits.overlaps(e.bits.opa.bits))}) // raw
 
-    val older_in_same_q = VecInit(entries.map { e =>
-      e.valid && e.bits.q === new_entry.q && !e.bits.issued
-    })
+      val ex_deps = VecInit(entries_ex.map { e => e.valid && !e.bits.issued }) // same q
 
-//    val is_st_and_must_wait_for_prior_ex_config = VecInit(entries.map { e =>
-//      e.valid && new_entry.q === stq && !new_entry.is_config && e.bits.q === exq && e.bits.is_config
-//    })
-//
-//    val is_ex_config_and_must_wait_for_prior_st = VecInit(entries.map { e =>
-//      // TODO when acc reads no longer rely upon config-ex's relu6, this dependency can be broken
-//      e.valid && new_entry.q === exq && new_entry.is_config && e.bits.q === stq && !e.bits.is_config
-//    })
+      val st_deps = VecInit(entries_st.map { e => e.valid && e.bits.opa.valid && not_config && new_entry.opa_is_dst &&
+        new_entry.opa.bits.overlaps(e.bits.opa.bits)})  // war
 
-    new_entry.deps := (Cat(raws) | Cat(wars) | Cat(waws) | Cat(older_in_same_q)).asBools().reverse // |
-    //  Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).asBools().reverse
+      new_entry.deps := ld_deps ++ ex_deps ++ st_deps
+    }.otherwise {
+      // raw (after ld/ex)
+      val ld_deps = VecInit(entries_ld.map { e => e.valid && e.bits.opa.valid && not_config &&
+        new_entry.opa.bits.overlaps(e.bits.opa.bits)})  // raw
+
+      val ex_deps = VecInit(entries_ex.map { e => e.valid && e.bits.opa.valid && not_config &&
+        e.bits.opa_is_dst && new_entry.opa.bits.overlaps(e.bits.opa.bits)}) // raw only if ex is preload
+
+      val st_deps = VecInit(entries_st.map { e => e.valid && !e.bits.issued }) // same q
+
+      new_entry.deps := ld_deps ++ ex_deps ++ st_deps
+    }
+    // TODO: evaluate whether to keep same q
 
     new_entry.allocated_at := instructions_allocated
 
