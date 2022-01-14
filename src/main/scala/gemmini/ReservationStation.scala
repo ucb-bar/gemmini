@@ -420,6 +420,15 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }
   }
 
+  // Explicitly mark "opb" in all ld/st queues entries as being invalid.
+  // This helps us to reduce the total reservation table area
+  Seq(entries_ld, entries_st).foreach { entries_type =>
+    entries_type.foreach { e =>
+      e.bits.opb.valid := false.B
+      e.bits.opb.bits := DontCare
+    }
+  }
+
   // val utilization = PopCount(entries.map(e => e.valid))
   val utilization_ld_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === ldq))
   val utilization_st_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === stq))
