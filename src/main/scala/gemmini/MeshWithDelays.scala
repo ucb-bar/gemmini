@@ -14,7 +14,6 @@ class MeshWithDelaysReq[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](ac
   val tag = tagType
   val flush = UInt(2.W) // TODO magic number
 
-  override def cloneType: MeshWithDelaysReq.this.type = new MeshWithDelaysReq(accType, tagType, block_size).asInstanceOf[this.type]
 }
 
 class MeshWithDelaysResp[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](outType: T, meshCols: Int, tileCols: Int, block_size: Int, tagType: TagT) extends Bundle {
@@ -23,7 +22,6 @@ class MeshWithDelaysResp[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](o
   val tag = tagType
   val last = Bool()
 
-  override def cloneType: MeshWithDelaysResp.this.type = new MeshWithDelaysResp(outType, meshCols, tileCols, block_size, tagType).asInstanceOf[this.type]
 }
 
 // TODO Add io.out.ready back in. Before it was removed, it didn't work when banking, and it seemed to assume that SRAM outputs stay steady when ren is low
@@ -216,7 +214,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
       tag.make_this_garbage()
     }
 
-    override def cloneType: TagWithIdAndTotalRows.this.type = (new TagWithIdAndTotalRows).asInstanceOf[this.type]
   }
 
   val matmul_id_of_output = wrappingAdd(matmul_id, Mux(io.req.bits.pe_control.dataflow === Dataflow.OS.id.U, 3.U, 2.U), max_simultaneous_matmuls)

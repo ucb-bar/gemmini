@@ -13,7 +13,6 @@ class VectorScalarMultiplierReq[T <: Data, U <: Data, Tag <: Data](block_cols: I
   val last: Bool = Bool()
   val tag: Tag = tag_t.cloneType
 
-  override def cloneType: VectorScalarMultiplierReq.this.type = new VectorScalarMultiplierReq(block_cols, t, u, tag_t).asInstanceOf[this.type]
 }
 
 class VectorScalarMultiplierResp[T <: Data, Tag <: Data](block_cols: Int, t: T, tag_t: Tag) extends Bundle {
@@ -22,7 +21,6 @@ class VectorScalarMultiplierResp[T <: Data, Tag <: Data](block_cols: Int, t: T, 
   val last: Bool = Bool()
   val tag: Tag = tag_t.cloneType
 
-  override def cloneType: VectorScalarMultiplierResp.this.type = new VectorScalarMultiplierResp(block_cols, t, tag_t).asInstanceOf[this.type]
 }
 
 class DataWithIndex[T <: Data, U <: Data](t: T, u: U) extends Bundle {
@@ -30,7 +28,6 @@ class DataWithIndex[T <: Data, U <: Data](t: T, u: U) extends Bundle {
   val scale = u.cloneType
   val id = UInt(2.W) // TODO hardcoded
   val index = UInt()
-  override def cloneType: DataWithIndex.this.type = new DataWithIndex(t, u).asInstanceOf[this.type]
 }
 
 class ScalePipe[T <: Data, U <: Data](t: T, mvin_scale_args: ScaleArguments[T, U]) extends Module {

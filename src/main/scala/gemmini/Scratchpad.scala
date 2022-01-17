@@ -24,7 +24,6 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
   val status = new MStatus
 
-  override def cloneType: this.type = new ScratchpadMemReadRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, scale_t_bits: Int)
@@ -45,7 +44,6 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, scale_t_bits: Int)
   val pool_en = Bool()
   val store_en = Bool()
 
-  override def cloneType: this.type = new ScratchpadMemWriteRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadMemWriteResponse extends Bundle {
@@ -61,7 +59,6 @@ class ScratchpadReadMemIO[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
   val req = Decoupled(new ScratchpadMemReadRequest(local_addr_t, scale_t_bits))
   val resp = Flipped(Valid(new ScratchpadMemReadResponse))
 
-  override def cloneType: this.type = new ScratchpadReadMemIO(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadWriteMemIO(local_addr_t: LocalAddr, scale_t_bits: Int)
@@ -69,7 +66,6 @@ class ScratchpadWriteMemIO(local_addr_t: LocalAddr, scale_t_bits: Int)
   val req = Decoupled(new ScratchpadMemWriteRequest(local_addr_t, scale_t_bits))
   val resp = Flipped(Valid(new ScratchpadMemWriteResponse))
 
-  override def cloneType: this.type = new ScratchpadWriteMemIO(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadReadReq(val n: Int) extends Bundle {

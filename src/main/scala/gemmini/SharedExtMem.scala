@@ -20,7 +20,6 @@ class ExtMemIO extends Bundle {
 class ExtSpadMemIO(sp_banks: Int, acc_banks: Int, acc_sub_banks: Int) extends Bundle {
   val spad = Vec(sp_banks, new ExtMemIO)
   val acc = Vec(acc_banks, Vec(acc_sub_banks, new ExtMemIO))
-  override def cloneType: this.type = new ExtSpadMemIO(sp_banks, acc_banks, acc_sub_banks).asInstanceOf[this.type]
 }
 
 
