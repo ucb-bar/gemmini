@@ -71,7 +71,7 @@ class PixelRepeater[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols
 
     io.resp.valid := req.valid && !underflow
 
-    when(io.resp.fire() || underflow) {
+    when(io.resp.fire || underflow) {
       req.bits.pixel_repeats := req.bits.pixel_repeats - 1.U
 
       when(req.bits.pixel_repeats === 0.U) {
@@ -79,7 +79,7 @@ class PixelRepeater[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols
       }
     }
 
-    when(io.req.fire()) {
+    when(io.req.fire) {
       req.push(io.req.bits)
       req.bits.pixel_repeats := io.req.bits.pixel_repeats - 1.U
     }

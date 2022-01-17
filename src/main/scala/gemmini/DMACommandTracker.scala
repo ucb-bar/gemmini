@@ -82,7 +82,7 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
     cmds(next_empty_alloc).bytes_left := io.alloc.bits.bytes_to_read
   }
 
-  when (io.request_returned.fire()) {
+  when (io.request_returned.fire) {
     val cmd_id = io.request_returned.bits.cmd_id
     cmds(cmd_id).bytes_left := cmds(cmd_id).bytes_left - io.request_returned.bits.bytes_read
 
@@ -90,7 +90,7 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
     assert(cmds(cmd_id).bytes_left >= io.request_returned.bits.bytes_read)
   }
 
-  when (io.cmd_completed.fire()) {
+  when (io.cmd_completed.fire) {
     cmds(io.cmd_completed.bits.cmd_id).valid := false.B
   }
 

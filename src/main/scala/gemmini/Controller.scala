@@ -388,7 +388,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     .otherwise {
       reservation_station.io.alloc.valid := true.B
 
-      when(reservation_station.io.alloc.fire()) {
+      when(reservation_station.io.alloc.fire) {
         // compressed_cmd.ready := true.B
         unrolled_cmd.ready := true.B
       }
@@ -413,5 +413,5 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   //=========================================================================
   // Performance Counters Access
   //=========================================================================
-  
+
 }

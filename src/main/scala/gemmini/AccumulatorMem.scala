@@ -112,7 +112,7 @@ class AccumulatorMem[T <: Data, U <: Data](
 
   val pipelined_writes = Reg(Vec(acc_latency, Valid(new AccumulatorWriteReq(n, t))))
   val oldest_pipelined_write = pipelined_writes(acc_latency-1)
-  pipelined_writes(0).valid := io.write.fire()
+  pipelined_writes(0).valid := io.write.fire
   pipelined_writes(0).bits  := io.write.bits
   for (i <- 1 until acc_latency) {
     pipelined_writes(i) := pipelined_writes(i-1)
@@ -143,8 +143,8 @@ class AccumulatorMem[T <: Data, U <: Data](
     mem.io.mask := oldest_pipelined_write.bits.mask
     rdata_for_adder := mem.io.rdata
     rdata_for_read_resp := mem.io.rdata
-    mem.io.raddr := Mux(io.write.fire() && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
-    mem.io.ren := io.read.req.fire() || (io.write.fire() && io.write.bits.acc)
+    mem.io.raddr := Mux(io.write.fire && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
+    mem.io.ren := io.read.req.fire || (io.write.fire && io.write.bits.acc)
   } else {
     val rmw_req = Wire(Decoupled(UInt()))
     rmw_req.valid := io.write.valid && io.write.bits.acc
@@ -204,7 +204,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       for (e <- w_q) {
         when (e.valid) {
           assert(!(
-            io.write.fire() && io.write.bits.acc &&
+            io.write.fire && io.write.bits.acc &&
             isThisBank(io.write.bits.addr) && getBankIdx(io.write.bits.addr) === e.addr &&
             ((io.write.bits.mask.asUInt & e.mask.asUInt) =/= 0.U)
           ), "you cannot accumulate to an AccumulatorMem address until previous writes to that address have completed")
@@ -270,7 +270,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       //   1. incoming reads for RMW
       //   2. writes from RMW
       //   3. incoming reads
-      when (rmw_req.fire() && isThisBank(rmw_req.bits)) {
+      when (rmw_req.fire && isThisBank(rmw_req.bits)) {
         ren := true.B
         when (isThisBank(only_read_req.bits)) {
           only_read_req.ready := false.B
@@ -281,7 +281,7 @@ class AccumulatorMem[T <: Data, U <: Data](
           only_read_req.ready := false.B
         }
       } .otherwise {
-        ren := isThisBank(only_read_req.bits) && only_read_req.fire()
+        ren := isThisBank(only_read_req.bits) && only_read_req.fire
         raddr := getBankIdx(only_read_req.bits)
       }
 
@@ -298,7 +298,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
   q.io.enq.bits.fromDMA := RegNext(io.read.req.bits.fromDMA)
   q.io.enq.bits.acc_bank_id := DontCare
-  q.io.enq.valid := RegNext(io.read.req.fire())
+  q.io.enq.valid := RegNext(io.read.req.fire)
 
   val p = q.io.deq
 
@@ -311,7 +311,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.read.resp.valid := p.valid
   p.ready := io.read.resp.ready
 
-  val q_will_be_empty = (q.io.count +& q.io.enq.fire()) - q.io.deq.fire() === 0.U
+  val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U
   io.read.req.ready := q_will_be_empty && (
       // Make sure we aren't accumulating, which would take over both ports
       !(io.write.valid && io.write.bits.acc) &&
@@ -327,5 +327,5 @@ class AccumulatorMem[T <: Data, U <: Data](
   }
 
   // assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
-  assert(!(io.read.req.fire() && io.write.fire() && io.read.req.bits.addr === io.write.bits.addr), "reading from and writing to same address is not supported")
+  assert(!(io.read.req.fire && io.write.fire && io.read.req.bits.addr === io.write.bits.addr), "reading from and writing to same address is not supported")
 }

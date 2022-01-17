@@ -66,7 +66,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
   val in_fire = WireInit(false.B)
   io.req.ready := !in.valid || (in.bits.repeats === 0.U && in_fire)
 
-  when (io.req.fire()) {
+  when (io.req.fire) {
     in.valid := io.req.valid
     in.bits  := io.req.bits
   } .elsewhen (in_fire) {
@@ -85,7 +85,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
       latency
     )())
     io.resp <> pipe.io.out
-    in_fire := pipe.io.in.fire()
+    in_fire := pipe.io.in.fire
 
     pipe.io.in.valid := in.valid
     pipe.io.in.bits.tag := in.bits.tag
@@ -108,7 +108,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
 
     io.resp.valid := Mux1H(head_oh.asBools, (regs zip completed_masks).map({case (r,c) => r.valid && c.reduce(_&&_)}))
     io.resp.bits := Mux1H(head_oh.asBools, out_regs)
-    when (io.resp.fire()) {
+    when (io.resp.fire) {
       for (i <- 0 until nEntries) {
         when (head_oh(i)) {
           regs(i).valid := false.B
@@ -150,7 +150,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
         input.bits.scale  := regs(i).bits.scale.asTypeOf(u)
         input.bits.id := i.U
         input.bits.index := w.U
-        when (input.fire()) {
+        when (input.fire) {
           fired_masks(i)(w) := true.B
         }
       }
@@ -173,7 +173,7 @@ class VectorScalarMultiplier[T <: Data, U <: Data, Tag <: Data](
       for (j <- 0 until nEntries) {
         for (w <- 0 until width) {
           if ((j*width+w) % num_scale_units == i) {
-            when (pipe_out.fire() && pipe_out.bits.id === j.U && pipe_out.bits.index === w.U) {
+            when (pipe_out.fire && pipe_out.bits.id === j.U && pipe_out.bits.index === w.U) {
               out_regs(j).out(w) := pipe_out.bits.data
               completed_masks(j)(w) := true.B
             }

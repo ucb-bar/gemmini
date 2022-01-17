@@ -107,7 +107,7 @@ class TilerFSM[T <: Data : Arithmetic, U <: Data, V <: Data]
   // combinational calculation of optimal output-groups. this is updated at
   // the s_IDLE -> s_RESET_OUTPUT_GROUP state transition
   //------------------------------------------------------------------------
-  val g_OG_DIM_SELECT = OG_HEIGHT_MAP.zipWithIndex.map{ case(h,i) => 
+  val g_OG_DIM_SELECT = OG_HEIGHT_MAP.zipWithIndex.map{ case(h,i) =>
     val w = TOTAL_ACC_TILES/h
     if (h < w)      WireDefault(g_TILE_ROW_END < h.U)
     else if(h > w)  WireDefault(g_TILE_COL_END < w.U)
@@ -198,9 +198,9 @@ class TilerFSM[T <: Data : Arithmetic, U <: Data, V <: Data]
 
   // continuous assigns (only added in the switch-cases that call this!)
   def update_tile_dims(dummy: Int = 0) = {
-    gbl_item_rows     := Mux(gbl_tile_row_n === g_TILE_ROW_END, 
+    gbl_item_rows     := Mux(gbl_tile_row_n === g_TILE_ROW_END,
                              g_LAST_M_ITEMS, DIM.U)
-    gbl_item_cols     := Mux(gbl_tile_col_n === g_TILE_COL_END, 
+    gbl_item_cols     := Mux(gbl_tile_col_n === g_TILE_COL_END,
                              g_LAST_N_ITEMS, DIM.U)
     loop2_k_item_dims := Mux(loop2_k_tile_col_n === g_K_TILE_COL_END,
                              g_LAST_K_ITEMS, DIM.U)
@@ -246,7 +246,7 @@ class TilerFSM[T <: Data : Arithmetic, U <: Data, V <: Data]
       g_LAST_N_ITEMS := Mux(cmd.n(LOG2_DIM-1,0).orR,cmd.n(LOG2_DIM-1,0),DIM.U)
       g_LAST_K_ITEMS := Mux(cmd.k(LOG2_DIM-1,0).orR,cmd.k(LOG2_DIM-1,0),DIM.U)
 
-      g_TILE_ROW_END   := (cmd.m >> LOG2_DIM) + cmd.m(LOG2_DIM-1,0).orR - 1.U 
+      g_TILE_ROW_END   := (cmd.m >> LOG2_DIM) + cmd.m(LOG2_DIM-1,0).orR - 1.U
       g_TILE_COL_END   := (cmd.n >> LOG2_DIM) + cmd.n(LOG2_DIM-1,0).orR - 1.U
       g_K_TILE_COL_END := (cmd.k >> LOG2_DIM) + cmd.k(LOG2_DIM-1,0).orR - 1.U
 
@@ -256,7 +256,7 @@ class TilerFSM[T <: Data : Arithmetic, U <: Data, V <: Data]
 
       // issue gemmini commands
       // NOTE: the "h10000".U(17) is because a_addr_stride was added to ExecuteController
-      when(io.cmd_in.fire()) {
+      when(io.cmd_in.fire) {
         sched.push               := 2.U
         sched.bits(0).inst.funct := CONFIG_CMD
         sched.bits(0).rs1        := (g_ACC_OUT_RSHIFT << 32) |
@@ -639,7 +639,7 @@ class TilerFSM[T <: Data : Arithmetic, U <: Data, V <: Data]
       val l_did_row_incr = WireDefault(false.B)
       val l_did_col_incr = WireDefault(false.B)
 
-      when (gbl_tile_col === g_TILE_COL_END && 
+      when (gbl_tile_col === g_TILE_COL_END &&
             gbl_tile_row === g_TILE_ROW_END) {
         // update next state
         state := s_IDLE
@@ -658,7 +658,7 @@ class TilerFSM[T <: Data : Arithmetic, U <: Data, V <: Data]
           update_tile_dims()
           l_did_col_incr := true.B
         }
-   
+
         // reset global state that resets for each new output-group
         gbl_CD_acc_row_addr := 0.U
 
@@ -672,11 +672,11 @@ class TilerFSM[T <: Data : Arithmetic, U <: Data, V <: Data]
 
         loop1_tile_col_start := l_tile_col_start
         loop1_tile_col_end   := l_tile_col_end
-                                
+
         loop1_tile_row_start := l_tile_row_start
         loop1_tile_row_end   := l_tile_row_end
-                                
-         
+
+
         // update all derived pointers to matrices in memory
         when(l_did_row_incr) {
           loop1_A_mem_addr := g_A_MEM_ADDR + (l_tile_row_start *
@@ -693,7 +693,7 @@ class TilerFSM[T <: Data : Arithmetic, U <: Data, V <: Data]
           loop1_A_mem_addr := loop1_A_mem_addr + 0.U
           loop1_B_mem_addr := loop1_B_mem_addr + g_I_BYTE_COLS_PER_GROUP
           loop1_C_mem_addr := loop1_C_mem_addr + g_I_BYTE_COLS_PER_GROUP
-          loop1_D_mem_addr := loop1_D_mem_addr + 
+          loop1_D_mem_addr := loop1_D_mem_addr +
                               Mux(!g_HAS_BIAS, 0.U, g_O_BYTE_COLS_PER_GROUP)
         }
 
