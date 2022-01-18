@@ -473,6 +473,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < PlusArg("gemmini_timeout", 10000), "pipeline stall")
+  FpgaDebug(cycles_since_issue)
 
   for (e <- entries) {
     dontTouch(e.bits.allocated_at)
