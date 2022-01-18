@@ -44,7 +44,7 @@ git submodule update
 
 cd -
 cd toolchains/esp-tools/riscv-isa-sim/build
-git fetch && git checkout 79486d67f99fa739c8c1d5916c9b74d0417b53c4
+git fetch && git checkout 090e82c473fd28b4eb2011ffcd771ead6076faab
 make && make install
 ```
 
