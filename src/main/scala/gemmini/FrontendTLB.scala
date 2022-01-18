@@ -54,6 +54,8 @@ class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: 
   tlb.io.sfence.bits.rs2 := false.B
   tlb.io.sfence.bits.addr := DontCare
   tlb.io.sfence.bits.asid := DontCare
+  tlb.io.sfence.bits.hv := false.B
+  tlb.io.sfence.bits.hg := false.B
 
   io.ptw <> tlb.io.ptw
   tlb.io.ptw.status := io.req.bits.status
