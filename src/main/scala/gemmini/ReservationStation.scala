@@ -10,6 +10,7 @@ import Util._
 
 import midas.targetutils.PerfCounter
 import midas.targetutils.SynthesizePrintf
+import midas.targetutils.FpgaDebug
 
 
 // TODO unify this class with GemminiCmdWithDeps
@@ -452,6 +453,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   dontTouch(functs)
   dontTouch(issueds)
   dontTouch(packed_deps)
+
+  FpgaDebug(valids)
+  FpgaDebug(functs)
+  FpgaDebug(issueds)
+  FpgaDebug(packed_deps)
 
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
