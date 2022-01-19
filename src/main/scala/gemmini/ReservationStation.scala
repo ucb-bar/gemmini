@@ -457,7 +457,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   FpgaDebug(valids)
   FpgaDebug(functs)
   FpgaDebug(issueds)
-  FpgaDebug(packed_deps)
+  // FpgaDebug(packed_deps)
 
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))

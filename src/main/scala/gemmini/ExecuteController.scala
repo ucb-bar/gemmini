@@ -7,6 +7,7 @@ import GemminiISA._
 import Util._
 import freechips.rocketchip.config.Parameters
 import midas.targetutils.PerfCounter
+import midas.targetutils.FpgaDebug
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
@@ -69,6 +70,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // val (cmd, _) = MultiHeadedQueue(io.cmd, ex_queue_length, cmd_q_heads)
   val (cmd, _) = MultiHeadedQueue(unrolled_cmd, ex_queue_length, cmd_q_heads)
   cmd.pop := 0.U
+
+  for (v <- cmd.valid) {
+    FpgaDebug(v)
+  }
+  for (c <- cmd.bits) {
+    FpgaDebug(c.cmd.inst.funct)
+    FpgaDebug(c.rob_id)
+  }
 
   io.solitary_preload := cmd.valid(0) && cmd.bits(0).cmd.inst.funct === PRELOAD_CMD && !cmd.valid(1)
 
@@ -281,6 +290,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val perform_single_preload = RegInit(false.B)
   val perform_single_mul = RegInit(false.B)
   val perform_mul_pre = RegInit(false.B)
+
+  FpgaDebug(perform_single_preload)
+  FpgaDebug(perform_single_mul)
+  FpgaDebug(perform_mul_pre)
 
   val performing_single_preload = WireInit(perform_single_preload && control_state === compute)
   val performing_single_mul = WireInit(perform_single_mul && control_state === compute)
@@ -889,6 +902,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.req.bits.total_rows := cntl.total_rows
   }
 
+  FpgaDebug(mesh.io.req.valid)
+  FpgaDebug(mesh.io.req.ready)
+  FpgaDebug(mesh.io.req.bits.tag.addr.is_acc_addr)
+  FpgaDebug(mesh.io.req.bits.tag.addr.data)
+  FpgaDebug(mesh.io.req.bits.tag.addr.accumulate)
+  FpgaDebug(mesh.io.req.bits.tag.rob_id)
+
   when (cntl_valid && cntl.perform_single_preload) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, dataA.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
@@ -968,6 +988,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Handle dependencies and turn off outputs for garbage addresses
   val mesh_completed_rob_id_fire = WireInit(false.B)
   //val complete_lock = RegInit(false.B)
+
+  FpgaDebug(io.completed.valid)
+  FpgaDebug(io.completed.bits)
+  FpgaDebug(mesh.io.resp.valid)
+  FpgaDebug(mesh.io.resp.bits.tag.rob_id)
 
   //Seah: added for WS accumulator
   when(mesh.io.resp.fire() && mesh.io.resp.bits.tag.rob_id.valid) {
