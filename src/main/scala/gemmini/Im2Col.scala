@@ -24,7 +24,6 @@ class Im2ColReadReq[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[
   val weight_triple_bank = Bool()
   val start_inputting = Bool() //start_inputting_a
 
-  override def cloneType: Im2ColReadReq.this.type = new Im2ColReadReq(config).asInstanceOf[this.type]
 
 }
 
@@ -38,7 +37,6 @@ class Im2ColReadResp[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   //added for sync
   val im2col_delay = Bool()
 
-  override def cloneType: Im2ColReadResp.this.type = new Im2ColReadResp(config).asInstanceOf[this.type]
 
 }
 

@@ -140,7 +140,6 @@ object Util {
       bits
     }
 
-    override def cloneType: this.type = new UDValid(t.cloneType).asInstanceOf[this.type]
   }
 
   object UDValid {

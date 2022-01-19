@@ -116,7 +116,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     Mux(io.dma.req.bits.has_acc_bitwidth, cols * actual_rows_read * config.accType.getWidth.U,
       cols * actual_rows_read * config.inputType.getWidth.U) / 8.U
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
-  cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
+  cmd_tracker.io.request_returned.valid := io.dma.resp.fire // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.bytes_read := io.dma.resp.bits.bytesRead
   cmd_tracker.io.cmd_completed.ready := io.completed.ready
@@ -130,7 +130,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.busy := cmd.valid || cmd_tracker.io.busy
 
   // Row counter
-  when (io.dma.req.fire()) {
+  when (io.dma.req.fire) {
     row_counter := wrappingAdd(row_counter, 1.U, actual_rows_read)
 
     assert(block_stride >= rows)
@@ -150,19 +150,19 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
         }
 
         .elsewhen(DoLoad && cmd_tracker.io.alloc.fire()) {
-          control_state := Mux(io.dma.req.fire(), sending_rows, waiting_for_dma_req_ready)
+          control_state := Mux(io.dma.req.fire, sending_rows, waiting_for_dma_req_ready)
         }
       }
     }
 
     is (waiting_for_dma_req_ready) {
-      when (io.dma.req.fire()) {
+      when (io.dma.req.fire) {
         control_state := sending_rows
       }
     }
 
     is (sending_rows) {
-      val last_row = row_counter === 0.U || (row_counter === actual_rows_read-1.U && io.dma.req.fire())
+      val last_row = row_counter === 0.U || (row_counter === actual_rows_read-1.U && io.dma.req.fire)
 
       when (last_row) {
         control_state := waiting_for_command

@@ -84,11 +84,11 @@ class LoopUnroller(block_size: Int)(implicit p: Parameters) extends Module {
 
   when (cmd.valid) {
     when (is_loop && (state === idle || state === preload)) {
-      when (io.out.fire()) {
+      when (io.out.fire) {
         state := compute
       }
     }.elsewhen(is_loop && state === compute) {
-      when (io.out.fire()) {
+      when (io.out.fire) {
         increment()
         state := Mux(last_iteration, idle, preload)
         cmd.ready := last_iteration

@@ -31,7 +31,6 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val block_stride = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
-  override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
 }
 
 class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: Int, acc_rows: Int, aligned_to: Int, mvin_scale_t_bits: Int)
@@ -50,7 +49,6 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
   val bytes_read = UInt(8.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
-  override def cloneType: StreamReadResponse.this.type = new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to, mvin_scale_t_bits).asInstanceOf[this.type]
 }
 
 class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
@@ -83,8 +81,8 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     core.module.io.flush := io.flush
 
     xactTracker.io.alloc <> core.module.io.reserve
-    xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, beatPacker.io.req.fire())
-    xactTracker.io.peek.pop := beatPacker.io.in.fire() && core.module.io.beatData.bits.last
+    xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, beatPacker.io.req.fire)
+    xactTracker.io.peek.pop := beatPacker.io.in.fire && core.module.io.beatData.bits.last
 
     core.module.io.beatData.ready := beatPacker.io.in.ready
     beatPacker.io.req.valid := core.module.io.beatData.valid
@@ -101,12 +99,12 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.is_acc := beatPacker.io.out.bits.is_acc
     io.resp.bits.accumulate := beatPacker.io.out.bits.accumulate
     io.resp.bits.has_acc_bitwidth := beatPacker.io.out.bits.has_acc_bitwidth
-    io.resp.bits.scale := RegEnable(xactTracker.io.peek.entry.scale, beatPacker.io.req.fire())
-    io.resp.bits.repeats := RegEnable(xactTracker.io.peek.entry.repeats, beatPacker.io.req.fire())
-    io.resp.bits.pixel_repeats := RegEnable(xactTracker.io.peek.entry.pixel_repeats, beatPacker.io.req.fire())
-    io.resp.bits.len := RegEnable(xactTracker.io.peek.entry.len, beatPacker.io.req.fire())
-    io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
-    io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
+    io.resp.bits.scale := RegEnable(xactTracker.io.peek.entry.scale, beatPacker.io.req.fire)
+    io.resp.bits.repeats := RegEnable(xactTracker.io.peek.entry.repeats, beatPacker.io.req.fire)
+    io.resp.bits.pixel_repeats := RegEnable(xactTracker.io.peek.entry.pixel_repeats, beatPacker.io.req.fire)
+    io.resp.bits.len := RegEnable(xactTracker.io.peek.entry.len, beatPacker.io.req.fire)
+    io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire)
+    io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire)
     io.resp.bits.last := beatPacker.io.out.bits.last
 
     io.counter.collect(core.module.io.counter)
@@ -270,7 +268,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         if (bytesRequested.getWidth >= log2Up(spadWidthBytes+1)) bytesRequested / spadWidthBytes.U else 0.U)
     io.reserve.entry.spad_row_offset := Mux(req.has_acc_bitwidth, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
 
-    when (untranslated_a.fire()) {
+    when (untranslated_a.fire) {
       val next_vaddr = req.vaddr + read_bytes_read // send_size
       val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
       req.vaddr := next_vaddr
@@ -295,7 +293,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
 
     // Accepting requests to kick-start the state machine
-    when (io.req.fire()) {
+    when (io.req.fire) {
       req := io.req.bits
       bytesRequested := 0.U
 
@@ -312,7 +310,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val total_bytes_read = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
     when (io.counter.external_reset) {
       total_bytes_read := 0.U
-    }.elsewhen (tl.d.fire()) {
+    }.elsewhen (tl.d.fire) {
       total_bytes_read := total_bytes_read + (1.U << tl.d.bits.size)
     }
 
@@ -390,7 +388,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     val xactBusy_fire = WireInit(false.B)
     val xactBusy_add = Mux(xactBusy_fire, (1.U << xactId).asUInt(), 0.U)
-    val xactBusy_remove = ~Mux(tl.d.fire(), (1.U << tl.d.bits.source).asUInt(), 0.U)
+    val xactBusy_remove = ~Mux(tl.d.fire, (1.U << tl.d.bits.source).asUInt(), 0.U)
     xactBusy := (xactBusy | xactBusy_add) & xactBusy_remove.asUInt()
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
@@ -502,7 +500,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
-    xactBusy_fire := untranslated_a.fire() && state === s_writing_new_block
+    xactBusy_fire := untranslated_a.fire && state === s_writing_new_block
     untranslated_a.valid := (state === s_writing_new_block || state === s_writing_beats) && !xactBusy.andR()
     untranslated_a.bits.tl_a := Mux(write_full, putFull, putPartial)
     untranslated_a.bits.vaddr := write_vaddr
@@ -521,7 +519,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val tlb_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
     tlb_q.io.enq <> tlb_arb.io.out
 
-    io.tlb.req.valid := tlb_q.io.deq.fire()
+    io.tlb.req.valid := tlb_q.io.deq.fire
     io.tlb.req.bits.tlb_req.vaddr := tlb_q.io.deq.bits.vaddr
     io.tlb.req.bits.tlb_req.passthrough := false.B
     io.tlb.req.bits.tlb_req.size := 0.U // send_size
@@ -543,11 +541,11 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits := translate_q.io.deq.bits.tl_a
-    tl.a.bits.address := RegEnableThru(io.tlb.resp.paddr, RegNext(io.tlb.req.fire()))
+    tl.a.bits.address := RegEnableThru(io.tlb.resp.paddr, RegNext(io.tlb.req.fire))
 
     tl.d.ready := xactBusy.orR()
 
-    when (untranslated_a.fire()) {
+    when (untranslated_a.fire) {
       when (state === s_writing_new_block) {
         beatsLeft := write_beats - 1.U
 
@@ -584,7 +582,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
 
     // Accepting requests to kick-start the state machine
-    when (io.req.fire()) {
+    when (io.req.fire) {
       val pooled = {
         val cols = dataWidth / inputType.getWidth
         val v1 = io.req.bits.data.asTypeOf(Vec(cols, inputType))
@@ -615,7 +613,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     // External counters
     val total_bytes_sent = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
-    when (tl.d.fire()) {
+    when (tl.d.fire) {
       total_bytes_sent := total_bytes_sent + (1.U << tl.d.bits.size)
     }
 
