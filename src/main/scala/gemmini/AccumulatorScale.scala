@@ -8,7 +8,6 @@ import Util._
 class AccumulatorReadRespWithFullData[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U, shift_width: Int) extends Bundle {
   val resp = new AccumulatorReadResp(fullDataType, scale_t, shift_width)
   val full_data = fullDataType.cloneType
-  override def cloneType: this.type = new AccumulatorReadRespWithFullData(fullDataType.cloneType, scale_t, shift_width).asInstanceOf[this.type]
 }
 
 
@@ -17,7 +16,6 @@ class AccumulatorScaleResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDa
   val data = rDataType.cloneType
   val acc_bank_id = UInt(2.W)
   val fromDMA = Bool()
-  override def cloneType: this.type = new AccumulatorScaleResp(fullDataType, rDataType).asInstanceOf[this.type]
 }
 
 class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
@@ -26,8 +24,6 @@ class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
 ) extends Bundle {
   val in = Flipped(Decoupled(new AccumulatorReadResp[T,U](fullDataType, scale_t, shift_width)))
   val out = Decoupled(new AccumulatorScaleResp[T](fullDataType, rDataType))
-  override def cloneType: this.type = new AccumulatorScaleIO(fullDataType, scale_t,
-    shift_width, rDataType).asInstanceOf[this.type]
 }
 
 class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extends Bundle {
@@ -40,7 +36,6 @@ class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extend
   val full_data = t.cloneType
   val id = UInt(2.W) // TODO hardcoded
   val index = UInt()
-  override def cloneType: this.type = new AccScaleDataWithIndex(t, u).asInstanceOf[this.type]
 }
 
 class AccScalePipe[T <: Data : Arithmetic, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U, latency: Int, has_nonlinear_activations: Boolean)(implicit ev: Arithmetic[T]) extends Module {
@@ -123,7 +118,7 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
     val tail_oh = RegInit(1.U(nEntries.W))
     out.valid := Mux1H(head_oh.asBools, (regs zip completed_masks).map({case (r, c) => r.valid && c.reduce(_&&_)}))
     out.bits  := Mux1H(head_oh.asBools, out_regs)
-    when (out.fire()) {
+    when (out.fire) {
       for (i <- 0 until nEntries) {
         when (head_oh(i)) {
           regs(i).valid := false.B
@@ -132,8 +127,8 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
       head_oh := (head_oh << 1) | head_oh(nEntries-1)
     }
 
-    io.in.ready := !Mux1H(tail_oh.asBools, regs.map(_.valid)) || (tail_oh === head_oh && out.fire())
-    when (io.in.fire()) {
+    io.in.ready := !Mux1H(tail_oh.asBools, regs.map(_.valid)) || (tail_oh === head_oh && out.fire)
+    when (io.in.fire) {
       for (i <- 0 until nEntries) {
         when (tail_oh(i)) {
           regs(i).valid := true.B
@@ -160,7 +155,7 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
         input.bits.relu6_shift := regs(i).bits.relu6_shift
         input.bits.id := i.U
         input.bits.index := w.U
-        when (input.fire()) {
+        when (input.fire) {
           fired_masks(i)(w) := true.B
         }
       }
@@ -185,7 +180,7 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
           if ((j*width+w) % num_scale_units == i) {
             val id0 = w % io.in.bits.data(0).size
             val id1 = w / io.in.bits.data(0).size
-            when (pipe_out.fire() && pipe_out.bits.id === j.U && pipe_out.bits.index === w.U) {
+            when (pipe_out.fire && pipe_out.bits.id === j.U && pipe_out.bits.index === w.U) {
               out_regs(j).data     (id1)(id0) := pipe_out.bits.data
               out_regs(j).full_data(id1)(id0) := pipe_out.bits.full_data
               completed_masks(j)(w) := true.B

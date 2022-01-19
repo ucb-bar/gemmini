@@ -25,17 +25,17 @@ class InstCompressor(implicit p: Parameters) extends Module {
   fused_cmd.rs1 := Cat(buf(0).bits.rs1(31, 0), buf(1).bits.rs1(31, 0))
   fused_cmd.rs2 := Cat(buf(0).bits.rs2(31, 0), buf(1).bits.rs2(31, 0))
 
-  io.in.ready := !buf(0).valid || (buf(0).valid && is_preload && !buf(1).valid) || io.out.fire()
+  io.in.ready := !buf(0).valid || (buf(0).valid && is_preload && !buf(1).valid) || io.out.fire
   io.out.valid := (buf(0).valid && !is_preload) || (buf(0).valid && is_preload && buf(1).valid)
   io.out.bits := Mux(is_preload, fused_cmd, buf(0).bits)
 
   io.busy := buf(0).valid
 
-  when (io.out.fire()) {
+  when (io.out.fire) {
     buf.foreach(_.pop())
   }
 
-  when (io.in.fire()) {
+  when (io.in.fire) {
     val waddr = Mux(buf(0).valid && is_preload && !buf(1).valid, 1.U, 0.U)
     buf(waddr).push(io.in.bits)
   }
@@ -62,11 +62,11 @@ class InstDecompressor(rob_entries: Int)(implicit p: Parameters) extends Module 
   unfused_cmd.cmd.rs1 := Mux(pushed_preload, cmd.rs1(31, 0), cmd.rs1(63, 32))
   unfused_cmd.cmd.rs2 := Mux(pushed_preload, cmd.rs2(31, 0), cmd.rs2(63, 32))
 
-  io.in.ready := !buf.valid || (io.out.fire() && !(is_compute && !pushed_preload))
+  io.in.ready := !buf.valid || (io.out.fire && !(is_compute && !pushed_preload))
   io.out.valid := buf.valid
   io.out.bits := Mux(is_compute, unfused_cmd, buf.bits)
 
-  when (io.out.fire()) {
+  when (io.out.fire) {
     when (is_compute && !pushed_preload) {
       pushed_preload := true.B
     }.otherwise {
@@ -74,7 +74,7 @@ class InstDecompressor(rob_entries: Int)(implicit p: Parameters) extends Module 
     }
   }
 
-  when (io.in.fire()) {
+  when (io.in.fire) {
     buf.push(io.in.bits)
     pushed_preload := false.B
   }

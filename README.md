@@ -32,7 +32,7 @@ Run these steps to install Chipyard and Spike (make sure to checkout the correct
 ```shell
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
-git checkout ec1b075658fb92a624151536dd1de76bad94f51f
+git checkout 117624d8eea27bafd613eec09e9b9b3e31239e08
 ./scripts/init-submodules-no-riscv-tools.sh
 ./scripts/build-toolchains.sh esp-tools
 

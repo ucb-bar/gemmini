@@ -33,7 +33,7 @@ class MultiHeadedQueue[T <: Data](gen: T, entries: Int, heads: Int, maxpop: Int 
   }
 
   // Pushing
-  when (io.enq.fire()) {
+  when (io.enq.fire) {
     regs(waddr) := io.enq.bits
     waddr := wrappingAdd(waddr, 1.U, entries)
     len := len + 1.U
@@ -42,7 +42,7 @@ class MultiHeadedQueue[T <: Data](gen: T, entries: Int, heads: Int, maxpop: Int 
   // Popping
   when(io.deq.pop > 0.U) {
     raddr := wrappingAdd(raddr, io.deq.pop, entries)
-    len := len - io.deq.pop + io.enq.fire()
+    len := len - io.deq.pop + io.enq.fire
   }
 
   assert(io.deq.pop <= len && io.deq.pop <= heads.U && io.deq.pop <= maxpop.U)
