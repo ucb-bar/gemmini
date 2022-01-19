@@ -75,6 +75,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     instructions_allocated := instructions_allocated + 1.U
   }
   dontTouch(instructions_allocated)
+  FpgaDebug(instructions_allocated)
 
   class Entry extends Bundle {
     val q = q_t.cloneType
@@ -453,6 +454,15 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   dontTouch(functs)
   dontTouch(issueds)
   dontTouch(packed_deps)
+
+  val preload_allocated_at = Wire(UInt(instructions_allocated.getWidth.W))
+  preload_allocated_at := DontCare
+  for (e <- entries) {
+    when (e.valid && e.bits.cmd.inst.funct === PRELOAD_CMD) {
+      preload_allocated_at := e.bits.allocated_at
+    }
+  }
+  FpgaDebug(preload_allocated_at)
 
   FpgaDebug(valids)
   FpgaDebug(functs)
