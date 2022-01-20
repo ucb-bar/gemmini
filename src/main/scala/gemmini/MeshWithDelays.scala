@@ -45,7 +45,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   assert(meshRows*tileRows == meshColumns*tileColumns)
   val block_size = meshRows*tileRows
 
-  val latency_per_pe = (tile_latency + 1).toFloat / (tileRows min tileColumns)
+  val latency_per_pe = ((tile_latency + 1).toFloat / (tileRows min tileColumns)) max 1.0f
   val max_simultaneous_matmuls = if (n_simultaneous_matmuls == -1) {
     (5 * latency_per_pe).ceil.toInt
   } else {
