@@ -10,7 +10,6 @@ import Util._
 
 import midas.targetutils.PerfCounter
 import midas.targetutils.SynthesizePrintf
-import midas.targetutils.FpgaDebug
 
 
 // TODO unify this class with GemminiCmdWithDeps
@@ -49,8 +48,6 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val busy = Output(Bool())
 
-    val solitary_preload = Input(Bool()) // TODO very hacky. from ExecuteController, to prevent infinite fence stalls. remove later
-
     val counter = new CounterEventIO()
   })
 
@@ -75,7 +72,6 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     instructions_allocated := instructions_allocated + 1.U
   }
   dontTouch(instructions_allocated)
-  FpgaDebug(instructions_allocated)
 
   class Entry extends Bundle {
     val q = q_t.cloneType
@@ -111,20 +107,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val empty = !entries.map(_.valid).reduce(_ || _)
   val full = entries.map(_.valid).reduce(_ && _)
 
-  // TODO we could also check for a solitary preload by recording the last instruction that was allocated, rather than
-  // reading all entries to check for preloads, which is an O(n) operation in terms of area cost
-  val solitary_preload = RegInit(false.B) // This checks whether or not the reservation station received a "preload" instruction, but hasn't yet received the following "compute" instruction
-
   val utilization = PopCount(entries.map(e => e.valid)) // TODO it may be cheaper to count the utilization in a register, rather than performing a PopCount
-  // val solitary_preload = utilization === 1.U && entries.map(e => e.valid && e.bits.cmd.inst.funct === PRELOAD_CMD).reduce(_ || _)
-  // io.busy := !empty && !(solitary_preload && io.solitary_preload)
+  val solitary_preload = RegInit(false.B) // This checks whether or not the reservation station received a "preload" instruction, but hasn't yet received the following "compute" instruction
   io.busy := !empty && !(utilization === 1.U && solitary_preload)
-
-  dontTouch(solitary_preload)
-  dontTouch(io.solitary_preload)
-
-  FpgaDebug(solitary_preload)
-  FpgaDebug(io.solitary_preload)
 
   // Config values set by programmer
   val a_stride = Reg(UInt(a_stride_bits.W))
@@ -468,21 +453,6 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   dontTouch(issueds)
   dontTouch(packed_deps)
 
-  val preload_allocated_at = Wire(UInt(instructions_allocated.getWidth.W))
-  preload_allocated_at := DontCare
-  for (e <- entries) {
-    when (e.valid && e.bits.cmd.inst.funct === PRELOAD_CMD) {
-      preload_allocated_at := e.bits.allocated_at
-    }
-  }
-  dontTouch(preload_allocated_at)
-  FpgaDebug(preload_allocated_at)
-
-  FpgaDebug(valids)
-  FpgaDebug(functs)
-  FpgaDebug(issueds)
-  // FpgaDebug(packed_deps)
-
   val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
   // assert(min_pop_count < 2.U)
@@ -497,7 +467,6 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < PlusArg("gemmini_timeout", 10000), "pipeline stall")
-  FpgaDebug(cycles_since_issue)
 
   for (e <- entries) {
     dontTouch(e.bits.allocated_at)
