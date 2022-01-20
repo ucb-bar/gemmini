@@ -679,7 +679,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       }
     }
     is(flush) {
-      when(mesh.io.req.fire()) {
+      when(mesh.io.req.fire) {
         control_state := flushing
       }
     }
@@ -807,9 +807,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val accReadValid = VecInit(io.acc.read_resp.map(bank => ex_read_from_acc.B && bank.valid && !bank.bits.fromDMA))
   val im2ColValid = io.im2col.resp.valid
 
-  mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) &&
-    (!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) &&
-    (!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready) &&
+  mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire || !mesh.io.a.ready) &&
+    (!cntl.b_fire || mesh.io.b.fire || !mesh.io.b.ready) &&
+    (!cntl.d_fire || mesh.io.d.fire || !mesh.io.d.ready) &&
     (!cntl.first || mesh.io.req.ready)
 
   val dataA_valid = cntl.a_garbage || cntl.a_unpadded_cols === 0.U || Mux(cntl.im2colling, im2ColValid, Mux(cntl.a_read_from_acc, accReadValid(cntl.a_bank_acc), readValid(cntl.a_bank)))
@@ -837,8 +837,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)})
 
   // Pop responses off the scratchpad io ports
-  when (mesh_cntl_signals_q.io.deq.fire()) {
-    when (cntl.a_fire && mesh.io.a.fire() && !cntl.a_garbage && cntl.a_unpadded_cols > 0.U && !cntl.im2colling) {
+  when (mesh_cntl_signals_q.io.deq.fire) {
+    when (cntl.a_fire && mesh.io.a.fire && !cntl.a_garbage && cntl.a_unpadded_cols > 0.U && !cntl.im2colling) {
       when (cntl.a_read_from_acc) {
         io.acc.read_resp(cntl.a_bank_acc).ready := !io.acc.read_resp(cntl.a_bank_acc).bits.fromDMA
       }.otherwise {
@@ -846,7 +846,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       }
     }
 
-    when (cntl.b_fire && mesh.io.b.fire() && !cntl.b_garbage && !cntl.accumulate_zeros && cntl.b_unpadded_cols > 0.U) {
+    when (cntl.b_fire && mesh.io.b.fire && !cntl.b_garbage && !cntl.accumulate_zeros && cntl.b_unpadded_cols > 0.U) {
       when (cntl.b_read_from_acc) {
         io.acc.read_resp(cntl.b_bank_acc).ready := !io.acc.read_resp(cntl.b_bank_acc).bits.fromDMA
       }.otherwise {
@@ -854,7 +854,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       }
     }
 
-    when (cntl.d_fire && mesh.io.d.fire() && !cntl.d_garbage && !cntl.preload_zeros && cntl.d_unpadded_cols > 0.U) {
+    when (cntl.d_fire && mesh.io.d.fire && !cntl.d_garbage && !cntl.preload_zeros && cntl.d_unpadded_cols > 0.U) {
       when (cntl.d_read_from_acc) {
         io.acc.read_resp(cntl.d_bank_acc).ready := !io.acc.read_resp(cntl.d_bank_acc).bits.fromDMA
       }.otherwise {
@@ -879,7 +879,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
-    mesh.io.req.valid := mesh_cntl_signals_q.io.deq.fire() && (cntl.a_fire || cntl.b_fire || cntl.d_fire)
+    mesh.io.req.valid := mesh_cntl_signals_q.io.deq.fire && (cntl.a_fire || cntl.b_fire || cntl.d_fire)
 
     mesh.io.req.bits.tag.addr := cntl.c_addr
 
@@ -967,7 +967,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   //val complete_lock = RegInit(false.B)
 
   //Seah: added for WS accumulator
-  when(mesh.io.resp.fire() && mesh.io.resp.bits.tag.rob_id.valid) {
+  when(mesh.io.resp.fire && mesh.io.resp.bits.tag.rob_id.valid) {
     output_counter := wrappingAdd(output_counter, 1.U, w_total_output_rows)
     val last = mesh.io.resp.bits.last
 
@@ -1002,29 +1002,29 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Performance counter
   CounterEventIO.init(io.counter)
   io.counter.connectEventSignal(CounterEvent.EXE_ACTIVE_CYCLE, control_state === compute)
-  io.counter.connectEventSignal(CounterEvent.EXE_FLUSH_CYCLE, 
+  io.counter.connectEventSignal(CounterEvent.EXE_FLUSH_CYCLE,
     control_state === flushing || control_state === flush)
-  io.counter.connectEventSignal(CounterEvent.EXE_CONTROL_Q_BLOCK_CYCLE, 
+  io.counter.connectEventSignal(CounterEvent.EXE_CONTROL_Q_BLOCK_CYCLE,
     !mesh_cntl_signals_q.io.enq.ready && mesh_cntl_signals_q.io.enq.valid)
-  io.counter.connectEventSignal(CounterEvent.EXE_PRELOAD_HAZ_CYCLE, 
+  io.counter.connectEventSignal(CounterEvent.EXE_PRELOAD_HAZ_CYCLE,
     cmd.valid(0) && DoPreloads(0) && cmd.valid(1) && raw_hazard_pre)
-  io.counter.connectEventSignal(CounterEvent.EXE_OVERLAP_HAZ_CYCLE, 
+  io.counter.connectEventSignal(CounterEvent.EXE_OVERLAP_HAZ_CYCLE,
     cmd.valid(0) && DoPreloads(1) && cmd.valid(1) && DoComputes(0) && cmd.valid(2) && raw_hazard_mulpre)
   io.counter.connectEventSignal(CounterEvent.A_GARBAGE_CYCLES, cntl.a_garbage)
   io.counter.connectEventSignal(CounterEvent.B_GARBAGE_CYCLES, cntl.b_garbage)
   io.counter.connectEventSignal(CounterEvent.D_GARBAGE_CYCLES, cntl.d_garbage)
-  io.counter.connectEventSignal(CounterEvent.ACC_A_WAIT_CYCLE, 
-    !(!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) && cntl.a_read_from_acc && !cntl.im2colling)
-  io.counter.connectEventSignal(CounterEvent.ACC_B_WAIT_CYCLE, 
-    !(!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) && cntl.b_read_from_acc)
-  io.counter.connectEventSignal(CounterEvent.ACC_D_WAIT_CYCLE, 
-    !(!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready) && cntl.d_read_from_acc)
-  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_A_WAIT_CYCLE, 
-    !(!cntl.a_fire || mesh.io.a.fire() || !mesh.io.a.ready) && !cntl.a_read_from_acc && !cntl.im2colling)
-  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_B_WAIT_CYCLE, 
-    !(!cntl.b_fire || mesh.io.b.fire() || !mesh.io.b.ready) && !cntl.b_read_from_acc)
-  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_D_WAIT_CYCLE, 
-    !(!cntl.d_fire || mesh.io.d.fire() || !mesh.io.d.ready) && !cntl.d_read_from_acc)
+  io.counter.connectEventSignal(CounterEvent.ACC_A_WAIT_CYCLE,
+    !(!cntl.a_fire || mesh.io.a.fire || !mesh.io.a.ready) && cntl.a_read_from_acc && !cntl.im2colling)
+  io.counter.connectEventSignal(CounterEvent.ACC_B_WAIT_CYCLE,
+    !(!cntl.b_fire || mesh.io.b.fire || !mesh.io.b.ready) && cntl.b_read_from_acc)
+  io.counter.connectEventSignal(CounterEvent.ACC_D_WAIT_CYCLE,
+    !(!cntl.d_fire || mesh.io.d.fire || !mesh.io.d.ready) && cntl.d_read_from_acc)
+  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_A_WAIT_CYCLE,
+    !(!cntl.a_fire || mesh.io.a.fire || !mesh.io.a.ready) && !cntl.a_read_from_acc && !cntl.im2colling)
+  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_B_WAIT_CYCLE,
+    !(!cntl.b_fire || mesh.io.b.fire || !mesh.io.b.ready) && !cntl.b_read_from_acc)
+  io.counter.connectEventSignal(CounterEvent.SCRATCHPAD_D_WAIT_CYCLE,
+    !(!cntl.d_fire || mesh.io.d.fire || !mesh.io.d.ready) && !cntl.d_read_from_acc)
 
   if (use_firesim_simulation_counters) {
     val ex_flush_cycle = control_state === flushing || control_state === flush

@@ -65,9 +65,9 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
     (state === second_preload) -> second_preload_cmd,
   ))
 
-  q.pop := Mux(io.out.fire() && !(first_preload && unroll_preload) && state =/= first_compute, 1.U, 0.U)
+  q.pop := Mux(io.out.fire && !(first_preload && unroll_preload) && state =/= first_compute, 1.U, 0.U)
 
-  when (io.out.fire()) {
+  when (io.out.fire) {
     when (is_config) {
       val set_only_strides = cmds(0).cmd.rs1(7)
       when (!set_only_strides) {

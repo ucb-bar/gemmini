@@ -18,7 +18,6 @@ class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
 
-  override def cloneType: this.type = new GemminiCmd(rob_entries).asInstanceOf[this.type]
 }
 
 class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiArrayConfig[T, U, V])
@@ -389,7 +388,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     .otherwise {
       reservation_station.io.alloc.valid := true.B
 
-      when(reservation_station.io.alloc.fire()) {
+      when(reservation_station.io.alloc.fire) {
         // compressed_cmd.ready := true.B
         unrolled_cmd.ready := true.B
       }
@@ -414,5 +413,5 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   //=========================================================================
   // Performance Counters Access
   //=========================================================================
-  
+
 }

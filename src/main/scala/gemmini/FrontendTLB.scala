@@ -54,25 +54,27 @@ class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: 
   tlb.io.sfence.bits.rs2 := false.B
   tlb.io.sfence.bits.addr := DontCare
   tlb.io.sfence.bits.asid := DontCare
+  tlb.io.sfence.bits.hv := false.B
+  tlb.io.sfence.bits.hg := false.B
 
   io.ptw <> tlb.io.ptw
   tlb.io.ptw.status := io.req.bits.status
   val exception = io.req.valid && Mux(io.req.bits.tlb_req.cmd === M_XRD, tlb.io.resp.pf.ld || tlb.io.resp.ae.ld, tlb.io.resp.pf.st || tlb.io.resp.ae.st)
   when (exception) { interrupt := true.B }
-  when (interrupt && tlb.io.sfence.fire()) {
+  when (interrupt && tlb.io.sfence.fire) {
     interrupt := false.B
   }
 
   assert(!io.exp.flush_retry || !io.exp.flush_skip, "TLB: flushing with both retry and skip at same time")
 
   CounterEventIO.init(io.counter)
-  io.counter.connectEventSignal(CounterEvent.DMA_TLB_HIT_REQ, io.req.fire() && !tlb.io.resp.miss)
-  io.counter.connectEventSignal(CounterEvent.DMA_TLB_TOTAL_REQ, io.req.fire())
+  io.counter.connectEventSignal(CounterEvent.DMA_TLB_HIT_REQ, io.req.fire && !tlb.io.resp.miss)
+  io.counter.connectEventSignal(CounterEvent.DMA_TLB_TOTAL_REQ, io.req.fire)
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_MISS_CYCLE, tlb.io.resp.miss)
 
   if (use_firesim_simulation_counters) {
-    PerfCounter(io.req.fire() && !tlb.io.resp.miss, "tlb_hits", "total number of tlb hits")
-    PerfCounter(io.req.fire(), "tlb_reqs", "total number of tlb reqs")
+    PerfCounter(io.req.fire && !tlb.io.resp.miss, "tlb_hits", "total number of tlb hits")
+    PerfCounter(io.req.fire, "tlb_reqs", "total number of tlb reqs")
     PerfCounter(tlb.io.resp.miss, "tlb_miss_cycles", "total number of cycles where the tlb is resolving a miss")
   }
 }
@@ -123,7 +125,7 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_fi
     val tlb = if (use_shared_tlb) tlbs.head else tlbs(i)
     val tlbReq = if (use_shared_tlb) tlbArbOpt.get.io.in(i).bits else tlb.io.req.bits
     val tlbReqValid = if (use_shared_tlb) tlbArbOpt.get.io.in(i).valid else tlb.io.req.valid
-    val tlbReqFire = if (use_shared_tlb) tlbArbOpt.get.io.in(i).fire() else tlb.io.req.fire()
+    val tlbReqFire = if (use_shared_tlb) tlbArbOpt.get.io.in(i).fire else tlb.io.req.fire
 
     tlbReqValid := RegNext(client.req.valid && !l0_tlb_hit)
     tlbReq := RegNext(client.req.bits)

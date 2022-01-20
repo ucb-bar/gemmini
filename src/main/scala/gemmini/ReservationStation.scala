@@ -21,7 +21,6 @@ class ReservationStationIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bun
 
   def fire(dummy: Int=0) = valid && ready
 
-  override def cloneType: this.type = new ReservationStationIssue(cmd_t, rob_entries).asInstanceOf[this.type]
 }
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
@@ -68,7 +67,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   val instructions_allocated = RegInit(0.U(32.W))
-  when (io.alloc.fire()) {
+  when (io.alloc.fire) {
     instructions_allocated := instructions_allocated + 1.U
   }
   dontTouch(instructions_allocated)
@@ -127,7 +126,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val new_partial_allocs = Wire(Vec(reservation_station_partial_entries, Bool()))
   new_partial_allocs.foreach(_ := false.B)
   val new_entry_oh = new_full_allocs ++ new_partial_allocs
-  val alloc_fire = io.alloc.fire()
+  val alloc_fire = io.alloc.fire
 
   val raws_probe = WireInit(0.U(rob_entries.W))
   val waws_probe = WireInit(0.U(rob_entries.W))
@@ -363,7 +362,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       new_full_allocs(full_alloc_id) := true.B
     }
 
-    when (io.alloc.fire()) {
+    when (io.alloc.fire) {
       when (new_entry.is_config && new_entry.q === exq && !is_im2col) {
         a_stride := new_entry.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
         c_stride := new_entry.cmd.rs2(63, 48) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
@@ -420,7 +419,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   // Mark entries as completed once they've returned
-  when (io.completed.fire()) {
+  when (io.completed.fire) {
     entries.foreach(_.bits.deps(io.completed.bits) := false.B)
 
     for ((e, i) <- entries.zipWithIndex) {
@@ -461,7 +460,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   val cycles_since_issue = RegInit(0.U(16.W))
 
-  when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire() || !io.busy || io.completed.fire()) {
+  when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire() || !io.busy || io.completed.fire) {
     cycles_since_issue := 0.U
   }.elsewhen(io.busy) {
     cycles_since_issue := cycles_since_issue + 1.U

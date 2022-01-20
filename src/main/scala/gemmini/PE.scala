@@ -9,7 +9,6 @@ class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
   val propagate = UInt(1.W) // Which register should be propagated (and which should be accumulated)?
   val shift = UInt(log2Up(accType.getWidth).W) // TODO this isn't correct for Floats
 
-  override def cloneType: PEControl.this.type = new PEControl(accType).asInstanceOf[this.type]
 }
 
 // TODO update documentation
