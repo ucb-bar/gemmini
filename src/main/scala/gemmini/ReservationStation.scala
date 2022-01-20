@@ -462,6 +462,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       preload_allocated_at := e.bits.allocated_at
     }
   }
+  dontTouch(preload_allocated_at)
   FpgaDebug(preload_allocated_at)
 
   FpgaDebug(valids)
