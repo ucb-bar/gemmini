@@ -47,8 +47,6 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val busy = Output(Bool())
 
-    val solitary_preload = Input(Bool()) // TODO very hacky. from ExecuteController, to prevent infinite fence stalls. remove later
-
     val counter = new CounterEventIO()
   })
 
@@ -108,11 +106,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val empty = !entries.map(_.valid).reduce(_ || _)
   val full = entries.map(_.valid).reduce(_ && _)
 
-  // TODO we could also check for a solitary preload by recording the last instruction that was allocated, rather than
-  // reading all entries to check for preloads, which is an O(n) operation in terms of area cost
-  val utilization = PopCount(entries.map(_.valid))
-  val solitary_preload = utilization === 1.U && entries.map(e => e.valid && e.bits.cmd.inst.funct === PRELOAD_CMD).reduce(_ || _)
-  io.busy := !empty && !(solitary_preload && io.solitary_preload)
+  val utilization = PopCount(entries.map(e => e.valid)) // TODO it may be cheaper to count the utilization in a register, rather than performing a PopCount
+  val solitary_preload = RegInit(false.B) // This checks whether or not the reservation station received a "preload" instruction, but hasn't yet received the following "compute" instruction
+  io.busy := !empty && !(utilization === 1.U && solitary_preload)
 
   // Config values set by programmer
   val a_stride = Reg(UInt(a_stride_bits.W))
@@ -383,6 +379,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       }.elsewhen(new_entry.is_config && new_entry.q === stq) {
         val pool_stride = new_entry.cmd.rs1(5, 4) // TODO magic numbers
         pooling_is_enabled := pool_stride =/= 0.U
+      }.elsewhen(funct === PRELOAD_CMD) {
+        solitary_preload := true.B
+      }.elsewhen(funct_is_compute) {
+        solitary_preload := false.B
       }
     }
   }
