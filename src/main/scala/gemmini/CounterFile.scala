@@ -70,6 +70,7 @@ object CounterEvent {
   val LOOP_MATMUL_ACTIVE_CYCLES = 43
   val TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES = 44
 
+
   val n = 45
 }
 
@@ -86,7 +87,13 @@ object CounterExternal {
   val RDMA_TOTAL_LATENCY = 6
   val WDMA_TOTAL_LATENCY = 7
 
-  val n = 8
+  // Added for Patrick
+  val SCRATCHPAD_READS = 8
+  val SCRATCHPAD_WRITES = 9
+  val ACCUMULATOR_READS = 10
+  val ACCUMULATOR_WRITES = 11
+
+  val n = 12
 
   val EXTERNAL_WIDTH = 32
 }

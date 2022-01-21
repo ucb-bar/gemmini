@@ -769,5 +769,25 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     // Counter connection
     io.counter.collect(reader.module.io.counter)
     io.counter.collect(writer.module.io.counter)
+
+    val scratchpad_reads = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
+    val scratchpad_writes = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
+    val accumulator_reads = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
+    val accumulator_writes = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
+    when (io.counter.external_reset) {
+      scratchpad_reads := 0.U
+      scratchpad_writes := 0.U
+      accumulator_reads := 0.U
+      accumulator_writes := 0.U
+    }.otherwise {
+      scratchpad_reads := scratchpad_reads + PopCount(spad_mems.map(_.io.read.req.fire()))
+      scratchpad_writes := scratchpad_writes + PopCount(spad_mems.map(_.io.write.en))
+      accumulator_reads := accumulator_reads + PopCount(acc_mems.map(_.io.read.req.fire()))
+      accumulator_writes := accumulator_writes + PopCount(acc_mems.map(_.io.write.fire()))
+    }
+    io.counter.connectExternalCounter(CounterExternal.SCRATCHPAD_READS, scratchpad_reads)
+    io.counter.connectExternalCounter(CounterExternal.SCRATCHPAD_WRITES, scratchpad_writes)
+    io.counter.connectExternalCounter(CounterExternal.ACCUMULATOR_READS, accumulator_reads)
+    io.counter.connectExternalCounter(CounterExternal.ACCUMULATOR_WRITES, accumulator_writes)
   }
 }
