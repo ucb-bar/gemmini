@@ -70,8 +70,11 @@ object CounterEvent {
   val LOOP_MATMUL_ACTIVE_CYCLES = 43
   val TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES = 44
 
+  // Added for Patrick
+  val RDMA_READ_REQUESTS = 45
+  val WDMA_WRITE_REQUESTS = 46
 
-  val n = 45
+  val n = 47
 }
 
 object CounterExternal {
