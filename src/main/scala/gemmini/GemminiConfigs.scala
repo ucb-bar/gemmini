@@ -1,7 +1,7 @@
 
 package gemmini
 
-import scala.math.{pow,sqrt}
+import scala.math.{max, pow, sqrt}
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.tile._
@@ -32,7 +32,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              st_queue_length: Int = 2,
                                                                              ex_queue_length: Int = 8,
 
-                                                                             reservation_station_entries_per_type: Int = 16,
+                                                                             reservation_station_entries_ld: Int = 16,
+                                                                             reservation_station_entries_st: Int = 4,
+                                                                             reservation_station_entries_ex: Int = 8,
 
                                                                              sp_banks: Int = 4, // TODO support one-bank designs
                                                                              sp_singleported: Boolean = false,
@@ -186,9 +188,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   //==========================================================================
   // cisc-gemmini miscellaneous constants (some redundant with above)
   //==========================================================================
-  val rob_entries      = pow(2, log2Up(reservation_station_entries_per_type)).toInt * 3
+  val res_max_per_type = max(reservation_station_entries_ld,
+                         max(reservation_station_entries_st, reservation_station_entries_ex))
+  val rob_entries      = res_max_per_type * 3
   val ROB_ENTRIES      = rob_entries
-  val ROB_ID_WIDTH     = 2 + log2Up(reservation_station_entries_per_type)
+  val ROB_ID_WIDTH     = 2 + log2Up(res_max_per_type)
   val LOG2_ROB_ENTRIES = ROB_ID_WIDTH
   // assuming 3 queues (load/store/execute), enum takes 2 bits
 
