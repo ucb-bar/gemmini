@@ -24,9 +24,9 @@ object GemminiFPConfigs {
     st_queue_length = 2,
     ex_queue_length = 8,
 
-    reservation_station_entries_ld = 16,
+    reservation_station_entries_ld = 8,
     reservation_station_entries_st = 4,
-    reservation_station_entries_ex = 8,
+    reservation_station_entries_ex = 16,
 
     sp_banks = 4,
     sp_singleported = true,

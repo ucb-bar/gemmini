@@ -32,9 +32,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              st_queue_length: Int = 2,
                                                                              ex_queue_length: Int = 8,
 
-                                                                             reservation_station_entries_ld: Int = 16,
+                                                                             reservation_station_entries_ld: Int = 8,
                                                                              reservation_station_entries_st: Int = 4,
-                                                                             reservation_station_entries_ex: Int = 8,
+                                                                             reservation_station_entries_ex: Int = 16,
 
                                                                              sp_banks: Int = 4, // TODO support one-bank designs
                                                                              sp_singleported: Boolean = false,

@@ -106,6 +106,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     // Debugging signals
     val allocated_at = UInt(instructions_allocated.getWidth.W)
   }
+
+  assert(isPow2(reservation_station_entries_ld))
+  assert(isPow2(reservation_station_entries_ex))
+  assert(isPow2(reservation_station_entries_st))
+
   val entries_ld = Reg(Vec(reservation_station_entries_ld, UDValid(new Entry)))
   val entries_ex = Reg(Vec(reservation_station_entries_ex, UDValid(new Entry)))
   val entries_st = Reg(Vec(reservation_station_entries_st, UDValid(new Entry)))

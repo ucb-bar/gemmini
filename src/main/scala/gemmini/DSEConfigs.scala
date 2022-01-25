@@ -21,9 +21,9 @@ object DSEBaseConfig {
     ld_queue_length = 4,
     st_queue_length = 2,
     ex_queue_length = 8,
-    reservation_station_entries_ld = 4,
-    reservation_station_entries_st = 2,
-    reservation_station_entries_ex = 8,
+    reservation_station_entries_ld = 8,
+    reservation_station_entries_st = 4,
+    reservation_station_entries_ex = 16,
 
 
   sp_banks = 4, // TODO support one-bank designs
