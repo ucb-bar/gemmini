@@ -28,19 +28,19 @@ class TagQueue[T <: Data with TagQueueTag](t: T, entries: Int) extends Module {
   io.deq.bits := regs(raddr)
   io.all := regs
 
-  when (io.enq.fire()) {
+  when (io.enq.fire) {
     regs(waddr) := io.enq.bits
     waddr := wrappingAdd(waddr, 1.U, entries)
   }
 
-  when (io.deq.fire()) {
+  when (io.deq.fire) {
     regs(raddr).make_this_garbage()
     raddr := wrappingAdd(raddr, 1.U, entries)
   }
 
-  when (io.enq.fire() && !io.deq.fire()) {
+  when (io.enq.fire && !io.deq.fire) {
     len := len + 1.U
-  }.elsewhen(!io.enq.fire() && io.deq.fire()) {
+  }.elsewhen(!io.enq.fire && io.deq.fire) {
     len := len - 1.U
   }
 

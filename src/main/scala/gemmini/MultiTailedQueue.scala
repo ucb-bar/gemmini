@@ -4,7 +4,7 @@ import chisel3._
 import chisel3.util._
 import Util._
 
-class MultiTailedQueue[T <: Data](gen: T, entries: Int, maxpush: Int) 
+class MultiTailedQueue[T <: Data](gen: T, entries: Int, maxpush: Int)
   extends Module {
   val io = IO(new Bundle {
     val enq = new Bundle {
@@ -36,10 +36,10 @@ class MultiTailedQueue[T <: Data](gen: T, entries: Int, maxpush: Int)
   // pop interface
   io.deq.bits := regs(raddr)
   io.deq.valid := (avail < entries.U)
-  raddr := wrappingAdd(raddr, io.deq.fire(), entries)
+  raddr := wrappingAdd(raddr, io.deq.fire, entries)
 
   // countgth calc
-  avail := avail - io.enq.push + io.deq.fire()
+  avail := avail - io.enq.push + io.deq.fire
 }
 
 object MultiTailedQueue {

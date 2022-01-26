@@ -24,7 +24,6 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
   val status = new MStatus
 
-  override def cloneType: this.type = new ScratchpadMemReadRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, scale_t_bits: Int)
@@ -45,7 +44,6 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, scale_t_bits: Int)
   val pool_en = Bool()
   val store_en = Bool()
 
-  override def cloneType: this.type = new ScratchpadMemWriteRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadMemWriteResponse extends Bundle {
@@ -61,7 +59,6 @@ class ScratchpadReadMemIO[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)
   val req = Decoupled(new ScratchpadMemReadRequest(local_addr_t, scale_t_bits))
   val resp = Flipped(Valid(new ScratchpadMemReadResponse))
 
-  override def cloneType: this.type = new ScratchpadReadMemIO(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadWriteMemIO(local_addr_t: LocalAddr, scale_t_bits: Int)
@@ -69,7 +66,6 @@ class ScratchpadWriteMemIO(local_addr_t: LocalAddr, scale_t_bits: Int)
   val req = Decoupled(new ScratchpadMemWriteRequest(local_addr_t, scale_t_bits))
   val resp = Flipped(Valid(new ScratchpadMemWriteResponse))
 
-  override def cloneType: this.type = new ScratchpadWriteMemIO(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadReadReq(val n: Int) extends Bundle {
@@ -142,7 +138,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   }
 
   val raddr = io.read.req.bits.addr
-  val ren = io.read.req.fire()
+  val ren = io.read.req.fire
   val rdata = if (single_ported) {
     assert(!(ren && io.write.en))
     read(raddr, ren && !io.write.en).asUInt()
@@ -158,7 +154,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   q.io.enq.bits.data := rdata
   q.io.enq.bits.fromDMA := RegNext(fromDMA)
 
-  val q_will_be_empty = (q.io.count +& q.io.enq.fire()) - q.io.deq.fire() === 0.U
+  val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U
   io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
 
   io.read.resp <> q.io.deq
@@ -292,7 +288,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     io.dma.write.resp.valid := false.B
     io.dma.write.resp.bits.cmd_id := write_dispatch_q.bits.cmd_id
-    when (write_dispatch_q.bits.laddr.is_garbage() && write_dispatch_q.fire()) {
+    when (write_dispatch_q.bits.laddr.is_garbage() && write_dispatch_q.fire) {
       io.dma.write.resp.valid := true.B
     }
 
@@ -397,9 +393,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     reader.module.io.resp.ready := Mux(reader.module.io.resp.bits.is_acc && reader.module.io.resp.bits.has_acc_bitwidth,
       mvin_scale_acc_in.ready, mvin_scale_in.ready)
 
-    val mvin_scale_finished = mvin_scale_pixel_repeater.io.resp.fire() && mvin_scale_pixel_repeater.io.resp.bits.last
-    val mvin_scale_acc_finished = mvin_scale_acc_out.fire() && mvin_scale_acc_out.bits.last
-    val zero_writer_finished = zero_writer_pixel_repeater.io.resp.fire() && zero_writer_pixel_repeater.io.resp.bits.last
+    val mvin_scale_finished = mvin_scale_pixel_repeater.io.resp.fire && mvin_scale_pixel_repeater.io.resp.bits.last
+    val mvin_scale_acc_finished = mvin_scale_acc_out.fire && mvin_scale_acc_out.bits.last
+    val zero_writer_finished = zero_writer_pixel_repeater.io.resp.fire && zero_writer_pixel_repeater.io.resp.bits.last
 
     val zero_writer_bytes_read = Mux(zero_writer_pixel_repeater.io.resp.bits.laddr.is_acc_addr,
       zero_writer_pixel_repeater.io.resp.bits.tag.cols * (accType.getWidth / 8).U,
@@ -460,7 +456,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.sp_row()
           bio.read.req.bits.fromDMA := true.B
 
-          when (bio.read.req.fire()) {
+          when (bio.read.req.fire) {
             write_dispatch_q.ready := true.B
             write_scale_q.io.enq.valid := true.B
 
@@ -485,7 +481,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         dma_read_pipe.ready := writer.module.io.req.ready &&
           !write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
           !write_issue_q.io.deq.bits.laddr.is_garbage()
-        when (dma_read_pipe.fire()) {
+        when (dma_read_pipe.fire) {
           writeData.valid := true.B
           writeData.bits := dma_read_pipe.bits.data
         }
@@ -630,7 +626,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.scale := write_dispatch_q.bits.acc_scale.asTypeOf(bio.read.req.bits.scale)
           bio.read.req.bits.fromDMA := true.B
 
-          when (bio.read.req.fire()) {
+          when (bio.read.req.fire) {
             write_dispatch_q.ready := true.B
             write_scale_q.io.enq.valid := true.B
 
@@ -701,10 +697,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val consecutive_write_block = RegInit(false.B)
         if (acc_singleported) {
           val consecutive_write_sub_bank = RegInit(0.U((1 max log2Ceil(acc_sub_banks)).W))
-          when (bio.write.fire() && bio.write.bits.acc &&
+          when (bio.write.fire && bio.write.bits.acc &&
             (bio.write.bits.addr(log2Ceil(acc_sub_banks)-1,0) === consecutive_write_sub_bank)) {
             consecutive_write_block := true.B
-          } .elsewhen (bio.write.fire() && bio.write.bits.acc) {
+          } .elsewhen (bio.write.fire && bio.write.bits.acc) {
             consecutive_write_block := false.B
             consecutive_write_sub_bank := bio.write.bits.addr(log2Ceil(acc_sub_banks)-1,0)
           } .otherwise {

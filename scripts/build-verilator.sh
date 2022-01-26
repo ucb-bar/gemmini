@@ -13,12 +13,12 @@ help () {
 }
 
 show_help=0
-DEBUG=""
+debug=""
 
 while [ $# -gt 0 ] ; do
   case $1 in
     -h | --help) show_help=1 ;;
-    --debug) DEBUG="debug"
+    --debug) debug="debug"
   esac
 
   shift

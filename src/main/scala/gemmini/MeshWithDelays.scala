@@ -14,7 +14,6 @@ class MeshWithDelaysReq[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](ac
   val tag = tagType
   val flush = UInt(2.W) // TODO magic number
 
-  override def cloneType: MeshWithDelaysReq.this.type = new MeshWithDelaysReq(accType, tagType, block_size).asInstanceOf[this.type]
 }
 
 class MeshWithDelaysResp[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](outType: T, meshCols: Int, tileCols: Int, block_size: Int, tagType: TagT) extends Bundle {
@@ -23,7 +22,6 @@ class MeshWithDelaysResp[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](o
   val tag = tagType
   val last = Bool()
 
-  override def cloneType: MeshWithDelaysResp.this.type = new MeshWithDelaysResp(outType, meshCols, tileCols, block_size, tagType).asInstanceOf[this.type]
 }
 
 // TODO Add io.out.ready back in. Before it was removed, it didn't work when banking, and it seemed to assume that SRAM outputs stay steady when ren is low
@@ -47,7 +45,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   assert(meshRows*tileRows == meshColumns*tileColumns)
   val block_size = meshRows*tileRows
 
-  val latency_per_pe = (tile_latency + 1).toFloat / (tileRows min tileColumns)
+  val latency_per_pe = ((tile_latency + 1).toFloat / (tileRows min tileColumns)) max 1.0f
   val max_simultaneous_matmuls = if (n_simultaneous_matmuls == -1) {
     (5 * latency_per_pe).ceil.toInt
   } else {
@@ -99,9 +97,9 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val total_fires = req.bits.total_rows
   val fire_counter = RegInit(0.U(log2Up(block_size).W))
 
-  val a_buf = RegEnable(io.a.bits, io.a.fire())
-  val b_buf = RegEnable(io.b.bits, io.b.fire())
-  val d_buf = RegEnable(io.d.bits, io.d.fire())
+  val a_buf = RegEnable(io.a.bits, io.a.fire)
+  val b_buf = RegEnable(io.b.bits, io.b.fire)
+  val d_buf = RegEnable(io.d.bits, io.d.fire)
 
   val a_written = RegInit(false.B)
   val b_written = RegInit(false.B)
@@ -113,7 +111,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   val last_fire = fire_counter === total_fires - 1.U && input_next_row_into_spatial_array
 
-  when (io.req.fire()) {
+  when (io.req.fire) {
     req.push(io.req.bits)
     in_prop := io.req.bits.pe_control.propagate ^ in_prop
     matmul_id := wrappingAdd(matmul_id, 1.U, max_simultaneous_matmuls)
@@ -130,15 +128,15 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     fire_counter := wrappingAdd(fire_counter, 1.U, total_fires)
   }
 
-  when (io.a.fire()) {
+  when (io.a.fire) {
     a_written := true.B
   }
 
-  when (io.b.fire()) {
+  when (io.b.fire) {
     b_written := true.B
   }
 
-  when (io.d.fire()) {
+  when (io.d.fire) {
     d_written := true.B
   }
 
@@ -216,14 +214,13 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
       tag.make_this_garbage()
     }
 
-    override def cloneType: TagWithIdAndTotalRows.this.type = (new TagWithIdAndTotalRows).asInstanceOf[this.type]
   }
 
   val matmul_id_of_output = wrappingAdd(matmul_id, Mux(io.req.bits.pe_control.dataflow === Dataflow.OS.id.U, 3.U, 2.U), max_simultaneous_matmuls)
   val matmul_id_of_current = wrappingAdd(matmul_id, 1.U, max_simultaneous_matmuls)
 
   val tagq = Module(new TagQueue(new TagWithIdAndTotalRows, tagqlen))
-  tagq.io.enq.valid := io.req.fire() && io.req.bits.flush === 0.U
+  tagq.io.enq.valid := io.req.fire && io.req.bits.flush === 0.U
   tagq.io.enq.bits.tag := io.req.bits.tag
   tagq.io.enq.bits.total_rows := DontCare
   tagq.io.enq.bits.id := matmul_id_of_output
@@ -240,7 +237,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   tagq.io.deq.ready := io.resp.valid && io.resp.bits.last && out_matmul_id === tagq.io.deq.bits.id
 
   val total_rows_q = Module(new Queue(new TagWithIdAndTotalRows, tagqlen))
-  total_rows_q.io.enq.valid := io.req.fire() && io.req.bits.flush === 0.U
+  total_rows_q.io.enq.valid := io.req.fire && io.req.bits.flush === 0.U
   total_rows_q.io.enq.bits.tag := DontCare
   total_rows_q.io.enq.bits.total_rows := io.req.bits.total_rows
   total_rows_q.io.enq.bits.id := matmul_id_of_current
@@ -257,5 +254,5 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     req.valid := false.B
   }
 
-  assert(!(io.req.fire() && !tagq.io.enq.ready && io.req.bits.flush === 0.U))
+  assert(!(io.req.fire && !tagq.io.enq.ready && io.req.bits.flush === 0.U))
 }
