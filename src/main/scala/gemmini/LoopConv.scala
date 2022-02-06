@@ -1145,12 +1145,12 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   }
 }
 
-class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
-  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
-  config_mvin_rs1_t: ConfigMvinRs1, mvin_rs2_t: MvinRs2, config_mvout_rs2_t: ConfigMvoutRs2, mvout_rs2_t: MvoutRs2,
-  config_ex_rs1_t: ConfigExRs1, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
-  compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs,
-  has_training_convs: Boolean, has_max_pool: Boolean, has_first_layer_optimizations: Boolean)
+class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
+                max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
+                config_mvin_rs1_t: ConfigMvinRs1, mvin_rs2_t: MvinRs2, config_mvout_rs2_t: ConfigMvoutRs2, mvout_rs2_t: MvoutRs2,
+                config_ex_rs1_t: ConfigExRs1, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
+                compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs,
+                has_training_convs: Boolean, has_max_pool: Boolean, has_first_layer_optimizations: Boolean)
   (implicit p: Parameters) extends Module {
   val large_iterator_bitwidth = 16
   val small_iterator_bitwidth = 16 // 8
@@ -1160,11 +1160,11 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   val max_block_len_acc = (dma_max_bytes / (block_size * (acc_w / 8))) max 1
 
   val io = IO(new Bundle {
-    val in = Flipped(Decoupled(new RoCCCommand))
-    val out = Decoupled(new RoCCCommand)
-    val ld_utilization = Input(UInt(log2Up(rob_size+1).W))
-    val st_utilization = Input(UInt(log2Up(rob_size+1).W))
-    val ex_utilization = Input(UInt(log2Up(rob_size+1).W))
+    val in = Flipped(Decoupled(new GemminiCmd(reservation_station_size)))
+    val out = Decoupled(new GemminiCmd(reservation_station_size))
+    val ld_completed = Input(UInt(log2Up(reservation_station_size+1).W))
+    val st_completed = Input(UInt(log2Up(reservation_station_size+1).W))
+    val ex_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val busy = Output(Bool())
   })
 
@@ -1203,13 +1203,29 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   arb.io.in(4) <> ld_input.io.cmd
   val unrolled_cmd = arb.io.out
 
+  // Create reservation station utilization counters
+  val ld_utilization = RegInit(0.U(log2Up(max_lds+1).W))
+  val st_utilization = RegInit(0.U(log2Up(max_sts+1).W))
+  val ex_utilization = RegInit(0.U(log2Up(max_exs+1).W))
+
+  ld_utilization := ld_utilization +& (ld_bias.io.cmd.fire || ld_weights.io.cmd.fire || ld_input.io.cmd.fire) -& io.ld_completed
+  st_utilization := st_utilization +& st.io.cmd.fire -& io.st_completed
+  ex_utilization := ex_utilization +& ex.io.cmd.fire -& io.ex_completed
+
+  assert(ld_utilization >= io.ld_completed, "ld utilization underflow")
+  assert(st_utilization >= io.st_completed, "st utilization underflow")
+  assert(ex_utilization >= io.ex_completed, "ex utilization underflow")
+
   // Wire up unrolled command output
-  val is_loop_run_cmd = cmd.bits.inst.funct === LOOP_CONV_WS
-  val is_loop_config_cmd = cmd.bits.inst.funct >= LOOP_CONV_WS_CONFIG_1 && cmd.bits.inst.funct <= LOOP_CONV_WS_CONFIG_6
+  val is_loop_run_cmd = cmd.bits.cmd.inst.funct === LOOP_CONV_WS
+  val is_loop_config_cmd = cmd.bits.cmd.inst.funct >= LOOP_CONV_WS_CONFIG_1 && cmd.bits.cmd.inst.funct <= LOOP_CONV_WS_CONFIG_6
   val is_loop_cmd = is_loop_run_cmd || is_loop_config_cmd
 
-  io.out.bits := Mux(loop_configured, unrolled_cmd.bits, cmd.bits)
-  io.out.bits.status := cmd.bits.status // TODO This is not guaranteed to be the correct fix! We must fix this
+  io.out.bits.cmd := Mux(loop_configured, unrolled_cmd.bits, cmd.bits.cmd)
+  io.out.bits.cmd.status := cmd.bits.cmd.status // TODO This is not guaranteed to be the correct fix! We must fix this
+  io.out.bits.rob_id := DontCare
+  io.out.bits.from_matmul_fsm := Mux(loop_configured, false.B, cmd.bits.from_matmul_fsm)
+  io.out.bits.from_conv_fsm := Mux(loop_configured, true.B, cmd.bits.from_conv_fsm)
   io.out.valid := Mux(loop_configured, unrolled_cmd.valid, cmd.valid && !is_loop_config_cmd && !is_loop_run_cmd)
 
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)
@@ -1225,11 +1241,11 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ld_input.io.wait_for_prev_loop := ex_is_waiting_for_loads && ld_input.io.loop_id =/= ex.io.loop_id
 
   // Wire up overloaded signals
-  ld_bias.io.rob_overloaded := io.ld_utilization >= max_lds.U
-  ld_input.io.rob_overloaded := io.ld_utilization >= max_lds.U
-  ld_weights.io.rob_overloaded := io.ld_utilization >= max_lds.U
-  ex.io.rob_overloaded := io.ex_utilization >= max_exs.U
-  st.io.rob_overloaded := io.st_utilization >= max_sts.U
+  ld_bias.io.rob_overloaded := ld_utilization >= max_lds.U
+  ld_input.io.rob_overloaded := ld_utilization >= max_lds.U
+  ld_weights.io.rob_overloaded := ld_utilization >= max_lds.U
+  ex.io.rob_overloaded := ex_utilization >= max_exs.U
+  st.io.rob_overloaded := st_utilization >= max_sts.U
 
   // Wire up iterator inputs
   ex.io.lda_completed := (ld_input.io.loop_id =/= ex.io.loop_id) || ld_input.io.idle
@@ -1240,85 +1256,85 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   // Create config registers
   when(cmd.valid && is_loop_cmd && !loop_being_configured.configured) {
 
-    switch (cmd.bits.inst.funct) {
+    switch (cmd.bits.cmd.inst.funct) {
       is (LOOP_CONV_WS_CONFIG_1) {
-        loop_being_configured.outer_bounds.out_channels := cmd.bits.rs1(63, 48)
-        loop_being_configured.outer_bounds.in_channels := cmd.bits.rs1(47, 32)
-        loop_being_configured.outer_bounds.in_dim := cmd.bits.rs1(31, 16)
-        loop_being_configured.outer_bounds.batch_size := cmd.bits.rs1(15, 0)
+        loop_being_configured.outer_bounds.out_channels := cmd.bits.cmd.rs1(63, 48)
+        loop_being_configured.outer_bounds.in_channels := cmd.bits.cmd.rs1(47, 32)
+        loop_being_configured.outer_bounds.in_dim := cmd.bits.cmd.rs1(31, 16)
+        loop_being_configured.outer_bounds.batch_size := cmd.bits.cmd.rs1(15, 0)
 
-        loop_being_configured.outer_bounds.padding := cmd.bits.rs2(63, 48)
-        loop_being_configured.outer_bounds.stride := cmd.bits.rs2(47, 32)
-        loop_being_configured.outer_bounds.pool_out_dim := cmd.bits.rs2(31, 16)
-        loop_being_configured.outer_bounds.out_dim := cmd.bits.rs2(15, 0)
+        loop_being_configured.outer_bounds.padding := cmd.bits.cmd.rs2(63, 48)
+        loop_being_configured.outer_bounds.stride := cmd.bits.cmd.rs2(47, 32)
+        loop_being_configured.outer_bounds.pool_out_dim := cmd.bits.cmd.rs2(31, 16)
+        loop_being_configured.outer_bounds.out_dim := cmd.bits.cmd.rs2(15, 0)
       }
 
       is (LOOP_CONV_WS_CONFIG_2) {
-        loop_being_configured.outer_bounds.kernel_dim := cmd.bits.rs1(63, 48)
-        loop_being_configured.outer_bounds.pool_size := (if (!has_max_pool) 1.U else cmd.bits.rs1(47, 32))
-        loop_being_configured.outer_bounds.pool_stride := (if (!has_max_pool) 1.U else cmd.bits.rs1(31, 16))
-        loop_being_configured.outer_bounds.pool_padding := (if (!has_max_pool) 0.U else cmd.bits.rs1(15, 0))
+        loop_being_configured.outer_bounds.kernel_dim := cmd.bits.cmd.rs1(63, 48)
+        loop_being_configured.outer_bounds.pool_size := (if (!has_max_pool) 1.U else cmd.bits.cmd.rs1(47, 32))
+        loop_being_configured.outer_bounds.pool_stride := (if (!has_max_pool) 1.U else cmd.bits.cmd.rs1(31, 16))
+        loop_being_configured.outer_bounds.pool_padding := (if (!has_max_pool) 0.U else cmd.bits.cmd.rs1(15, 0))
 
-        loop_being_configured.inner_bounds.batches := cmd.bits.rs2(63, 48)
-        loop_being_configured.inner_bounds.porows := cmd.bits.rs2(47, 32)
-        loop_being_configured.inner_bounds.pocols := cmd.bits.rs2(31, 16)
-        loop_being_configured.inner_bounds.pochs := cmd.bits.rs2(15, 0)
+        loop_being_configured.inner_bounds.batches := cmd.bits.cmd.rs2(63, 48)
+        loop_being_configured.inner_bounds.porows := cmd.bits.cmd.rs2(47, 32)
+        loop_being_configured.inner_bounds.pocols := cmd.bits.cmd.rs2(31, 16)
+        loop_being_configured.inner_bounds.pochs := cmd.bits.cmd.rs2(15, 0)
       }
 
       is (LOOP_CONV_WS_CONFIG_3) {
-        loop_being_configured.inner_bounds.krows := cmd.bits.rs1(63, 48)
-        loop_being_configured.inner_bounds.kcols := cmd.bits.rs1(47, 32)
-        loop_being_configured.inner_bounds.kchs := cmd.bits.rs1(31, 16)
-        loop_being_configured.inner_bounds.lpad := cmd.bits.rs1(15, 0)
+        loop_being_configured.inner_bounds.krows := cmd.bits.cmd.rs1(63, 48)
+        loop_being_configured.inner_bounds.kcols := cmd.bits.cmd.rs1(47, 32)
+        loop_being_configured.inner_bounds.kchs := cmd.bits.cmd.rs1(31, 16)
+        loop_being_configured.inner_bounds.lpad := cmd.bits.cmd.rs1(15, 0)
 
-        loop_being_configured.inner_bounds.rpad := cmd.bits.rs2(63, 48)
-        loop_being_configured.inner_bounds.upad := cmd.bits.rs2(47, 32)
-        loop_being_configured.inner_bounds.dpad := cmd.bits.rs2(31, 16)
-        loop_being_configured.inner_bounds.plpad := cmd.bits.rs2(15, 0)
+        loop_being_configured.inner_bounds.rpad := cmd.bits.cmd.rs2(63, 48)
+        loop_being_configured.inner_bounds.upad := cmd.bits.cmd.rs2(47, 32)
+        loop_being_configured.inner_bounds.dpad := cmd.bits.cmd.rs2(31, 16)
+        loop_being_configured.inner_bounds.plpad := cmd.bits.cmd.rs2(15, 0)
       }
 
       is (LOOP_CONV_WS_CONFIG_4) {
-        loop_being_configured.inner_bounds.orows := cmd.bits.rs1(63, 48)
-        loop_being_configured.inner_bounds.prad := cmd.bits.rs1(47, 32)
-        loop_being_configured.inner_bounds.pupad := cmd.bits.rs1(31, 16)
-        loop_being_configured.inner_bounds.pdpad := cmd.bits.rs1(15, 0)
+        loop_being_configured.inner_bounds.orows := cmd.bits.cmd.rs1(63, 48)
+        loop_being_configured.inner_bounds.prad := cmd.bits.cmd.rs1(47, 32)
+        loop_being_configured.inner_bounds.pupad := cmd.bits.cmd.rs1(31, 16)
+        loop_being_configured.inner_bounds.pdpad := cmd.bits.cmd.rs1(15, 0)
 
-        loop_being_configured.inner_bounds.ocols := cmd.bits.rs2(15, 0)
-        loop_being_configured.outer_bounds.kernel_dilation := cmd.bits.rs2(31, 16)
+        loop_being_configured.inner_bounds.ocols := cmd.bits.cmd.rs2(15, 0)
+        loop_being_configured.outer_bounds.kernel_dilation := cmd.bits.cmd.rs2(31, 16)
       }
 
       is (LOOP_CONV_WS_CONFIG_5) {
-        loop_being_configured.weights_dram_addr := cmd.bits.rs1
+        loop_being_configured.weights_dram_addr := cmd.bits.cmd.rs1
 
-        loop_being_configured.output_dram_addr := cmd.bits.rs2
+        loop_being_configured.output_dram_addr := cmd.bits.cmd.rs2
       }
 
       is (LOOP_CONV_WS_CONFIG_6) {
-        loop_being_configured.bias_dram_addr := cmd.bits.rs1
+        loop_being_configured.bias_dram_addr := cmd.bits.cmd.rs1
 
-        loop_being_configured.input_dram_addr := cmd.bits.rs2
+        loop_being_configured.input_dram_addr := cmd.bits.cmd.rs2
       }
 
       is (LOOP_CONV_WS) {
-        loop_being_configured.no_bias := cmd.bits.rs1(0)
+        loop_being_configured.no_bias := cmd.bits.cmd.rs1(0)
 
         // TODO we added a default value for max_pixels_per_row just to maintain backwards compatibility. we should deprecate and remove it later
-        val config_max_pixels_per_row = cmd.bits.rs1(15, 8)
+        val config_max_pixels_per_row = cmd.bits.cmd.rs1(15, 8)
         loop_being_configured.max_pixels_per_row := Mux(
           !has_first_layer_optimizations.B || config_max_pixels_per_row === 0.U,
           1.U, config_max_pixels_per_row)
 
-        loop_being_configured.wrot180 := has_training_convs.B && cmd.bits.rs1(1)
-        loop_being_configured.input_dilated := has_training_convs.B && cmd.bits.rs2(2)
-        loop_being_configured.trans_output_1203 := has_training_convs.B && cmd.bits.rs1(2)
-        loop_being_configured.trans_weight_1203 := has_training_convs.B && cmd.bits.rs1(3)
-        loop_being_configured.trans_weight_0132 := has_training_convs.B && cmd.bits.rs1(4)
-        loop_being_configured.trans_input_3120 := has_training_convs.B && cmd.bits.rs1(5)
+        loop_being_configured.wrot180 := has_training_convs.B && cmd.bits.cmd.rs1(1)
+        loop_being_configured.input_dilated := has_training_convs.B && cmd.bits.cmd.rs2(2)
+        loop_being_configured.trans_output_1203 := has_training_convs.B && cmd.bits.cmd.rs1(2)
+        loop_being_configured.trans_weight_1203 := has_training_convs.B && cmd.bits.cmd.rs1(3)
+        loop_being_configured.trans_weight_0132 := has_training_convs.B && cmd.bits.cmd.rs1(4)
+        loop_being_configured.trans_input_3120 := has_training_convs.B && cmd.bits.cmd.rs1(5)
 
-        loop_being_configured.no_pool := !has_max_pool.B || cmd.bits.rs2(0)
-        loop_being_configured.activation := cmd.bits.rs2(4,3)
+        loop_being_configured.no_pool := !has_max_pool.B || cmd.bits.cmd.rs2(0)
+        loop_being_configured.activation := cmd.bits.cmd.rs2(4,3)
 
-        loop_being_configured.downsample := cmd.bits.rs2(1)
+        loop_being_configured.downsample := cmd.bits.cmd.rs2(1)
 
         loop_being_configured.configured := true.B
 
@@ -1481,14 +1497,14 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
 }
 
 object LoopConv {
-  def apply(in: DecoupledIO[RoCCCommand], ld_utilization: UInt, st_utilization: UInt, ex_utilization: UInt,
+  def apply(in: DecoupledIO[GemminiCmd], ld_completed: UInt, st_completed: UInt, ex_completed: UInt,
             block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
             config_mvin_rs1_t: ConfigMvinRs1, mvin_rs2_t: MvinRs2, config_mvout_rs2_t: ConfigMvoutRs2,
             mvout_rs2_t: MvoutRs2, config_ex_rs1_t: ConfigExRs1, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
             compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, has_training_convs: Boolean, has_max_pool: Boolean,
             has_first_layer_optimizations: Boolean)
-           (implicit p: Parameters): Tuple2[DecoupledIO[RoCCCommand], Bool] = {
+           (implicit p: Parameters): (DecoupledIO[GemminiCmd], Bool) = {
 
     val mod = Module(new LoopConv(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
@@ -1496,9 +1512,9 @@ object LoopConv {
       compute_rs1_t, compute_rs2_t, has_training_convs, has_max_pool, has_first_layer_optimizations))
 
     mod.io.in <> in
-    mod.io.ld_utilization := ld_utilization
-    mod.io.st_utilization := st_utilization
-    mod.io.ex_utilization := ex_utilization
+    mod.io.ld_completed := ld_completed
+    mod.io.st_completed := st_completed
+    mod.io.ex_completed := ex_completed
     (mod.io.out, mod.io.busy)
   }
 

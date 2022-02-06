@@ -17,7 +17,8 @@ import Util._
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
-
+  val from_matmul_fsm = Bool()
+  val from_conv_fsm = Bool()
 }
 
 class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiArrayConfig[T, U, V])
@@ -120,21 +121,29 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val unrolled_cmd = LoopUnroller(raw_risc_cmd, outer.config.meshRows * outer.config.tileRows)
   */
 
-  val reservation_station = withClock (gated_clock) { Module(new ReservationStation(outer.config, new RoCCCommand)) }
+  val reservation_station = withClock (gated_clock) { Module(new ReservationStation(outer.config, new GemminiCmd(reservation_station_entries))) }
   counters.io.event_io.collect(reservation_station.io.counter)
 
   when (io.cmd.valid && io.cmd.bits.inst.funct === CLKGATE_EN && !io.busy) {
     clock_en_reg := io.cmd.bits.rs1(0)
   }
-  val raw_cmd = Queue(io.cmd)
+
+  val raw_cmd_q = Module(new Queue(new GemminiCmd(reservation_station_entries), entries = 2))
+  raw_cmd_q.io.enq.valid := io.cmd.valid
+  io.cmd.ready := raw_cmd_q.io.enq.ready
+  raw_cmd_q.io.enq.bits.cmd := io.cmd.bits
+  raw_cmd_q.io.enq.bits.rob_id := DontCare
+  raw_cmd_q.io.enq.bits.from_conv_fsm := false.B
+  raw_cmd_q.io.enq.bits.from_matmul_fsm := false.B
+
+  val raw_cmd = raw_cmd_q.io.deq
 
   val max_lds = reservation_station_entries_ld
   val max_exs = reservation_station_entries_ex
   val max_sts = reservation_station_entries_st
 
-  // TODO replace 4,12,2 with parameters based on ROB size
-  val (conv_cmd, loop_conv_unroller_busy) = withClock (gated_clock) { LoopConv(raw_cmd, reservation_station.io.ld_utilization, reservation_station.io.st_utilization, reservation_station.io.ex_utilization,
-    meshRows*tileRows, coreMaxAddrBits, rob_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
+  val (conv_cmd, loop_conv_unroller_busy) = withClock (gated_clock) { LoopConv(raw_cmd, reservation_station.io.conv_ld_completed, reservation_station.io.conv_st_completed, reservation_station.io.conv_ex_completed,
+    meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes,
     new ConfigMvinRs1(mvin_scale_t_bits, block_stride_bits, pixel_repeats_bits), new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new ConfigMvoutRs2(acc_scale_t_bits, 32), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t),
@@ -143,8 +152,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     has_training_convs, has_max_pool, has_first_layer_optimizations) }
 
-  val (loop_cmd, loop_matmul_unroller_busy) = withClock (gated_clock) { LoopMatmul(conv_cmd, reservation_station.io.ld_utilization, reservation_station.io.st_utilization, reservation_station.io.ex_utilization,
-    meshRows*tileRows, coreMaxAddrBits, rob_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
+  val (loop_cmd, loop_matmul_unroller_busy) = withClock (gated_clock) { LoopMatmul(conv_cmd, reservation_station.io.matmul_ld_completed, reservation_station.io.matmul_st_completed, reservation_station.io.matmul_ex_completed,
+    meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
@@ -223,20 +232,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   load_controller.io.cmd.valid := reservation_station.io.issue.ld.valid
   reservation_station.io.issue.ld.ready := load_controller.io.cmd.ready
-  load_controller.io.cmd.bits.cmd := reservation_station.io.issue.ld.cmd
-  load_controller.io.cmd.bits.cmd.inst.funct := reservation_station.io.issue.ld.cmd.inst.funct
+  load_controller.io.cmd.bits := reservation_station.io.issue.ld.cmd
   load_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.ld.rob_id)
 
   store_controller.io.cmd.valid := reservation_station.io.issue.st.valid
   reservation_station.io.issue.st.ready := store_controller.io.cmd.ready
-  store_controller.io.cmd.bits.cmd := reservation_station.io.issue.st.cmd
-  store_controller.io.cmd.bits.cmd.inst.funct := reservation_station.io.issue.st.cmd.inst.funct
+  store_controller.io.cmd.bits := reservation_station.io.issue.st.cmd
   store_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.st.rob_id)
 
   ex_controller.io.cmd.valid := reservation_station.io.issue.ex.valid
   reservation_station.io.issue.ex.ready := ex_controller.io.cmd.ready
-  ex_controller.io.cmd.bits.cmd := reservation_station.io.issue.ex.cmd
-  ex_controller.io.cmd.bits.cmd.inst.funct := reservation_station.io.issue.ex.cmd.inst.funct
+  ex_controller.io.cmd.bits := reservation_station.io.issue.ex.cmd
   ex_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.ex.rob_id)
 
   // Wire up scratchpad to controllers
@@ -303,7 +309,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   //-------------------------------------------------------------------------
   // risc
-  val reservation_station_completed_arb = Module(new Arbiter(UInt(log2Up(rob_entries).W), 3))
+  val reservation_station_completed_arb = Module(new Arbiter(UInt(log2Up(reservation_station_entries).W), 3))
 
   reservation_station_completed_arb.io.in(0).valid := ex_controller.io.completed.valid
   reservation_station_completed_arb.io.in(0).bits := ex_controller.io.completed.bits
@@ -353,7 +359,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // val config_cmd_type = cmd.bits.rs1(1,0) // TODO magic numbers
 
     //val funct = unrolled_cmd.bits.inst.funct
-    val risc_funct = unrolled_cmd.bits.inst.funct
+    val risc_funct = unrolled_cmd.bits.cmd.inst.funct
 
     val is_flush = risc_funct === FLUSH_CMD
     val is_counter_op = risc_funct === COUNTER_OP
@@ -367,7 +373,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     */
 
     when (is_flush) {
-      val skip = unrolled_cmd.bits.rs1(0)
+      val skip = unrolled_cmd.bits.cmd.rs1(0)
       tlb.io.exp.foreach(_.flush_skip := skip)
       tlb.io.exp.foreach(_.flush_retry := !skip)
 
@@ -393,6 +399,15 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     }
 
   }
+
+  // Debugging signals
+  val pipeline_stall_counter = RegInit(0.U(32.W))
+  when (io.cmd.fire()) {
+    pipeline_stall_counter := 0.U
+  }.elsewhen(io.busy) {
+    pipeline_stall_counter := pipeline_stall_counter + 1.U
+  }
+  assert(pipeline_stall_counter < 10000000.U, "pipeline stall")
 
   /*
   //=========================================================================

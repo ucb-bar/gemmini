@@ -16,11 +16,11 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new GemminiCmd(rob_entries)))
+    val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
 
     val dma = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
 
-    val completed = Decoupled(UInt(log2Up(rob_entries).W))
+    val completed = Decoupled(UInt(log2Up(reservation_station_entries).W))
 
     val busy = Output(Bool())
 
@@ -84,7 +84,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val nCmds = (max_in_flight_mem_reqs / block_rows) + 1
 
   val deps_t = new Bundle {
-    val rob_id = UInt(log2Up(rob_entries).W)
+    val rob_id = UInt(log2Up(reservation_station_entries).W)
   }
 
   val maxBytesInRowRequest = config.dma_maxbytes max (block_cols * config.inputType.getWidth / 8) max

@@ -190,8 +190,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   //==========================================================================
   val res_max_per_type = max(reservation_station_entries_ld,
                          max(reservation_station_entries_st, reservation_station_entries_ex))
-  val rob_entries      = res_max_per_type * 3
-  val ROB_ENTRIES      = rob_entries
+  val reservation_station_entries      = res_max_per_type * 3
+  val ROB_ENTRIES      = reservation_station_entries
   val ROB_ID_WIDTH     = 2 + log2Up(res_max_per_type)
   val LOG2_ROB_ENTRIES = ROB_ID_WIDTH
   // assuming 3 queues (load/store/execute), enum takes 2 bits

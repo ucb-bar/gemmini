@@ -13,8 +13,8 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
   import GemminiISA._
 
   val io = IO(new Bundle {
-    val in = Flipped(Decoupled(new GemminiCmd(rob_entries)))
-    val out = Decoupled(new GemminiCmd(rob_entries))
+    val in = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
+    val out = Decoupled(new GemminiCmd(reservation_station_entries))
     val counter = new CounterEventIO()
   })
 
