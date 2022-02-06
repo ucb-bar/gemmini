@@ -382,7 +382,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     .elsewhen (is_counter_op) {
       // If this is a counter access/configuration command, execute immediately
-      counters.io.in <> unrolled_cmd
+      counters.io.in.valid := unrolled_cmd.valid
+      unrolled_cmd.ready := counters.io.in.ready
+      counters.io.in.bits := unrolled_cmd.bits.cmd
     }
 
     .elsewhen (is_clock_gate_en) {
