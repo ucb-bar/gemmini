@@ -13,37 +13,42 @@ import midas.targetutils.SynthesizePrintf
 
 
 // TODO unify this class with GemminiCmdWithDeps
-class ReservationStationIssue[T <: Data](cmd_t: T, rob_entries: Int) extends Bundle {
+class ReservationStationIssue[T <: Data](cmd_t: T, id_width: Int) extends Bundle {
   val valid = Output(Bool())
   val ready = Input(Bool())
   val cmd = Output(cmd_t.cloneType)
-  val rob_id = Output(UInt(log2Up(rob_entries).W))
+  val rob_id = Output(UInt(id_width.W))
 
   def fire(dummy: Int=0) = valid && ready
-
 }
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
-class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: RoCCCommand) extends Module {
+class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: GemminiCmd) extends Module {
   import config._
 
   val block_rows = tileRows * meshRows
   val block_cols = tileColumns * meshColumns
 
+  val max_instructions_completed_per_type_per_cycle = 2 // Every cycle, at most two instructions of a single "type" (ld/st/ex) can be completed: one through the io.completed port, and the other if it is a "complete-on-issue" instruction
+
   val io = IO(new Bundle {
     val alloc = Flipped(Decoupled(cmd_t.cloneType))
 
-    val completed = Flipped(Valid(UInt(log2Up(rob_entries).W)))
+    val completed = Flipped(Valid(UInt(ROB_ID_WIDTH.W)))
 
     val issue = new Bundle {
-      val ld = new ReservationStationIssue(cmd_t, rob_entries)
-      val st = new ReservationStationIssue(cmd_t, rob_entries)
-      val ex = new ReservationStationIssue(cmd_t, rob_entries)
+      val ld = new ReservationStationIssue(cmd_t, ROB_ID_WIDTH)
+      val st = new ReservationStationIssue(cmd_t, ROB_ID_WIDTH)
+      val ex = new ReservationStationIssue(cmd_t, ROB_ID_WIDTH)
     }
 
-    val ld_utilization = Output(UInt(log2Up(rob_entries+1).W))
-    val st_utilization = Output(UInt(log2Up(rob_entries+1).W))
-    val ex_utilization = Output(UInt(log2Up(rob_entries+1).W))
+    val conv_ld_completed = Output(UInt(log2Up(max_instructions_completed_per_type_per_cycle+1).W))
+    val conv_ex_completed = Output(UInt(log2Up(max_instructions_completed_per_type_per_cycle+1).W))
+    val conv_st_completed = Output(UInt(log2Up(max_instructions_completed_per_type_per_cycle+1).W))
+
+    val matmul_ld_completed = Output(UInt(log2Up(max_instructions_completed_per_type_per_cycle+1).W))
+    val matmul_ex_completed = Output(UInt(log2Up(max_instructions_completed_per_type_per_cycle+1).W))
+    val matmul_st_completed = Output(UInt(log2Up(max_instructions_completed_per_type_per_cycle+1).W))
 
     val busy = Output(Bool())
 
@@ -51,7 +56,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   })
 
   // TODO make this a ChiselEnum
-  val ldq :: stq :: exq :: Nil = Enum(3)
+  val ldq :: exq :: stq :: Nil = Enum(3)
   val q_t = ldq.cloneType
 
   class OpT extends Bundle {
@@ -92,16 +97,34 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val cmd = cmd_t.cloneType
 
-    val deps = Vec(rob_entries, Bool())
-    def ready(dummy: Int = 0): Bool = !deps.reduce(_ || _)
+    // instead of one large deps vector, we need 3 separate ones if we want
+    // easy indexing, small area while allowing them to be different sizes
+    val deps_ld = Vec(reservation_station_entries_ld, Bool())
+    val deps_ex = Vec(reservation_station_entries_ex, Bool())
+    val deps_st = Vec(reservation_station_entries_st, Bool())
+
+    def ready(dummy: Int = 0): Bool = !(deps_ld.reduce(_ || _) || deps_ex.reduce(_ || _) || deps_st.reduce(_ || _))
 
     // Debugging signals
     val allocated_at = UInt(instructions_allocated.getWidth.W)
   }
-  val full_entries = Reg(Vec(reservation_station_full_entries, UDValid(new Entry)))
-  val partial_entries = Reg(Vec(reservation_station_partial_entries, UDValid(new Entry)))
 
-  val entries = full_entries ++ partial_entries
+  assert(isPow2(reservation_station_entries_ld))
+  assert(isPow2(reservation_station_entries_ex))
+  assert(isPow2(reservation_station_entries_st))
+
+  val entries_ld = Reg(Vec(reservation_station_entries_ld, UDValid(new Entry)))
+  val entries_ex = Reg(Vec(reservation_station_entries_ex, UDValid(new Entry)))
+  val entries_st = Reg(Vec(reservation_station_entries_st, UDValid(new Entry)))
+
+  val entries = entries_ld ++ entries_ex ++ entries_st
+
+  val empty_ld = !entries_ld.map(_.valid).reduce(_ || _)
+  val empty_ex = !entries_ex.map(_.valid).reduce(_ || _)
+  val empty_st = !entries_st.map(_.valid).reduce(_ || _)
+  val full_ld = entries_ld.map(_.valid).reduce(_ && _)
+  val full_ex = entries_ex.map(_.valid).reduce(_ && _)
+  val full_st = entries_st.map(_.valid).reduce(_ && _)
 
   val empty = !entries.map(_.valid).reduce(_ || _)
   val full = entries.map(_.valid).reduce(_ && _)
@@ -109,6 +132,31 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val utilization = PopCount(entries.map(e => e.valid)) // TODO it may be cheaper to count the utilization in a register, rather than performing a PopCount
   val solitary_preload = RegInit(false.B) // This checks whether or not the reservation station received a "preload" instruction, but hasn't yet received the following "compute" instruction
   io.busy := !empty && !(utilization === 1.U && solitary_preload)
+  
+  // Tell the conv and matmul FSMs if any of their issued instructions completed
+  val conv_ld_issue_completed = WireInit(false.B)
+  val conv_st_issue_completed = WireInit(false.B)
+  val conv_ex_issue_completed = WireInit(false.B)
+
+  val conv_ld_completed = WireInit(false.B)
+  val conv_st_completed = WireInit(false.B)
+  val conv_ex_completed = WireInit(false.B)
+
+  val matmul_ld_issue_completed = WireInit(false.B)
+  val matmul_st_issue_completed = WireInit(false.B)
+  val matmul_ex_issue_completed = WireInit(false.B)
+
+  val matmul_ld_completed = WireInit(false.B)
+  val matmul_st_completed = WireInit(false.B)
+  val matmul_ex_completed = WireInit(false.B)
+  
+  io.conv_ld_completed := conv_ld_issue_completed +& conv_ld_completed
+  io.conv_st_completed := conv_st_issue_completed +& conv_st_completed
+  io.conv_ex_completed := conv_ex_issue_completed +& conv_ex_completed
+
+  io.matmul_ld_completed := matmul_ld_issue_completed +& matmul_ld_completed
+  io.matmul_st_completed := matmul_st_issue_completed +& matmul_st_completed
+  io.matmul_ex_completed := matmul_ex_issue_completed +& matmul_ex_completed
 
   // Config values set by programmer
   val a_stride = Reg(UInt(a_stride_bits.W))
@@ -121,47 +169,27 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
-  val new_full_allocs = Wire(Vec(reservation_station_full_entries, Bool()))
-  new_full_allocs.foreach(_ := false.B)
-  val new_partial_allocs = Wire(Vec(reservation_station_partial_entries, Bool()))
-  new_partial_allocs.foreach(_ := false.B)
-  val new_entry_oh = new_full_allocs ++ new_partial_allocs
-  val alloc_fire = io.alloc.fire
 
-  val raws_probe = WireInit(0.U(rob_entries.W))
-  val waws_probe = WireInit(0.U(rob_entries.W))
-  val wars_probe = WireInit(0.U(rob_entries.W))
-  val older_in_same_q_probe = WireInit(0.U(rob_entries.W))
-  val is_st_and_must_wait_for_prior_ex_config_probe = WireInit(0.U(rob_entries.W))
-  val is_ex_config_and_must_wait_for_prior_st_probe = WireInit(0.U(rob_entries.W))
+  val new_allocs_oh_ld = Wire(Vec(reservation_station_entries_ld, Bool()))
+  val new_allocs_oh_ex = Wire(Vec(reservation_station_entries_ex, Bool()))
+  val new_allocs_oh_st = Wire(Vec(reservation_station_entries_st, Bool()))
 
-  val wars_op1_probe = WireInit(0.U(rob_entries.W))
-  val wars_op2_probe = WireInit(0.U(rob_entries.W))
-  val raws_op1_probe = WireInit(0.U(rob_entries.W))
-  val raws_op2_probe = WireInit(0.U(rob_entries.W))
+  val new_entry_oh = new_allocs_oh_ld ++ new_allocs_oh_ex ++ new_allocs_oh_st
+  new_entry_oh.foreach(_ := false.B)
 
-  dontTouch(raws_probe)
-  dontTouch(waws_probe)
-  dontTouch(wars_probe)
-  dontTouch(wars_op1_probe)
-  dontTouch(wars_op2_probe)
-  dontTouch(raws_op1_probe)
-  dontTouch(raws_op2_probe)
-  dontTouch(older_in_same_q_probe)
-  dontTouch(is_st_and_must_wait_for_prior_ex_config_probe)
-  dontTouch(is_ex_config_and_must_wait_for_prior_st_probe)
+  val alloc_fire = io.alloc.fire()
 
   dontTouch(new_entry)
   io.alloc.ready := false.B
   when (io.alloc.valid) {
     val spAddrBits = 32
-    val cmd = io.alloc.bits
+    val cmd = io.alloc.bits.cmd
     val funct = cmd.inst.funct
     val funct_is_compute = funct === COMPUTE_AND_STAY_CMD || funct === COMPUTE_AND_FLIP_CMD
     val config_cmd_type = cmd.rs1(1,0) // TODO magic numbers
 
     new_entry.issued := false.B
-    new_entry.cmd := cmd
+    new_entry.cmd := io.alloc.bits
 
     new_entry.is_config := funct === CONFIG_CMD
 
@@ -237,8 +265,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       dst.bits.end := dst.bits.start + preload_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
-      val id = MuxCase(0.U, Seq((new_entry.cmd.inst.funct === LOAD2_CMD) -> 1.U,
-        (new_entry.cmd.inst.funct === LOAD3_CMD) -> 2.U))
+      val id = MuxCase(0.U, Seq((new_entry.cmd.cmd.inst.funct === LOAD2_CMD) -> 1.U,
+        (new_entry.cmd.cmd.inst.funct === LOAD3_CMD) -> 2.U))
       val block_stride = ld_block_strides(id)
       val pixel_repeats = ld_pixel_repeats(id)
 
@@ -276,108 +304,81 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     ))
 
     assert(is_load || is_store || is_ex)
-    // This can be RAW op1/op2 <- dst, or WAW dst <- dst
-    val opa_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits) })
-    // This can be WAR dst <- op1/op2
-    val opa_matches_opb = VecInit(entries.map { e => e.valid && e.bits.opb.valid && new_entry.opa.bits.overlaps(e.bits.opb.bits) })
-    // This can be RAW op2 <- dst
-    val opb_matches_opa = VecInit(entries.map { e => e.valid && e.bits.opa.valid && new_entry.opb.bits.overlaps(e.bits.opa.bits) })
+    assert(ldq < exq && exq < stq)
 
-    val op1_matches_opa = VecInit((entries zip (opa_matches_opa zip opb_matches_opa)).map { case (e, (a, b)) =>
-      e.valid && op1.valid && Mux(dst.valid, b, a)
-    })
-    val op2_matches_opa = VecInit((entries zip (opa_matches_opa zip opb_matches_opa)).map { case (e, (a, b)) =>
-      e.valid && op2.valid && Mux(dst.valid || op1.valid, b, a)
-    })
-    val dst_matches_opa = VecInit((entries zip opa_matches_opa).map { case (e, a) =>
-      e.valid && dst.valid && a
-    })
-    val dst_matches_opb = VecInit((entries zip opa_matches_opb).map { case (e, b) =>
-      e.valid && dst.valid && b
-    })
+    val not_config = !new_entry.is_config
+    when (is_load) {
+      // war (after ex/st) | waw (after ex)
+      new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && !e.bits.issued }) // same q
 
-    val op1_raws_opa = VecInit((entries zip op1_matches_opa).map { case (e, m) =>
-      m && op1.valid && e.bits.q =/= new_entry.q && e.bits.opa_is_dst
-    })
-    val op2_raws_opa = VecInit((entries zip op2_matches_opa).map { case (e, m) =>
-      m && op2.valid && e.bits.q =/= new_entry.q && e.bits.opa_is_dst
-    })
-    val raws = VecInit((op1_raws_opa zip op2_raws_opa).map { case (a, b) => a || b })
+      new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && !new_entry.is_config && (
+        (new_entry.opa.bits.overlaps(e.bits.opa.bits) && e.bits.opa.valid) || // waw if preload, war if compute
+        (new_entry.opa.bits.overlaps(e.bits.opb.bits) && e.bits.opb.valid))}) // war
 
-    val dst_wars_opa = VecInit((entries zip dst_matches_opa).map { case (e, m) =>
-      m && dst.valid && e.bits.q =/= new_entry.q && !e.bits.opa_is_dst
-    })
-    val dst_wars_opb = VecInit((entries zip dst_matches_opb).map { case (e, m) =>
-      m && dst.valid && e.bits.q =/= new_entry.q
-    })
-    val wars = VecInit((dst_wars_opa zip dst_wars_opb).map { case (a, b) => a || b })
+      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && e.bits.opa.valid && not_config &&
+        new_entry.opa.bits.overlaps(e.bits.opa.bits)})  // war
+    }.elsewhen (is_ex) {
+      // raw (after ld) | war (after st) | waw (after ld)
+      new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && e.bits.opa.valid && not_config && (
+        new_entry.opa.bits.overlaps(e.bits.opa.bits) || // waw if preload, raw if compute
+        new_entry.opb.bits.overlaps(e.bits.opa.bits))}) // raw
 
-    val dst_waws_opa = VecInit((entries zip dst_matches_opa).map { case (e, m) =>
-      m && dst.valid && (e.bits.q =/= new_entry.q || new_entry.q === ldq) && e.bits.opa_is_dst
-    })
-    val waws = dst_waws_opa
+      new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && !e.bits.issued }) // same q
 
-    val older_in_same_q = VecInit(entries.map { e =>
-      e.valid && e.bits.q === new_entry.q && !e.bits.issued
-    })
+      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && e.bits.opa.valid && not_config && new_entry.opa_is_dst &&
+        new_entry.opa.bits.overlaps(e.bits.opa.bits)})  // war
+    }.otherwise {
+      // raw (after ld/ex)
+      new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && e.bits.opa.valid && not_config &&
+        new_entry.opa.bits.overlaps(e.bits.opa.bits)})  // raw
 
-    val is_st_and_must_wait_for_prior_ex_config = VecInit(entries.map { e =>
-      e.valid && new_entry.q === stq && !new_entry.is_config && e.bits.q === exq && e.bits.is_config
-    })
+      new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && e.bits.opa.valid && not_config &&
+        e.bits.opa_is_dst && new_entry.opa.bits.overlaps(e.bits.opa.bits)}) // raw only if ex is preload
 
-    val is_ex_config_and_must_wait_for_prior_st = VecInit(entries.map { e =>
-      // TODO when acc reads no longer rely upon config-ex's relu6, this dependency can be broken
-      e.valid && new_entry.q === exq && new_entry.is_config && e.bits.q === stq && !e.bits.is_config
-    })
-
-    new_entry.deps := (Cat(raws) | Cat(wars) | Cat(waws) | Cat(older_in_same_q) |
-      Cat(is_st_and_must_wait_for_prior_ex_config) | Cat(is_ex_config_and_must_wait_for_prior_st)).asBools().reverse
-
-    raws_probe := Cat(raws.reverse)
-    waws_probe := Cat(waws.reverse)
-    wars_probe := Cat(wars.reverse)
-    older_in_same_q_probe := Cat(older_in_same_q.reverse)
-    is_st_and_must_wait_for_prior_ex_config_probe := Cat(is_st_and_must_wait_for_prior_ex_config.reverse)
-    is_ex_config_and_must_wait_for_prior_st_probe := Cat(is_ex_config_and_must_wait_for_prior_st.reverse)
+      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && !e.bits.issued }) // same q
+    }
 
     new_entry.allocated_at := instructions_allocated
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
-    val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
-    val full_alloc_id = MuxCase((reservation_station_full_entries-1).U, full_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
-    val partial_alloc_id = MuxCase((reservation_station_partial_entries-1).U, partial_entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+    Seq(
+      (ldq, entries_ld, new_allocs_oh_ld, reservation_station_entries_ld),
+      (exq, entries_ex, new_allocs_oh_ex, reservation_station_entries_ex),
+      (stq, entries_st, new_allocs_oh_st, reservation_station_entries_st))
+      .foreach { case (q, entries_type, new_allocs_type, entries_count) =>
+        when (new_entry.q === q) {
+          val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
+          when (q =/= exq) { assert(!is_full) }
 
-    when (!is_full && !partial_entries(partial_alloc_id).valid) {
-      io.alloc.ready := true.B
-      partial_entries(partial_alloc_id).valid := true.B
-      partial_entries(partial_alloc_id).bits := new_entry
-      partial_entries(partial_alloc_id).bits.opb.valid := false.B
-      partial_entries(partial_alloc_id).bits.opb.bits := DontCare
-      new_partial_allocs(partial_alloc_id) := true.B
-    } .elsewhen (!full_entries(full_alloc_id).valid) {
-      io.alloc.ready := true.B
-      full_entries(full_alloc_id).valid := true.B
-      full_entries(full_alloc_id).bits := new_entry
-      new_full_allocs(full_alloc_id) := true.B
-    }
+          // looking for the first invalid entry
+          val alloc_id = MuxCase((entries_count - 1).U, entries_type.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
+
+          when (!entries_type(alloc_id).valid) {
+            io.alloc.ready := true.B
+            entries_type(alloc_id).valid := true.B
+            entries_type(alloc_id).bits := new_entry
+            new_allocs_type(alloc_id) := true.B
+          }
+        }
+      }
 
     when (io.alloc.fire) {
       when (new_entry.is_config && new_entry.q === exq && !is_im2col) {
-        a_stride := new_entry.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
-        c_stride := new_entry.cmd.rs2(63, 48) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
-        val set_only_strides = new_entry.cmd.rs1(7) // TODO magic numbers
+        a_stride := new_entry.cmd.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
+        c_stride := new_entry.cmd.cmd.rs2(63, 48) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
+        val set_only_strides = new_entry.cmd.cmd.rs1(7) // TODO magic numbers
         when (!set_only_strides) {
-          a_transpose := new_entry.cmd.rs1(8) // TODO magic numbers
+          a_transpose := new_entry.cmd.cmd.rs1(8) // TODO magic numbers
         }
       }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
-        val id = new_entry.cmd.rs1(4,3) // TODO magic numbers
-        val block_stride = new_entry.cmd.rs1(31, 16) // TODO magic numbers
-        val repeat_pixels = maxOf(new_entry.cmd.rs1(8 + pixel_repeats_bits - 1, 8), 1.U) // TODO we use a default value of pixel repeats here, for backwards compatibility. However, we should deprecate and remove this default value eventually
+        val id = new_entry.cmd.cmd.rs1(4,3) // TODO magic numbers
+        val block_stride = new_entry.cmd.cmd.rs1(31, 16) // TODO magic numbers
+        val repeat_pixels = maxOf(new_entry.cmd.cmd.rs1(8 + pixel_repeats_bits - 1, 8), 1.U) // TODO we use a default value of pixel repeats here, for backwards compatibility. However, we should deprecate and remove this default value eventually
         ld_block_strides(id) := block_stride
         ld_pixel_repeats(id) := repeat_pixels - 1.U
       }.elsewhen(new_entry.is_config && new_entry.q === stq) {
-        val pool_stride = new_entry.cmd.rs1(5, 4) // TODO magic numbers
+        val pool_stride = new_entry.cmd.cmd.rs1(5, 4) // TODO magic numbers
         pooling_is_enabled := pool_stride =/= 0.U
       }.elsewhen(funct === PRELOAD_CMD) {
         solitary_preload := true.B
@@ -388,45 +389,105 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   // Issue commands which are ready to be issued
-  Seq((ldq, io.issue.ld), (stq, io.issue.st), (exq, io.issue.ex)).foreach { case (q, io) =>
-    val issue_valids = entries.map(e => e.valid && e.bits.ready() && !e.bits.issued && e.bits.q === q)
+  Seq((ldq, io.issue.ld, entries_ld), (exq, io.issue.ex, entries_ex), (stq, io.issue.st, entries_st))
+    .foreach { case (q, io, entries_type) =>
+
+    val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued)
     val issue_sel = PriorityEncoderOH(issue_valids)
     val issue_id = OHToUInt(issue_sel)
-    val issue_entry = Mux1H(issue_sel, entries)
+    val global_issue_id = Cat(q.asUInt, issue_id.pad(log2Up(res_max_per_type)))
+    assert(q.getWidth == 2)
+    assert(global_issue_id.getWidth == 2 + log2Up(res_max_per_type))
+
+    val issue_entry = Mux1H(issue_sel, entries_type)
 
     io.valid := issue_valids.reduce(_||_)
     io.cmd := issue_entry.bits.cmd
-    io.rob_id := OHToUInt(issue_sel)
+    // use the most significant 2 bits to indicate instruction type
+    io.rob_id := global_issue_id
+
+    val complete_on_issue = entries_type(issue_id).bits.complete_on_issue
+    val from_conv_fsm = entries_type(issue_id).bits.cmd.from_conv_fsm
+    val from_matmul_fsm = entries_type(issue_id).bits.cmd.from_matmul_fsm
 
     when (io.fire()) {
-      // Clear out all the dependency bits for instructions which depend on the same queue
-      entries.zipWithIndex.foreach { case (e, i) =>
-        val is_same_q = Mux(alloc_fire && new_entry_oh(i),
-          new_entry.q === issue_entry.bits.q,
-          e.bits.q === issue_entry.bits.q)
-
-        when (is_same_q || issue_entry.bits.complete_on_issue) {
-          e.bits.deps(issue_id) := false.B
-        }
-      }
-      for ((e, i) <- entries.zipWithIndex) {
+      entries_type.zipWithIndex.foreach { case (e, i) =>
         when (issue_sel(i)) {
           e.bits.issued := true.B
           e.valid := !e.bits.complete_on_issue
         }
       }
+
+      // Update the "deps" vectors of all instructions which depend on the one that is being issued
+      Seq((ldq, entries_ld), (exq, entries_ex), (stq, entries_st))
+        .foreach { case (q_, entries_type_) =>
+
+        entries_type_.zipWithIndex.foreach { case (e, i) =>
+          val deps_type = if (q == ldq) e.bits.deps_ld
+                          else if (q == exq) e.bits.deps_ex else e.bits.deps_st
+          when (q === q_) {
+            deps_type(issue_id) := false.B
+          }.otherwise {
+            when (issue_entry.bits.complete_on_issue) {
+              deps_type(issue_id) := false.B
+            }
+          }
+        }
+      }
+
+      // If the instruction completed on issue, then notify the conv/matmul FSMs that another one of their commands
+      // completed
+      when (q === ldq) { conv_ld_issue_completed := complete_on_issue && from_conv_fsm }
+      when (q === stq) { conv_st_issue_completed := complete_on_issue && from_conv_fsm }
+      when (q === exq) { conv_ex_issue_completed := complete_on_issue && from_conv_fsm }
+
+      when (q === ldq) { matmul_ld_issue_completed := complete_on_issue && from_matmul_fsm }
+      when (q === stq) { matmul_st_issue_completed := complete_on_issue && from_matmul_fsm }
+      when (q === exq) { matmul_ex_issue_completed := complete_on_issue && from_matmul_fsm }
     }
   }
 
   // Mark entries as completed once they've returned
   when (io.completed.fire) {
-    entries.foreach(_.bits.deps(io.completed.bits) := false.B)
+    val type_width = log2Up(res_max_per_type)
+    val queue_type = io.completed.bits(type_width + 1, type_width)
+    val issue_id = io.completed.bits(type_width - 1, 0)
 
-    for ((e, i) <- entries.zipWithIndex) {
-      when (i.U === io.completed.bits) {
-        e.valid := false.B
-        assert(e.valid)
-      }
+    when (queue_type === ldq) {
+      entries.foreach(_.bits.deps_ld(issue_id) := false.B)
+      entries_ld(issue_id).valid := false.B
+
+      conv_ld_completed := entries_ld(issue_id).bits.cmd.from_conv_fsm
+      matmul_ld_completed := entries_ld(issue_id).bits.cmd.from_matmul_fsm
+
+      assert(entries_ld(issue_id).valid)
+    }.elsewhen (queue_type === exq) {
+      entries.foreach(_.bits.deps_ex(issue_id) := false.B)
+      entries_ex(issue_id).valid := false.B
+
+      conv_ex_completed := entries_ex(issue_id).bits.cmd.from_conv_fsm
+      matmul_ex_completed := entries_ex(issue_id).bits.cmd.from_matmul_fsm
+      
+      assert(entries_ex(issue_id).valid)
+    }.elsewhen (queue_type === stq) {
+      entries.foreach(_.bits.deps_st(issue_id) := false.B)
+      entries_st(issue_id).valid := false.B
+
+      conv_st_completed := entries_st(issue_id).bits.cmd.from_conv_fsm
+      matmul_st_completed := entries_st(issue_id).bits.cmd.from_matmul_fsm
+      
+      assert(entries_st(issue_id).valid)
+    }.otherwise {
+      assert(queue_type =/= 3.U)
+    }
+  }
+
+  // Explicitly mark "opb" in all ld/st queues entries as being invalid.
+  // This helps us to reduce the total reservation table area
+  Seq(entries_ld, entries_st).foreach { entries_type =>
+    entries_type.foreach { e =>
+      e.bits.opb.valid := false.B
+      e.bits.opb.bits := DontCare
     }
   }
 
@@ -434,25 +495,23 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val utilization_ld_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === ldq))
   val utilization_st_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === stq))
   val utilization_ex_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === exq))
-  val utilization_ld_q = PopCount(entries.map(e => e.valid && e.bits.q === ldq))
-  val utilization_st_q = PopCount(entries.map(e => e.valid && e.bits.q === stq))
-  val utilization_ex_q = PopCount(entries.map(e => e.valid && e.bits.q === exq))
-
-  io.ld_utilization := utilization_ld_q
-  io.st_utilization := utilization_st_q
-  io.ex_utilization := utilization_ex_q
+  val utilization_ld_q = PopCount(entries_ld.map(e => e.valid))
+  val utilization_st_q = PopCount(entries_st.map(e => e.valid))
+  val utilization_ex_q = PopCount(entries_ex.map(e => e.valid))
 
   val valids = VecInit(entries.map(_.valid))
-  val functs = VecInit(entries.map(_.bits.cmd.inst.funct))
+  val functs = VecInit(entries.map(_.bits.cmd.cmd.inst.funct))
   val issueds = VecInit(entries.map(_.bits.issued))
-  val packed_deps = VecInit(entries.map(e => Cat(e.bits.deps.reverse)))
+  val packed_deps = VecInit(entries.map(e =>
+    Cat(Cat(e.bits.deps_ld.reverse), Cat(e.bits.deps_ex.reverse), Cat(e.bits.deps_st.reverse))))
 
   dontTouch(valids)
   dontTouch(functs)
   dontTouch(issueds)
   dontTouch(packed_deps)
 
-  val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid, PopCount(e.bits.deps), 0.U)))
+  val pop_count_packed_deps = VecInit(entries.map(e => Mux(e.valid,
+    PopCount(e.bits.deps_ld) + PopCount(e.bits.deps_ex) + PopCount(e.bits.deps_st), 0.U)))
   val min_pop_count = pop_count_packed_deps.reduce((acc, d) => minOf(acc, d))
   // assert(min_pop_count < 2.U)
   dontTouch(pop_count_packed_deps)

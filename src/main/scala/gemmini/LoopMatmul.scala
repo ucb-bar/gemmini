@@ -656,7 +656,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   }
 }
 
-class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
+class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
                  mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
                  compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_rs2_t: MvoutRs2)
@@ -666,11 +666,11 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
 
   val io = IO(new Bundle {
-    val in = Flipped(Decoupled(new RoCCCommand))
-    val out = Decoupled(new RoCCCommand)
-    val ld_utilization = Input(UInt(log2Up(rob_size+1).W))
-    val st_utilization = Input(UInt(log2Up(rob_size+1).W))
-    val ex_utilization = Input(UInt(log2Up(rob_size+1).W))
+    val in = Flipped(Decoupled(new GemminiCmd(reservation_station_size)))
+    val out = Decoupled(new GemminiCmd(reservation_station_size))
+    val ld_completed = Input(UInt(log2Up(reservation_station_size+1).W))
+    val st_completed = Input(UInt(log2Up(reservation_station_size+1).W))
+    val ex_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val busy = Output(Bool())
   })
 
@@ -722,24 +722,40 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   arb.io.in(3) <> ldab_arb.io.out
   val unrolled_cmd = arb.io.out
 
+  // Create reservation station utilization counters
+  val ld_utilization = RegInit(0.U(log2Up(max_lds+1).W))
+  val st_utilization = RegInit(0.U(log2Up(max_sts+1).W))
+  val ex_utilization = RegInit(0.U(log2Up(max_exs+1).W))
+
+  ld_utilization := ld_utilization +& (ldA.io.cmd.fire || ldB.io.cmd.fire || ldD.io.cmd.fire) -& io.ld_completed
+  st_utilization := st_utilization +& stC.io.cmd.fire -& io.st_completed
+  ex_utilization := ex_utilization +& ex.io.cmd.fire -& io.ex_completed
+
+  assert(ld_utilization >= io.ld_completed, "ld utilization underflow")
+  assert(st_utilization >= io.st_completed, "st utilization underflow")
+  assert(ex_utilization >= io.ex_completed, "ex utilization underflow")
+
   // Wire up unrolled command output
-  val is_loop_run_cmd = cmd.bits.inst.funct === LOOP_WS
-  val is_loop_config_cmd = cmd.bits.inst.funct >= LOOP_WS_CONFIG_BOUNDS && cmd.bits.inst.funct <= LOOP_WS_CONFIG_STRIDES_DC
+  val is_loop_run_cmd = cmd.bits.cmd.inst.funct === LOOP_WS
+  val is_loop_config_cmd = cmd.bits.cmd.inst.funct >= LOOP_WS_CONFIG_BOUNDS && cmd.bits.cmd.inst.funct <= LOOP_WS_CONFIG_STRIDES_DC
   val is_loop_cmd = is_loop_run_cmd || is_loop_config_cmd
 
-  io.out.bits := Mux(loop_configured, unrolled_cmd.bits, cmd.bits)
-  io.out.bits.status := cmd.bits.status // TODO This is not guaranteed to be the correct fix! We must fix this
+  io.out.bits.cmd := Mux(loop_configured, unrolled_cmd.bits, cmd.bits.cmd)
+  io.out.bits.cmd.status := cmd.bits.cmd.status // TODO This is not guaranteed to be the correct fix! We must fix this
+  io.out.bits.rob_id := DontCare
+  io.out.bits.from_matmul_fsm := Mux(loop_configured, true.B, cmd.bits.from_matmul_fsm)
+  io.out.bits.from_conv_fsm := Mux(loop_configured, false.B, cmd.bits.from_conv_fsm)
   io.out.valid := Mux(loop_configured, unrolled_cmd.valid, cmd.valid && !is_loop_config_cmd && !is_loop_run_cmd)
 
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)
   arb.io.out.ready := io.out.ready
 
   // Wire up overloaded signals
-  ldA.io.rob_overloaded := io.ld_utilization >= max_lds.U
-  ldB.io.rob_overloaded := io.ld_utilization >= max_lds.U
-  ex.io.rob_overloaded := io.ex_utilization >= max_exs.U
-  ldD.io.rob_overloaded := io.ld_utilization >= max_lds.U
-  stC.io.rob_overloaded := io.st_utilization >= max_sts.U
+  ldA.io.rob_overloaded := ld_utilization >= max_lds.U
+  ldB.io.rob_overloaded := ld_utilization >= max_lds.U
+  ex.io.rob_overloaded := ex_utilization >= max_exs.U
+  ldD.io.rob_overloaded := ld_utilization >= max_lds.U
+  stC.io.rob_overloaded := st_utilization >= max_sts.U
 
   // Wire up iterator inputs
   ex.io.lda_completed := (ldA.io.loop_id =/= ex.io.loop_id) || ldA.io.idle
@@ -761,45 +777,45 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
   // Create config registers
   when(cmd.valid && is_loop_cmd && !loop_being_configured.configured) {
 
-    switch (cmd.bits.inst.funct) {
+    switch (cmd.bits.cmd.inst.funct) {
       is (LOOP_WS_CONFIG_BOUNDS) {
-        loop_being_configured.max_k := cmd.bits.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2)
-        loop_being_configured.max_j := cmd.bits.rs2(iterator_bitwidth * 2 - 1, iterator_bitwidth)
-        loop_being_configured.max_i := cmd.bits.rs2(iterator_bitwidth-1, 0)
+        loop_being_configured.max_k := cmd.bits.cmd.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2)
+        loop_being_configured.max_j := cmd.bits.cmd.rs2(iterator_bitwidth * 2 - 1, iterator_bitwidth)
+        loop_being_configured.max_i := cmd.bits.cmd.rs2(iterator_bitwidth-1, 0)
 
-        loop_being_configured.pad_k := cmd.bits.rs1(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2)
-        loop_being_configured.pad_j := cmd.bits.rs1(iterator_bitwidth * 2 - 1, iterator_bitwidth)
-        loop_being_configured.pad_i := cmd.bits.rs1(iterator_bitwidth-1, 0)
+        loop_being_configured.pad_k := cmd.bits.cmd.rs1(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2)
+        loop_being_configured.pad_j := cmd.bits.cmd.rs1(iterator_bitwidth * 2 - 1, iterator_bitwidth)
+        loop_being_configured.pad_i := cmd.bits.cmd.rs1(iterator_bitwidth-1, 0)
       }
 
       is (LOOP_WS_CONFIG_ADDRS_AB) {
-        loop_being_configured.a_dram_addr := cmd.bits.rs1
-        loop_being_configured.b_dram_addr := cmd.bits.rs2
+        loop_being_configured.a_dram_addr := cmd.bits.cmd.rs1
+        loop_being_configured.b_dram_addr := cmd.bits.cmd.rs2
       }
 
       is (LOOP_WS_CONFIG_ADDRS_DC) {
-        loop_being_configured.d_dram_addr := cmd.bits.rs1
-        loop_being_configured.c_dram_addr := cmd.bits.rs2
+        loop_being_configured.d_dram_addr := cmd.bits.cmd.rs1
+        loop_being_configured.c_dram_addr := cmd.bits.cmd.rs2
       }
 
       is (LOOP_WS_CONFIG_STRIDES_AB) {
-        loop_being_configured.a_dram_stride := cmd.bits.rs1
-        loop_being_configured.b_dram_stride := cmd.bits.rs2
+        loop_being_configured.a_dram_stride := cmd.bits.cmd.rs1
+        loop_being_configured.b_dram_stride := cmd.bits.cmd.rs2
       }
 
       is (LOOP_WS_CONFIG_STRIDES_DC) {
-        loop_being_configured.d_dram_stride := cmd.bits.rs1
-        loop_being_configured.c_dram_stride := cmd.bits.rs2
+        loop_being_configured.d_dram_stride := cmd.bits.cmd.rs1
+        loop_being_configured.c_dram_stride := cmd.bits.cmd.rs2
       }
 
       is (LOOP_WS) {
-        loop_being_configured.ex_accumulate := cmd.bits.rs1(0)
-        loop_being_configured.full_c := cmd.bits.rs1(1)
-        loop_being_configured.low_d := cmd.bits.rs1(2)
-        loop_being_configured.a_transpose := cmd.bits.rs2(0)
-        loop_being_configured.b_transpose := cmd.bits.rs2(1)
+        loop_being_configured.ex_accumulate := cmd.bits.cmd.rs1(0)
+        loop_being_configured.full_c := cmd.bits.cmd.rs1(1)
+        loop_being_configured.low_d := cmd.bits.cmd.rs1(2)
+        loop_being_configured.a_transpose := cmd.bits.cmd.rs2(0)
+        loop_being_configured.b_transpose := cmd.bits.cmd.rs2(1)
 
-        loop_being_configured.weightA := cmd.bits.rs1(15, 8) // TODO magic numbers
+        loop_being_configured.weightA := cmd.bits.cmd.rs1(15, 8) // TODO magic numbers
 
         loop_being_configured.configured := true.B
 
@@ -963,19 +979,19 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
 }
 
 object LoopMatmul {
-  def apply(in: DecoupledIO[RoCCCommand], ld_utilization: UInt, st_utilization: UInt, ex_utilization: UInt,
+  def apply(in: DecoupledIO[GemminiCmd], ld_completed: UInt, st_completed: UInt, ex_completed: UInt,
             block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
             mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
             compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_rs2_t: MvoutRs2)
-           (implicit p: Parameters): Tuple2[DecoupledIO[RoCCCommand], Bool] = {
+           (implicit p: Parameters): (DecoupledIO[GemminiCmd], Bool) = {
     val mod = Module(new LoopMatmul(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
       mvin_rs2_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t, mvout_rs2_t))
     mod.io.in <> in
-    mod.io.ld_utilization := ld_utilization
-    mod.io.st_utilization := st_utilization
-    mod.io.ex_utilization := ex_utilization
+    mod.io.ld_completed := ld_completed
+    mod.io.st_completed := st_completed
+    mod.io.ex_completed := ex_completed
     (mod.io.out, mod.io.busy)
   }
 

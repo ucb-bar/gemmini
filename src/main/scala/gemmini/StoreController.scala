@@ -16,11 +16,11 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new GemminiCmd(rob_entries)))
+    val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
 
     val dma = new ScratchpadWriteMemIO(local_addr_t, acc_scale_t_bits)
 
-    val completed = Decoupled(UInt(log2Up(rob_entries).W))
+    val completed = Decoupled(UInt(log2Up(reservation_station_entries).W))
 
     val busy = Output(Bool())
 
@@ -122,7 +122,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val nCmds = (max_in_flight_mem_reqs / block_rows) + 1
 
   val deps_t = new Bundle {
-    val rob_id = UInt(log2Up(rob_entries).W)
+    val rob_id = UInt(log2Up(reservation_station_entries).W)
   }
 
   val cmd_tracker_max_rows = ((block_rows * max_blocks) max
