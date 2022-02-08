@@ -164,6 +164,63 @@ object GemminiConfigs {
     ex_write_to_acc = true,
   )
 
+  val dummyConfig = GemminiArrayConfig[DummySInt, Float, Float](
+    inputType = DummySInt(8),
+    accType = DummySInt(32),
+    spatialArrayOutputType = DummySInt(20),
+    tileRows     = defaultConfig.tileRows,
+    tileColumns  = defaultConfig.tileColumns,
+    meshRows     = defaultConfig.meshRows,
+    meshColumns  = defaultConfig.meshColumns,
+    dataflow     = defaultConfig.dataflow,
+    sp_capacity  = defaultConfig.sp_capacity,
+    acc_capacity = defaultConfig.acc_capacity,
+    sp_banks     = defaultConfig.sp_banks,
+    acc_banks    = defaultConfig.acc_banks,
+    sp_singleported = defaultConfig.sp_singleported,
+    acc_singleported = defaultConfig.acc_singleported,
+    has_training_convs = defaultConfig.has_training_convs,
+    has_max_pool = defaultConfig.has_max_pool,
+    has_nonlinear_activations = defaultConfig.has_nonlinear_activations,
+    reservation_station_full_entries = defaultConfig.reservation_station_full_entries,
+    reservation_station_partial_entries = defaultConfig.reservation_station_partial_entries,
+    ld_queue_length = defaultConfig.ld_queue_length,
+    st_queue_length = defaultConfig.st_queue_length,
+    ex_queue_length = defaultConfig.ex_queue_length,
+    max_in_flight_mem_reqs = defaultConfig.max_in_flight_mem_reqs,
+    dma_maxbytes = defaultConfig.dma_maxbytes,
+    dma_buswidth = defaultConfig.dma_buswidth,
+    tlb_size = defaultConfig.tlb_size,
+
+    mvin_scale_args = Some(ScaleArguments(
+      (t: DummySInt, f: Float) => t.dontCare,
+      4, Float(8, 24), 4,
+      identity = "1.0",
+      c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (elem_t)y);})"
+    )),
+
+    mvin_scale_acc_args = None,
+    mvin_scale_shared = defaultConfig.mvin_scale_shared,
+
+    acc_scale_args = Some(ScaleArguments(
+      (t: DummySInt, f: Float) => t.dontCare,
+      1, Float(8, 24), -1,
+      identity = "1.0",
+      c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
+    )),
+
+    num_counter = defaultConfig.num_counter,
+
+    acc_read_full_width = defaultConfig.acc_read_full_width,
+    acc_read_small_width = defaultConfig.acc_read_small_width,
+
+    ex_read_from_spad = defaultConfig.ex_read_from_spad,
+    ex_read_from_acc = defaultConfig.ex_read_from_acc,
+    ex_write_to_spad = defaultConfig.ex_write_to_spad,
+    ex_write_to_acc = defaultConfig.ex_write_to_acc,
+  )
+
+
   val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
     acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=4)),
     acc_singleported=true,
