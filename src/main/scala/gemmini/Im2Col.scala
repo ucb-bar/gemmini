@@ -24,7 +24,6 @@ class Im2ColReadReq[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[
   val weight_triple_bank = Bool()
   val start_inputting = Bool() //start_inputting_a
 
-  override def cloneType: Im2ColReadReq.this.type = new Im2ColReadReq(config).asInstanceOf[this.type]
 
 }
 
@@ -38,7 +37,6 @@ class Im2ColReadResp[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   //added for sync
   val im2col_delay = Bool()
 
-  override def cloneType: Im2ColReadResp.this.type = new Im2ColReadResp(config).asInstanceOf[this.type]
 
 }
 
@@ -52,6 +50,8 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
     val resp = Decoupled(new Im2ColReadResp(config)) // to ExecuteController
 
     val sram_reads = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)) // from Scratchpad
+
+    val counter = new CounterEventIO()
   })
   val req = Reg(new Im2ColReadReq(config))
 
@@ -133,7 +133,7 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
 
   val im2col_en_d = RegNext(im2col_en)
 
-  val sram_read_signals_q = Module(new Queue(new im2colRowSignals, mem_pipeline+1,
+  val sram_read_signals_q = Module(new Queue(new im2colRowSignals, spad_read_delay+1,
     pipe=true))
 
   io.sram_reads.foreach { sr =>
@@ -442,10 +442,16 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
   sram_read_signals_q.io.enq.bits.sram_bank := im2col_spad_bank
 
   sram_read_signals_q.io.deq.ready := true.B//sram_resp_valid
-  if(!hasIm2col){ //to default values
+  if(!config.hasIm2Col){ //to default values
     io.resp.valid := false.B
     io.req.ready := true.B
     io.sram_reads.foreach(_.req.valid := false.B)
     io.sram_reads.foreach(_.resp.ready := false.B)
   }
+
+  // Performance counter
+  CounterEventIO.init(io.counter)
+  io.counter.connectEventSignal(CounterEvent.IM2COL_ACTIVE_CYCLES, im2col_state === preparing_im2col)
+  io.counter.connectEventSignal(CounterEvent.IM2COL_MEM_CYCLES, im2col_state === doing_im2col)
+  io.counter.connectEventSignal(CounterEvent.IM2COL_TRANSPOSER_WAIT_CYCLE, im2col_state === waiting_for_im2col && sram_read_req)
 }

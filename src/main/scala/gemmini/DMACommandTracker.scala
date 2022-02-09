@@ -21,7 +21,6 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
         val bytes_to_read = Input(UInt(log2Up(maxBytes+1).W))
         val cmd_id = Output(cmd_id_t.cloneType)
 
-        override def cloneType: this.type = new BitsT(tag_t.cloneType, cmd_id_t.cloneType).asInstanceOf[this.type]
       }
 
       val bits = new BitsT(tag_t.cloneType, cmd_id_t.cloneType)
@@ -34,7 +33,6 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
       val bytes_read = UInt(log2Up(maxBytes+1).W)
       val cmd_id = cmd_id_t.cloneType
 
-      override def cloneType: this.type = new RequestReturnedT(cmd_id_t.cloneType).asInstanceOf[this.type]
     }
 
     val request_returned = Flipped(Valid(new RequestReturnedT(cmd_id_t.cloneType)))
@@ -43,7 +41,6 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
       val cmd_id = cmd_id_t.cloneType
       val tag = tag_t.cloneType
 
-      override def cloneType: this.type = new CmdCompletedT(cmd_id_t.cloneType, tag_t.cloneType).asInstanceOf[this.type]
     }
 
     val cmd_completed = Decoupled(new CmdCompletedT(cmd_id_t.cloneType, tag_t.cloneType))
@@ -85,7 +82,7 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
     cmds(next_empty_alloc).bytes_left := io.alloc.bits.bytes_to_read
   }
 
-  when (io.request_returned.fire()) {
+  when (io.request_returned.fire) {
     val cmd_id = io.request_returned.bits.cmd_id
     cmds(cmd_id).bytes_left := cmds(cmd_id).bytes_left - io.request_returned.bits.bytes_read
 
@@ -93,7 +90,7 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
     assert(cmds(cmd_id).bytes_left >= io.request_returned.bits.bytes_read)
   }
 
-  when (io.cmd_completed.fire()) {
+  when (io.cmd_completed.fire) {
     cmds(io.cmd_completed.bits.cmd_id).valid := false.B
   }
 

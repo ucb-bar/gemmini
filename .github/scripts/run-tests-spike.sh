@@ -10,7 +10,7 @@ source $SCRIPT_DIR/defaults.sh
 TOOLS_DIR=$LOCAL_ESP_DIR
 PATH=$PATH:$LOCAL_ESP_DIR/bin
 
-git clone git@github.com:ucb-bar/esp-isa-sim.git
+git clone https://github.com/ucb-bar/esp-isa-sim.git
 cd esp-isa-sim
 git checkout $(cat $LOCAL_CHECKOUT_DIR/SPIKE.hash)
 cp $LOCAL_CHIPYARD_DIR/generators/gemmini/software/gemmini-rocc-tests/include/gemmini_params.h gemmini/

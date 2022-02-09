@@ -109,6 +109,22 @@ object Util {
     Mux(u1 < u2, u1, u2)
   }
 
+  def accumulateTree[T <: Data](xs: Seq[T])(implicit ev: Arithmetic[T]): T = {
+    import ev._
+
+    assert(xs.nonEmpty, "can't accumulate 0 elements")
+
+    if (xs.length == 1) {
+      xs.head
+    } else {
+      val upperRowLen = 1 << log2Ceil(xs.length)
+      val upperRow = xs.padTo(upperRowLen, xs.head.zero)
+      val pairs = upperRow.grouped(2)
+      val lowerRow = pairs.map { case Seq(a, b) => a + b }
+      accumulateTree(lowerRow.toSeq)
+    }
+  }
+
   // An undirectioned Valid bundle
   class UDValid[T <: Data](t: T) extends Bundle {
     val valid = Bool()
@@ -124,7 +140,6 @@ object Util {
       bits
     }
 
-    override def cloneType: this.type = new UDValid(t.cloneType).asInstanceOf[this.type]
   }
 
   object UDValid {

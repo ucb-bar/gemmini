@@ -1,0 +1,142 @@
+name: Gemmini CI
+on: [push]
+jobs:
+  install-esp-toolchain:
+    name: install-esp-toolchain
+    runs-on: ubuntu-latest
+    container:
+      image: ucbbar/chipyard-ci-image:554b436
+      options: --entrypoint /bin/bash
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: get paths
+        run: .github/scripts/defaults.sh
+        id: get-paths
+
+      - name: toolchain-build
+        run: .github/scripts/build-toolchains.sh esp-tools
+
+      - name: cache esp-toolchain install
+        uses: actions/cache@v2
+        with:
+          path: ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
+          key: esp-tools-install-${{ github.ref }}-${{ github.sha }}
+
+  prepare-build-environment:
+    name: prepare-build-environment
+    runs-on: ubuntu-latest
+    container:
+      image: ucbbar/chipyard-ci-image:554b436
+      options: --entrypoint /bin/bash
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: get paths
+        run: .github/scripts/defaults.sh
+        id: get-paths
+
+      - name: setup build environment
+        run: .github/scripts/prepare-for-rtl-build.sh
+      - name: install verilator
+        run: .github/scripts/install-verilator.sh
+
+      - name: cache prepare-build-environment install
+        uses: actions/cache@v2
+        with:
+          path: |
+            ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
+            ${{ steps.get-paths.outputs.LOCAL_VERILATOR_DIR }}
+          key: prepare-build-environment-${{ github.ref }}-${{ github.sha }}
+
+  prepare-gemmini-config:
+    name: prepare-gemmini-config
+    runs-on: ubuntu-latest
+    needs: [prepare-build-environment, install-esp-toolchain]
+    container:
+      image: ucbbar/chipyard-ci-image:554b436
+      options: --entrypoint /bin/bash
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: get paths
+        run: .github/scripts/defaults.sh
+        id: get-paths
+
+      - name: restore cache esp-toolchain install
+        uses: actions/cache@v2
+        with:
+          path: ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
+          key: esp-tools-install-${{ github.ref }}-${{ github.sha }}
+
+      - name: restore cache prepare-build-environment install
+        uses: actions/cache@v2
+        with:
+          path: |
+            ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
+            ${{ steps.get-paths.outputs.LOCAL_VERILATOR_DIR }}
+          key: prepare-build-environment-${{ github.ref }}-${{ github.sha }}
+
+      - name: Building Gemmini Config using Verilator
+        run: .github/scripts/do-rtl-build.sh
+
+      - name: cache prepare-gemmini-config install
+        uses: actions/cache@v2
+        with:
+          path: |
+            ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
+            ${{ steps.get-paths.outputs.LOCAL_VERILATOR_DIR }}
+            ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
+          key: prepare-gemmini-config-${{ github.ref }}-${{ github.sha }}
+
+  spike-run-tests:
+    name: spike-run-tests
+    runs-on: ubuntu-latest
+    needs: prepare-gemmini-config
+    container:
+      image: ucbbar/chipyard-ci-image:554b436
+      options: --entrypoint /bin/bash
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: get paths
+        run: .github/scripts/defaults.sh
+        id: get-paths
+
+      - name: restore cache prepare-gemmini-config install
+        uses: actions/cache@v2
+        with:
+          path: |
+            ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
+            ${{ steps.get-paths.outputs.LOCAL_VERILATOR_DIR }}
+            ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
+          key: prepare-gemmini-config-${{ github.ref }}-${{ github.sha }}
+
+      - name: run-tests
+        run: .github/scripts/run-tests-spike.sh
+
+  rtl-run-tests:
+    name: rtl-run-tests
+    runs-on: ubuntu-latest
+    needs: prepare-gemmini-config
+    container:
+      image: ucbbar/chipyard-ci-image:554b436
+      options: --entrypoint /bin/bash
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: get paths
+        run: .github/scripts/defaults.sh
+        id: get-paths
+
+      - name: restore cache prepare-gemmini-config install
+        uses: actions/cache@v2
+        with:
+          path: |
+            ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
+            ${{ steps.get-paths.outputs.LOCAL_VERILATOR_DIR }}
+            ${{ steps.get-paths.outputs.LOCAL_ESP_DIR }}
+          key: prepare-gemmini-config-${{ github.ref }}-${{ github.sha }}
+
+      - name: run-tests
+        run: .github/scripts/run-tests-rtl.sh

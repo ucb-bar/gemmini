@@ -14,6 +14,9 @@ import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
 import Util._
 
+import midas.targetutils.PerfCounter
+import midas.targetutils.SynthesizePrintf
+
 class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val spaddr = UInt(log2Up(spad_rows max acc_rows).W) // TODO use LocalAddr in DMA
@@ -24,6 +27,7 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val status = new MStatus
   val len = UInt(16.W) // TODO magic number
   val repeats = UInt(16.W) // TODO magic number
+  val pixel_repeats = UInt(8.W) // TODO magic number
   val block_stride = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
@@ -48,17 +52,18 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
   val has_acc_bitwidth = Bool()
   val scale = UInt(mvin_scale_t_bits.W)
   val repeats = UInt(16.W) // TODO magic number
+  val pixel_repeats = UInt(16.W) // TODO magic number
+  val len = UInt(16.W) // TODO magic number
   val last = Bool()
   val bytes_read = UInt(8.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
-  override def cloneType: StreamReadResponse.this.type = new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to, mvin_scale_t_bits).asInstanceOf[this.type]
 }
 
 class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
-                   spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean)
+                   spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean, use_firesim_simulation_counters: Boolean)
                   (implicit p: Parameters) extends LazyModule {
-  val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows, use_tlb_register_filter))
+  val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows, use_tlb_register_filter, use_firesim_simulation_counters))
   val node = core.node
 
   lazy val module = new LazyModuleImp(this) {
@@ -69,11 +74,13 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
       val flush = Input(Bool())
+
+      val counter = new CounterEventIO()
     })
 
     val nCmds = (nXacts / meshRows) + 1
 
-    val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits, nCmds))
+    val xactTracker = Module(new XactTracker(nXacts, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, config.mvin_scale_t_bits, nCmds, use_firesim_simulation_counters))
 
     val beatPacker = Module(new BeatMerger(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows, config.mvin_scale_t_bits, nCmds))
 
@@ -83,8 +90,8 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     core.module.io.flush := io.flush
 
     xactTracker.io.alloc <> core.module.io.reserve
-    xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, beatPacker.io.req.fire())
-    xactTracker.io.peek.pop := beatPacker.io.in.fire() && core.module.io.beatData.bits.last
+    xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, beatPacker.io.req.fire)
+    xactTracker.io.peek.pop := beatPacker.io.in.fire && core.module.io.beatData.bits.last
 
     core.module.io.beatData.ready := beatPacker.io.in.ready
     beatPacker.io.req.valid := core.module.io.beatData.valid
@@ -101,11 +108,16 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.is_acc := beatPacker.io.out.bits.is_acc
     io.resp.bits.accumulate := beatPacker.io.out.bits.accumulate
     io.resp.bits.has_acc_bitwidth := beatPacker.io.out.bits.has_acc_bitwidth
-    io.resp.bits.scale := RegEnable(xactTracker.io.peek.entry.scale, beatPacker.io.req.fire())
-    io.resp.bits.repeats := RegEnable(xactTracker.io.peek.entry.repeats, beatPacker.io.req.fire())
-    io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire())
-    io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire())
+    io.resp.bits.scale := RegEnable(xactTracker.io.peek.entry.scale, beatPacker.io.req.fire)
+    io.resp.bits.repeats := RegEnable(xactTracker.io.peek.entry.repeats, beatPacker.io.req.fire)
+    io.resp.bits.pixel_repeats := RegEnable(xactTracker.io.peek.entry.pixel_repeats, beatPacker.io.req.fire)
+    io.resp.bits.len := RegEnable(xactTracker.io.peek.entry.len, beatPacker.io.req.fire)
+    io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire)
+    io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire)
     io.resp.bits.last := beatPacker.io.out.bits.last
+
+    io.counter.collect(core.module.io.counter)
+    io.counter.collect(xactTracker.io.counter)
   }
 }
 
@@ -119,7 +131,8 @@ class StreamReadBeat (val nXacts: Int, val beatBits: Int, val maxReqBytes: Int) 
 // TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
 class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int,
                                   spadWidth: Int, accWidth: Int, aligned_to: Int,
-                                  spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean)
+                                  spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean,
+                                  use_firesim_simulation_counters: Boolean)
                                  (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-reader", sourceId = IdRange(0, nXacts))
@@ -143,6 +156,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits, maxBytes))
       val tlb = new FrontendTLBIO
       val flush = Input(Bool())
+      val counter = new CounterEventIO()
     })
 
     val s_idle :: s_req_new_block :: Nil = Enum(2)
@@ -395,6 +409,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.reserve.entry.has_acc_bitwidth := req.has_acc_bitwidth
     io.reserve.entry.scale := req.scale
     io.reserve.entry.repeats := req.repeats
+    io.reserve.entry.pixel_repeats := req.pixel_repeats
+    io.reserve.entry.len := req.len
     io.reserve.entry.block_stride := req.block_stride
     io.reserve.entry.lg_len_req := DontCare // TODO just remove this from the IO completely
     io.reserve.entry.bytes_to_read := read_bytes_read
@@ -408,7 +424,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         if (bytesRequested.getWidth >= log2Up(spadWidthBytes+1)) bytesRequested / spadWidthBytes.U else 0.U)
     io.reserve.entry.spad_row_offset := Mux(req.has_acc_bitwidth, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
 
-    when (untranslated_a.fire()) {
+    when (untranslated_a.fire) {
       val next_vaddr = req.vaddr + read_bytes_read // send_size
       val new_page = next_vaddr(pgIdxBits-1, 0) === 0.U
       req.vaddr := next_vaddr
@@ -433,13 +449,40 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     // TODO the size data is already returned from TileLink, so there's no need for us to store it in the XactTracker ourselves
 
     // Accepting requests to kick-start the state machine
-    when (io.req.fire()) {
+    when (io.req.fire) {
       req := io.req.bits
       bytesRequested := 0.U
 
       state := s_req_new_block
 
       kick_start := true.B
+    }
+
+    // Performance counter
+    CounterEventIO.init(io.counter)
+    io.counter.connectEventSignal(CounterEvent.RDMA_ACTIVE_CYCLE, state =/= s_idle)
+    io.counter.connectEventSignal(CounterEvent.RDMA_TLB_WAIT_CYCLES, io.tlb.resp.miss)
+    io.counter.connectEventSignal(CounterEvent.RDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
+
+    // External counters
+    val total_bytes_read = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
+    when (io.counter.external_reset) {
+      total_bytes_read := 0.U
+    }.elsewhen (tl.d.fire) {
+      total_bytes_read := total_bytes_read + (1.U << tl.d.bits.size)
+    }
+
+    io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, total_bytes_read)
+
+    if (use_firesim_simulation_counters) {
+      PerfCounter(state =/= s_idle, "rdma_active_cycles", "cycles during which the read dma is active")
+      PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "rdma_tlb_wait_cycles", "cycles during which the read dma is stalling as it waits for a TLB response")
+      PerfCounter(tl.a.valid && !tl.a.ready, "rdma_tl_wait_cycles", "cycles during which the read dma is stalling as it waits for the TileLink port to be available")
+
+      val cntr = Counter(500000)
+      when (cntr.inc()) {
+        printf(SynthesizePrintf("RDMA bytes rec: %d\n", total_bytes_read))
+      }
     }
   }
 }
@@ -457,7 +500,8 @@ class StreamWriteRequest(val dataWidth: Int, val maxBytes: Int)(implicit p: Para
 }
 
 class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int,
-                                          inputType: T, block_cols: Int, use_tlb_register_filter: Boolean)
+                                          inputType: T, block_cols: Int, use_tlb_register_filter: Boolean,
+                                          use_firesim_simulation_counters: Boolean)
                   (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-writer", sourceId = IdRange(0, nXacts))
@@ -480,6 +524,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
       val flush = Input(Bool())
+      val counter = new CounterEventIO()
     })
 
     val (s_idle :: s_writing_new_block :: s_writing_beats :: Nil) = Enum(3)
@@ -501,7 +546,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     val xactBusy_fire = WireInit(false.B)
     val xactBusy_add = Mux(xactBusy_fire, (1.U << xactId).asUInt(), 0.U)
-    val xactBusy_remove = ~Mux(tl.d.fire(), (1.U << tl.d.bits.source).asUInt(), 0.U)
+    val xactBusy_remove = ~Mux(tl.d.fire, (1.U << tl.d.bits.source).asUInt(), 0.U)
     xactBusy := (xactBusy | xactBusy_add) & xactBusy_remove.asUInt()
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
@@ -613,7 +658,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
-    xactBusy_fire := untranslated_a.fire() && state === s_writing_new_block
+    xactBusy_fire := untranslated_a.fire && state === s_writing_new_block
     untranslated_a.valid := (state === s_writing_new_block || state === s_writing_beats) && !xactBusy.andR()
     untranslated_a.bits.tl_a := Mux(write_full, putFull, putPartial)
     untranslated_a.bits.vaddr := write_vaddr
@@ -632,7 +677,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val tlb_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
     tlb_q.io.enq <> tlb_arb.io.out
 
-    io.tlb.req.valid := tlb_q.io.deq.fire()
+    io.tlb.req.valid := tlb_q.io.deq.fire
     io.tlb.req.bits.tlb_req.vaddr := tlb_q.io.deq.bits.vaddr
     io.tlb.req.bits.tlb_req.passthrough := false.B
     io.tlb.req.bits.tlb_req.size := 0.U // send_size
@@ -654,11 +699,11 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits := translate_q.io.deq.bits.tl_a
-    tl.a.bits.address := RegEnableThru(io.tlb.resp.paddr, RegNext(io.tlb.req.fire()))
+    tl.a.bits.address := RegEnableThru(io.tlb.resp.paddr, RegNext(io.tlb.req.fire))
 
     tl.d.ready := xactBusy.orR()
 
-    when (untranslated_a.fire()) {
+    when (untranslated_a.fire) {
       when (state === s_writing_new_block) {
         beatsLeft := write_beats - 1.U
 
@@ -695,7 +740,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
 
     // Accepting requests to kick-start the state machine
-    when (io.req.fire()) {
+    when (io.req.fire) {
       val pooled = {
         val cols = dataWidth / inputType.getWidth
         val v1 = io.req.bits.data.asTypeOf(Vec(cols, inputType))
@@ -717,5 +762,40 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       assert(io.req.bits.len <= (block_cols * inputType.getWidth / 8).U || io.req.bits.block === 0.U, "DMA can't write multiple blocks to main memory when writing full accumulator output")
       assert(!io.req.bits.pool_en || io.req.bits.block === 0.U, "Can't pool with block-mvout")
     }
- }
+
+    // Performance counter
+    CounterEventIO.init(io.counter)
+    io.counter.connectEventSignal(CounterEvent.WDMA_ACTIVE_CYCLE, state =/= s_idle)
+    io.counter.connectEventSignal(CounterEvent.WDMA_TLB_WAIT_CYCLES, io.tlb.resp.miss)
+    io.counter.connectEventSignal(CounterEvent.WDMA_TL_WAIT_CYCLES, tl.a.valid && !tl.a.ready)
+
+    // External counters
+    val total_bytes_sent = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
+    when (tl.d.fire) {
+      total_bytes_sent := total_bytes_sent + (1.U << tl.d.bits.size)
+    }
+
+    val total_latency = RegInit(0.U(CounterExternal.EXTERNAL_WIDTH.W))
+    total_latency := total_latency + PopCount(xactBusy)
+
+    when (io.counter.external_reset) {
+      total_bytes_sent := 0.U
+      total_latency := 0.U
+    }
+
+    io.counter.connectExternalCounter(CounterExternal.WDMA_BYTES_SENT, total_bytes_sent)
+    io.counter.connectExternalCounter(CounterExternal.WDMA_TOTAL_LATENCY, total_latency)
+
+    if (use_firesim_simulation_counters) {
+      PerfCounter(state =/= s_idle, "wdma_active_cycles", "cycles during which write read dma is active")
+      PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "wdma_tlb_wait_cycles", "cycles during which the write dma is stalling as it waits for a TLB response")
+      PerfCounter(tl.a.valid && !tl.a.ready, "wdma_tl_wait_cycles", "cycles during which the write dma is stalling as it waits for the TileLink port to be available")
+
+      val cntr = Counter(500000)
+      when(cntr.inc()) {
+        printf(SynthesizePrintf("WDMA bytes sent: %d\n", total_bytes_sent))
+        printf(SynthesizePrintf("WDMA total latency: %d\n", total_latency))
+      }
+    }
+  }
 }
