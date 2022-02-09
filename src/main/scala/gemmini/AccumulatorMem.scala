@@ -289,11 +289,6 @@ class AccumulatorMem[T <: Data, U <: Data](
         w_q.foreach(_.valid := false.B)
       }
     }
-  } else /*if (is_dummy)*/ {
-    // This is just like the dual-ported accumulator, except that we never write
-    // anything into the SRAM.
-    mem.io.raddr := Mux(io.write.fire && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
-    mem.io.ren := io.read.req.fire || (io.write.fire && io.write.bits.acc)
   }
 
   val q = Module(new Queue(new AccumulatorReadResp(t, scale_t, log2Ceil(t.head.head.getWidth)),  1, true, true))
