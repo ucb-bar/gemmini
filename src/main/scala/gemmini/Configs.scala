@@ -182,9 +182,9 @@ object GemminiConfigs {
     has_training_convs = defaultConfig.has_training_convs,
     has_max_pool = defaultConfig.has_max_pool,
     has_nonlinear_activations = defaultConfig.has_nonlinear_activations,
-    reservation_station_entries_ld = defaultConfig.reservation_station_entries_ld
-    reservation_station_entries_st = defaultConfig.reservation_station_entries_st
-    reservation_station_entries_ex = defaultConfig.reservation_station_entries_ex
+    reservation_station_entries_ld = defaultConfig.reservation_station_entries_ld,
+    reservation_station_entries_st = defaultConfig.reservation_station_entries_st,
+    reservation_station_entries_ex = defaultConfig.reservation_station_entries_ex,
     ld_queue_length = defaultConfig.ld_queue_length,
     st_queue_length = defaultConfig.st_queue_length,
     ex_queue_length = defaultConfig.ex_queue_length,
