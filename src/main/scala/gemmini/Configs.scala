@@ -36,17 +36,17 @@ object GemminiConfigs {
     acc_banks = 2,
     acc_singleported = false,
     num_acc_sub_banks = -1,
-    sp_capacity = CapacityInKilobytes(256),
+    sp_capacity = CapacityInKilobytes(64),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     dataflow = Dataflow.BOTH,
-    acc_capacity = CapacityInKilobytes(64),
+    acc_capacity = CapacityInKilobytes(32),
     mem_pipeline = 4,
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
     tlb_size = 4,
     use_tlb_register_filter = true,
-    max_in_flight_reqs = 16,
+    max_in_flight_reqs = 64,
     use_dedicated_tl_port = false,
 
     inputType = SInt(8.W),
@@ -174,6 +174,17 @@ class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     (p: Parameters) => {
       implicit val q = p
       val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
+
+class GemminiConfigAcc64 extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(GemminiConfigs.defaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64))))
       gemmini
     }
   )

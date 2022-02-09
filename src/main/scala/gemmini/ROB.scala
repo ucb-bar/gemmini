@@ -250,10 +250,10 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(total_mvin_rows)._2
     }
 
-    val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
+    val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_CALM)
     val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
-    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_EX || config_cmd_type === CONFIG_IM2COL))
-    val is_im2col = funct === CONFIG_CMD && config_cmd_type === CONFIG_IM2COL // im2col commands are a subset of ex commands, so they still go in the ex queue
+    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
+    //val is_im2col = funct === CONFIG_CMD && config_cmd_type === CONFIG_IM2COL // im2col commands are a subset of ex commands, so they still go in the ex queue
 
     new_entry.q := Mux1H(Seq(
       is_load -> ldq,
@@ -348,7 +348,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
     }
 
     when (io.alloc.fire()) {
-      when (new_entry.is_config && new_entry.q === exq && !is_im2col) {
+      when (new_entry.is_config && new_entry.q === exq) {
         a_stride := new_entry.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
         c_stride := new_entry.cmd.rs2(63, 48) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
         val set_only_strides = new_entry.cmd.rs1(7) // TODO magic numbers
@@ -444,7 +444,7 @@ class ROB[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConf
   }.elsewhen(io.busy) {
     cycles_since_issue := cycles_since_issue + 1.U
   }
-  assert(cycles_since_issue < PlusArg("gemmini_timeout", 10000), "pipeline stall")
+  assert(cycles_since_issue < PlusArg("gemmini_timeout", 300000), "pipeline stall")
 
   for (e <- entries) {
     dontTouch(e.bits.allocated_at)

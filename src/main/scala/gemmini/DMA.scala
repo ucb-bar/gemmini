@@ -27,6 +27,14 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val block_stride = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
+  // for conflict monitoring
+  val monitor_conflict = Bool()
+  val high_priority = Bool()
+  val calm_reset = Bool() // reset counter
+
+  val window = UInt(16.W)
+  val target_load = UInt(16.W)
+
   override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
 }
 
@@ -147,7 +155,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val bytesLeft = Mux(req.has_acc_bitwidth, req.len * (config.accType.getWidth / 8).U, req.len * (config.inputType.getWidth / 8).U) - bytesRequested
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
-    io.req.ready := state_machine_ready_for_req
+
+    val bubble = RegInit(false.B)
+    io.req.ready := state_machine_ready_for_req && !bubble
 
     // Select the size and mask of the TileLink request
     class Packet extends Bundle {
@@ -225,13 +235,158 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     translate_q.io.enq <> tlb_q.io.deq
     translate_q.io.deq.ready := true.B
 
+    //retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready)
+    //retry_a.bits := translate_q.io.deq.bits
+    //assert(retry_a.ready)
+
+    //tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
+    //tl.a.bits := translate_q.io.deq.bits.tl_a
+    //tl.a.bits.address := io.tlb.resp.paddr
+
+    /////////////////////////////////////////////////////////////////////////////////////////
+    // for contention
+    val kick_start = RegInit(false.B)
+    val monitor_enable = req.monitor_conflict && kick_start
+    dontTouch(monitor_enable)
+    dontTouch(kick_start)
+
+    val inner_load_counter = RegInit(0.S(25.W)) // counts load resp current time window
+    val outer_load_counter = RegInit(0.S(25.W)) // piles up number of overflowing load (after it piles up till window, it pauses whole window and flushes it out)
+    //val conflict_detected = RegInit(false.B)
+    //val pause_turn = RegInit(io.pause_turn)
     retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready)
     retry_a.bits := translate_q.io.deq.bits
     assert(retry_a.ready)
 
-    tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
-    tl.a.bits := translate_q.io.deq.bits.tl_a
+    val tl_miss = tl.a.valid && !tl.a.ready
+
+    //val high_priority = RegInit(req.high_priority)
+    val window = RegInit(req.window)
+    val baseline_load = RegInit((req.target_load).zext())
+
+    val tl_miss_counter = RegInit(0.U(16.W))
+    val tl_fire_counter = RegInit(0.U(16.W))
+    val window_counter = RegInit(0.U(16.W))
+
+
+    // pause monitoring detecting logic
+    val (s_reset :: s_load_monitor_start :: s_conflict_monitor_start :: s_detected  :: Nil) = Enum(4)
+    val m_state = RegInit(s_reset)
+
+    //PerfCounter(bubble, "bubble_injected", "bubble gets triggered and injected")
+    val req_size = ((1.U << tl.a.bits.size) >> 4.U).asUInt()
+    dontTouch(req_size)
+    //val bubble_cycles = Mux(high_priority, window/2.U, Mux(baseline_load =/= 0.S, baseline_load.asUInt(), window)) // encode cycles to inject bubble to baseline_load, if not inject window/2
+    val bubble_cycles = window / 2.U
+    //PerfCounter(tl.a.valid && !tl.a.ready, "reader_blocked_on_tilelink_port", "how many cycles was the reader ready to make a TL request but TL wasn't ready")
+    //PerfCounter(tl.a.fire(), "reader_tl_req_cnt", "number of tilelink requests made in reader")
+    val bubble_insert_cycles = RegInit(bubble_cycles)
+    when(m_state === s_reset){
+      tl_fire_counter := 0.U
+      tl_miss_counter := 0.U
+      outer_load_counter := 0.S
+      inner_load_counter := 0.S
+      bubble := false.B
+      when(monitor_enable){
+        m_state := s_load_monitor_start
+        //m_state := Mux(req.high_priority, s_load_monitor_start, s_conflict_monitor_start)
+        window := req.window
+        //high_priority := req.high_priority
+        baseline_load := (req.target_load).zext()
+      }
+    }.elsewhen(m_state === s_load_monitor_start){ // for high priority core
+      window_counter := wrappingAdd(window_counter, 1.U, window) // count cycles
+      bubble := false.B
+      when(tl.a.fire()){
+        inner_load_counter := inner_load_counter + req_size.zext()
+      }
+      // count up how much load is fast
+      when(window_counter === window - 1.U){
+        outer_load_counter := outer_load_counter + (inner_load_counter - baseline_load)
+        inner_load_counter := 0.S
+      }
+      // if the overflow piles up, move to halt
+      when(outer_load_counter * 2.U > baseline_load) {
+        window_counter := 0.U
+        m_state := s_detected
+        bubble := true.B
+        when(outer_load_counter >= baseline_load){
+          bubble_insert_cycles := bubble_cycles + bubble_cycles
+          outer_load_counter := outer_load_counter - baseline_load
+        }.elsewhen(outer_load_counter >= baseline_load / 2.S + baseline_load / 4.S){
+          bubble_insert_cycles := bubble_cycles + bubble_cycles / 2.U
+          outer_load_counter := outer_load_counter - (baseline_load / 2.S + baseline_load / 4.S)
+        }.elsewhen(outer_load_counter >= baseline_load / 2.S + baseline_load / 8.S){
+          bubble_insert_cycles := bubble_cycles + bubble_cycles / 4.U
+          outer_load_counter := outer_load_counter - (baseline_load / 2.S + baseline_load / 8.S)
+        }.otherwise{
+          bubble_insert_cycles := bubble_cycles // just use bubble cycles
+          outer_load_counter := outer_load_counter - baseline_load / 2.S
+        }
+      }
+    }
+      /*
+      .elsewhen(m_state === s_conflict_monitor_start){ // for low priority core
+      window_counter := wrappingAdd(window_counter, 1.U, window)
+      tl_miss_counter := wrappingAdd(tl_miss_counter, 1.U, window, tl_miss)
+      tl_fire_counter := wrappingAdd(tl_fire_counter, req_size, window, tl.a.fire())
+      bubble := false.B
+      when(window_counter === window - 1.U){
+        when(tl_miss_counter > tl_fire_counter){//} - tl_fire_counter / 8.U){
+          m_state := s_detected
+          bubble := true.B
+          bubble_insert_cycles := bubble_cycles
+        }.otherwise{
+          tl_miss_counter := 0.U
+          tl_fire_counter := 0.U
+        }
+        window_counter := 0.U
+      }
+    }
+    */
+      .otherwise{ // need to make DMA idle for window frame
+      window_counter := wrappingAdd(window_counter, 1.U, bubble_insert_cycles)
+      bubble := true.B
+      tl_fire_counter := 0.U
+      tl_miss_counter := 0.U
+      //      outer_load_counter := 0.S
+      inner_load_counter := 0.S
+      when(window_counter === bubble_insert_cycles - 1.U){
+        bubble := false.B
+        window_counter := 0.U
+        m_state := s_load_monitor_start
+        //m_state := Mux(req.high_priority, s_load_monitor_start, s_conflict_monitor_start)
+      }
+    }
+
+    when(req.calm_reset){
+      m_state := s_reset
+      bubble := false.B
+    }
+
+
+    tl.a.valid   := translate_q.io.deq.valid && !io.tlb.resp.miss
+    tl.a.bits   := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := io.tlb.resp.paddr
+
+    /*
+    val cycles = freechips.rocketchip.util.WideCounter(32)
+    when(tl.a.fire()){
+      printf("GEMMINI_MEM_REQ %x %x %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size)
+      //printf(midas.targetutils.SynthesizePrintf("GEMMINI_MEM: %x %x %x\n", p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size))
+    }
+    when(tl_miss){
+      printf("GEMMINI_BLOCK %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U)
+      //printf(midas.targetutils.SynthesizePrintf("GEMMINI_BLOCK: %x %x \n", p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address))
+
+    }
+    when(tl.d.fire()){
+      printf("GEMMINI_MEM_RESP %x %x %x\n", cycles.value, p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.size)
+      //printf(midas.targetutils.SynthesizePrintf("GEMMINI_MEM: %x %x %x\n", p(freechips.rocketchip.tile.TileKey).hartId.U, tl.a.bits.address, tl.a.bits.size))
+    }
+*/
+    /////////////////////////////////////////////////////////////////////////////////////////
+
 
     io.reserve.valid := state === s_req_new_block && untranslated_a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
@@ -283,6 +438,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       bytesRequested := 0.U
 
       state := s_req_new_block
+
+      kick_start := true.B
     }
   }
 }

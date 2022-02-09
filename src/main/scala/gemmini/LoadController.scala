@@ -36,12 +36,23 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val cmd = Queue(io.cmd, ld_queue_length)
   val vaddr = cmd.bits.cmd.rs1
   val localaddr = cmd.bits.cmd.rs2.asTypeOf(local_addr_t)
-  val cols = cmd.bits.cmd.rs2(32 + mvin_cols_bits - 1, 32) // TODO magic numbers
-  val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits - 1, 48) // TODO magic numbers
+  //val cols = cmd.bits.cmd.rs2(32 + mvin_cols_bits - 1, 32) // TODO magic numbers
+  val cols = cmd.bits.cmd.rs2(44, 32)
+  //val rows = cmd.bits.cmd.rs2(48 + mvin_rows_bits - 1, 48) // TODO magic numbers
+  val rows = cmd.bits.cmd.rs2(60, 48) // TODO magic numbers
   val config_stride = cmd.bits.cmd.rs2
   val config_scale = cmd.bits.cmd.rs1(32 + mvin_scale_t_bits - 1, 32) // TODO magic numbers
   val config_shrink = cmd.bits.cmd.rs1(2) // TODO magic numbers
   val config_block_stride = cmd.bits.cmd.rs1(31, 16) // TODO magic numbers
+
+  val config_monitor_window = cmd.bits.cmd.rs2(31, 16)
+  val config_baseline_load = cmd.bits.cmd.rs2(15, 0)
+  val config_high_priority = cmd.bits.cmd.rs2(63)
+  val monitor_window = RegInit(0.U(16.W))
+  val baseline_load = RegInit(0.U(16.W))
+  val high_priority = RegInit(false.B)
+  val calm_reset = RegInit(false.B)
+  val monitor_conflict = monitor_window =/= 0.U
 
   val mstatus = cmd.bits.cmd.status
 
@@ -63,6 +74,9 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoLoad = !DoConfig // TODO change this if more commands are added
+
+  val CALM_Config = cmd.bits.cmd.rs1(1, 0) === CONFIG_CALM && DoConfig
+  dontTouch(CALM_Config)
 
   cmd.ready := false.B
 
@@ -94,6 +108,12 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
   io.dma.req.bits.all_zeros := all_zeros
   io.dma.req.bits.status := mstatus
+  // for CALM setup
+  io.dma.req.bits.monitor_conflict := monitor_conflict
+  io.dma.req.bits.high_priority := high_priority
+  io.dma.req.bits.target_load := baseline_load
+  io.dma.req.bits.window := monitor_window
+  io.dma.req.bits.calm_reset := calm_reset
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
@@ -127,15 +147,24 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
       when (cmd.valid) {
         // when(DoConfig && !cmd_tracker.io.cmd_completed.valid) {
         when(DoConfig) {
-          stride := config_stride
-          scale := config_scale
-          shrink := config_shrink
-          block_stride := config_block_stride
-          cmd.ready := true.B
+          when(CALM_Config){
+            monitor_window := config_monitor_window
+            baseline_load := config_baseline_load
+            high_priority := config_high_priority
+            calm_reset := true.B
+            cmd.ready := true.B
+          }.otherwise{
+            stride := config_stride
+            scale := config_scale
+            shrink := config_shrink
+            block_stride := config_block_stride
+            cmd.ready := true.B
+          }
         }
 
         .elsewhen(DoLoad && cmd_tracker.io.alloc.fire()) {
           control_state := Mux(io.dma.req.fire(), sending_rows, waiting_for_dma_req_ready)
+          calm_reset := false.B
         }
       }
     }
