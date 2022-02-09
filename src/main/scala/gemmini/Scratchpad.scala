@@ -90,7 +90,7 @@ class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundl
   val data = Output(UInt(w.W))
 }
 
-class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean) extends Module {
+class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean, is_dummy: Boolean) extends Module {
   // This is essentially a pipelined SRAM with the ability to stall pipeline stages
 
   require(w % aligned_to == 0 || w < aligned_to)
@@ -103,7 +103,11 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     val ext_mem = if (use_shared_ext_mem) Some(new ExtMemIO) else None
   })
 
-  val (read, write) = if (use_shared_ext_mem) {
+  val (read, write) = if (is_dummy) {
+    def read(addr: UInt, ren: Bool): Data = 0.U
+    def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]): Unit = { }
+    (read _, write _)
+  } else if (use_shared_ext_mem) {
     def read(addr: UInt, ren: Bool): Data = {
       io.ext_mem.get.read_en := ren
       io.ext_mem.get.read_addr := addr
@@ -427,7 +431,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(
         sp_bank_entries, spad_w,
         aligned_to, config.sp_singleported,
-        use_shared_ext_mem
+        use_shared_ext_mem, is_dummy
       )) }
       val bank_ios = VecInit(banks.map(_.io))
       // Reading from the SRAM banks
@@ -582,7 +586,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         acc_bank_entries, acc_row_t, acc_scale_func, acc_scale_t.asInstanceOf[V],
         acc_singleported, acc_sub_banks,
         use_shared_ext_mem,
-        acc_latency, accType,
+        acc_latency, accType, is_dummy
       )) }
       val bank_ios = VecInit(banks.map(_.io))
 
