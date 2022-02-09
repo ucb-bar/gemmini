@@ -182,8 +182,9 @@ object GemminiConfigs {
     has_training_convs = defaultConfig.has_training_convs,
     has_max_pool = defaultConfig.has_max_pool,
     has_nonlinear_activations = defaultConfig.has_nonlinear_activations,
-    reservation_station_full_entries = defaultConfig.reservation_station_full_entries,
-    reservation_station_partial_entries = defaultConfig.reservation_station_partial_entries,
+    reservation_station_entries_ld = defaultConfig.reservation_station_entries_ld
+    reservation_station_entries_st = defaultConfig.reservation_station_entries_st
+    reservation_station_entries_ex = defaultConfig.reservation_station_entries_ex
     ld_queue_length = defaultConfig.ld_queue_length,
     st_queue_length = defaultConfig.st_queue_length,
     ex_queue_length = defaultConfig.ex_queue_length,
@@ -219,7 +220,6 @@ object GemminiConfigs {
     ex_write_to_spad = defaultConfig.ex_write_to_spad,
     ex_write_to_acc = defaultConfig.ex_write_to_acc,
   )
-
 
   val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
     acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=4)),
