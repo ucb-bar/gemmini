@@ -94,6 +94,7 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
     data := ~(0.U(maxAddrBits.W))
   }
 
+  override def cloneType: LocalAddr.this.type = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries).asInstanceOf[this.type]
 }
 
 object LocalAddr {

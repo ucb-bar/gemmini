@@ -187,7 +187,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   // Sending outputs
   when (skip) {
     state := idle
-  }.elsewhen(command_p.io.in.fire) {
+  }.elsewhen(command_p.io.in.fire()) {
     when (state === config) {
       state := ld
     }.otherwise {
@@ -207,7 +207,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   }
 
   // Accepting requests
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req := io.req.bits
     state := config
     b := 0.U
@@ -361,7 +361,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   }
 
   // Sending outputs
-  when(command_p.io.in.fire) {
+  when(command_p.io.in.fire()) {
     when (state === config) {
       state := ld
     }.otherwise {
@@ -387,7 +387,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   }
 
   // Accepting requests
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req := io.req.bits
     state := config
     b := 0.S
@@ -536,7 +536,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   }
 
   // Sending outputs
-  when(command_p.io.in.fire) {
+  when(command_p.io.in.fire()) {
     when (state === config) {
       state := ld
     }.otherwise {
@@ -559,7 +559,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   }
 
   // Accepting requests
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req := io.req.bits
     state := config
     kch := 0.U
@@ -768,12 +768,12 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   }
 
   // Updating "new_weights"
-  when (state === comp && command_p.io.in.fire) {
+  when (state === comp && command_p.io.in.fire()) {
     new_weights := false.B
   }
 
   // Sending outputs
-  when (command_p.io.in.fire || skip_iteration) {
+  when (command_p.io.in.fire() || skip_iteration) {
     when (state === config) {
       state := pre
     }.elsewhen (state === pre) {
@@ -813,7 +813,7 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   }
 
   // Accepting requests
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req := io.req.bits
     state := Mux(io.req.bits.trans_input_3120, config, pre)
 
@@ -1009,7 +1009,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   // Sending outputs
   when (skip) {
     state := idle
-  }.elsewhen(command_p.io.in.fire) {
+  }.elsewhen(command_p.io.in.fire()) {
     when (req.no_pool) {
       val next_och = floorAdd(och, block_size.U, ochs)
       val next_ocol = floorAdd(ocol, block_size.U, ocols, next_och === 0.U)
@@ -1040,7 +1040,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   }
 
   // Accepting requests
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req := io.req.bits
     state := Mux(io.req.bits.no_pool, st, pre_pool_config)
 
@@ -1375,7 +1375,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
 
   ld_bias.io.req.valid := !loop_requesting_ld_bias.ld_bias_started && loop_requesting_ld_bias.configured
 
-  when (ld_bias.io.req.fire) {
+  when (ld_bias.io.req.fire()) {
     loop_requesting_ld_bias.running := true.B
     loop_requesting_ld_bias.ld_bias_started := true.B
 
@@ -1400,7 +1400,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
 
   ld_input.io.req.valid := !loop_requesting_ld_input.ld_input_started && loop_requesting_ld_input.configured
 
-  when (ld_input.io.req.fire) {
+  when (ld_input.io.req.fire()) {
     loop_requesting_ld_input.running := true.B
     loop_requesting_ld_input.ld_input_started := true.B
   }
@@ -1418,7 +1418,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
 
   ld_weights.io.req.valid := !loop_requesting_ld_weights.ld_weights_started && loop_requesting_ld_weights.configured
 
-  when (ld_weights.io.req.fire) {
+  when (ld_weights.io.req.fire()) {
     loop_requesting_ld_weights.running := true.B
     loop_requesting_ld_weights.ld_weights_started := true.B
   }
@@ -1442,7 +1442,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   ex.io.req.valid := !loop_requesting_ex.ex_started && loop_requesting_ex.ld_bias_started &&
     loop_requesting_ex.ld_input_started && loop_requesting_ex.ld_weights_started && loop_requesting_ex.configured
 
-  when (ex.io.req.fire) {
+  when (ex.io.req.fire()) {
     loop_requesting_ex.running := true.B
     loop_requesting_ex.ex_started := true.B
 
@@ -1465,7 +1465,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
 
   st.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started && loop_requesting_st.configured
 
-  when (st.io.req.fire) {
+  when (st.io.req.fire()) {
     loop_requesting_st.running := true.B
     loop_requesting_st.st_started := true.B
 

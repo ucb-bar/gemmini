@@ -19,8 +19,8 @@ class PipelinedTransposer[T <: Data](val dim: Int, val dataType: T) extends Tran
   val regArrayT = regArray.transpose
   val sMoveUp :: sMoveLeft :: Nil = Enum(2)
   val state = RegInit(sMoveUp)
-  val leftCounter = RegInit(0.U(log2Ceil(dim+1).W)) //(io.inRow.fire && state === sMoveLeft, dim+1)
-  val upCounter = RegInit(0.U(log2Ceil(dim+1).W)) //Counter(io.inRow.fire && state === sMoveUp, dim+1)
+  val leftCounter = RegInit(0.U(log2Ceil(dim+1).W)) //(io.inRow.fire() && state === sMoveLeft, dim+1)
+  val upCounter = RegInit(0.U(log2Ceil(dim+1).W)) //Counter(io.inRow.fire() && state === sMoveUp, dim+1)
 
   io.outCol.valid := 0.U
   io.inRow.ready := 0.U
@@ -28,14 +28,14 @@ class PipelinedTransposer[T <: Data](val dim: Int, val dataType: T) extends Tran
     is(sMoveUp) {
       io.inRow.ready := upCounter <= dim.U
       io.outCol.valid := leftCounter > 0.U
-      when(io.inRow.fire) {
+      when(io.inRow.fire()) {
         upCounter := upCounter + 1.U
       }
       when(upCounter === (dim-1).U) {
         state := sMoveLeft
         leftCounter := 0.U
       }
-      when(io.outCol.fire) {
+      when(io.outCol.fire()) {
         leftCounter := leftCounter - 1.U
       }
     }
@@ -45,11 +45,11 @@ class PipelinedTransposer[T <: Data](val dim: Int, val dataType: T) extends Tran
       when(leftCounter === (dim-1).U) {
         state := sMoveUp
       }
-      when(io.inRow.fire) {
+      when(io.inRow.fire()) {
         leftCounter := leftCounter + 1.U
         upCounter := 0.U
       }
-      when(io.outCol.fire) {
+      when(io.outCol.fire()) {
         upCounter := upCounter - 1.U
       }
     }
@@ -131,7 +131,7 @@ class AlwaysOutTransposer[T <: Data](val dim: Int, val dataType: T) extends Tran
 
   // Wire up global signals
   pes.flatten.foreach(_.io.dir := dir)
-  pes.flatten.foreach(_.io.en := io.inRow.fire)
+  pes.flatten.foreach(_.io.en := io.inRow.fire())
 
   io.outCol.valid := true.B
   io.inRow.ready := true.B
@@ -141,11 +141,11 @@ class AlwaysOutTransposer[T <: Data](val dim: Int, val dataType: T) extends Tran
 
   io.outCol.bits := Mux(dir === LEFT_DIR, left_out, up_out)
 
-  when (io.inRow.fire) {
+  when (io.inRow.fire()) {
     counter := wrappingAdd(counter, 1.U, dim)
   }
 
-  when (counter === (dim-1).U && io.inRow.fire) {
+  when (counter === (dim-1).U && io.inRow.fire()) {
     dir := ~dir
   }
 }
@@ -155,7 +155,7 @@ class NaiveTransposer[T <: Data](val dim: Int, val dataType: T) extends Transpos
   val regArrayT = regArray.transpose
   // state = 0 => filling regArray row-wise, state = 1 => draining regArray column-wise
   val state = RegInit(0.U(1.W))
-  val countInc = io.inRow.fire || io.outCol.fire
+  val countInc = io.inRow.fire() || io.outCol.fire()
   val (countValue, countWrap) = Counter(countInc, dim)
 
   io.inRow.ready := state === 0.U
@@ -163,7 +163,7 @@ class NaiveTransposer[T <: Data](val dim: Int, val dataType: T) extends Transpos
 
   for (i <- 0 until dim) {
     for (j <- 0 until dim) {
-      when(countValue === i.U && io.inRow.fire) {
+      when(countValue === i.U && io.inRow.fire()) {
         regArray(i)(j) := io.inRow.bits(j)
       }
     }
@@ -178,13 +178,13 @@ class NaiveTransposer[T <: Data](val dim: Int, val dataType: T) extends Transpos
     }
   }
 
-  when (io.inRow.fire && countWrap) {
+  when (io.inRow.fire() && countWrap) {
     state := 1.U
   }
-  when (io.outCol.fire && countWrap) {
+  when (io.outCol.fire() && countWrap) {
     state := 0.U
   }
 
-  assert(!(state === 0.U) || !io.outCol.fire)
-  assert(!(state === 1.U) || !io.inRow.fire)
+  assert(!(state === 0.U) || !io.outCol.fire())
+  assert(!(state === 1.U) || !io.inRow.fire())
 }

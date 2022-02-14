@@ -26,6 +26,8 @@ class TilerCmd(OTYPE_BITS_IDX: Int)
   val repeating_bias = Bool()
   val status         = new MStatus
 
+  override def cloneType: this.type =
+    (new TilerCmd(OTYPE_BITS_IDX)).asInstanceOf[this.type]
 }
 
 

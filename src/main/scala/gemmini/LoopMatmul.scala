@@ -90,7 +90,7 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   io.loop_id := req.loop_id
 
-  when (io.cmd.fire) {
+  when (io.cmd.fire()) {
     // The order here is k, j, i
     val i_blocks = Mux(req.transpose, max_blocks, 1.U)
     val k_blocks = Mux(req.transpose, 1.U, max_blocks)
@@ -106,7 +106,7 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     }
   }
 
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req := io.req.bits
     state := ld
     i := 0.U
@@ -198,7 +198,7 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   io.loop_id := req.loop_id
 
-  when (io.cmd.fire) {
+  when (io.cmd.fire()) {
     // The order here is k, j, i
     val j_blocks = Mux(req.transpose, 1.U, max_blocks)
     val k_blocks = Mux(req.transpose, max_blocks, 1.U)
@@ -214,7 +214,7 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     }
   }
 
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req := io.req.bits
     state := ld
     j := 0.U
@@ -296,7 +296,7 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   when (req.dram_addr === 0.U) {
     state := idle
-  }.elsewhen (io.cmd.fire) {
+  }.elsewhen (io.cmd.fire()) {
     // The order here is k, j, i
     val next_i = floorAdd(i, 1.U, req.max_i)
     val next_j = floorAdd(j, max_blocks, req.max_j, next_i === 0.U)
@@ -309,7 +309,7 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     }
   }
 
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req := io.req.bits
     state := ld
     j := 0.U
@@ -450,7 +450,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
   io.loop_id := req.loop_id
 
-  when (io.cmd.fire) {
+  when (io.cmd.fire()) {
     when (state === pre) {
       state := comp
     }.otherwise {
@@ -466,7 +466,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
     }
   }
 
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req := io.req.bits
     state := pre
     j := 0.U
@@ -566,7 +566,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   when (req.dram_addr === 0.U) {
     state := idle
-  }.elsewhen (io.cmd.fire) {
+  }.elsewhen (io.cmd.fire()) {
     // The order here is k, j, i
     val next_i = floorAdd(i, 1.U, req.max_i)
     val next_j = floorAdd(j, max_blocks, req.max_j, next_i === 0.U)
@@ -579,7 +579,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     }
   }
 
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req := io.req.bits
     state := st
     j := 0.U
@@ -843,7 +843,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
   ldA.io.req.valid := !loop_requesting_ldA.lda_started && loop_requesting_ldA.configured
 
-  when (ldA.io.req.fire) {
+  when (ldA.io.req.fire()) {
     loop_requesting_ldA.running := true.B
     loop_requesting_ldA.lda_started := true.B
   }
@@ -862,7 +862,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
   ldB.io.req.valid := !loop_requesting_ldB.ldb_started && loop_requesting_ldB.configured
 
-  when (ldB.io.req.fire) {
+  when (ldB.io.req.fire()) {
     loop_requesting_ldB.running := true.B
     loop_requesting_ldB.ldb_started := true.B
   }
@@ -886,7 +886,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ex.io.req.valid := !loop_requesting_ex.ex_started && loop_requesting_ex.lda_started &&
     loop_requesting_ex.ldb_started && loop_requesting_ex.ldd_started && loop_requesting_ex.configured
 
-  when (ex.io.req.fire) {
+  when (ex.io.req.fire()) {
     loop_requesting_ex.running := true.B
     loop_requesting_ex.ex_started := true.B
 
@@ -909,7 +909,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
   ldD.io.req.valid := !loop_requesting_ldD.ldd_started && loop_requesting_ldD.configured
 
-  when (ldD.io.req.fire) {
+  when (ldD.io.req.fire()) {
     loop_requesting_ldD.running := true.B
     loop_requesting_ldD.ldd_started := true.B
 
@@ -933,7 +933,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
   stC.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started && loop_requesting_st.configured
 
-  when (stC.io.req.fire) {
+  when (stC.io.req.fire()) {
     loop_requesting_st.running := true.B
     loop_requesting_st.st_started := true.B
 

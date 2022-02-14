@@ -23,6 +23,7 @@ class XactTrackerEntry[U <: Data](maxShift: Int, spadWidth: Int, accWidth: Int,
   val bytes_to_read = UInt(log2Up(maxReqBytes+1).W)
   val cmd_id = UInt(log2Up(nCmds).W)
 
+  override def cloneType: XactTrackerEntry.this.type = new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds).asInstanceOf[this.type]
 }
 
 class XactTrackerAllocIO[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidth :Int,
@@ -35,6 +36,7 @@ class XactTrackerAllocIO[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, 
 
   def fire(dummy: Int = 0) = valid && ready
 
+  override def cloneType: XactTrackerAllocIO.this.type = new XactTrackerAllocIO(nXacts, maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds).asInstanceOf[this.type]
 }
 
 class XactTrackerPeekIO[U <: Data](val nXacts: Int, val maxShift: Int, val spadWidth: Int, val accWidth: Int,
