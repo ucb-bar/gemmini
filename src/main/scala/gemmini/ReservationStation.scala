@@ -20,8 +20,8 @@ class ReservationStationIssue[T <: Data](cmd_t: T, id_width: Int) extends Bundle
   val rob_id = Output(UInt(id_width.W))
 
   def fire(dummy: Int=0) = valid && ready
-  override def cloneType: this.type = new ReservationStationIssue(cmd_t, rob_entries).asInstanceOf[this.type]
-
+  override def cloneType: this.type = new ReservationStationIssue(cmd_t, id_width).asInstanceOf[this.type]
+}
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
 class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: GemminiCmd) extends Module {
@@ -295,7 +295,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_LOAD || config_cmd_type === CONFIG_CALM))
     val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
     val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_EX))
-    val is_im2col = funct === CONFIG_CMD && config_cmd_type === CONFIG_IM2COL // im2col commands are a subset of ex commands, so they still go in the ex queue
+//    val is_im2col = funct === CONFIG_CMD && config_cmd_type === CONFIG_IM2COL // im2col commands are a subset of ex commands, so they still go in the ex queue
 
     new_entry.q := Mux1H(Seq(
       is_load -> ldq,
@@ -449,8 +449,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   // Mark entries as completed once they've returned
-<<<<<<< HEAD
-  when (io.completed.fire) {
+  when (io.completed.fire()) {
     val type_width = log2Up(res_max_per_type)
     val queue_type = io.completed.bits(type_width + 1, type_width)
     val issue_id = io.completed.bits(type_width - 1, 0)

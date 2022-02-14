@@ -279,9 +279,9 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val dram_stride = Mux(req.trans_input_3120, batch_size * (input_w/8).U, ich_stride * (input_w/8).U)
 
   // Addresses
-  val dram_addr = MuxCase(req.dram_addr + LoopConv.castDramOffset((((b * in_dim * in_dim +& irow*in_dim +& icol) * ich_stride +& ich) * (input_w/8).U)).asUInt(), Seq(
+  val dram_addr = MuxCase(req.dram_addr + LoopConv.castDramOffset(((((b * in_dim * in_dim +& irow*in_dim +& icol) * ich_stride +& ich) * (input_w/8).U)).asUInt()).asUInt(), Seq(
     is_zeros -> 0.U,
-    req.trans_input_3120 -> (req.dram_addr + LoopConv.castDramOffset((((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U)).asUInt())
+    req.trans_input_3120 -> (req.dram_addr + LoopConv.castDramOffset(((((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U)).asUInt()).asUInt())
   ))
 
   val spad_addr = Mux(req.trans_input_3120,

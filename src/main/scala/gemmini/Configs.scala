@@ -33,11 +33,11 @@ object GemminiConfigs {
     meshColumns = 16,
 
     // Spatial array PE options
-    dataflow = Dataflow.BOTH,
+    dataflow = Dataflow.WS,
 
     // Scratchpad and accumulator
-    sp_capacity = CapacityInKilobytes(256),
-    acc_capacity = CapacityInKilobytes(64),
+    sp_capacity = CapacityInKilobytes(64),
+    acc_capacity = CapacityInKilobytes(32),
 
     sp_banks = 4,
     acc_banks = 2,
@@ -46,7 +46,7 @@ object GemminiConfigs {
     acc_singleported = false,
 
     // DNN options
-    has_training_convs = true,
+    has_training_convs = false,
     has_max_pool = true,
     has_nonlinear_activations = true,
 
@@ -61,7 +61,7 @@ object GemminiConfigs {
     ex_queue_length = 8,
 
     // DMA options
-    max_in_flight_mem_reqs = 16,
+    max_in_flight_mem_reqs = 64,
 
     dma_maxbytes = 64,
     dma_buswidth = 128,
@@ -152,7 +152,7 @@ object GemminiConfigs {
     )),
 
     // SoC counters options
-    num_counter = 8,
+    num_counter = 0,
 
     // Scratchpad and Accumulator input/output options
     acc_read_full_width = true,
