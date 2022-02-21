@@ -804,8 +804,10 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, rob_full_
      */
 
     val other_exs = exs.filter(_ != ex)
-    val must_wait_for_other_compute = other_exs.map(_.io.must_send_compute).reduce(_ || _)
+    //val must_wait_for_other_compute = other_exs.map(_.io.must_send_compute).reduce(_ || _)
+    val must_wait_for_other_compute = if (other_exs.isEmpty) {false.B} else {other_exs.map(_.io.must_send_compute).reduce(_ || _)}
 
+    //val limits = (1 to ex_total_k_portions).map(i => rob_full_entries / i)
     val limits = if (ex_total_k_portions == 1) { Seq(rob_full_entries) } else { (1 to ex_total_k_portions).map(i => rob_full_entries / i) }
     val limits_uint = VecInit(limits.map(_.U))
     val first_limits = VecInit(limits.map(l => if (ex_fine_grained_interleaving) l.U else (l * 1.5).toInt.U)) // ALON: You can scale the earliest k-portion's limit by any scalar factor (e.g. 1.25) that you would like

@@ -19,6 +19,7 @@ class XactTrackerEntry[U <: Data](maxShift: Int, spadWidth: Int, accWidth: Int,
   val lg_len_req = UInt(log2Up(log2Up(maxReqBytes+1)+1).W)
   val bytes_to_read = UInt(log2Up(maxReqBytes+1).W)
   val cmd_id = UInt(log2Up(nCmds).W)
+  val start_cycle = UInt(64.W)
 
   override def cloneType: XactTrackerEntry.this.type = new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds).asInstanceOf[this.type]
 }
@@ -60,6 +61,8 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
     val busy = Output(Bool())
   })
 
+  val cycles = Reg(UInt(64.W))
+  val xact_latency = Wire(UInt(64.W))
   val entries = Reg(Vec(nXacts, UDValid(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds))))
 
   val free_entry = MuxCase((nXacts-1).U, entries.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
@@ -69,18 +72,24 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
   io.peek.entry := entries(io.peek.xactid).bits
 
   io.busy := entries.map(_.valid).reduce(_ || _)
+  cycles := cycles + 1.U
+  xact_latency := cycles - entries(io.peek.xactid).bits.start_cycle
 
   when (io.alloc.fire()) {
     entries(free_entry).valid := true.B
     entries(free_entry).bits := io.alloc.entry
+    entries(free_entry).bits.start_cycle := cycles
   }
 
   when (io.peek.pop) {
     entries(io.peek.xactid).valid := false.B
     assert(entries(io.peek.xactid).valid)
+    printf(p"[GEMMINI][TL-XACT-LATENCY]: $xact_latency\n")
+    printf(p"[GEMMINI][TL-XACT-CYCLE]: $cycles\n")
   }
 
   when (reset.asBool()) {
     entries.foreach(_.valid := false.B)
+    cycles := 0.U
   }
 }
