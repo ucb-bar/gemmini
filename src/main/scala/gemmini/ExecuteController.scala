@@ -15,7 +15,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   import ev._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new GemminiCmd(rob_entries)))
+    val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
 
     val im2col = new Bundle {
       val req = Decoupled(new Im2ColReadReq(config))
@@ -41,9 +41,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       val write = Vec(acc_banks, Decoupled(new AccumulatorWriteReq(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType)))))
     }
 
-    val completed = Valid(UInt(log2Up(rob_entries).W))
+    val completed = Valid(UInt(log2Up(reservation_station_entries).W))
     val busy = Output(Bool())
-    val solitary_preload = Output(Bool()) // TODO very hacky. for ROB, to prevent infinite fence stalls. remove later
 
     val counter = new CounterEventIO()
   })
@@ -51,7 +50,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val block_size = meshRows*tileRows
 
   val mesh_tag = new Bundle with TagQueueTag {
-    val rob_id = UDValid(UInt(log2Up(rob_entries).W))
+    val rob_id = UDValid(UInt(log2Up(reservation_station_entries).W))
     val addr = local_addr_t.cloneType
     val rows = UInt(log2Up(block_size + 1).W)
     val cols = UInt(log2Up(block_size + 1).W)
@@ -69,8 +68,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // val (cmd, _) = MultiHeadedQueue(io.cmd, ex_queue_length, cmd_q_heads)
   val (cmd, _) = MultiHeadedQueue(unrolled_cmd, ex_queue_length, cmd_q_heads)
   cmd.pop := 0.U
-
-  io.solitary_preload := cmd.valid(0) && cmd.bits(0).cmd.inst.funct === PRELOAD_CMD && !cmd.valid(1)
 
   // STATE defines
   val waiting_for_cmd :: compute :: flush :: flushing :: Nil = Enum(4)
@@ -176,7 +173,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   io.completed.bits := DontCare
 
   // val pending_completed_rob_id = Reg(UDValid(UInt(log2Up(rob_entries).W)))
-  val pending_completed_rob_ids = Reg(Vec(2, UDValid(UInt(log2Up(rob_entries).W))))
+  val pending_completed_rob_ids = Reg(Vec(2, UDValid(UInt(log2Up(reservation_station_entries).W))))
 
   // Instantiate a queue which queues up signals which must be fed into the mesh
   val mesh_cntl_signals_q = Module(new Queue(new ComputeCntlSignals, spad_read_delay+1,
@@ -738,7 +735,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val total_rows = UInt(log2Up(block_size + 1).W)
 
-    val rob_id = UDValid(UInt(log2Up(rob_entries).W))
+    val rob_id = UDValid(UInt(log2Up(reservation_station_entries).W))
 
     val dataflow = UInt(1.W)
     val prop = UInt(1.W)
