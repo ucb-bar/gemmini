@@ -10,6 +10,7 @@ class SinglePortedSyncMemIO[T <: Data](n: Int, t: T) extends Bundle {
   val wen = Input(Bool())
   val ren = Input(Bool())
 
+  override def cloneType = (new SinglePortedSyncMemIO(n, t)).asInstanceOf[this.type]
 }
 
 class SinglePortSyncMem[T <: Data](n: Int, t: T) extends Module {

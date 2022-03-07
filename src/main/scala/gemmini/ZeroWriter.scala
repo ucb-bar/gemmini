@@ -11,6 +11,7 @@ class ZeroWriterReq[Tag <: Data](laddr_t: LocalAddr, max_cols: Int, tag_t: Tag) 
   val block_stride = UInt(16.W) // TODO magic number
   val tag = tag_t
 
+  override def cloneType: ZeroWriterReq.this.type = new ZeroWriterReq(laddr_t.cloneType, max_cols, tag_t.cloneType).asInstanceOf[this.type]
 }
 
 class ZeroWriterResp[Tag <: Data](laddr_t: LocalAddr, block_cols: Int, tag_t: Tag) extends Bundle {
@@ -19,6 +20,7 @@ class ZeroWriterResp[Tag <: Data](laddr_t: LocalAddr, block_cols: Int, tag_t: Ta
   val last = Bool()
   val tag = tag_t
 
+  override def cloneType: ZeroWriterResp.this.type = new ZeroWriterResp(laddr_t, block_cols, tag_t.cloneType).asInstanceOf[this.type]
 }
 
 class ZeroWriter[T <: Data, U <: Data, V <: Data, Tag <: Data](config: GemminiArrayConfig[T, U, V], tag_t: Tag)
@@ -45,7 +47,7 @@ class ZeroWriter[T <: Data, U <: Data, V <: Data, Tag <: Data](config: GemminiAr
   io.resp.bits.last := col_counter +& block_cols.U >= req.bits.cols
   io.resp.bits.tag := req.bits.tag
 
-  when (io.resp.fire) {
+  when (io.resp.fire()) {
     val next_col_counter = floorAdd(col_counter, block_cols.U, req.bits.cols)
 
     col_counter := next_col_counter
@@ -56,7 +58,7 @@ class ZeroWriter[T <: Data, U <: Data, V <: Data, Tag <: Data](config: GemminiAr
     }
   }
 
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req.push(io.req.bits)
 
     col_counter := 0.U

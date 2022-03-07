@@ -156,7 +156,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   cmd_tracker.io.alloc.bits.bytes_to_read := Mux(!pooling_is_enabled, Mux(mvout_1d_enabled, mvout_1d_rows, rows*blocks), pool_total_rows) // TODO do we have to add upad and lpad to this?
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
 
-  cmd_tracker.io.request_returned.valid := io.dma.resp.fire // TODO use a bundle connect
+  cmd_tracker.io.request_returned.valid := io.dma.resp.fire() // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.bytes_read := 1.U
   cmd_tracker.io.cmd_completed.ready := io.completed.ready
@@ -170,7 +170,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.busy := cmd.valid || cmd_tracker.io.busy
 
   // Row counter
-  when (io.dma.req.fire) {
+  when (io.dma.req.fire()) {
     when (!pooling_is_enabled) {
       //where does rows come from?
       //row_counter := wrappingAdd(row_counter, 1.U, rows)
@@ -223,20 +223,20 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
         }
           .elsewhen(DoStore && cmd_tracker.io.alloc.fire()) {
             val next_state = Mux(pooling_is_enabled, pooling, sending_rows)
-            control_state := Mux(io.dma.req.fire, next_state, waiting_for_dma_req_ready)
+            control_state := Mux(io.dma.req.fire(), next_state, waiting_for_dma_req_ready)
           }
       }
     }
 
     is (waiting_for_dma_req_ready) {
-      when (io.dma.req.fire) {
+      when (io.dma.req.fire()) {
         control_state := Mux(pooling_is_enabled, pooling, sending_rows)
       }
     }
 
     is (sending_rows) {
-      val last_block = block_counter === blocks - 1.U && io.dma.req.fire
-      val last_row = Mux(mvout_1d_enabled, row_counter === mvout_1d_rows - 1.U, row_counter === rows - 1.U) && io.dma.req.fire
+      val last_block = block_counter === blocks - 1.U && io.dma.req.fire()
+      val last_row = Mux(mvout_1d_enabled, row_counter === mvout_1d_rows - 1.U, row_counter === rows - 1.U) && io.dma.req.fire()
       //normal mvout: row, 1D mvout: orows*ocols
 
       val only_one_dma_req = block_counter === 0.U && row_counter === 0.U // This is a special case when only one DMA request is made
@@ -251,7 +251,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
       // TODO Is it really possible for all the counters to be 0 here?
       val last_row = (porow_counter === 0.U && pocol_counter === 0.U && wrow_counter === 0.U && wcol_counter === 0.U) ||
         (porow_counter === pool_porows - 1.U && pocol_counter === pool_pocols - 1.U &&
-          wrow_counter === pool_size - 1.U && wcol_counter === pool_size - 1.U && io.dma.req.fire)
+          wrow_counter === pool_size - 1.U && wcol_counter === pool_size - 1.U && io.dma.req.fire())
 
       when (last_row) {
         control_state := waiting_for_command

@@ -42,7 +42,7 @@ class Pipeline[T <: Data] (gen: T, latency: Int)(comb: Seq[T => T] = Seq.fill(la
       }
     }
     // When the pipeline stage behind you is valid then become true
-    when(io.in.fire) {
+    when(io.in.fire()) {
       valids.head := true.B
     }
     (valids.tail, valids.init).zipped.foreach { case (v2, v1) =>
@@ -52,7 +52,7 @@ class Pipeline[T <: Data] (gen: T, latency: Int)(comb: Seq[T => T] = Seq.fill(la
     }
 
     // Stages
-    when(io.in.fire) {
+    when(io.in.fire()) {
       stages.head := comb.head(io.in.bits)
     }
     io.out.bits := comb.last(stages.last)

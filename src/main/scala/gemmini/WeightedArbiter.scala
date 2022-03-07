@@ -61,7 +61,7 @@ class WeightedArbiter[T <: Data](t: T, maxWeightA: Int, staticWeightAEnabled: Bo
     }
   }
 
-  when (io.out.fire) {
+  when (io.out.fire()) {
     when (A_chosen) {
       count := satAdd(count, 1.U, weightA + 1.U)
     }.elsewhen(B_chosen) {

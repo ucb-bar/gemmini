@@ -155,7 +155,7 @@ class CounterIO(nPerfCounter: Int, counterWidth: Int) extends Bundle {
 
 // A simple counter file. Every counter is incremented when the corresponding event signal is high on rising edge.
 // There are two type of counters: Built-in counters and external counters. External counters have their value
-// stored in other modules and can incremented by arbitary values.
+// stored in other modules and can incremented by arbitary values. 
 class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
 {
   val io = IO(new CounterIO(nPerfCounter, counterWidth))
@@ -182,8 +182,8 @@ class CounterFile(nPerfCounter: Int, counterWidth: Int) extends Module
     }
     // Snapshot: In case a sequence of access instructions get interrupted (i.e. preempted by OS), it is possible
     // to take a snapshot when reading counter value by setting a bit in the instruction. All subsequent readings
-    // return the values from the snapshot until it is cleared by a instruction with "clear" bit marked.
-    // When the snapshot bit is set, the normal counters are still being incremented.
+    // return the values from the snapshot until it is cleared by a instruction with "clear" bit marked. 
+    // When the snapshot bit is set, the normal counters are still being incremented. 
     when (io.snapshot_reset) {
       snapshot_enable := false.B
     } .elsewhen (io.snapshot) {
@@ -227,7 +227,7 @@ class CounterController(nPerfCounter: Int, counterWidth: Int)(implicit p: Parame
 
     val module = Module(new CounterFile(nPerfCounter: Int, counterWidth: Int))
     module.io.event_io <> io.event_io
-
+    
     val out_reg = Reg(io.out.bits.cloneType)
     val out_valid_reg = RegInit(false.B)
 
@@ -243,16 +243,16 @@ class CounterController(nPerfCounter: Int, counterWidth: Int)(implicit p: Parame
 
     io.in.ready := !out_valid_reg
     module.io.addr := io.in.bits.rs1(nCounterIndexBit + 3, 4)
-    module.io.counter_reset := io.in.bits.rs1(0) & io.in.fire
-    module.io.snapshot_reset := io.in.bits.rs1(1) & io.in.fire
-    module.io.snapshot := io.in.bits.rs1(2) & io.in.fire
-    module.io.config_address.valid := io.in.bits.rs1(3) & io.in.fire
+    module.io.counter_reset := io.in.bits.rs1(0) & io.in.fire()
+    module.io.snapshot_reset := io.in.bits.rs1(1) & io.in.fire()
+    module.io.snapshot := io.in.bits.rs1(2) & io.in.fire()
+    module.io.config_address.valid := io.in.bits.rs1(3) & io.in.fire()
     module.io.config_address.bits := io.in.bits.rs1(17, 12)
     module.io.external := io.in.bits.rs1(31)
 
-    when (io.out.fire) {
+    when (io.out.fire()) {
       out_valid_reg := false.B
-    } .elsewhen (io.in.fire) {
+    } .elsewhen (io.in.fire()) {
       out_valid_reg := true.B
       out_reg.rd := io.in.bits.inst.rd
       out_reg.data := 0.U

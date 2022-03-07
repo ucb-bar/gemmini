@@ -64,7 +64,7 @@ class CmdFSM[T <: Data: Arithmetic, U <: Data, V <: Data]
   status := DontCare
 
   //==========================================================================
-  // Combinational Output Defaults
+  // Combinational Output Defaults 
   //==========================================================================
   io.cmd.ready         := false.B
   io.tiler.valid       := false.B
@@ -90,7 +90,7 @@ class CmdFSM[T <: Data: Arithmetic, U <: Data, V <: Data]
   io.busy := (state === s_EX_PENDING)
 
   //==========================================================================
-  // FSM
+  // FSM 
   //==========================================================================
   def reset_and_listen(): Unit = {
     // Reset all data-validity
@@ -109,13 +109,13 @@ class CmdFSM[T <: Data: Arithmetic, U <: Data, V <: Data]
     // Wait for tiling/ execution to complete,
     // let any further commands queue up
     io.tiler.valid := true.B
-    when (io.tiler.fire) {
+    when (io.tiler.fire()) {
       state := s_LISTENING
     }
   }.elsewhen (state === s_ERROR) {
     // In s_ERROR state - only update based on RESET commands
     io.cmd.ready := true.B
-    when (io.cmd.fire) {
+    when (io.cmd.fire()) {
       val cmd = io.cmd.bits
       val funct = cmd.inst.funct
       when (funct === RESET) {
@@ -124,7 +124,7 @@ class CmdFSM[T <: Data: Arithmetic, U <: Data, V <: Data]
     }
   }.otherwise { // s_LISTENING State
     io.cmd.ready := true.B
-    when (io.cmd.fire) {
+    when (io.cmd.fire()) {
       val cmd = io.cmd.bits
       val funct = cmd.inst.funct
       val rs1 = cmd.rs1
@@ -143,7 +143,7 @@ class CmdFSM[T <: Data: Arithmetic, U <: Data, V <: Data]
         // Signal to the Tiler, and move to our EXEC state
         // FIXME: check all valid
         io.tiler.valid := true.B
-        when (io.tiler.fire) {
+        when (io.tiler.fire()) {
           state := s_LISTENING
         }.otherwise {
           state := s_EX_PENDING
