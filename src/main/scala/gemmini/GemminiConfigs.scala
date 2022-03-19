@@ -85,6 +85,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_training_convs: Boolean = true,
                                                                              has_max_pool: Boolean = true,
                                                                              has_nonlinear_activations: Boolean = true,
+                                                                             has_dw_convs: Boolean = true,
 
                                                                              has_first_layer_optimizations: Boolean = true,
 
