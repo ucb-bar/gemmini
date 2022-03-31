@@ -61,7 +61,7 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
 
   io.req.ready := !req.valid
 
-  io.in.ready := io.req.fire || (req.valid && bytesRead =/= (1.U << req.bits.lg_len_req).asUInt())
+  io.in.ready := io.req.fire() || (req.valid && bytesRead =/= (1.U << req.bits.lg_len_req).asUInt())
 
   io.out.valid := req.valid && usefulBytesRead > bytesSent && (usefulBytesRead - bytesSent >= rowBytes ||
     usefulBytesRead === req.bits.bytes_to_read)
@@ -92,7 +92,7 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
     req.pop()
   }
 
-  when (io.out.fire) {
+  when (io.out.fire()) {
     bytesSent := bytesSent_next
 
     when (last_sending && bytesRead === (1.U << req.bits.lg_len_req).asUInt()) {
@@ -101,18 +101,18 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
     }
   }
 
-  when (io.req.fire) {
+  when (io.req.fire()) {
     req.push(io.req.bits)
     bytesRead := 0.U
     bytesSent := 0.U
   }
 
-  when (io.in.fire) {
-    val current_bytesRead = Mux(io.req.fire, 0.U, bytesRead)
-    val current_bytesDiscarded = Mux(io.req.fire, 0.U, bytesDiscarded)
-    val current_usefulBytesRead = Mux(io.req.fire, 0.U, usefulBytesRead)
-    val current_shift = Mux(io.req.fire, io.req.bits.shift, req.bits.shift)
-    val current_lg_len_req = Mux(io.req.fire, io.req.bits.lg_len_req, req.bits.lg_len_req)
+  when (io.in.fire()) {
+    val current_bytesRead = Mux(io.req.fire(), 0.U, bytesRead)
+    val current_bytesDiscarded = Mux(io.req.fire(), 0.U, bytesDiscarded)
+    val current_usefulBytesRead = Mux(io.req.fire(), 0.U, usefulBytesRead)
+    val current_shift = Mux(io.req.fire(), io.req.bits.shift, req.bits.shift)
+    val current_lg_len_req = Mux(io.req.fire(), io.req.bits.lg_len_req, req.bits.lg_len_req)
     val current_len_req = (1.U << current_lg_len_req).asUInt()
 
     when (current_shift - current_bytesDiscarded <= beatBytes.U /* &&
@@ -127,7 +127,7 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
 
     bytesRead := satAdd(current_bytesRead, beatBytes.U, current_len_req)
 
-    when (!io.req.fire && bytesSent === req.bits.bytes_to_read && last_reading) {
+    when (!io.req.fire() && bytesSent === req.bits.bytes_to_read && last_reading) {
       req.pop()
     }
   }

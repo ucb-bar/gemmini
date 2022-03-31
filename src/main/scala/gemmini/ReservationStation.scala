@@ -20,6 +20,8 @@ class ReservationStationIssue[T <: Data](cmd_t: T, id_width: Int) extends Bundle
   val rob_id = Output(UInt(id_width.W))
 
   def fire(dummy: Int=0) = valid && ready
+
+  override def cloneType: this.type = new ReservationStationIssue(cmd_t, id_width).asInstanceOf[this.type]
 }
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
@@ -72,7 +74,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   val instructions_allocated = RegInit(0.U(32.W))
-  when (io.alloc.fire) {
+  when (io.alloc.fire()) {
     instructions_allocated := instructions_allocated + 1.U
   }
   dontTouch(instructions_allocated)
@@ -363,7 +365,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         }
       }
 
-    when (io.alloc.fire) {
+    when (io.alloc.fire()) {
       when (new_entry.is_config && new_entry.q === exq && !is_im2col) {
         a_stride := new_entry.cmd.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
         c_stride := new_entry.cmd.cmd.rs2(63, 48) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
@@ -448,7 +450,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   // Mark entries as completed once they've returned
-  when (io.completed.fire) {
+  when (io.completed.fire()) {
     val type_width = log2Up(res_max_per_type)
     val queue_type = io.completed.bits(type_width + 1, type_width)
     val issue_id = io.completed.bits(type_width - 1, 0)
@@ -519,7 +521,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   val cycles_since_issue = RegInit(0.U(16.W))
 
-  when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire() || !io.busy || io.completed.fire) {
+  when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire() || !io.busy || io.completed.fire()) {
     cycles_since_issue := 0.U
   }.elsewhen(io.busy) {
     cycles_since_issue := cycles_since_issue + 1.U
