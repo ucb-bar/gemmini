@@ -397,6 +397,7 @@ class LoopConvLdWeightReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth:
   val dram_addr = UInt(coreMaxAddrBits.W)
   val trans_weight_1203 = Bool()
   val trans_weight_0132 = Bool()
+  val dw = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
 
@@ -439,6 +440,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val addr_start = req.addr_end - B_rows
 
   val dram_stride = MuxCase(out_channels, Seq(
+    req.dw -> 1.U,
     req.trans_weight_1203 -> (kernel_dim * kernel_dim * out_channels),
     req.trans_weight_0132 -> in_channels
   )) * (input_w/8).U
@@ -451,6 +453,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
 
   // Addresses
   val dram_offset = MuxCase(((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U, Seq(
+    req.dw -> (krow * kernel_dim +& kcol) * (input_w/8).U,
     req.trans_weight_1203 -> (((kch*kernel_dim*kernel_dim +& krow*kernel_dim +& kcol) * out_channels +& och) * (input_w/8).U),
     req.trans_weight_0132 -> (((krow*kernel_dim*out_channels +& kcol*out_channels +& och) * in_channels +& kch) * (input_w/8).U)
   ))
@@ -1059,6 +1062,7 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val trans_weight_1203 = Bool()
   val trans_weight_0132 = Bool()
   val trans_input_3120 = Bool()
+  val dw = Bool()
 
   val max_pixels_per_row = UInt(small_iterator_bitwidth.W)
 
@@ -1150,7 +1154,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
                 config_mvin_rs1_t: ConfigMvinRs1, mvin_rs2_t: MvinRs2, config_mvout_rs2_t: ConfigMvoutRs2, mvout_rs2_t: MvoutRs2,
                 config_ex_rs1_t: ConfigExRs1, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
                 compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs,
-                has_training_convs: Boolean, has_max_pool: Boolean, has_first_layer_optimizations: Boolean)
+                has_training_convs: Boolean, has_max_pool: Boolean, has_first_layer_optimizations: Boolean,
+                has_dw_convs: Boolean)
   (implicit p: Parameters) extends Module {
   val large_iterator_bitwidth = 16
   val small_iterator_bitwidth = 16 // 8
@@ -1330,6 +1335,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
         loop_being_configured.trans_weight_1203 := has_training_convs.B && cmd.bits.cmd.rs1(3)
         loop_being_configured.trans_weight_0132 := has_training_convs.B && cmd.bits.cmd.rs1(4)
         loop_being_configured.trans_input_3120 := has_training_convs.B && cmd.bits.cmd.rs1(5)
+        loop_being_configured.dw := has_dw_convs.B && cmd.bits.cmd.rs1(6)
 
         loop_being_configured.no_pool := !has_max_pool.B || cmd.bits.cmd.rs2(0)
         loop_being_configured.activation := cmd.bits.cmd.rs2(4,3)
@@ -1400,6 +1406,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   ld_weights.io.req.bits.dram_addr := loop_requesting_ld_weights.weights_dram_addr
   ld_weights.io.req.bits.trans_weight_1203 := loop_requesting_ld_weights.trans_weight_1203
   ld_weights.io.req.bits.trans_weight_0132 := loop_requesting_ld_weights.trans_weight_0132
+  ld_weights.io.req.bits.dw := loop_requesting_ld_weights.dw
   ld_weights.io.req.bits.loop_id := loop_requesting_ld_weights_id
 
   ld_weights.io.req.valid := !loop_requesting_ld_weights.ld_weights_started && loop_requesting_ld_weights.configured
@@ -1503,13 +1510,13 @@ object LoopConv {
             config_mvin_rs1_t: ConfigMvinRs1, mvin_rs2_t: MvinRs2, config_mvout_rs2_t: ConfigMvoutRs2,
             mvout_rs2_t: MvoutRs2, config_ex_rs1_t: ConfigExRs1, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
             compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, has_training_convs: Boolean, has_max_pool: Boolean,
-            has_first_layer_optimizations: Boolean)
+            has_first_layer_optimizations: Boolean, has_dw_convs: Boolean)
            (implicit p: Parameters): (DecoupledIO[GemminiCmd], Bool) = {
 
     val mod = Module(new LoopConv(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
       config_mvin_rs1_t, mvin_rs2_t, config_mvout_rs2_t, mvout_rs2_t, config_ex_rs1_t, preload_rs1_t, preload_rs2_t,
-      compute_rs1_t, compute_rs2_t, has_training_convs, has_max_pool, has_first_layer_optimizations))
+      compute_rs1_t, compute_rs2_t, has_training_convs, has_max_pool, has_first_layer_optimizations, has_dw_convs))
 
     mod.io.in <> in
     mod.io.ld_completed := ld_completed
