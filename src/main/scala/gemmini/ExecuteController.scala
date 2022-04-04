@@ -548,7 +548,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
             when (!set_only_strides) {
               if (has_nonlinear_activations) {
-                assert(config_ex_rs1.activation =/= Activation.IGELU, "Execute controller doesn't support IGELU currently")
                 activation := config_ex_rs1.activation
               }
               in_shift := config_ex_rs2.in_shift
