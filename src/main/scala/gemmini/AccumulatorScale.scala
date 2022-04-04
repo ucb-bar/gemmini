@@ -11,7 +11,6 @@ class AccumulatorReadRespWithFullData[T <: Data: Arithmetic, U <: Data](fullData
   override def cloneType: this.type = new AccumulatorReadRespWithFullData(fullDataType.cloneType, scale_t, shift_width).asInstanceOf[this.type]
 }
 
-
 class AccumulatorScaleResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]]) extends Bundle {
   val full_data = fullDataType.cloneType
   val data = rDataType.cloneType
@@ -36,6 +35,8 @@ class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extend
   val scale = u.cloneType
   val act = UInt(2.W) // TODO magic number
   val relu6_shift = UInt(shift_width.W)
+  val igelu_qb = t.cloneType
+  val igelu_qc = t.cloneType
   val data = t.cloneType
   val full_data = t.cloneType
   val id = UInt(2.W) // TODO hardcoded
@@ -52,7 +53,27 @@ class AccScalePipe[T <: Data : Arithmetic, U <: Data](t: T, rDataType: Vec[Vec[T
   import ev._
   val out = WireInit(io.in)
 
-  val e_scaled = scale_func(io.in.bits.data, io.in.bits.scale)
+  val e_gelued = Mux(io.in.bits.act =/= Activation.IGELU, io.in.bits.data,
+    {
+      val q = io.in.bits.data
+      val qb = io.in.bits.igelu_qb
+      val qc = io.in.bits.igelu_qc
+
+      val zero = q.zero
+      val one = q.identity
+      def neg(x: T) = zero-x
+
+      val q_sign = Mux(q.zero > q, neg(one), one)
+      val q_abs = Mux(q.zero > q, neg(q), q)
+      val q_clipped = Mux(q_abs > neg(qb), neg(qb), q_abs)
+      val q_poly = qc.mac(q_clipped + qb, q_clipped + qb).withWidthOf(q)
+      val q_erf = (q_sign * q_poly).withWidthOf(q)
+      (q * (q_erf + qc)).withWidthOf(q)
+    }
+  )
+
+  // val e_scaled = scale_func(io.in.bits.data, io.in.bits.scale)
+  val e_scaled = scale_func(e_gelued, io.in.bits.scale)
   val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
   val e_act = MuxCase(e_clipped, Seq(
     (has_nonlinear_activations.B && io.in.bits.act === Activation.RELU) -> e_clipped.relu,
@@ -158,6 +179,8 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
         input.bits.scale  := regs(i).bits.scale
         input.bits.act    := regs(i).bits.act
         input.bits.relu6_shift := regs(i).bits.relu6_shift
+        input.bits.igelu_qb := regs(i).bits.igelu_qb
+        input.bits.igelu_qc := regs(i).bits.igelu_qc
         input.bits.id := i.U
         input.bits.index := w.U
         when (input.fire()) {

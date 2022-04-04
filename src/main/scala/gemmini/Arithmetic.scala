@@ -32,6 +32,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def *(t: T): T
   def mac(m1: T, m2: T): T // Returns (m1 * m2 + self)
   def +(t: T): T
+  def -(t: T): T
   def >>(u: UInt): T // This is a rounding shift! Rounds away from 0
   def >(t: T): Bool
   def identity: T
@@ -48,6 +49,7 @@ object Arithmetic {
       override def *(t: UInt) = self * t
       override def mac(m1: UInt, m2: UInt) = m1 * m2 + self
       override def +(t: UInt) = self + t
+      override def -(t: UInt) = self - t
 
       override def >>(u: UInt) = {
         // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
@@ -89,6 +91,7 @@ object Arithmetic {
       override def *(t: SInt) = self * t
       override def mac(m1: SInt, m2: SInt) = m1 * m2 + self
       override def +(t: SInt) = self + t
+      override def -(t: SInt) = self - t
 
       override def >>(u: UInt) = {
         // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
@@ -239,6 +242,12 @@ object Arithmetic {
         result
       }
 
+      override def -(t: Float): Float = {
+        val t_sgn = t.bits(t.getWidth-1)
+        val neg_t = Cat(t_sgn, t.bits(t.getWidth-2,0)).asTypeOf(t)
+        self + neg_t
+      }
+
       override def >>(u: UInt): Float = {
         // Recode self
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
@@ -379,6 +388,7 @@ object Arithmetic {
       override def *(t: DummySInt) = self.dontCare
       override def mac(m1: DummySInt, m2: DummySInt) = self.dontCare
       override def +(t: DummySInt) = self.dontCare
+      override def -(t: DummySInt) = self.dontCare
       override def >>(t: UInt) = self.dontCare
       override def >(t: DummySInt): Bool = false.B
       override def identity = self.dontCare

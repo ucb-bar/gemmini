@@ -295,9 +295,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
-    val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
-    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_EX || config_cmd_type === CONFIG_IM2COL))
-    val is_im2col = funct === CONFIG_CMD && config_cmd_type === CONFIG_IM2COL // im2col commands are a subset of ex commands, so they still go in the ex queue
+    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
+    val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_STORE|| config_cmd_type === CONFIG_BERT))
+    val is_bert = funct === CONFIG_CMD && config_cmd_type === CONFIG_BERT // bert commands are a subset of store commands, so they still go in the store queue
 
     new_entry.q := Mux1H(Seq(
       is_load -> ldq,
@@ -366,7 +366,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       }
 
     when (io.alloc.fire()) {
-      when (new_entry.is_config && new_entry.q === exq && !is_im2col) {
+      when (new_entry.is_config && new_entry.q === exq) {
         a_stride := new_entry.cmd.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
         c_stride := new_entry.cmd.cmd.rs2(63, 48) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
         val set_only_strides = new_entry.cmd.cmd.rs1(7) // TODO magic numbers
@@ -379,7 +379,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         val repeat_pixels = maxOf(new_entry.cmd.cmd.rs1(8 + pixel_repeats_bits - 1, 8), 1.U) // TODO we use a default value of pixel repeats here, for backwards compatibility. However, we should deprecate and remove this default value eventually
         ld_block_strides(id) := block_stride
         ld_pixel_repeats(id) := repeat_pixels - 1.U
-      }.elsewhen(new_entry.is_config && new_entry.q === stq) {
+      }.elsewhen(new_entry.is_config && new_entry.q === stq && !is_bert) {
         val pool_stride = new_entry.cmd.cmd.rs1(5, 4) // TODO magic numbers
         pooling_is_enabled := pool_stride =/= 0.U
       }.elsewhen(funct === PRELOAD_CMD) {

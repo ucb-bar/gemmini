@@ -6,4 +6,5 @@ object Activation {
   val NONE = 0.U
   val RELU = 1.U
   val RELU6 = 2.U
+  val IGELU = 3.U
 }

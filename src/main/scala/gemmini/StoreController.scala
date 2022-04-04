@@ -18,7 +18,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
 
-    val dma = new ScratchpadWriteMemIO(local_addr_t, acc_scale_t_bits)
+    val dma = new ScratchpadWriteMemIO(local_addr_t, accType.getWidth, acc_scale_t_bits)
 
     val completed = Decoupled(UInt(log2Up(reservation_station_entries).W))
 
@@ -43,6 +43,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
 
   val activation = Reg(UInt(GemminiISA.CONFIG_MVOUT_RS1_ACTIVATION_WIDTH.W))
+  val igelu_qb = Reg(accType)
+  val igelu_qc = Reg(accType)
   val acc_scale = Reg(acc_scale_t)
 
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
@@ -87,6 +89,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val config_mvout_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigMvoutRs1)
   val config_mvout_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigMvoutRs2(acc_scale_t_bits, 32))
+  val config_cmd_type = config_mvout_rs1.cmd_type
   val config_stride = config_mvout_rs2.stride
   val config_activation = config_mvout_rs1.activation
   val config_acc_scale = config_mvout_rs2.acc_scale
@@ -100,6 +103,11 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val config_upad = config_mvout_rs1.upad
   val config_lpad = config_mvout_rs1.lpad
 
+  val config_bert_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigBertRs1(accType.getWidth))
+  val config_bert_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigBertRs2(accType.getWidth))
+  val config_igelu_qc = config_bert_rs1.qc
+  val config_igelu_qb = config_bert_rs2.qb
+
   val mstatus = cmd.bits.cmd.status
 
   val current_vaddr = vaddr + row_counter * stride
@@ -112,8 +120,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val pool_vaddr = vaddr + (porow_counter * pool_out_dim + pocol_counter) * stride // TODO get rid of these multiplications
 
-  val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
-  val DoStore = !DoConfig // TODO change this if more commands are added
+  val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE
+  val DoConfigBert = cmd.bits.cmd.inst.funct === CONFIG_CMD && config_cmd_type === CONFIG_BERT
+  val DoStore = !DoConfig && !DoConfigBert
 
   cmd.ready := false.B
 
@@ -142,6 +151,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.laddr := Mux(pooling_is_enabled, pool_row_addr, current_localaddr) //Todo: laddr for 1D?
 
   io.dma.req.bits.acc_act := activation
+  io.dma.req.bits.acc_igelu_qb := igelu_qb.asTypeOf(io.dma.req.bits.acc_igelu_qb)
+  io.dma.req.bits.acc_igelu_qc := igelu_qc.asTypeOf(io.dma.req.bits.acc_igelu_qc)
   io.dma.req.bits.acc_scale := acc_scale.asTypeOf(io.dma.req.bits.acc_scale)
 
   io.dma.req.bits.len := Mux(block_counter === blocks - 1.U, ((cols - 1.U) % block_cols.U) + 1.U, block_cols.U)
@@ -221,10 +232,14 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
           }
           cmd.ready := true.B
         }
-          .elsewhen(DoStore && cmd_tracker.io.alloc.fire()) {
-            val next_state = Mux(pooling_is_enabled, pooling, sending_rows)
-            control_state := Mux(io.dma.req.fire(), next_state, waiting_for_dma_req_ready)
-          }
+        .elsewhen(DoConfigBert) {
+          igelu_qb := config_igelu_qb.asTypeOf(igelu_qb)
+          igelu_qc := config_igelu_qc.asTypeOf(igelu_qc)
+        }
+        .elsewhen(DoStore && cmd_tracker.io.alloc.fire()) {
+          val next_state = Mux(pooling_is_enabled, pooling, sending_rows)
+          control_state := Mux(io.dma.req.fire(), next_state, waiting_for_dma_req_ready)
+        }
       }
     }
 

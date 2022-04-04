@@ -922,7 +922,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   pre_pool_config_cmd_rs1.pool_size := pool_size
   pre_pool_config_cmd_rs1.pool_stride := pool_stride
   pre_pool_config_cmd_rs1.activation := req.activation
-  pre_pool_config_cmd_rs1._unused := CONFIG_STORE
+  pre_pool_config_cmd_rs1.cmd_type := CONFIG_STORE
   pre_pool_config_cmd.rs1 := pre_pool_config_cmd_rs1.asUInt()
 
   val pre_pool_config_cmd_rs2 = Wire(config_mvout_rs2_t.cloneType)
@@ -938,7 +938,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val post_pool_config_cmd_rs1 = Wire(new ConfigMvoutRs1)
   post_pool_config_cmd_rs1 := DontCare
   post_pool_config_cmd_rs1.activation := req.activation
-  post_pool_config_cmd_rs1._unused := CONFIG_STORE
+  post_pool_config_cmd_rs1.cmd_type := CONFIG_STORE
   post_pool_config_cmd.rs1 := post_pool_config_cmd_rs1.asUInt()
 
   val post_pool_config_cmd_rs2 = Wire(config_mvout_rs2_t.cloneType)

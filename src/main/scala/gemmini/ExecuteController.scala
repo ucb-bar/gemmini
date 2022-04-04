@@ -29,7 +29,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val acc = new Bundle {
       val read_req = Vec(acc_banks, Decoupled(new AccumulatorReadReq(
-          acc_bank_entries, log2Up(accType.getWidth), acc_scale_t
+          acc_bank_entries, log2Up(accType.getWidth), accType, acc_scale_t
       )))
 
       val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
@@ -471,6 +471,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.read_req(i).bits.scale := acc_scale
       io.acc.read_req(i).bits.full := false.B
       io.acc.read_req(i).bits.relu6_shift := relu6_shift
+      io.acc.read_req(i).bits.igelu_qb := DontCare
+      io.acc.read_req(i).bits.igelu_qc := DontCare
       io.acc.read_req(i).bits.act := activation
       io.acc.read_req(i).bits.fromDMA := false.B
       io.acc.read_req(i).bits.addr := MuxCase(a_address_rs1.acc_row() + a_fire_counter,
@@ -546,6 +548,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
             when (!set_only_strides) {
               if (has_nonlinear_activations) {
+                assert(config_ex_rs1.activation =/= Activation.IGELU, "Execute controller doesn't support IGELU currently")
                 activation := config_ex_rs1.activation
               }
               in_shift := config_ex_rs2.in_shift

@@ -5,10 +5,12 @@ import chisel3.util._
 
 import Util._
 
-class AccumulatorReadReq[T <: Data](n: Int, shift_width: Int, scale_t: T) extends Bundle {
+class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, shift_width: Int, acc_t: T, scale_t: U) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
   val scale = scale_t
   val relu6_shift = UInt(shift_width.W)
+  val igelu_qb = acc_t.cloneType
+  val igelu_qc = acc_t.cloneType
   val act = UInt(2.W) // TODO magic number
   val full = Bool() // Whether or not we return the full bitwidth output
 
@@ -22,13 +24,15 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val fromDMA = Bool()
   val scale = scale_t.cloneType
   val relu6_shift = UInt(shift_width.W)
+  val igelu_qb = fullDataType.head.head.cloneType
+  val igelu_qc = fullDataType.head.head.cloneType
   val act = UInt(2.W) // TODO magic number
   val acc_bank_id = UInt(2.W) // TODO don't hardcode
   override def cloneType: this.type = new AccumulatorReadResp(fullDataType.cloneType, scale_t, shift_width).asInstanceOf[this.type]
 }
 
 class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, shift_width: Int, fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
-  val req = Decoupled(new AccumulatorReadReq[U](n, shift_width, scale_t))
+  val req = Decoupled(new AccumulatorReadReq[T, U](n, shift_width, fullDataType.head.head.cloneType, scale_t))
   val resp = Flipped(Decoupled(new AccumulatorReadResp[T, U](fullDataType, scale_t, shift_width)))
 
   override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, fullDataType.cloneType, scale_t.cloneType).asInstanceOf[this.type]
@@ -39,7 +43,6 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
   val data = t.cloneType
   val acc = Bool()
   val mask = Vec(t.getWidth / 8, Bool()) // TODO Use aligned_to here
-  // val current_waddr = Flipped(Valid(UInt(log2Ceil(n).W))) // This is the raddr that is being fed into the SRAM right now
 
   override def cloneType: this.type = new AccumulatorWriteReq(n, t).asInstanceOf[this.type]
 }
@@ -307,6 +310,8 @@ class AccumulatorMem[T <: Data, U <: Data](
 
   q.io.enq.bits.scale := RegNext(io.read.req.bits.scale)
   q.io.enq.bits.relu6_shift := RegNext(io.read.req.bits.relu6_shift)
+  q.io.enq.bits.igelu_qb := RegNext(io.read.req.bits.igelu_qb)
+  q.io.enq.bits.igelu_qc := RegNext(io.read.req.bits.igelu_qc)
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
   q.io.enq.bits.fromDMA := RegNext(io.read.req.bits.fromDMA)
   q.io.enq.bits.acc_bank_id := DontCare
@@ -317,6 +322,8 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.read.resp.bits.data := p.bits.data
   io.read.resp.bits.fromDMA := p.bits.fromDMA
   io.read.resp.bits.relu6_shift := p.bits.relu6_shift
+  io.read.resp.bits.igelu_qb := p.bits.igelu_qb
+  io.read.resp.bits.igelu_qc := p.bits.igelu_qc
   io.read.resp.bits.act := p.bits.act
   io.read.resp.bits.scale := p.bits.scale
   io.read.resp.bits.acc_bank_id := DontCare // This is set in Scratchpad
