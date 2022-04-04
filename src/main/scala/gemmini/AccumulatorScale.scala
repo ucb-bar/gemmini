@@ -44,7 +44,7 @@ class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extend
   override def cloneType: this.type = new AccScaleDataWithIndex(t, u).asInstanceOf[this.type]
 }
 
-class AccScalePipe[T <: Data : Arithmetic, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U, latency: Int, has_nonlinear_activations: Boolean)(implicit ev: Arithmetic[T]) extends Module {
+class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U, latency: Int, has_nonlinear_activations: Boolean)(implicit ev: Arithmetic[T]) extends Module {
   val u = scale_t
   val io = IO(new Bundle {
     val in = Input(Valid(new AccScaleDataWithIndex(t, u)(ev)))
@@ -54,25 +54,9 @@ class AccScalePipe[T <: Data : Arithmetic, U <: Data](t: T, rDataType: Vec[Vec[T
   val out = WireInit(io.in)
 
   val e_gelued = Mux(!has_nonlinear_activations.B || io.in.bits.act =/= Activation.IGELU, io.in.bits.data,
-    {
-      val q = io.in.bits.data
-      val qb = io.in.bits.igelu_qb
-      val qc = io.in.bits.igelu_qc
-
-      val zero = q.zero
-      val one = q.identity
-      def neg(x: T) = zero-x
-
-      val q_sign = Mux(q.zero > q, neg(one), one)
-      val q_abs = Mux(q.zero > q, neg(q), q)
-      val q_clipped = Mux(q_abs > neg(qb), neg(qb), q_abs)
-      val q_poly = qc.mac(q_clipped + qb, q_clipped + qb).withWidthOf(q)
-      val q_erf = (q_sign * q_poly).withWidthOf(q)
-      (q * (q_erf + qc)).withWidthOf(q)
-    }
+    AccumulatorScale.igelu(io.in.bits.data, io.in.bits.igelu_qb, io.in.bits.igelu_qc)
   )
 
-  // val e_scaled = scale_func(io.in.bits.data, io.in.bits.scale)
   val e_scaled = scale_func(e_gelued, io.in.bits.scale)
   val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
   val e_act = MuxCase(e_clipped, Seq(
@@ -84,7 +68,7 @@ class AccScalePipe[T <: Data : Arithmetic, U <: Data](t: T, rDataType: Vec[Vec[T
 }
 
 
-class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
+class AccumulatorScale[T <: Data, U <: Data](
   fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]],
   scale_t: U, shift_width: Int,
   read_small_data: Boolean, read_full_data: Boolean,
@@ -112,7 +96,12 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
     val pipe_out = Pipeline(in, latency, Seq.fill(latency)((x: AccumulatorReadRespWithFullData[T,U]) => x) :+ {
       x: AccumulatorReadRespWithFullData[T,U] =>
       val activated_rdata = VecInit(x.resp.data.map(v => VecInit(v.map { e =>
-        val e_scaled = scale_func(e, x.resp.scale)
+        val e_gelued = Mux(!has_nonlinear_activations.B || x.resp.act =/= Activation.IGELU, e,
+          AccumulatorScale.igelu(e, x.resp.igelu_qb, x.resp.igelu_qc)
+        )
+
+        val e_scaled = scale_func(e_gelued, x.resp.scale)
+        // val e_scaled = scale_func(e, x.resp.scale)
         val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
         val e_act = MuxCase(e_clipped, Seq(
           (x.resp.act === Activation.RELU) -> e_clipped.relu,
@@ -199,7 +188,7 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
       when (reset.asBool) {
         arbOut.valid := false.B
       }
-      val pipe = Module(new AccScalePipe(t, rDataType, scale_func, scale_t, latency, has_nonlinear_activations)(ev, ev))
+      val pipe = Module(new AccScalePipe(t, rDataType, scale_func, scale_t, latency, has_nonlinear_activations))
       pipe.io.in := arbOut
       val pipe_out = pipe.io.out
 
@@ -233,6 +222,22 @@ class AccumulatorScale[T <: Data: Arithmetic, U <: Data](
     io.out.bits.full_data := out.bits.full_data
   else
     io.out.bits.full_data := DontCare
+}
 
+object AccumulatorScale {
+  def igelu[T <: Data](q: T, qb: T, qc: T)(implicit ev: Arithmetic[T]): T = {
+    import ev._
+
+    val zero = q.zero
+    val one = q.identity
+    def neg(x: T) = zero-x
+
+    val q_sign = Mux(q.zero > q, neg(one), one)
+    val q_abs = Mux(q.zero > q, neg(q), q)
+    val q_clipped = Mux(q_abs > neg(qb), neg(qb), q_abs)
+    val q_poly = qc.mac(q_clipped + qb, q_clipped + qb).withWidthOf(q)
+    val q_erf = (q_sign * q_poly).withWidthOf(q)
+    (q * (q_erf + qc)).withWidthOf(q)
+  }
 }
 
