@@ -108,7 +108,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val config_igelu_qb = config_bert_rs2.qb
   val config_igelu_qc = config_bert_rs2.qc
 
-  assert(config_bert_rs1.cmd_type == config_mvout_rs1.cmd_type)
+  assert(config_bert_rs1.cmd_type === config_mvout_rs1.cmd_type)
 
   val mstatus = cmd.bits.cmd.status
 
