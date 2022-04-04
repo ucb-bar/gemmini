@@ -16,7 +16,7 @@ class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, shift_width: 
 
   val fromDMA = Bool()
 
-  override def cloneType: this.type = new AccumulatorReadReq(n, shift_width, scale_t.cloneType).asInstanceOf[this.type]
+  override def cloneType: this.type = new AccumulatorReadReq(n, shift_width, acc_t.cloneType, scale_t.cloneType).asInstanceOf[this.type]
 }
 
 class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U, shift_width: Int) extends Bundle {
@@ -28,6 +28,7 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val igelu_qc = fullDataType.head.head.cloneType
   val act = UInt(2.W) // TODO magic number
   val acc_bank_id = UInt(2.W) // TODO don't hardcode
+
   override def cloneType: this.type = new AccumulatorReadResp(fullDataType.cloneType, scale_t, shift_width).asInstanceOf[this.type]
 }
 
