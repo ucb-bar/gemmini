@@ -105,8 +105,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val config_bert_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigBertRs1(accType.getWidth))
   val config_bert_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigBertRs2(accType.getWidth))
-  val config_igelu_qc = config_bert_rs1.qc
   val config_igelu_qb = config_bert_rs2.qb
+  val config_igelu_qc = config_bert_rs2.qc
+
+  assert(config_bert_rs1.cmd_type == config_mvout_rs1.cmd_type)
 
   val mstatus = cmd.bits.cmd.status
 
@@ -235,6 +237,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
         .elsewhen(DoConfigBert) {
           igelu_qb := config_igelu_qb.asTypeOf(igelu_qb)
           igelu_qc := config_igelu_qc.asTypeOf(igelu_qc)
+          cmd.ready := true.B
         }
         .elsewhen(DoStore && cmd_tracker.io.alloc.fire()) {
           val next_state = Mux(pooling_is_enabled, pooling, sending_rows)
