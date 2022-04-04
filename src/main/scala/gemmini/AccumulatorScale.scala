@@ -48,7 +48,7 @@ class AccScalePipe[T <: Data : Arithmetic, U <: Data](t: T, rDataType: Vec[Vec[T
   import ev._
   val out = WireInit(io.in)
 
-  val e_gelued = Mux(io.in.bits.act =/= Activation.IGELU, io.in.bits.data,
+  val e_gelued = Mux(!has_nonlinear_activations.B || io.in.bits.act =/= Activation.IGELU, io.in.bits.data,
     {
       val q = io.in.bits.data
       val qb = io.in.bits.igelu_qb
