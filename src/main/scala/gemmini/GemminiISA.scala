@@ -38,7 +38,7 @@ object GemminiISA {
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U
   val CONFIG_STORE = 2.U
-  val CONFIG_IM2COL = 3.U
+  val CONFIG_BERT = 3.U
 
   //==========================================================================
   // cisc-gemmini opcodes
@@ -107,7 +107,7 @@ object GemminiISA {
     val _unused = UInt(CONFIG_MVIN_RS1_UNUSED_WIDTH.W)
   }
 
-  val CONFIG_MVOUT_RS1_UNUSED_WIDTH = 2
+  val CONFIG_MVOUT_RS1_CMD_TYPE_WIDTH = 2
   val CONFIG_MVOUT_RS1_ACTIVATION_WIDTH = 2
   val CONFIG_MVOUT_RS1_MAX_POOLING_STRIDE_WIDTH = 2
   val CONFIG_MVOUT_RS1_MAX_POOLING_WINDOW_SIZE_WIDTH = 2
@@ -132,7 +132,7 @@ object GemminiISA {
     val pool_size = UInt(CONFIG_MVOUT_RS1_MAX_POOLING_WINDOW_SIZE_WIDTH.W)
     val pool_stride = UInt(CONFIG_MVOUT_RS1_MAX_POOLING_STRIDE_WIDTH.W)
     val activation = UInt(CONFIG_MVOUT_RS1_ACTIVATION_WIDTH.W)
-    val _unused = UInt(CONFIG_MVOUT_RS1_UNUSED_WIDTH.W)
+    val cmd_type = UInt(CONFIG_MVOUT_RS1_CMD_TYPE_WIDTH.W)
   }
 
   val CONFIG_MVOUT_RS2_ACC_SCALE_WIDTH = 32
@@ -143,6 +143,26 @@ object GemminiISA {
     val acc_scale = UInt(acc_scale_bits.W)
     val _spacer0 = UInt((CONFIG_MVOUT_RS2_STRIDE_WIDTH - stride_bits).W)
     val stride = UInt(stride_bits.W)
+  }
+
+  val CONFIG_BERT_RS1_QC_WIDTH = 32
+  val CONFIG_BERT_RS1_SPACER0_WIDTH = 30
+  val CONFIG_BERT_RS1_CMD_TYPE_WIDTH = 2
+
+  class ConfigBertRs1(acc_t_bits: Int) extends Bundle {
+    val _spacer1 = UInt((CONFIG_BERT_RS1_QC_WIDTH - acc_t_bits).W)
+    val qc = UInt(acc_t_bits.W)
+    val _spacer0 = UInt(CONFIG_BERT_RS1_SPACER0_WIDTH.W)
+    val cmd_type = UInt(CONFIG_BERT_RS1_CMD_TYPE_WIDTH.W)
+  }
+
+  val CONFIG_BERT_RS2_SPACER1_WIDTH = 32
+  val CONFIG_BERT_RS2_QB_WIDTH = 32
+
+  class ConfigBertRs2(acc_t_bits: Int) extends Bundle {
+    val _spacer1 = UInt(CONFIG_BERT_RS2_SPACER1_WIDTH.W)
+    val _spacer0 = UInt((CONFIG_BERT_RS2_QB_WIDTH - acc_t_bits).W)
+    val qb = UInt(acc_t_bits.W)
   }
 
   val CONFIG_EX_RS1_CMD_TYPE_WIDTH = 2
