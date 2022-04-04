@@ -47,7 +47,7 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
   val pool_en = Bool()
   val store_en = Bool()
 
-  override def cloneType: this.type = new ScratchpadMemWriteRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
+  override def cloneType: this.type = new ScratchpadMemWriteRequest(local_addr_t, acc_t_bits, scale_t_bits).asInstanceOf[this.type]
 }
 
 class ScratchpadMemWriteResponse extends Bundle {
