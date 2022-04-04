@@ -294,7 +294,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
-    val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_STORE|| config_cmd_type === CONFIG_BERT))
+    val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_STORE || config_cmd_type === CONFIG_BERT))
     val is_bert = funct === CONFIG_CMD && config_cmd_type === CONFIG_BERT // bert commands are a subset of store commands, so they still go in the store queue
 
     new_entry.q := Mux1H(Seq(
