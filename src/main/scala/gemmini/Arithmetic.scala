@@ -244,7 +244,7 @@ object Arithmetic {
 
       override def -(t: Float): Float = {
         val t_sgn = t.bits(t.getWidth-1)
-        val neg_t = Cat(t_sgn, t.bits(t.getWidth-2,0)).asTypeOf(t)
+        val neg_t = Cat(~t_sgn, t.bits(t.getWidth-2,0)).asTypeOf(t)
         self + neg_t
       }
 
