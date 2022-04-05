@@ -55,8 +55,7 @@ class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_fun
   val e_scaled = scale_func(e_gelued, io.in.bits.scale)
   val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
   val e_act = MuxCase(e_clipped, Seq(
-    (has_nonlinear_activations.B && io.in.bits.act === Activation.RELU) -> e_clipped.relu,
-    (has_nonlinear_activations.B && io.in.bits.act === Activation.RELU6) -> e_clipped.relu6(io.in.bits.relu6_shift)))
+    (has_nonlinear_activations.B && io.in.bits.act === Activation.RELU) -> e_clipped.relu))
 
   out.bits.data := e_act
   io.out := Pipe(out, latency)
@@ -99,8 +98,7 @@ class AccumulatorScale[T <: Data, U <: Data](
         // val e_scaled = scale_func(e, x.resp.scale)
         val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
         val e_act = MuxCase(e_clipped, Seq(
-          (x.resp.act === Activation.RELU) -> e_clipped.relu,
-          (x.resp.act === Activation.RELU6) -> e_clipped.relu6(x.resp.relu6_shift)))
+          (x.resp.act === Activation.RELU) -> e_clipped.relu))
 
         e_act
       })))

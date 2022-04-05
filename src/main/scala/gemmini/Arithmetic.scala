@@ -39,7 +39,6 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def withWidthOf(t: T): T
   def clippedToWidthOf(t: T): T // Like "withWidthOf", except that it saturates
   def relu: T
-  def relu6(shift: UInt): T
   def zero: T
 }
 
@@ -74,12 +73,6 @@ object Arithmetic {
       }
 
       override def relu: UInt = self
-      override def relu6(shift: UInt): UInt = {
-        val max6 = (6.U << shift).asUInt()
-        val maxwidth = ((1 << (self.getWidth-1))-1).U
-        val max = Mux(max6 > maxwidth, maxwidth, max6)(self.getWidth-1, 0).asUInt()
-        Mux(self < max, self, max)
-      }
 
       override def zero: UInt = 0.U
       override def identity: UInt = 1.U
@@ -125,12 +118,6 @@ object Arithmetic {
       }
 
       override def relu: SInt = Mux(self >= 0.S, self, 0.S)
-      override def relu6(shift: UInt): SInt = {
-        val max6 = (6.S << shift).asSInt()
-        val maxwidth = ((1 << (self.getWidth-1))-1).S
-        val max = Mux(max6 > maxwidth, maxwidth, max6)(self.getWidth-1, 0).asSInt()
-        MuxCase(self, Seq((self < 0.S) -> 0.S, (self > max) -> max))
-      }
 
       override def zero: SInt = 0.S
       override def identity: SInt = 1.S
@@ -331,53 +318,6 @@ object Arithmetic {
         result
       }
 
-      override def relu6(shift: UInt): Float = {
-        // Get a constant 6 as a float
-        val in_to_rec_fn = Module(new INToRecFN(log2Up(6+1), self.expWidth, self.sigWidth))
-        in_to_rec_fn.io.signedIn := false.B
-        in_to_rec_fn.io.in := 6.U
-        in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-        in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
-
-        val six_rec = in_to_rec_fn.io.out
-
-        // Get 2^shift as a float
-        val shift_exp = self.bias.U(self.expWidth.W) + shift
-        val shift_fn = Cat(0.U(1.W), shift_exp, 0.U((self.sigWidth-1).W))
-        val shift_rec = recFNFromFN(self.expWidth, self.sigWidth, shift_fn)
-
-        // Get 6*(2^shift) as a float
-        val muladder = Module(new MulAddRecFN(self.expWidth, self.sigWidth))
-
-        muladder.io.op := 0.U
-        muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-        muladder.io.detectTininess := consts.tininess_afterRounding
-
-        muladder.io.a := six_rec
-        muladder.io.b := shift_rec
-        muladder.io.c := 0.U
-
-        val shifted_rec = muladder.io.out
-
-        // Now, compare self and 6*(2^shift) to calculate the activation function
-        val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
-        val self_raw = rawFloatFromFN(self.expWidth, self.sigWidth, self.bits)
-
-        val comparer = Module(new CompareRecFN(self.expWidth, self.sigWidth))
-        comparer.io.a := self_rec
-        comparer.io.b := shifted_rec
-        comparer.io.signaling := false.B
-
-        val larger_than_six = comparer.io.gt
-
-        val result_rec = Mux(!self_raw.isZero && self_raw.sign, 0.U,
-          Mux(larger_than_six, shifted_rec, self_rec))
-
-        val result = Wire(Float(self.expWidth, self.sigWidth))
-        result.bits := fNFromRecFN(self.expWidth, self.sigWidth, result_rec)
-        result
-      }
-
       override def zero: Float = 0.U.asTypeOf(self)
       override def identity: Float = Cat(0.U(2.W), ~(0.U((self.expWidth-1).W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
     }
@@ -395,7 +335,6 @@ object Arithmetic {
       override def withWidthOf(t: DummySInt) = self.dontCare
       override def clippedToWidthOf(t: DummySInt) = self.dontCare
       override def relu = self.dontCare
-      override def relu6(shift: UInt) = self.dontCare
       override def zero = self.dontCare
     }
   }

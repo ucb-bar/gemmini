@@ -928,8 +928,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val activated_wdata = VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map { e =>
       val e_clipped = e.clippedToWidthOf(inputType)
       val e_act = MuxCase(e_clipped, Seq(
-        (activation === Activation.RELU) -> e_clipped.relu,
-        (activation === Activation.RELU6) -> e_clipped.relu6(relu6_shift)))
+        (activation === Activation.RELU) -> e_clipped.relu))
 
       e_act
     })))
