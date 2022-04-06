@@ -553,7 +553,6 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   io.idle := state === idle
 
   // The order here is k, j, i
-  // val ex_ahead = io.ex_completed || (io.ex_k === req.max_k - 1.U && (io.ex_j > j || (io.ex_j === j && io.ex_i > i)))
   val ex_ahead = io.ex_completed ||
     (io.ex_k === req.max_k - 1.U &&
       (io.ex_j >= j + blocks ||
@@ -613,8 +612,6 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val low_d = Bool()
   val full_c = Bool()
   val ex_accumulate = Bool()
-
-  val weightA = UInt(8.W) // TODO magic numbers
 
   val configured = Bool()
 
@@ -706,7 +703,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val ab_loads_on_same_loop = ldA.io.loop_id === ldB.io.loop_id
   ldab_arb.io.forceA := !ab_loads_on_same_loop && ldA.io.loop_id === head_loop_id
   ldab_arb.io.forceB := !ab_loads_on_same_loop && ldB.io.loop_id === head_loop_id
-  ldab_arb.io.weightA := head_loop.weightA
+  ldab_arb.io.weightA := 0.U
   ldab_arb.io.inA_idle := ldA.io.idle
   ldab_arb.io.inB_idle := ldB.io.idle
   ldab_arb.io.inA_k := ldA.io.k
@@ -814,8 +811,6 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.low_d := cmd.bits.cmd.rs1(2)
         loop_being_configured.a_transpose := cmd.bits.cmd.rs2(0)
         loop_being_configured.b_transpose := cmd.bits.cmd.rs2(1)
-
-        loop_being_configured.weightA := cmd.bits.cmd.rs1(15, 8) // TODO magic numbers
 
         loop_being_configured.configured := true.B
 
