@@ -42,9 +42,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val block_cols = meshColumns * tileColumns
   val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
 
-  val activation = Reg(UInt(GemminiISA.CONFIG_MVOUT_RS1_ACTIVATION_WIDTH.W))
+  val activation = Reg(UInt(Activation.bitwidth.W)) // TODO magic number
   val igelu_qb = Reg(accType)
   val igelu_qc = Reg(accType)
+  val norm_stats_id = Reg(UInt(8.W)) // TODO magic number
   val acc_scale = Reg(acc_scale_t)
 
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
@@ -105,6 +106,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val config_bert_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigBertRs1(accType.getWidth))
   val config_bert_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigBertRs2(accType.getWidth))
+  val config_stats_id = config_bert_rs1.norm_stats_id
   val config_igelu_qb = config_bert_rs2.qb
   val config_igelu_qc = config_bert_rs2.qc
 
@@ -155,6 +157,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.acc_act := activation
   io.dma.req.bits.acc_igelu_qb := igelu_qb.asTypeOf(io.dma.req.bits.acc_igelu_qb)
   io.dma.req.bits.acc_igelu_qc := igelu_qc.asTypeOf(io.dma.req.bits.acc_igelu_qc)
+  io.dma.req.bits.acc_norm_stats_id := norm_stats_id
   io.dma.req.bits.acc_scale := acc_scale.asTypeOf(io.dma.req.bits.acc_scale)
 
   io.dma.req.bits.len := Mux(block_counter === blocks - 1.U, ((cols - 1.U) % block_cols.U) + 1.U, block_cols.U)
@@ -237,6 +240,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
         .elsewhen(DoConfigBert) {
           igelu_qb := config_igelu_qb.asTypeOf(igelu_qb)
           igelu_qc := config_igelu_qc.asTypeOf(igelu_qc)
+          norm_stats_id := config_stats_id
           cmd.ready := true.B
         }
         .elsewhen(DoStore && cmd_tracker.io.alloc.fire()) {

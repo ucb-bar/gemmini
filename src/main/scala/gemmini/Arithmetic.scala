@@ -40,6 +40,12 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def clippedToWidthOf(t: T): T // Like "withWidthOf", except that it saturates
   def relu: T
   def zero: T
+
+  // Optional parameters, which only need to be defined if you want to enable various optimizations for transformers
+  def divider(denom_t: UInt): Option[(DecoupledIO[UInt], DecoupledIO[T])] = None
+  def sqrt: Option[(DecoupledIO[UInt], DecoupledIO[T])] = None
+  def reciprocal[U <: Data](u: U): Option[(DecoupledIO[UInt], DecoupledIO[U])] = None
+  def mult_with_reciprocal[U <: Data](reciprocal: U) = self
 }
 
 object Arithmetic {
@@ -121,6 +127,209 @@ object Arithmetic {
 
       override def zero: SInt = 0.S
       override def identity: SInt = 1.S
+
+      override def divider(denom_t: UInt): Option[(DecoupledIO[UInt], DecoupledIO[SInt])] = {
+        // TODO this uses a floating point divider, but we should use an integer divider instead
+
+        val input = Wire(Decoupled(denom_t.cloneType))
+        val output = Wire(Decoupled(self.cloneType))
+
+        // We translate our integer to floating-point form so that we can use the hardfloat divider
+        val expWidth = log2Up(self.getWidth) + 1
+        val sigWidth = self.getWidth
+
+        def sin_to_float(x: SInt) = {
+          val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
+          in_to_rec_fn.io.signedIn := true.B
+          in_to_rec_fn.io.in := self.asUInt()
+          in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+          in_to_rec_fn.io.out
+        }
+
+        def uin_to_float(x: UInt) = {
+          val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
+          in_to_rec_fn.io.signedIn := false.B
+          in_to_rec_fn.io.in := self.asUInt()
+          in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+          in_to_rec_fn.io.out
+        }
+
+        def float_to_in(x: UInt) = {
+          val rec_fn_to_in = Module(new RecFNToIN(expWidth = expWidth, sigWidth, self.getWidth))
+          rec_fn_to_in.io.signedOut := true.B
+          rec_fn_to_in.io.in := x
+          rec_fn_to_in.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+
+          rec_fn_to_in.io.out.asSInt()
+        }
+
+        val self_rec = sin_to_float(self)
+        val denom_rec = uin_to_float(input.bits)
+
+        // Instantiate the hardloat divider
+        val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 0))
+
+        input.ready := divider.io.inReady
+        divider.io.inValid := input.valid
+        divider.io.sqrtOp := false.B
+        divider.io.a := self_rec
+        divider.io.b := denom_rec
+        divider.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+        divider.io.detectTininess := consts.tininess_afterRounding
+
+        output.valid := divider.io.outValid_div
+        output.bits := float_to_in(divider.io.out)
+
+        assert(!output.valid || output.ready)
+
+        Some((input, output))
+      }
+
+      override def sqrt: Option[(DecoupledIO[UInt], DecoupledIO[SInt])] = {
+        // TODO this uses a floating point divider, but we should use an integer divider instead
+
+        val input = Wire(Decoupled(UInt(0.W)))
+        val output = Wire(Decoupled(self.cloneType))
+
+        input.bits := DontCare
+
+        // We translate our integer to floating-point form so that we can use the hardfloat divider
+        val expWidth = log2Up(self.getWidth) + 1
+        val sigWidth = self.getWidth
+
+        def in_to_float(x: SInt) = {
+          val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
+          in_to_rec_fn.io.signedIn := true.B
+          in_to_rec_fn.io.in := self.asUInt()
+          in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+          in_to_rec_fn.io.out
+        }
+
+        def float_to_in(x: UInt) = {
+          val rec_fn_to_in = Module(new RecFNToIN(expWidth = expWidth, sigWidth, self.getWidth))
+          rec_fn_to_in.io.signedOut := true.B
+          rec_fn_to_in.io.in := x
+          rec_fn_to_in.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+
+          rec_fn_to_in.io.out.asSInt()
+        }
+
+        val self_rec = in_to_float(self)
+
+        // Instantiate the hardloat sqrt
+        val sqrter = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 0))
+
+        input.ready := sqrter.io.inReady
+        sqrter.io.inValid := input.valid
+        sqrter.io.sqrtOp := true.B
+        sqrter.io.a := self_rec
+        sqrter.io.b := DontCare
+        sqrter.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+        sqrter.io.detectTininess := consts.tininess_afterRounding
+
+        output.valid := sqrter.io.outValid_div
+        output.bits := float_to_in(sqrter.io.out)
+
+        assert(!output.valid || output.ready)
+
+        Some((input, output))
+      }
+
+      override def reciprocal[U <: Data](u: U): Option[(DecoupledIO[UInt], DecoupledIO[U])] = u match {
+        case Float(expWidth, sigWidth) =>
+          val input = Wire(Decoupled(UInt(0.W)))
+          val output = Wire(Decoupled(u.cloneType))
+
+          input.bits := DontCare
+
+          // We translate our integer to floating-point form so that we can use the hardfloat divider
+          def in_to_float(x: SInt) = {
+            val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
+            in_to_rec_fn.io.signedIn := true.B
+            in_to_rec_fn.io.in := self.asUInt()
+            in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+            in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+            in_to_rec_fn.io.out
+          }
+
+          def float_to_in(x: UInt) = {
+            val rec_fn_to_in = Module(new RecFNToIN(expWidth = expWidth, sigWidth, self.getWidth))
+            rec_fn_to_in.io.signedOut := true.B
+            rec_fn_to_in.io.in := x
+            rec_fn_to_in.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+
+            rec_fn_to_in.io.out.asSInt()
+          }
+
+          val self_rec = in_to_float(self)
+          val one_rec = in_to_float(1.S)
+
+          // Instantiate the hardloat divider
+          val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 0))
+
+          input.ready := divider.io.inReady
+          divider.io.inValid := input.valid
+          divider.io.sqrtOp := false.B
+          divider.io.a := one_rec
+          divider.io.b := self_rec
+          divider.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          divider.io.detectTininess := consts.tininess_afterRounding
+
+          output.valid := divider.io.outValid_div
+          output.bits := fNFromRecFN(expWidth, sigWidth, divider.io.out).asTypeOf(u)
+
+          assert(!output.valid || output.ready)
+
+          Some((input, output))
+
+        case _ => None
+      }
+
+      override def mult_with_reciprocal[U <: Data](reciprocal: U): SInt = reciprocal match {
+        case recip @ Float(expWidth, sigWidth) =>
+          def in_to_float(x: SInt) = {
+            val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
+            in_to_rec_fn.io.signedIn := true.B
+            in_to_rec_fn.io.in := self.asUInt()
+            in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+            in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+            in_to_rec_fn.io.out
+          }
+
+          def float_to_in(x: UInt) = {
+            val rec_fn_to_in = Module(new RecFNToIN(expWidth = expWidth, sigWidth, self.getWidth))
+            rec_fn_to_in.io.signedOut := true.B
+            rec_fn_to_in.io.in := x
+            rec_fn_to_in.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+
+            rec_fn_to_in.io.out.asSInt()
+          }
+
+          val self_rec = in_to_float(self)
+          val reciprocal_rec = recFNFromFN(expWidth, sigWidth, recip.bits)
+
+          // Instantiate the hardloat divider
+          val muladder = Module(new MulAddRecFN(expWidth, sigWidth))
+          muladder.io.op := 0.U
+          muladder.io.roundingMode := consts.round_near_even
+          muladder.io.detectTininess := consts.tininess_afterRounding
+
+          muladder.io.a := self_rec
+          muladder.io.b := reciprocal_rec
+          muladder.io.c := 0.U
+
+          float_to_in(muladder.io.out)
+
+        case _ => self
+      }
     }
   }
 

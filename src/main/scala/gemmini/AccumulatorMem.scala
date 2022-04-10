@@ -5,33 +5,31 @@ import chisel3.util._
 
 import Util._
 
-class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, shift_width: Int, acc_t: T, scale_t: U) extends Bundle {
+class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, scale_t: U) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
   val scale = scale_t
-  val relu6_shift = UInt(shift_width.W)
   val igelu_qb = acc_t.cloneType
   val igelu_qc = acc_t.cloneType
-  val act = UInt(2.W) // TODO magic number
+  val act = UInt(Activation.bitwidth.W) // TODO magic number
   val full = Bool() // Whether or not we return the full bitwidth output
 
   val fromDMA = Bool()
 
 }
 
-class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U, shift_width: Int) extends Bundle {
+class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
   val data = fullDataType.cloneType
   val fromDMA = Bool()
   val scale = scale_t.cloneType
-  val relu6_shift = UInt(shift_width.W)
   val igelu_qb = fullDataType.head.head.cloneType
   val igelu_qc = fullDataType.head.head.cloneType
-  val act = UInt(2.W) // TODO magic number
-  val acc_bank_id = UInt(2.W) // TODO don't hardcode
+  val act = UInt(Activation.bitwidth.W) // TODO magic number
+  val acc_bank_id = UInt(2.W) // TODO magic number
 }
 
-class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, shift_width: Int, fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
-  val req = Decoupled(new AccumulatorReadReq[T, U](n, shift_width, fullDataType.head.head.cloneType, scale_t))
-  val resp = Flipped(Decoupled(new AccumulatorReadResp[T, U](fullDataType, scale_t, shift_width)))
+class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
+  val req = Decoupled(new AccumulatorReadReq[T, U](n, fullDataType.head.head.cloneType, scale_t))
+  val resp = Flipped(Decoupled(new AccumulatorReadResp[T, U](fullDataType, scale_t)))
 }
 
 class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
@@ -45,7 +43,7 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
 class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U,
   acc_sub_banks: Int, use_shared_ext_mem: Boolean
 ) extends Bundle {
-  val read = Flipped(new AccumulatorReadIO(n, log2Ceil(t.head.head.getWidth), t, scale_t))
+  val read = Flipped(new AccumulatorReadIO(n, t, scale_t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
 
   val ext_mem = if (use_shared_ext_mem) Some(Vec(acc_sub_banks, new ExtMemIO)) else None
@@ -97,8 +95,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
   // to it, then we might not get the written data. We might need some kind of cooldown counter after addresses in the
   // accumulator have been written to for configurations with such small matrices
-
-  // TODO Refuse a read from an address which has only just been written to
 
   // TODO make a new aligned_to variable specifically for AccumulatorMem. We should assume that inputs are at least
   // accType.getWidth/8 aligned, because it won't make sense to do matrix additions directly in the DMA otherwise.
@@ -291,7 +287,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
   }
 
-  val q = Module(new Queue(new AccumulatorReadResp(t, scale_t, log2Ceil(t.head.head.getWidth)),  1, true, true))
+  val q = Module(new Queue(new AccumulatorReadResp(t, scale_t),  1, true, true))
   q.io.enq.bits.data := rdata_for_read_resp
 
   if (is_dummy) {
@@ -300,7 +296,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   }
 
   q.io.enq.bits.scale := RegNext(io.read.req.bits.scale)
-  q.io.enq.bits.relu6_shift := RegNext(io.read.req.bits.relu6_shift)
   q.io.enq.bits.igelu_qb := RegNext(io.read.req.bits.igelu_qb)
   q.io.enq.bits.igelu_qc := RegNext(io.read.req.bits.igelu_qc)
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
@@ -312,7 +307,6 @@ class AccumulatorMem[T <: Data, U <: Data](
 
   io.read.resp.bits.data := p.bits.data
   io.read.resp.bits.fromDMA := p.bits.fromDMA
-  io.read.resp.bits.relu6_shift := p.bits.relu6_shift
   io.read.resp.bits.igelu_qb := p.bits.igelu_qb
   io.read.resp.bits.igelu_qc := p.bits.igelu_qc
   io.read.resp.bits.act := p.bits.act

@@ -29,7 +29,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val acc = new Bundle {
       val read_req = Vec(acc_banks, Decoupled(new AccumulatorReadReq(
-          acc_bank_entries, log2Up(accType.getWidth), accType, acc_scale_t
+          acc_bank_entries, accType, acc_scale_t
       )))
 
       val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
@@ -115,8 +115,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val acc_scale = Reg(acc_scale_t)
-  val relu6_shift = Reg(UInt(log2Up(accType.getWidth).W))
-  val activation = if (has_nonlinear_activations) Reg(UInt(2.W)) else Activation.NONE // TODO magic number
+  val activation = if (has_nonlinear_activations) Reg(UInt(Activation.bitwidth.W)) else Activation.NONE // TODO magic number
   val a_transpose = Reg(Bool())
   val bd_transpose = Reg(Bool())
   val config_initialized = RegInit(false.B)
@@ -470,7 +469,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.read_req(i).valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
       io.acc.read_req(i).bits.scale := acc_scale
       io.acc.read_req(i).bits.full := false.B
-      io.acc.read_req(i).bits.relu6_shift := relu6_shift
       io.acc.read_req(i).bits.igelu_qb := DontCare
       io.acc.read_req(i).bits.igelu_qc := DontCare
       io.acc.read_req(i).bits.act := activation
@@ -489,7 +487,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.read_req(i).valid := false.B
       io.acc.read_req(i).bits.scale := DontCare
       io.acc.read_req(i).bits.full := false.B
-      io.acc.read_req(i).bits.relu6_shift := relu6_shift
       io.acc.read_req(i).bits.igelu_qb := DontCare
       io.acc.read_req(i).bits.igelu_qc := DontCare
       io.acc.read_req(i).bits.act := DontCare
@@ -554,7 +551,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               }
               in_shift := config_ex_rs2.in_shift
               acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_t) // TODO magic number
-              relu6_shift := config_ex_rs2.relu6_shift
               a_transpose := config_ex_rs1.a_transpose
               bd_transpose := config_ex_rs1.b_transpose
 
