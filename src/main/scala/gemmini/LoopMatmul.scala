@@ -559,7 +559,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val ln_norm_cmds = VecInit(VecInit(NormCmd.SUM, NormCmd.MEAN), VecInit(NormCmd.VARIANCE, NormCmd.INV_STDDEV),
     VecInit(NormCmd.RESET, NormCmd.RESET))
 
-  val stat_ids = Mux(rows -& ln_row > NORM_STAT_IDS.U, NORM_STAT_IDS.U, rows -& ln_row)
+  val ln_stat_ids = Mux(rows -& ln_row > NORM_STAT_IDS.U, NORM_STAT_IDS.U, rows -& ln_row)
 
   val ln_r = ln_row +& ln_stat_id
 
@@ -631,16 +631,19 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     state := ln_st
   }.elsewhen (io.cmd.fire() && state === ln_st) {
     val next_j = floorAdd(j, max_blocks, req.max_j)
-    val next_stat_id = floorAdd(ln_stat_id, 1.U, NORM_STAT_IDS.U, next_j === 0.U)
-    val next_row = floorAdd(ln_row, rows, NORM_STAT_IDS.U, next_j === 0.U && next_stat_id === 0.U)
-    val next_i = floorAdd(i, 1.U, req.max_i, next_j === 0.U && next_stat_id === 0.U && next_row === 0.U)
+    val next_stat_id = floorAdd(ln_stat_id, 1.U, ln_stat_ids, next_j === 0.U)
+    val next_cmd = floorAdd(ln_cmd, 1.U, ln_norm_cmds.size.U, next_j === 0.U && next_stat_id === 0.U)
+    val next_row = floorAdd(ln_row, NORM_STAT_IDS.U, rows, next_j === 0.U && next_stat_id === 0.U && next_cmd === 0.U)
+    val next_i = floorAdd(i, 1.U, req.max_i,
+      next_j === 0.U && next_stat_id === 0.U && next_cmd === 0.U && next_row === 0.U)
 
     j := next_j
     ln_stat_id := next_stat_id
+    ln_cmd := next_cmd
     ln_row := next_row
     i := next_i
 
-    when (next_i === 0.U && next_row === 0.U && next_stat_id === 0.U && next_j === 0.U) {
+    when (next_i === 0.U && next_row === 0.U && next_cmd === 0.U && next_stat_id === 0.U && next_j === 0.U) {
       state := idle
     }.elsewhen (next_j === 0.U) {
       state := ln_config

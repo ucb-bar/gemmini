@@ -614,7 +614,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
           start_inputting_a := !a_should_be_fed_into_transposer
           start_inputting_b := !b_should_be_fed_into_transposer
-          start_inputting_b := true.B
 
           control_state := compute
         }
