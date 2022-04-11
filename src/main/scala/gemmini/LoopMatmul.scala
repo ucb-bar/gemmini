@@ -488,6 +488,7 @@ class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val dram_addr = UInt(coreMaxAddrBits.W)
   val dram_stride = UInt(coreMaxAddrBits.W)
   val full_c = Bool()
+  val act = UInt(Activation.bitwidth.W)
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
 }
@@ -513,7 +514,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   })
 
   object State extends ChiselEnum {
-    val idle, st = Value
+    val idle, st, ln_config, ln_st = Value
   }
   import State._
   val state = RegInit(idle)
@@ -522,6 +523,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(req.max_j <= max_block_len.U, req.max_j, max_block_len.U))
 
+  // Non-BERT-related iterators and calculations
   val j = Reg(UInt(iterator_bitwidth.W))
   val i = Reg(UInt(iterator_bitwidth.W))
 
@@ -547,25 +549,74 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   mvout_cmd_rs2.local_addr := cast_to_acc_addr(mvout_cmd_rs2.local_addr, sp_addr, accumulate = false.B, read_full = req.full_c)
   mvout_cmd.rs2 := mvout_cmd_rs2.asUInt()
 
+  // Layernorm iterators and calculations
+  val ln_row = Reg(UInt(iterator_bitwidth.W))
+  val ln_cmd = Reg(UInt(iterator_bitwidth.W))
+  val ln_stat_id = Reg(UInt(iterator_bitwidth.W))
+
+  val NORM_STAT_IDS = 4 // TODO magic number
+
+  val ln_norm_cmds = VecInit(VecInit(NormCmd.SUM, NormCmd.MEAN), VecInit(NormCmd.VARIANCE, NormCmd.INV_STDDEV),
+    VecInit(NormCmd.RESET, NormCmd.RESET))
+
+  val stat_ids = Mux(rows -& ln_row > NORM_STAT_IDS.U, NORM_STAT_IDS.U, rows -& ln_row)
+
+  val ln_r = ln_row +& ln_stat_id
+
+  val ln_sp_addr = acc_addr_start +& (i * req.max_j +& j) * block_size.U +& ln_r
+  val ln_norm_cmd = Mux(j +& max_blocks >= req.max_j, ln_norm_cmds(ln_cmd)(1), ln_norm_cmds(ln_cmd)(0))
+
+  // TODO we assume for now that full_C and layernorm aren't true at the same
+  val ln_dram_offset = ((i * req.dram_stride +& j) * block_size.U +& ln_r * req.dram_stride) * (input_w/8).U
+  val ln_dram_addr = req.dram_addr + LoopMatmul.castDramOffset(ln_dram_offset)
+
+  val ln_config_bert_rs1 = Wire(new GemminiISA.ConfigBertRs1)
+  ln_config_bert_rs1 := DontCare
+  ln_config_bert_rs1.cmd_type := CONFIG_BERT
+  ln_config_bert_rs1.norm_stats_id := ln_stat_id
+
+  val ln_config_bert = Wire(new RoCCCommand)
+  ln_config_bert := DontCare
+  ln_config_bert.inst.funct := CONFIG_CMD
+  ln_config_bert.rs1 := ln_config_bert_rs1.asUInt()
+  ln_config_bert.rs2 := DontCare
+
+  val ln_mvout_cmd = Wire(new RoCCCommand)
+  ln_mvout_cmd := DontCare
+  ln_mvout_cmd.inst.funct := STORE_CMD
+  ln_mvout_cmd.rs1 := ln_dram_addr
+
+  val ln_mvout_cmd_rs2 = Wire(mvout_rs2_t.cloneType)
+  ln_mvout_cmd_rs2 := DontCare
+  ln_mvout_cmd_rs2.num_rows := 1.U
+  ln_mvout_cmd_rs2.num_cols := cols.asUInt()
+  ln_mvout_cmd_rs2.local_addr := cast_to_acc_addr(ln_mvout_cmd_rs2.local_addr, ln_sp_addr, accumulate = false.B, read_full = req.full_c)
+  ln_mvout_cmd_rs2.local_addr.norm_cmd := ln_norm_cmd
+  ln_mvout_cmd.rs2 := ln_mvout_cmd_rs2.asUInt()
+
   io.req.ready := state === idle
   io.j := j
   io.i := i
   io.idle := state === idle
 
-  // The order here is k, j, i
+  // The order here is k, j, i when not doing LAYERNORM
   val ex_ahead = io.ex_completed ||
-    (io.ex_k === req.max_k - 1.U &&
-      (io.ex_j >= j + blocks ||
-        ((io.ex_j === j + blocks - 1.U) && io.ex_i > i)))
+    (req.act =/= Activation.LAYERNORM &&
+      (io.ex_k === req.max_k - 1.U &&
+        (io.ex_j >= j + blocks ||
+          ((io.ex_j === j + blocks - 1.U) && io.ex_i > i))))
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && ex_ahead && req.dram_addr =/= 0.U
-  io.cmd.bits := mvout_cmd
+  io.cmd.bits := MuxCase(mvout_cmd, Seq(
+    (state === ln_config) -> ln_config_bert,
+    (state === ln_st) -> ln_mvout_cmd,
+  ))
 
   io.loop_id := req.loop_id
 
   when (req.dram_addr === 0.U) {
     state := idle
-  }.elsewhen (io.cmd.fire) {
+  }.elsewhen (io.cmd.fire() && state === st) {
     // The order here is k, j, i
     val next_i = floorAdd(i, 1.U, req.max_i)
     val next_j = floorAdd(j, max_blocks, req.max_j, next_i === 0.U)
@@ -576,13 +627,35 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     when (next_i === 0.U && next_j === 0.U) {
       state := idle
     }
+  }.elsewhen (io.cmd.fire() && state === ln_config) {
+    state := ln_st
+  }.elsewhen (io.cmd.fire() && state === ln_st) {
+    val next_j = floorAdd(j, max_blocks, req.max_j)
+    val next_stat_id = floorAdd(ln_stat_id, 1.U, NORM_STAT_IDS.U, next_j === 0.U)
+    val next_row = floorAdd(ln_row, rows, NORM_STAT_IDS.U, next_j === 0.U && next_stat_id === 0.U)
+    val next_i = floorAdd(i, 1.U, req.max_i, next_j === 0.U && next_stat_id === 0.U && next_row === 0.U)
+
+    j := next_j
+    ln_stat_id := next_stat_id
+    ln_row := next_row
+    i := next_i
+
+    when (next_i === 0.U && next_row === 0.U && next_stat_id === 0.U && next_j === 0.U) {
+      state := idle
+    }.elsewhen (next_j === 0.U) {
+      state := ln_config
+    }
   }
 
   when (io.req.fire) {
     req := io.req.bits
-    state := st
+    state := Mux(io.req.bits.act === Activation.LAYERNORM, ln_config, st)
+
     j := 0.U
     i := 0.U
+    ln_row := 0.U
+    ln_cmd := 0.U
+    ln_stat_id := 0.U
   }
 }
 
@@ -608,6 +681,8 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
 
   val a_transpose = Bool()
   val b_transpose = Bool()
+
+  val act = UInt(Activation.bitwidth.W)
 
   val low_d = Bool()
   val full_c = Bool()
@@ -809,6 +884,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.ex_accumulate := cmd.bits.cmd.rs1(0)
         loop_being_configured.full_c := cmd.bits.cmd.rs1(1)
         loop_being_configured.low_d := cmd.bits.cmd.rs1(2)
+        loop_being_configured.act := cmd.bits.cmd.rs1(8+Activation.bitwidth-1, 8) // TODO magic numbers
+
         loop_being_configured.a_transpose := cmd.bits.cmd.rs2(0)
         loop_being_configured.b_transpose := cmd.bits.cmd.rs2(1)
 
@@ -923,6 +1000,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.dram_addr := loop_requesting_st.c_dram_addr
   stC.io.req.bits.dram_stride := loop_requesting_st.c_dram_stride
   stC.io.req.bits.full_c := loop_requesting_st.full_c
+  stC.io.req.bits.act := loop_requesting_st.act
   stC.io.req.bits.addr_start := st_c_addr_start
   stC.io.req.bits.loop_id := loop_requesting_st_id
 

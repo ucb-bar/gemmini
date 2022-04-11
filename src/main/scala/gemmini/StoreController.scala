@@ -104,7 +104,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val config_upad = config_mvout_rs1.upad
   val config_lpad = config_mvout_rs1.lpad
 
-  val config_bert_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigBertRs1(accType.getWidth))
+  val config_bert_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigBertRs1)
   val config_bert_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigBertRs2(accType.getWidth))
   val config_stats_id = config_bert_rs1.norm_stats_id
   val config_igelu_qb = config_bert_rs2.qb

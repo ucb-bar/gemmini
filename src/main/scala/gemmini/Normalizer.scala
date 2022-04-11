@@ -46,16 +46,13 @@ class AccumulationLanes[T <: Data](num_stats: Int, acc_t: T, n_lanes: Int, laten
   val cmd = io.ins.bits.cmd
   val mean = io.ins.bits.mean
 
-  val data = io.ins.bits.data.zipWithIndex.map { case (d, i) => Mux(i.U < io.ins.bits.len, d, d.zero) }
-
-  def op(x: T, y: T): T = {
-    Mux(cmd === NormCmd.SUM || cmd === NormCmd.MEAN,
-      x + y,
-      (x-mean)*(x-mean) + (y-mean)*(y-mean)
-    )
+  val data = io.ins.bits.data.zipWithIndex.map { case (d, i) =>
+    Mux(i.U < io.ins.bits.len,
+      Mux(cmd === NormCmd.VARIANCE || cmd === NormCmd.INV_STDDEV, (d-mean)*(d-mean), d).withWidthOf(acc_t),
+      d.zero)
   }
 
-  val result = data.reduce(op)
+  val result = data.reduce(_ + _)
 
   val pipe = Module(new Pipeline[LaneOutput](new LaneOutput, latency)())
 
@@ -113,7 +110,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     val elems_left = req.len.cloneType
 
     def vec_grouped = VecInit(req.acc_read_resp.data.flatten.grouped(n_lanes).map(v => VecInit(v)).toSeq)
-    def vec_groups_left = elems_left / n_lanes.U
+    def vec_groups_left = elems_left / n_lanes.U + (elems_left % n_lanes.U =/= 0.U)
 
     def cmd = req.cmd
 
@@ -123,14 +120,14 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
   }
 
   val stats = Reg(Vec(num_stats, new Stats))
-  val done_with_lanes = Wire(Vec(num_stats, Bool()))
+  val done_with_functional_units = Wire(Vec(num_stats, Bool()))
   val next_states = Wire(Vec(num_stats, State()))
 
   (stats.map(_.state) zip next_states).foreach { case (s, ns) => s := ns }
 
   // IO
   val in_stats_id = io.in.bits.stats_id
-  io.in.ready := (stats(in_stats_id).state === idle || done_with_lanes(in_stats_id)) &&
+  io.in.ready := (stats(in_stats_id).state === idle || done_with_functional_units(in_stats_id)) &&
     stats.map(!_.waiting_for_lanes_to_drain).reduce(_ && _)
 
   val out_stats_id = MuxCase((num_stats-1).U,
@@ -205,7 +202,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
     when(stat.state === waiting_for_mean) {
       stat.mean := divider_out.bits
-    }.otherwise {
+    }.elsewhen(stat.state === waiting_for_variance) {
       stat.inv_stddev := divider_out.bits
     }
   }
@@ -233,7 +230,16 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     val stat = stats(waiting_for_sqrt_id)
 
     sqrt_out.ready := stat.state === waiting_for_stddev
-    stat.inv_stddev := sqrt_out.bits
+
+    // TODO this fallback for stddev === 0 only works if acc_t is an SInt
+    assert(acc_t.isInstanceOf[SInt])
+
+    when (stat.state === waiting_for_stddev) {
+      stat.inv_stddev := Mux(sqrt_out.bits.asUInt() === acc_t.zero.asUInt(),
+        1.S(acc_t.getWidth.W).asTypeOf(acc_t),
+        sqrt_out.bits
+      )
+    }
   }
 
   val stddev_to_inv_id = MuxCase((num_stats-1).U,
@@ -255,12 +261,15 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     // Reciprocal output
     val waiting_for_reciprocal_id = MuxCase((num_stats-1).U,
       stats.zipWithIndex.map { case (s,i) =>
-        (s.state === get_inv_stddev) -> i.U }
+        (s.state === waiting_for_inv_stddev) -> i.U }
     )
     val stat = stats(waiting_for_reciprocal_id)
 
-    reciprocal_out.ready := stat.state === waiting_for_stddev
-    stat.inv_stddev := reciprocal_out.bits.asTypeOf(stat.inv_stddev)
+    reciprocal_out.ready := stat.state === waiting_for_inv_stddev
+
+    when (stat.state === waiting_for_inv_stddev) {
+      stat.inv_stddev := reciprocal_out.bits.asTypeOf(stat.inv_stddev)
+    }
   }
 
   // State transitions
@@ -268,18 +277,15 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     val state = stat.state
     val cmd = stat.cmd
 
-    val done = done_with_lanes(id)
+    val done = done_with_functional_units(id)
 
     when (state === idle) {
-      next_state := Mux(in_stats_id === id.U && io.in.fire(),
-        Mux(io.in.bits.cmd === NormCmd.RESET, output, get_sum),
-        idle
-      )
-
-      done := true.B
+      // We have a different "when" statement below to support the case where a new row is input into the normalizer
+      next_state := idle
+      done := DontCare
     }.elsewhen(state === output) {
       next_state := Mux(io.out.fire() && out_stats_id === id.U, idle, state)
-      done := true.B
+      done := io.out.fire() && out_stats_id === id.U
     }.elsewhen(state === get_sum) {
       val is_last_lane_input = stat.vec_groups_left === 0.U ||
         (stat.vec_groups_left === 1.U &&
@@ -296,29 +302,33 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV
     }.elsewhen(state === get_mean || state === get_variance) {
       next_state := Mux(divider_in.fire() && sum_to_divide_id === id.U, state.next, state)
-      done := divider_in.fire()
+      done := false.B
     }.elsewhen(state === waiting_for_mean) {
       next_state := Mux(divider_out.fire(), idle, state)
-      done := true.B
+      done := divider_out.fire()
     }.elsewhen(state === waiting_for_variance) {
       next_state := Mux(divider_out.fire(), get_stddev, state)
-      done := true.B
+      done := false.B
     }.elsewhen(state === get_stddev) {
       next_state := Mux(sqrt_in.fire() && variance_to_sqrt_id === id.U, state.next, state)
-      done := true.B
+      done := false.B
     }.elsewhen(state === waiting_for_stddev) {
       next_state := Mux(sqrt_out.fire(), state.next, state)
-      done := true.B
+      done := false.B
     }.elsewhen(state === get_inv_stddev) {
       next_state := Mux(reciprocal_in.fire() && stddev_to_inv_id === id.U, state.next, state)
-      done := true.B
+      done := false.B
     }.elsewhen(state === waiting_for_inv_stddev) {
       next_state := Mux(reciprocal_out.fire(), idle, state)
-      done := true.B
+      done := reciprocal_out.fire()
     }.otherwise {
       assert(false.B, "invalid state in Normalizer")
       next_state := DontCare
       done := DontCare
+    }
+
+    when (io.in.fire() && in_stats_id === id.U) {
+      next_state := Mux(io.in.bits.cmd === NormCmd.RESET, output, get_sum)
     }
   }
 
@@ -331,7 +341,9 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
         (state === get_mean && next_state =/= get_mean) ||
         (state === get_variance && next_state =/= get_variance)
 
-    when (io.in.fire() && in_stats_id === id.U) {
+    val is_input = io.in.fire() && in_stats_id === id.U
+
+    when (is_input) {
       stat.req := io.in.bits
       stat.count := stat.count + io.in.bits.len
       stat.elems_left := io.in.bits.len
@@ -339,9 +351,11 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
     when(reset_running_state) {
       stat.sum := acc_t.zero
-      stat.count := 0.U
+      stat.count := Mux(is_input, io.in.bits.len, 0.U)
     }
   }
+
+  dontTouch(stats)
 
   // Assertions
   assert(PopCount(stats.map(s => s.state === waiting_for_mean || s.state === waiting_for_variance)) <= 1.U, "we don't support pipelining the divider/sqrt-unit/inv-unit right now")

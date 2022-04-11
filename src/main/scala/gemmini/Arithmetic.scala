@@ -141,8 +141,8 @@ object Arithmetic {
         def sin_to_float(x: SInt) = {
           val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
           in_to_rec_fn.io.signedIn := true.B
-          in_to_rec_fn.io.in := self.asUInt()
-          in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          in_to_rec_fn.io.in := x.asUInt()
+          in_to_rec_fn.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
           in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
 
           in_to_rec_fn.io.out
@@ -151,8 +151,8 @@ object Arithmetic {
         def uin_to_float(x: UInt) = {
           val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
           in_to_rec_fn.io.signedIn := false.B
-          in_to_rec_fn.io.in := self.asUInt()
-          in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          in_to_rec_fn.io.in := x
+          in_to_rec_fn.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
           in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
 
           in_to_rec_fn.io.out
@@ -162,7 +162,7 @@ object Arithmetic {
           val rec_fn_to_in = Module(new RecFNToIN(expWidth = expWidth, sigWidth, self.getWidth))
           rec_fn_to_in.io.signedOut := true.B
           rec_fn_to_in.io.in := x
-          rec_fn_to_in.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          rec_fn_to_in.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
 
           rec_fn_to_in.io.out.asSInt()
         }
@@ -178,7 +178,7 @@ object Arithmetic {
         divider.io.sqrtOp := false.B
         divider.io.a := self_rec
         divider.io.b := denom_rec
-        divider.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+        divider.io.roundingMode := consts.round_minMag
         divider.io.detectTininess := consts.tininess_afterRounding
 
         output.valid := divider.io.outValid_div
@@ -204,8 +204,8 @@ object Arithmetic {
         def in_to_float(x: SInt) = {
           val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
           in_to_rec_fn.io.signedIn := true.B
-          in_to_rec_fn.io.in := self.asUInt()
-          in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          in_to_rec_fn.io.in := x.asUInt()
+          in_to_rec_fn.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
           in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
 
           in_to_rec_fn.io.out
@@ -215,7 +215,7 @@ object Arithmetic {
           val rec_fn_to_in = Module(new RecFNToIN(expWidth = expWidth, sigWidth, self.getWidth))
           rec_fn_to_in.io.signedOut := true.B
           rec_fn_to_in.io.in := x
-          rec_fn_to_in.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          rec_fn_to_in.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
 
           rec_fn_to_in.io.out.asSInt()
         }
@@ -230,10 +230,10 @@ object Arithmetic {
         sqrter.io.sqrtOp := true.B
         sqrter.io.a := self_rec
         sqrter.io.b := DontCare
-        sqrter.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+        sqrter.io.roundingMode := consts.round_minMag
         sqrter.io.detectTininess := consts.tininess_afterRounding
 
-        output.valid := sqrter.io.outValid_div
+        output.valid := sqrter.io.outValid_sqrt
         output.bits := float_to_in(sqrter.io.out)
 
         assert(!output.valid || output.ready)
@@ -252,20 +252,11 @@ object Arithmetic {
           def in_to_float(x: SInt) = {
             val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
             in_to_rec_fn.io.signedIn := true.B
-            in_to_rec_fn.io.in := self.asUInt()
+            in_to_rec_fn.io.in := x.asUInt()
             in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
             in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
 
             in_to_rec_fn.io.out
-          }
-
-          def float_to_in(x: UInt) = {
-            val rec_fn_to_in = Module(new RecFNToIN(expWidth = expWidth, sigWidth, self.getWidth))
-            rec_fn_to_in.io.signedOut := true.B
-            rec_fn_to_in.io.in := x
-            rec_fn_to_in.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-
-            rec_fn_to_in.io.out.asSInt()
           }
 
           val self_rec = in_to_float(self)
@@ -279,7 +270,7 @@ object Arithmetic {
           divider.io.sqrtOp := false.B
           divider.io.a := one_rec
           divider.io.b := self_rec
-          divider.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          divider.io.roundingMode := consts.round_near_even
           divider.io.detectTininess := consts.tininess_afterRounding
 
           output.valid := divider.io.outValid_div
@@ -297,7 +288,7 @@ object Arithmetic {
           def in_to_float(x: SInt) = {
             val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
             in_to_rec_fn.io.signedIn := true.B
-            in_to_rec_fn.io.in := self.asUInt()
+            in_to_rec_fn.io.in := x.asUInt()
             in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
             in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
 
@@ -308,7 +299,7 @@ object Arithmetic {
             val rec_fn_to_in = Module(new RecFNToIN(expWidth = expWidth, sigWidth, self.getWidth))
             rec_fn_to_in.io.signedOut := true.B
             rec_fn_to_in.io.in := x
-            rec_fn_to_in.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+            rec_fn_to_in.io.roundingMode := consts.round_minMag
 
             rec_fn_to_in.io.out.asSInt()
           }

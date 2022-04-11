@@ -150,7 +150,7 @@ object GemminiISA {
   val CONFIG_BERT_RS1_SPACER0_WIDTH = 6
   val CONFIG_BERT_RS1_CMD_TYPE_WIDTH = 2
 
-  class ConfigBertRs1(acc_t_bits: Int) extends Bundle {
+  class ConfigBertRs1 extends Bundle {
     val _spacer1 = UInt(CONFIG_BERT_RS1_SPACER1_WIDTH.W)
     val norm_stats_id = UInt(CONFIG_BERT_RS1_NORM_STATS_ID_WIDTH.W)
     val _spacer0 = UInt(CONFIG_BERT_RS1_SPACER0_WIDTH.W)

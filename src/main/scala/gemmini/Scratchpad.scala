@@ -566,9 +566,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     ))
 
     acc_norm_unit.io.in.valid := false.B
-    acc_norm_unit.io.in.bits.len := write_dispatch_q.bits.len
-    acc_norm_unit.io.in.bits.stats_id := write_dispatch_q.bits.acc_norm_stats_id
-    acc_norm_unit.io.in.bits.cmd := write_dispatch_q.bits.laddr.norm_cmd
+    acc_norm_unit.io.in.bits.len := write_norm_q.io.deq.bits.len
+    acc_norm_unit.io.in.bits.stats_id := write_norm_q.io.deq.bits.acc_norm_stats_id
+    acc_norm_unit.io.in.bits.cmd := write_norm_q.io.deq.bits.laddr.norm_cmd
     acc_norm_unit.io.in.bits.acc_read_resp := DontCare
 
     val acc_scale_unit = Module(new AccumulatorScale(
