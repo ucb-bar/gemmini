@@ -401,7 +401,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         unrolled_cmd.ready := true.B
       }
     }
-
   }
 
   // Debugging signals

@@ -5,8 +5,8 @@ import chisel3.util._
 
 import Util._
 
-class AccumulatorReadRespWithFullData[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U, shift_width: Int) extends Bundle {
-  val resp = new AccumulatorReadResp(fullDataType, scale_t, shift_width)
+class AccumulatorReadRespWithFullData[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
+  val resp = new AccumulatorReadResp(fullDataType, scale_t)
   val full_data = fullDataType.cloneType
   override def cloneType: this.type = new AccumulatorReadRespWithFullData(fullDataType.cloneType, scale_t, shift_width).asInstanceOf[this.type]
 }
@@ -20,23 +20,22 @@ class AccumulatorScaleResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDa
 }
 
 class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
-  fullDataType: Vec[Vec[T]], scale_t: U, shift_width: Int,
+  fullDataType: Vec[Vec[T]], scale_t: U,
   rDataType: Vec[Vec[T]]
 ) extends Bundle {
-  val in = Flipped(Decoupled(new AccumulatorReadResp[T,U](fullDataType, scale_t, shift_width)))
+  val in = Flipped(Decoupled(new NormalizedOutput[T,U](fullDataType, scale_t)))
   val out = Decoupled(new AccumulatorScaleResp[T](fullDataType, rDataType))
   override def cloneType: this.type = new AccumulatorScaleIO(fullDataType, scale_t,
     shift_width, rDataType).asInstanceOf[this.type]
 }
 
 class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extends Bundle {
-  val shift_width = log2Ceil(t.getWidth)
-
   val scale = u.cloneType
   val act = UInt(2.W) // TODO magic number
-  val relu6_shift = UInt(shift_width.W)
   val igelu_qb = t.cloneType
   val igelu_qc = t.cloneType
+  val mean = t.cloneType
+  val inv_stddev = u.cloneType
   val data = t.cloneType
   val full_data = t.cloneType
   val id = UInt(2.W) // TODO hardcoded
@@ -53,24 +52,27 @@ class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_fun
   import ev._
   val out = WireInit(io.in)
 
-  val e_gelued = Mux(!has_nonlinear_activations.B || io.in.bits.act =/= Activation.IGELU, io.in.bits.data,
-    AccumulatorScale.igelu(io.in.bits.data, io.in.bits.igelu_qb, io.in.bits.igelu_qc)
-  )
+  val e = io.in.bits.data
 
-  val e_scaled = scale_func(e_gelued, io.in.bits.scale)
+  val e_act = MuxCase(e, Seq(
+    (has_nonlinear_activations.B && io.in.bits.act === Activation.RELU) -> e.relu,
+    (has_nonlinear_activations.B && io.in.bits.act === Activation.LAYERNORM) ->
+      (e - io.in.bits.mean).mult_with_reciprocal(io.in.bits.inv_stddev),
+    (has_nonlinear_activations.B && io.in.bits.act === Activation.IGELU) ->
+      AccumulatorScale.igelu(e, io.in.bits.igelu_qb, io.in.bits.igelu_qc),
+  ))
+
+  val e_scaled = scale_func(e_act, io.in.bits.scale)
   val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
-  val e_act = MuxCase(e_clipped, Seq(
-    (has_nonlinear_activations.B && io.in.bits.act === Activation.RELU) -> e_clipped.relu,
-    (has_nonlinear_activations.B && io.in.bits.act === Activation.RELU6) -> e_clipped.relu6(io.in.bits.relu6_shift)))
 
-  out.bits.data := e_act
+  out.bits.data := e_clipped
   io.out := Pipe(out, latency)
 }
 
 
 class AccumulatorScale[T <: Data, U <: Data](
   fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]],
-  scale_t: U, shift_width: Int,
+  scale_t: U,
   read_small_data: Boolean, read_full_data: Boolean,
   scale_func: (T, U) => T,
   num_scale_units: Int,
@@ -80,50 +82,57 @@ class AccumulatorScale[T <: Data, U <: Data](
   import ev._
 
   val io = IO(new AccumulatorScaleIO[T,U](
-    fullDataType, scale_t, shift_width, rDataType
+    fullDataType, scale_t, rDataType
   )(ev))
-  val t = io.in.bits.data(0)(0).cloneType
+  val t = io.in.bits.acc_read_resp.data(0)(0).cloneType
+  val acc_read_data = io.in.bits.acc_read_resp.data
   val out = Wire(Decoupled(new AccumulatorScaleResp[T](
     fullDataType, rDataType)(ev)))
 
   if (num_scale_units == -1) {
-    val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, shift_width)(ev)))
+    val data = io.in.bits.acc_read_resp.data
+    val act = io.in.bits.acc_read_resp.act
+    val igelu_qb = io.in.bits.acc_read_resp.igelu_qb
+    val igelu_qc = io.in.bits.acc_read_resp.igelu_qc
+    val scale = io.in.bits.acc_read_resp.scale
+
+    val activated_data = VecInit(data.map(v => VecInit(v.map { e =>
+      val e_act = MuxCase(e, Seq(
+        (has_nonlinear_activations.B && act === Activation.RELU) -> e.relu,
+        (has_nonlinear_activations.B && act === Activation.LAYERNORM) ->
+          (e - io.in.bits.mean).mult_with_reciprocal(io.in.bits.inv_stddev),
+        (has_nonlinear_activations.B && act === Activation.IGELU) ->
+          AccumulatorScale.igelu(e, igelu_qb, igelu_qc),
+      ))
+
+      val e_scaled = scale_func(e_act, scale)
+      val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
+
+      e_clipped
+    })))
+
+    val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t)(ev)))
     in.valid := io.in.valid
     io.in.ready := in.ready
-    in.bits.resp := io.in.bits
-    in.bits.full_data := io.in.bits.data
+    in.bits.resp := io.in.bits.acc_read_resp
+    in.bits.full_data := acc_read_data
+    in.bits.resp.data := activated_data
 
-    val pipe_out = Pipeline(in, latency, Seq.fill(latency)((x: AccumulatorReadRespWithFullData[T,U]) => x) :+ {
-      x: AccumulatorReadRespWithFullData[T,U] =>
-      val activated_rdata = VecInit(x.resp.data.map(v => VecInit(v.map { e =>
-        val e_gelued = Mux(!has_nonlinear_activations.B || x.resp.act =/= Activation.IGELU, e,
-          AccumulatorScale.igelu(e, x.resp.igelu_qb, x.resp.igelu_qc)
-        )
+    val pipe_out = Pipeline(in, latency)
 
-        val e_scaled = scale_func(e_gelued, x.resp.scale)
-        // val e_scaled = scale_func(e, x.resp.scale)
-        val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
-        val e_act = MuxCase(e_clipped, Seq(
-          (x.resp.act === Activation.RELU) -> e_clipped.relu,
-          (x.resp.act === Activation.RELU6) -> e_clipped.relu6(x.resp.relu6_shift)))
-
-        e_act
-      })))
-      val result = WireInit(x)
-      result.resp.data := activated_rdata
-      result
-    })
-    out.valid      := pipe_out.valid
+    out.valid := pipe_out.valid
     pipe_out.ready := out.ready
     out.bits.full_data := pipe_out.bits.full_data
     out.bits.data      := pipe_out.bits.resp.data
     out.bits.fromDMA   := pipe_out.bits.resp.fromDMA
     out.bits.acc_bank_id := pipe_out.bits.resp.acc_bank_id
   } else {
-    val width = io.in.bits.data.size * io.in.bits.data(0).size
+    val width = acc_read_data.size * acc_read_data(0).size
     val nEntries = 3
-    val regs = Reg(Vec(nEntries, Valid(new AccumulatorReadResp[T,U](
-      fullDataType, scale_t, shift_width)(ev))))
+    /*val regs = Reg(Vec(nEntries, Valid(new AccumulatorReadResp[T,U](
+      fullDataType, scale_t)(ev))))*/
+    val regs = Reg(Vec(nEntries, Valid(new NormalizedOutput[T,U](
+      fullDataType, scale_t)(ev))))
     val out_regs = Reg(Vec(nEntries, new AccumulatorScaleResp[T](
       fullDataType, rDataType)(ev)))
 
@@ -139,7 +148,7 @@ class AccumulatorScale[T <: Data, U <: Data](
           regs(i).valid := false.B
         }
       }
-      head_oh := (head_oh << 1) | head_oh(nEntries-1)
+      head_oh := (head_oh << 1).asUInt() | head_oh(nEntries-1)
     }
 
     io.in.ready := !Mux1H(tail_oh.asBools, regs.map(_.valid)) || (tail_oh === head_oh && out.fire())
@@ -148,13 +157,13 @@ class AccumulatorScale[T <: Data, U <: Data](
         when (tail_oh(i)) {
           regs(i).valid := true.B
           regs(i).bits  := io.in.bits
-          out_regs(i).fromDMA := io.in.bits.fromDMA
-          out_regs(i).acc_bank_id := io.in.bits.acc_bank_id
+          out_regs(i).fromDMA := io.in.bits.acc_read_resp.fromDMA
+          out_regs(i).acc_bank_id := io.in.bits.acc_read_resp.acc_bank_id
           fired_masks(i).foreach(_ := false.B)
           completed_masks(i).foreach(_ := false.B)
         }
       }
-      tail_oh := (tail_oh << 1) | tail_oh(nEntries-1)
+      tail_oh := (tail_oh << 1).asUInt() | tail_oh(nEntries-1)
     }
 
     val inputs = Seq.fill(width*nEntries) { Wire(Decoupled(new AccScaleDataWithIndex(t, scale_t)(ev))) }
@@ -162,14 +171,18 @@ class AccumulatorScale[T <: Data, U <: Data](
     for (i <- 0 until nEntries) {
       for (w <- 0 until width) {
         val input = inputs(i*width+w)
+
+        val acc_read_resp = regs(i).bits.acc_read_resp
+
         input.valid       := regs(i).valid && !fired_masks(i)(w)
-        input.bits.data   := regs(i).bits.data(w / io.in.bits.data(0).size)(w % io.in.bits.data(0).size)
-        input.bits.full_data := regs(i).bits.data(w / io.in.bits.data(0).size)(w % io.in.bits.data(0).size)
-        input.bits.scale  := regs(i).bits.scale
-        input.bits.act    := regs(i).bits.act
-        input.bits.relu6_shift := regs(i).bits.relu6_shift
-        input.bits.igelu_qb := regs(i).bits.igelu_qb
-        input.bits.igelu_qc := regs(i).bits.igelu_qc
+        input.bits.data   := acc_read_resp.data(w / acc_read_data(0).size)(w % acc_read_data(0).size)
+        input.bits.full_data := acc_read_resp.data(w / acc_read_data(0).size)(w % acc_read_data(0).size)
+        input.bits.scale  := acc_read_resp.scale
+        input.bits.act    := acc_read_resp.act
+        input.bits.igelu_qb := acc_read_resp.igelu_qb
+        input.bits.igelu_qc := acc_read_resp.igelu_qc
+        input.bits.mean := regs(i).bits.mean
+        input.bits.inv_stddev := regs(i).bits.inv_stddev
         input.bits.id := i.U
         input.bits.index := w.U
         when (input.fire()) {
@@ -195,8 +208,8 @@ class AccumulatorScale[T <: Data, U <: Data](
       for (j <- 0 until nEntries) {
         for (w <- 0 until width) {
           if ((j*width+w) % num_scale_units == i) {
-            val id0 = w % io.in.bits.data(0).size
-            val id1 = w / io.in.bits.data(0).size
+            val id0 = w % acc_read_data(0).size
+            val id1 = w / acc_read_data(0).size
             when (pipe_out.fire() && pipe_out.bits.id === j.U && pipe_out.bits.index === w.U) {
               out_regs(j).data     (id1)(id0) := pipe_out.bits.data
               out_regs(j).full_data(id1)(id0) := pipe_out.bits.full_data
