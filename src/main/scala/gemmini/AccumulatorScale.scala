@@ -30,8 +30,11 @@ class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extend
   val act = UInt(2.W) // TODO magic number
   val igelu_qb = t.cloneType
   val igelu_qc = t.cloneType
+  val iexp_qln2 = t.cloneType
+  val iexp_qln2_inv = t.cloneType
   val mean = t.cloneType
   val inv_stddev = u.cloneType
+  val inv_sum_exp = u.cloneType
   val data = t.cloneType
   val full_data = t.cloneType
   val id = UInt(2.W) // TODO hardcoded
@@ -55,6 +58,9 @@ class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_fun
       (e - io.in.bits.mean).mult_with_reciprocal(io.in.bits.inv_stddev),
     (has_nonlinear_activations.B && io.in.bits.act === Activation.IGELU) ->
       AccumulatorScale.igelu(e, io.in.bits.igelu_qb, io.in.bits.igelu_qc),
+    (has_nonlinear_activations.B && io.in.bits.act === Activation.SOFTMAX) ->
+      AccumulatorScale.iexp(e, io.in.bits.iexp_qln2, io.in.bits.iexp_qln2_inv,
+        io.in.bits.igelu_qb, io.in.bits.igelu_qc).mult_with_reciprocal(io.in.bits.inv_sum_exp),
   ))
 
   val e_scaled = scale_func(e_act, io.in.bits.scale)
@@ -87,8 +93,10 @@ class AccumulatorScale[T <: Data, U <: Data](
   if (num_scale_units == -1) {
     val data = io.in.bits.acc_read_resp.data
     val act = io.in.bits.acc_read_resp.act
-    val igelu_qb = io.in.bits.acc_read_resp.igelu_qb
+    val igelu_qb = io.in.bits.acc_read_resp.igelu_qb // better to call it ipoly qb/qc?
     val igelu_qc = io.in.bits.acc_read_resp.igelu_qc
+    val iexp_qln2 = io.in.bits.acc_read_resp.iexp_qln2
+    val iexp_qln2_inv = io.in.bits.acc_read_resp.iexp_qln2_inv
     val scale = io.in.bits.acc_read_resp.scale
 
     val activated_data = VecInit(data.map(v => VecInit(v.map { e =>
@@ -98,6 +106,8 @@ class AccumulatorScale[T <: Data, U <: Data](
           (e - io.in.bits.mean).mult_with_reciprocal(io.in.bits.inv_stddev),
         (has_nonlinear_activations.B && act === Activation.IGELU) ->
           AccumulatorScale.igelu(e, igelu_qb, igelu_qc),
+        (has_nonlinear_activations.B && act === Activation.SOFTMAX) ->
+          AccumulatorScale.iexp(e, iexp_qln2, iexp_qln2_inv, igelu_qb, igelu_qc).mult_with_reciprocal(io.in.bits.inv_sum_exp),
       ))
 
       val e_scaled = scale_func(e_act, scale)
@@ -176,8 +186,11 @@ class AccumulatorScale[T <: Data, U <: Data](
         input.bits.act    := acc_read_resp.act
         input.bits.igelu_qb := acc_read_resp.igelu_qb
         input.bits.igelu_qc := acc_read_resp.igelu_qc
+        input.bits.iexp_qln2 := acc_read_resp.iexp_qln2
+        input.bits.iexp_qln2_inv := acc_read_resp.iexp_qln2_inv
         input.bits.mean := regs(i).bits.mean
         input.bits.inv_stddev := regs(i).bits.inv_stddev
+        input.bits.inv_sum_exp := regs(i).bits.inv_sum_exp
         input.bits.id := i.U
         input.bits.index := w.U
         when (input.fire) {
@@ -247,5 +260,22 @@ object AccumulatorScale {
     val q_erf = (q_sign * q_poly).withWidthOf(q)
     (q * (q_erf + qc)).withWidthOf(q)
   }
-}
+
+  def iexp[T <: Data](q: T, qln2: T, qln2_inv: T, qb: T, qc: T)(implicit ev: Arithmetic[T]): T = {
+    import ev._
+
+    val zero = q.zero
+    def neg(x: T) = zero-x
+
+    // TODO: make note somewhere that qln2_inv needs scale to be
+    // TODO: 1 / (2 ** 16) / S
+
+    // qln2_inv / S / (2 ** 16) = 1 / ln2
+    // q * qln2_inv = x / S / ln2 * S * (2 ** 16) = x / ln2 * (2 ** 16)
+    val z = (neg(q) * qln2_inv) >> 16.U // q is non-positive
+    val qp = q.mac(z, qln2).withWidthOf(q)
+
+    val q_poly = qc.mac(qp + qb, qp + qb).withWidthOf(q)
+    q_poly >> z.asUInt()
+  }}
 

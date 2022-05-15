@@ -5,7 +5,7 @@ import chisel3.util._
 import chisel3.experimental.ChiselEnum
 
 object NormCmd extends ChiselEnum {
-  val RESET, SUM, MEAN, VARIANCE, INV_STDDEV = Value
+  val RESET, SUM, MEAN, VARIANCE, INV_STDDEV, MAX, SUM_EXP, INV_SUM_EXP = Value
 
   def writes_to_main_memory(cmd: Type): Bool = {
     cmd === RESET
@@ -15,6 +15,7 @@ object NormCmd extends ChiselEnum {
     MuxCase(cmd, Seq(
       (cmd === MEAN) -> SUM,
       (cmd === INV_STDDEV) -> VARIANCE,
+      (cmd === INV_SUM_EXP) -> SUM_EXP
     ))
   }
 }

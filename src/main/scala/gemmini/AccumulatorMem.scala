@@ -10,6 +10,8 @@ class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, sca
   val scale = scale_t
   val igelu_qb = acc_t.cloneType
   val igelu_qc = acc_t.cloneType
+  val iexp_qln2 = acc_t.cloneType
+  val iexp_qln2_inv = acc_t.cloneType
   val act = UInt(Activation.bitwidth.W) // TODO magic number
   val full = Bool() // Whether or not we return the full bitwidth output
 
@@ -23,6 +25,8 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val scale = scale_t.cloneType
   val igelu_qb = fullDataType.head.head.cloneType
   val igelu_qc = fullDataType.head.head.cloneType
+  val iexp_qln2 = fullDataType.head.head.cloneType
+  val iexp_qln2_inv = fullDataType.head.head.cloneType
   val act = UInt(Activation.bitwidth.W) // TODO magic number
   val acc_bank_id = UInt(2.W) // TODO magic number
 }
@@ -298,6 +302,8 @@ class AccumulatorMem[T <: Data, U <: Data](
   q.io.enq.bits.scale := RegNext(io.read.req.bits.scale)
   q.io.enq.bits.igelu_qb := RegNext(io.read.req.bits.igelu_qb)
   q.io.enq.bits.igelu_qc := RegNext(io.read.req.bits.igelu_qc)
+  q.io.enq.bits.iexp_qln2 := RegNext(q.io.enq.bits.iexp_qln2)
+  q.io.enq.bits.iexp_qln2_inv := RegNext(q.io.enq.bits.iexp_qln2_inv)
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
   q.io.enq.bits.fromDMA := RegNext(io.read.req.bits.fromDMA)
   q.io.enq.bits.acc_bank_id := DontCare
@@ -309,6 +315,8 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.read.resp.bits.fromDMA := p.bits.fromDMA
   io.read.resp.bits.igelu_qb := p.bits.igelu_qb
   io.read.resp.bits.igelu_qc := p.bits.igelu_qc
+  io.read.resp.bits.iexp_qln2 := p.bits.iexp_qln2
+  io.read.resp.bits.iexp_qln2_inv := p.bits.iexp_qln2_inv
   io.read.resp.bits.act := p.bits.act
   io.read.resp.bits.scale := p.bits.scale
   io.read.resp.bits.acc_bank_id := DontCare // This is set in Scratchpad

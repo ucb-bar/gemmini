@@ -35,6 +35,8 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
   val acc_scale = UInt(scale_t_bits.W)
   val acc_igelu_qb = UInt(acc_t_bits.W)
   val acc_igelu_qc = UInt(acc_t_bits.W)
+  val acc_iexp_qln2 = UInt(acc_t_bits.W)
+  val acc_iexp_qln2_inv = UInt(acc_t_bits.W)
   val acc_norm_stats_id = UInt(8.W) // TODO magic number
 
   val len = UInt(16.W) // TODO don't use a magic number for the width here
@@ -662,6 +664,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.act := ex_read_req.bits.act
           bio.read.req.bits.igelu_qb := ex_read_req.bits.igelu_qb
           bio.read.req.bits.igelu_qc := ex_read_req.bits.igelu_qc
+          bio.read.req.bits.iexp_qln2 := ex_read_req.bits.iexp_qln2
+          bio.read.req.bits.iexp_qln2_inv := ex_read_req.bits.iexp_qln2_inv
           bio.read.req.bits.scale := ex_read_req.bits.scale
           bio.read.req.bits.full := false.B
           bio.read.req.bits.fromDMA := false.B
@@ -671,6 +675,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.act := write_dispatch_q.bits.acc_act
           bio.read.req.bits.igelu_qb := write_dispatch_q.bits.acc_igelu_qb.asTypeOf(bio.read.req.bits.igelu_qb)
           bio.read.req.bits.igelu_qc := write_dispatch_q.bits.acc_igelu_qc.asTypeOf(bio.read.req.bits.igelu_qc)
+          bio.read.req.bits.iexp_qln2 := write_dispatch_q.bits.acc_iexp_qln2.asTypeOf(bio.read.req.bits.iexp_qln2)
+          bio.read.req.bits.iexp_qln2_inv := write_dispatch_q.bits.acc_iexp_qln2_inv.asTypeOf(bio.read.req.bits.iexp_qln2_inv)
           bio.read.req.bits.scale := write_dispatch_q.bits.acc_scale.asTypeOf(bio.read.req.bits.scale)
           bio.read.req.bits.fromDMA := true.B
 

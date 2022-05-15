@@ -40,6 +40,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def clippedToWidthOf(t: T): T // Like "withWidthOf", except that it saturates
   def relu: T
   def zero: T
+  def minimum: T
 
   // Optional parameters, which only need to be defined if you want to enable various optimizations for transformers
   def divider(denom_t: UInt): Option[(DecoupledIO[UInt], DecoupledIO[T])] = None
@@ -82,6 +83,7 @@ object Arithmetic {
 
       override def zero: UInt = 0.U
       override def identity: UInt = 1.U
+      override def minimum: UInt = 0.U
     }
   }
 
@@ -127,6 +129,7 @@ object Arithmetic {
 
       override def zero: SInt = 0.S
       override def identity: SInt = 1.S
+      override def minimum: SInt = (-(1 << (self.getWidth-1))).S
 
       override def divider(denom_t: UInt): Option[(DecoupledIO[UInt], DecoupledIO[SInt])] = {
         // TODO this uses a floating point divider, but we should use an integer divider instead
@@ -520,6 +523,7 @@ object Arithmetic {
 
       override def zero: Float = 0.U.asTypeOf(self)
       override def identity: Float = Cat(0.U(2.W), ~(0.U((self.expWidth-1).W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
+      override def minimum: Float = Cat(1.U, ~(0.U(self.expWidth.W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
     }
   }
 
@@ -536,6 +540,7 @@ object Arithmetic {
       override def clippedToWidthOf(t: DummySInt) = self.dontCare
       override def relu = self.dontCare
       override def zero = self.dontCare
+      override def minimum: DummySInt = self.dontCare
     }
   }
 }

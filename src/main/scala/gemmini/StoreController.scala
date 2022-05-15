@@ -45,6 +45,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val activation = Reg(UInt(Activation.bitwidth.W)) // TODO magic number
   val igelu_qb = Reg(accType)
   val igelu_qc = Reg(accType)
+  val iexp_qln2 = Reg(accType)
+  val iexp_qln2_inv = Reg(accType)
   val norm_stats_id = Reg(UInt(8.W)) // TODO magic number
   val acc_scale = Reg(acc_scale_t)
 
@@ -104,9 +106,12 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val config_upad = config_mvout_rs1.upad
   val config_lpad = config_mvout_rs1.lpad
 
-  val config_bert_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigBertRs1)
+  val config_bert_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigBertRs1(accType.getWidth))
   val config_bert_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigBertRs2(accType.getWidth))
   val config_stats_id = config_bert_rs1.norm_stats_id
+  val config_activation_msb = config_bert_rs1.act_msb
+  val config_iexp_q_const_type = config_bert_rs1.q_const_type
+  val config_iexp_q_const = config_bert_rs1.q_const
   val config_igelu_qb = config_bert_rs2.qb
   val config_igelu_qc = config_bert_rs2.qc
 
@@ -159,6 +164,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.acc_act := activation
   io.dma.req.bits.acc_igelu_qb := igelu_qb.asTypeOf(io.dma.req.bits.acc_igelu_qb)
   io.dma.req.bits.acc_igelu_qc := igelu_qc.asTypeOf(io.dma.req.bits.acc_igelu_qc)
+  io.dma.req.bits.acc_iexp_qln2 := iexp_qln2.asTypeOf(io.dma.req.bits.acc_iexp_qln2)
+  io.dma.req.bits.acc_iexp_qln2_inv := iexp_qln2_inv.asTypeOf(io.dma.req.bits.acc_iexp_qln2_inv)
   io.dma.req.bits.acc_norm_stats_id := norm_stats_id
   io.dma.req.bits.acc_scale := acc_scale.asTypeOf(io.dma.req.bits.acc_scale)
 
@@ -242,6 +249,11 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
         .elsewhen(DoConfigBert) {
           igelu_qb := config_igelu_qb.asTypeOf(igelu_qb)
           igelu_qc := config_igelu_qc.asTypeOf(igelu_qc)
+          when(config_iexp_q_const === 0.U) {
+            iexp_qln2 := config_iexp_q_const.asTypeOf(iexp_qln2)
+            iexp_qln2_inv := config_iexp_q_const.asTypeOf(iexp_qln2_inv)
+          }
+          activation := Cat(config_activation_msb, activation)
           norm_stats_id := config_stats_id
           cmd.ready := true.B
         }
