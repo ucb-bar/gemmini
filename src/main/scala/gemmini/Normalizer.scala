@@ -226,7 +226,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     lanes.io.ins.bits.mean := stat.mean
     lanes.io.ins.bits.max := stat.max
 
-    val iexp_const = new IExpConst(acc_t)
+    val iexp_const = Wire(new IExpConst(acc_t))
     iexp_const.qln2 := io.in.bits.acc_read_resp.iexp_qln2.asTypeOf(iexp_const.qln2)
     iexp_const.qln2_inv := io.in.bits.acc_read_resp.iexp_qln2_inv.asTypeOf(iexp_const.qln2_inv)
     iexp_const.qb := io.in.bits.acc_read_resp.igelu_qb.asTypeOf(iexp_const.qb)
@@ -255,18 +255,18 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
   {
     // Max lanes input
-    val in_lanes_stats_id = MuxCase((num_stats-1).U,
+    val max_in_lanes_stats_id = MuxCase((num_stats-1).U,
       stats.zipWithIndex.map { case (s,i) => (s.state === get_max) -> i.U }
     )
 
-    val stat = stats(in_lanes_stats_id)
+    val stat = stats(max_in_lanes_stats_id)
 
     val len = Mux(stat.elems_left % n_lanes.U === 0.U, n_lanes.U, stat.elems_left % n_lanes.U)
 
     max_lanes.io.ins.valid := stat.state === get_max && stat.vec_groups_left > 0.U
     max_lanes.io.ins.bits.data := stat.vec_grouped(stat.vec_groups_left-1.U)
     max_lanes.io.ins.bits.len := len
-    max_lanes.io.ins.bits.stats_id := in_lanes_stats_id
+    max_lanes.io.ins.bits.stats_id := max_in_lanes_stats_id
 
     when (max_lanes.io.ins.fire()) {
       stat.elems_left := stat.elems_left - len
@@ -275,9 +275,9 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
   {
     // Max lanes output
-    val out_lanes_stats_id = max_lanes.io.out.bits.stats_id
+    val max_out_lanes_stats_id = max_lanes.io.out.bits.stats_id
 
-    val stat = stats(out_lanes_stats_id)
+    val stat = stats(max_out_lanes_stats_id)
 
     when (max_lanes.io.out.fire()) {
       stat.max := Mux(stat.max > max_lanes.io.out.bits.result,
@@ -386,7 +386,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     stats.zipWithIndex.map { case (s,i) =>
       (s.state === get_inv_sum_exp) -> i.U }
   )
-  val sum_exp_to_inv = stats(sum_exp_to_inv_id).inv_sum_exp
+  val sum_exp_to_inv = stats(sum_exp_to_inv_id).sum
   val (exp_reciprocal_in, exp_reciprocal_out) = sum_exp_to_inv.reciprocal(scale_t).get
 
   {
@@ -448,26 +448,26 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
           lanes.io.ins.bits.stats_id === id.U &&
           lanes.io.ins.fire())
 
-      next_state := Mux(
-        is_last_lane_input,
-        MuxCase(state, Seq(
-          (cmd === NormCmd.SUM || cmd === NormCmd.VARIANCE || cmd === NormCmd.SUM_EXP) -> idle,
-          (cmd === NormCmd.MEAN) -> get_mean,
-          (cmd === NormCmd.INV_STDDEV) -> get_variance,
-          (cmd === NormCmd.INV_SUM_EXP) -> get_inv_sum_exp,
-        )),
-        state
-      )
-      /*next_state := Mux(cmd === NormCmd.SUM || cmd === NormCmd.VARIANCE,
+//      next_state := Mux(
+//        is_last_lane_input,
+//        MuxCase(state, Seq(
+//          (cmd === NormCmd.SUM || cmd === NormCmd.VARIANCE || cmd === NormCmd.SUM_EXP) -> idle,
+//          (cmd === NormCmd.MEAN) -> get_mean,
+//          (cmd === NormCmd.INV_STDDEV) -> get_variance,
+//          (cmd === NormCmd.INV_SUM_EXP) -> get_inv_sum_exp,
+//        )),
+//        state
+//      )
+      next_state := Mux(cmd === NormCmd.SUM || cmd === NormCmd.VARIANCE,
         Mux(is_last_lane_input, idle, state),
         Mux(is_last_lane_input,
           Mux(cmd === NormCmd.MEAN, get_mean, get_variance),
           state)
-      )*/
+      )
 
-      //done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV
-      done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV &&
-        cmd =/= NormCmd.SUM_EXP && cmd =/= NormCmd.INV_SUM_EXP
+      done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV
+      //done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV &&
+      //  cmd =/= NormCmd.SUM_EXP && cmd =/= NormCmd.INV_SUM_EXP
     }.elsewhen(state === get_mean || state === get_variance) {
       next_state := Mux(divider_in.fire() && sum_to_divide_id === id.U, state.next, state)
       done := false.B
@@ -486,7 +486,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     }.elsewhen(state === get_inv_stddev) {
       next_state := Mux(reciprocal_in.fire() && stddev_to_inv_id === id.U, state.next, state)
       done := false.B
-    }.elsewhen(state === waiting_for_inv_sum_exp) {
+    }.elsewhen(state === waiting_for_inv_stddev) {
       next_state := Mux(reciprocal_out.fire(), idle, state)
       done := reciprocal_out.fire()
     }.elsewhen(state === get_inv_sum_exp) {

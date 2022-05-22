@@ -276,6 +276,6 @@ object AccumulatorScale {
     val qp = q.mac(z, qln2).withWidthOf(q)
 
     val q_poly = qc.mac(qp + qb, qp + qb).withWidthOf(q)
-    q_poly >> z.asUInt()
+    q_poly >> z.asUInt()(7, 0)
   }}
 
