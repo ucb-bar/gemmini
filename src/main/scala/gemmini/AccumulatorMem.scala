@@ -302,8 +302,8 @@ class AccumulatorMem[T <: Data, U <: Data](
   q.io.enq.bits.scale := RegNext(io.read.req.bits.scale)
   q.io.enq.bits.igelu_qb := RegNext(io.read.req.bits.igelu_qb)
   q.io.enq.bits.igelu_qc := RegNext(io.read.req.bits.igelu_qc)
-  q.io.enq.bits.iexp_qln2 := RegNext(q.io.enq.bits.iexp_qln2)
-  q.io.enq.bits.iexp_qln2_inv := RegNext(q.io.enq.bits.iexp_qln2_inv)
+  q.io.enq.bits.iexp_qln2 := RegNext(io.read.req.bits.iexp_qln2)
+  q.io.enq.bits.iexp_qln2_inv := RegNext(io.read.req.bits.iexp_qln2_inv)
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
   q.io.enq.bits.fromDMA := RegNext(io.read.req.bits.fromDMA)
   q.io.enq.bits.acc_bank_id := DontCare

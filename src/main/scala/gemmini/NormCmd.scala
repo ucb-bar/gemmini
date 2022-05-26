@@ -14,6 +14,7 @@ object NormCmd extends ChiselEnum {
   def non_reset_version(cmd: Type): Type = {
     MuxCase(cmd, Seq(
       (cmd === MEAN) -> SUM,
+      (cmd === MAX) -> MAX,
       (cmd === INV_STDDEV) -> VARIANCE,
       (cmd === INV_SUM_EXP) -> SUM_EXP
     ))

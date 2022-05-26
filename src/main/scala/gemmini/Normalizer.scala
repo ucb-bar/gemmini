@@ -4,6 +4,7 @@ import chisel3._
 import chisel3.experimental.ChiselEnum
 import chisel3.util._
 import gemmini.AccumulatorScale.iexp
+import hardfloat.{DivSqrtRecFN_small, INToRecFN, consts, fNFromRecFN}
 
 class NormalizedInput[T <: Data: Arithmetic, U <: Data](max_len: Int, num_stats: Int, fullDataType: Vec[Vec[T]],
                                                         scale_t: U) extends Bundle {
@@ -164,6 +165,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     // Running state
     val sum = acc_t.cloneType
     val count = UInt(16.W) // TODO magic number
+    val running_max = acc_t.cloneType
     val max = acc_t.cloneType
 
     // Iterative state
@@ -226,7 +228,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     lanes.io.ins.bits.mean := stat.mean
     lanes.io.ins.bits.max := stat.max
 
-    val iexp_const = new IExpConst(acc_t)
+    val iexp_const = Wire(new IExpConst(acc_t))
     iexp_const.qln2 := io.in.bits.acc_read_resp.iexp_qln2.asTypeOf(iexp_const.qln2)
     iexp_const.qln2_inv := io.in.bits.acc_read_resp.iexp_qln2_inv.asTypeOf(iexp_const.qln2_inv)
     iexp_const.qb := io.in.bits.acc_read_resp.igelu_qb.asTypeOf(iexp_const.qb)
@@ -255,18 +257,18 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
   {
     // Max lanes input
-    val in_lanes_stats_id = MuxCase((num_stats-1).U,
+    val max_in_lanes_stats_id = MuxCase((num_stats-1).U,
       stats.zipWithIndex.map { case (s,i) => (s.state === get_max) -> i.U }
     )
 
-    val stat = stats(in_lanes_stats_id)
+    val stat = stats(max_in_lanes_stats_id)
 
     val len = Mux(stat.elems_left % n_lanes.U === 0.U, n_lanes.U, stat.elems_left % n_lanes.U)
 
     max_lanes.io.ins.valid := stat.state === get_max && stat.vec_groups_left > 0.U
     max_lanes.io.ins.bits.data := stat.vec_grouped(stat.vec_groups_left-1.U)
     max_lanes.io.ins.bits.len := len
-    max_lanes.io.ins.bits.stats_id := in_lanes_stats_id
+    max_lanes.io.ins.bits.stats_id := max_in_lanes_stats_id
 
     when (max_lanes.io.ins.fire()) {
       stat.elems_left := stat.elems_left - len
@@ -275,13 +277,13 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
   {
     // Max lanes output
-    val out_lanes_stats_id = max_lanes.io.out.bits.stats_id
+    val max_out_lanes_stats_id = max_lanes.io.out.bits.stats_id
 
-    val stat = stats(out_lanes_stats_id)
+    val stat = stats(max_out_lanes_stats_id)
 
-    when (max_lanes.io.out.fire()) {
-      stat.max := Mux(stat.max > max_lanes.io.out.bits.result,
-        stat.max, max_lanes.io.out.bits.result).asInstanceOf[stat.max.type]
+    when (max_lanes.io.out.fire()) { // TODO: MUST FIX
+      stat.running_max := Mux(max_lanes.io.out.bits.result > stat.running_max, max_lanes.io.out.bits.result, stat.running_max)
+      //stat.max := Mux(max_lanes.io.out.bits.result > stat.max, max_lanes.io.out.bits.result, stat.max)
     }
   }
 
@@ -386,29 +388,91 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     stats.zipWithIndex.map { case (s,i) =>
       (s.state === get_inv_sum_exp) -> i.U }
   )
-  val sum_exp_to_inv = stats(sum_exp_to_inv_id).inv_sum_exp
-  val (exp_reciprocal_in, exp_reciprocal_out) = sum_exp_to_inv.reciprocal(scale_t).get
+  val sum_exp_to_inv = stats(sum_exp_to_inv_id).sum
+//  val (exp_reciprocal_in, exp_reciprocal_out) = sum_exp_to_inv.reciprocal(scale_t).get
+
+//  {
+//    // Reciprocal input
+//    val stat = stats(sum_exp_to_inv_id)
+//
+//    exp_reciprocal_in.valid := stat.state === get_inv_sum_exp
+//    exp_reciprocal_in.bits := DontCare
+//  }
+//
+//  {
+//    // Reciprocal output
+//    val waiting_for_reciprocal_id = MuxCase((num_stats-1).U,
+//      stats.zipWithIndex.map { case (s,i) =>
+//        (s.state === waiting_for_inv_sum_exp) -> i.U }
+//    )
+//    val stat = stats(waiting_for_reciprocal_id)
+//
+//    exp_reciprocal_out.ready := stat.state === waiting_for_inv_sum_exp
+//
+//    when (stat.state === waiting_for_inv_sum_exp) {
+//      stat.inv_sum_exp := exp_reciprocal_out.bits.asTypeOf(stat.inv_sum_exp)
+//    }
+//  }
+
+  val exp_divider_in = Wire(Decoupled(UInt(0.W)))
+  val exp_divider_out = Wire(Decoupled(scale_t.cloneType))
+
+  //  val (exp_divider_in, exp_divider_out) = 65536.S.asTypeOf(acc_t).divider(sum_exp_to_inv.asUInt()).get
+  scale_t match {
+    case Float(expWidth, sigWidth) =>
+
+      exp_divider_in.bits := DontCare
+
+      // We translate our integer to floating-point form so that we can use the hardfloat divider
+      def in_to_float(x: SInt) = {
+        val in_to_rec_fn = Module(new INToRecFN(intWidth = sum_exp_to_inv.getWidth, expWidth, sigWidth))
+        in_to_rec_fn.io.signedIn := true.B
+        in_to_rec_fn.io.in := x.asUInt()
+        in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+        in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+        in_to_rec_fn.io.out
+      }
+
+      val self_rec = in_to_float(sum_exp_to_inv.asUInt().asSInt())
+      val one_rec = in_to_float(127.S)
+
+      // Instantiate the hardloat divider
+      val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 0))
+
+      exp_divider_in.ready := divider.io.inReady
+      divider.io.inValid := exp_divider_in.valid
+      divider.io.sqrtOp := false.B
+      divider.io.a := one_rec
+      divider.io.b := self_rec
+      divider.io.roundingMode := consts.round_near_even
+      divider.io.detectTininess := consts.tininess_afterRounding
+
+      exp_divider_out.valid := divider.io.outValid_div
+      exp_divider_out.bits := fNFromRecFN(expWidth, sigWidth, divider.io.out).asTypeOf(scale_t)
+  }
+
 
   {
-    // Reciprocal input
+    // Divider input
     val stat = stats(sum_exp_to_inv_id)
 
-    exp_reciprocal_in.valid := stat.state === get_inv_sum_exp
-    exp_reciprocal_in.bits := DontCare
+    exp_divider_in.valid := stat.state === get_inv_sum_exp
+    exp_divider_in.bits := sum_exp_to_inv.asUInt()
   }
 
   {
     // Reciprocal output
-    val waiting_for_reciprocal_id = MuxCase((num_stats-1).U,
+    val waiting_for_divide_id = MuxCase((num_stats-1).U,
       stats.zipWithIndex.map { case (s,i) =>
         (s.state === waiting_for_inv_sum_exp) -> i.U }
     )
-    val stat = stats(waiting_for_reciprocal_id)
+    val stat = stats(waiting_for_divide_id)
 
-    exp_reciprocal_out.ready := stat.state === waiting_for_inv_sum_exp
+    exp_divider_out.ready := stat.state === waiting_for_inv_sum_exp
 
     when (stat.state === waiting_for_inv_sum_exp) {
-      stat.inv_sum_exp := exp_reciprocal_out.bits.asTypeOf(stat.inv_sum_exp)
+      stat.inv_sum_exp := exp_divider_out.bits.asTypeOf(stat.inv_sum_exp)
     }
   }
 
@@ -458,16 +522,16 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
         )),
         state
       )
-      /*next_state := Mux(cmd === NormCmd.SUM || cmd === NormCmd.VARIANCE,
-        Mux(is_last_lane_input, idle, state),
-        Mux(is_last_lane_input,
-          Mux(cmd === NormCmd.MEAN, get_mean, get_variance),
-          state)
-      )*/
+//      next_state := Mux(cmd === NormCmd.SUM || cmd === NormCmd.VARIANCE,
+//        Mux(is_last_lane_input, idle, state),
+//        Mux(is_last_lane_input,
+//          Mux(cmd === NormCmd.MEAN, get_mean, get_variance),
+//          state)
+//      )
 
-      //done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV
-      done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV &&
-        cmd =/= NormCmd.SUM_EXP && cmd =/= NormCmd.INV_SUM_EXP
+      done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV
+      //done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV &&
+      //  cmd =/= NormCmd.SUM_EXP && cmd =/= NormCmd.INV_SUM_EXP
     }.elsewhen(state === get_mean || state === get_variance) {
       next_state := Mux(divider_in.fire() && sum_to_divide_id === id.U, state.next, state)
       done := false.B
@@ -486,24 +550,27 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     }.elsewhen(state === get_inv_stddev) {
       next_state := Mux(reciprocal_in.fire() && stddev_to_inv_id === id.U, state.next, state)
       done := false.B
-    }.elsewhen(state === waiting_for_inv_sum_exp) {
+    }.elsewhen(state === waiting_for_inv_stddev) {
       next_state := Mux(reciprocal_out.fire(), idle, state)
       done := reciprocal_out.fire()
     }.elsewhen(state === get_inv_sum_exp) {
-      next_state := Mux(exp_reciprocal_in.fire() && sum_exp_to_inv_id === id.U, state.next, state)
+      next_state := Mux(exp_divider_in.fire() && sum_exp_to_inv_id === id.U, state.next, state)
       done := false.B
     }.elsewhen(state === waiting_for_inv_sum_exp) {
-      next_state := Mux(exp_reciprocal_out.fire(), idle, state)
-      done := exp_reciprocal_out.fire()
+      next_state := Mux(exp_divider_out.fire(), idle, state)
+      done := exp_divider_out.fire()
     }.otherwise {
       assert(false.B, "invalid state in Normalizer")
       next_state := DontCare
       done := DontCare
     }
 
-    // TODO
     when (io.in.fire() && in_stats_id === id.U) {
-      next_state := Mux(io.in.bits.cmd === NormCmd.RESET, output, get_sum)
+      next_state := Mux(io.in.bits.cmd === NormCmd.RESET, output,
+        Mux(io.in.bits.cmd === NormCmd.MAX, get_max, get_sum))
+      when (io.in.bits.cmd === NormCmd.SUM_EXP) {
+        stat.max := stat.running_max
+      }
     }
   }
 
@@ -514,8 +581,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     val reset_running_state =
       state === output ||
         (state === get_mean && next_state =/= get_mean) ||
-        (state === get_variance && next_state =/= get_variance) ||
-        (state === get_max && next_state =/= get_max)
+        (state === get_variance && next_state =/= get_variance)
 
     val is_input = io.in.fire() && in_stats_id === id.U
 
@@ -527,8 +593,11 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
     when(reset_running_state) {
       stat.sum := acc_t.zero
-      stat.max := (-2147483648L).S.asTypeOf(acc_t) // TODO: define minimum
       stat.count := Mux(is_input, io.in.bits.len, 0.U)
+    }
+
+    when (state =/= get_inv_sum_exp && next_state === get_inv_sum_exp) {
+      stat.running_max := (-2147483648L).S.asTypeOf(acc_t) // TODO: define minimum
     }
   }
 
@@ -546,6 +615,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     stats.foreach(_.state := idle)
     stats.foreach(_.sum := acc_t.zero)
     stats.foreach(_.max := (-2147483648L).S.asTypeOf(acc_t)) // TODO: how to specify min value?
+    stats.foreach(_.running_max := (-2147483648L).S.asTypeOf(acc_t))
     stats.foreach(_.count := 0.U)
     stats.foreach(_.inv_sum_exp := acc_t.zero)
   }

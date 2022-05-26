@@ -249,11 +249,12 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
         .elsewhen(DoConfigBert) {
           igelu_qb := config_igelu_qb.asTypeOf(igelu_qb)
           igelu_qc := config_igelu_qc.asTypeOf(igelu_qc)
-          when(config_iexp_q_const === 0.U) {
+          when(config_iexp_q_const_type === 0.U) {
             iexp_qln2 := config_iexp_q_const.asTypeOf(iexp_qln2)
+          }.elsewhen(config_iexp_q_const_type === 1.U) {
             iexp_qln2_inv := config_iexp_q_const.asTypeOf(iexp_qln2_inv)
           }
-          activation := Cat(config_activation_msb, activation)
+          activation := Cat(config_activation_msb, activation(1, 0)) // TODO: magic number
           norm_stats_id := config_stats_id
           cmd.ready := true.B
         }
