@@ -59,7 +59,9 @@ class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_fun
     (has_nonlinear_activations.B && io.in.bits.act === Activation.IGELU) ->
       AccumulatorScale.igelu(e, io.in.bits.igelu_qb, io.in.bits.igelu_qc),
     (has_nonlinear_activations.B && io.in.bits.act === Activation.SOFTMAX) ->
-      AccumulatorScale.iexp(e - io.in.bits.max, io.in.bits.iexp_qln2, io.in.bits.iexp_qln2_inv, io.in.bits.igelu_qb, io.in.bits.igelu_qc).mult_with_reciprocal(io.in.bits.inv_sum_exp),
+      scale_func(
+        AccumulatorScale.iexp(e - io.in.bits.max, io.in.bits.iexp_qln2, io.in.bits.iexp_qln2_inv, io.in.bits.igelu_qb, io.in.bits.igelu_qc),
+        io.in.bits.inv_sum_exp.asTypeOf(scale_t)),
   ))
 
   val e_scaled = scale_func(e_act, io.in.bits.scale)
@@ -106,7 +108,9 @@ class AccumulatorScale[T <: Data, U <: Data](
         (has_nonlinear_activations.B && act === Activation.IGELU) ->
           AccumulatorScale.igelu(e, igelu_qb, igelu_qc),
         (has_nonlinear_activations.B && act === Activation.SOFTMAX) ->
-          AccumulatorScale.iexp(e - io.in.bits.max, iexp_qln2, iexp_qln2_inv, igelu_qb, igelu_qc).mult_with_reciprocal(io.in.bits.inv_sum_exp),
+          scale_func(
+            AccumulatorScale.iexp(e - io.in.bits.max, iexp_qln2, iexp_qln2_inv, igelu_qb, igelu_qc),
+            io.in.bits.inv_sum_exp.asTypeOf(scale_t)),
       ))
 
       val e_scaled = scale_func(e_act, scale)
@@ -267,18 +271,16 @@ object AccumulatorScale {
     val zero = q.zero
     def neg(x: T) = zero-x
 
-    // TODO: make note somewhere that qln2_inv needs scale to be
-    // TODO: 1 / (2 ** 16) / S
+    // qln2_inv needs scale to be
+    // 1 / (2 ** 16) / S
 
     // qln2_inv / S / (2 ** 16) = 1 / ln2
     // q * qln2_inv = x / S / ln2 * S * (2 ** 16) = x / ln2 * (2 ** 16)
     val neg_q_iexp = neg(q)
-    val z_iexp = (neg_q_iexp * qln2_inv) >> 16.U // q is non-positive
+    val z_iexp = (neg_q_iexp * qln2_inv).asUInt().do_>>(16).asTypeOf(q) // q is non-positive
     val qp_iexp = q.mac(z_iexp, qln2).withWidthOf(q)
-
     val q_poly_iexp = qc.mac(qp_iexp + qb, qp_iexp + qb).withWidthOf(q)
-
-    // TODO: we dont want a rounding shift
-    q_poly_iexp.asUInt().do_>>(z_iexp.asUInt()(5, 0)).asTypeOf(q)
+    // we dont want a rounding shift
+    (q_poly_iexp.asUInt().do_>>(z_iexp.asUInt()(5, 0))).asTypeOf(q)
   }}
 

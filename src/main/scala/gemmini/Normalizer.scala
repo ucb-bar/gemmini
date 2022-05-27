@@ -60,11 +60,13 @@ class AccumulationLanes[T <: Data](num_stats: Int, acc_t: T, n_lanes: Int, laten
   val iexp_c = io.ins.bits.iexp_const
 
   val data = io.ins.bits.data.zipWithIndex.map { case (d, i) =>
+    val iexp_result = iexp(d - io.ins.bits.max, iexp_c.qln2, iexp_c.qln2_inv, iexp_c.qb, iexp_c.qc)
+    dontTouch(iexp_result)
     Mux(i.U < io.ins.bits.len,
       MuxCase(d, Seq(
         (cmd === NormCmd.VARIANCE || cmd === NormCmd.INV_STDDEV) -> (d-mean)*(d-mean),
         (cmd === NormCmd.SUM_EXP || cmd === NormCmd.INV_SUM_EXP) ->
-          iexp(d - io.ins.bits.max, iexp_c.qln2, iexp_c.qln2_inv, iexp_c.qb, iexp_c.qc)
+          iexp_result //iexp(d - io.ins.bits.max, iexp_c.qln2, iexp_c.qln2_inv, iexp_c.qb, iexp_c.qc)
       )).withWidthOf(acc_t),
       d.zero)
   }
@@ -457,12 +459,12 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     // Divider input
     val stat = stats(sum_exp_to_inv_id)
 
-    exp_divider_in.valid := stat.state === get_inv_sum_exp
+    exp_divider_in.valid := (stat.state === get_inv_sum_exp) && !lanes.io.busy
     exp_divider_in.bits := sum_exp_to_inv.asUInt()
   }
 
   {
-    // Reciprocal output
+    // Divider output
     val waiting_for_divide_id = MuxCase((num_stats-1).U,
       stats.zipWithIndex.map { case (s,i) =>
         (s.state === waiting_for_inv_sum_exp) -> i.U }
@@ -529,9 +531,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 //          state)
 //      )
 
-      done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV
-      //done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV &&
-      //  cmd =/= NormCmd.SUM_EXP && cmd =/= NormCmd.INV_SUM_EXP
+      done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV && cmd =/= NormCmd.INV_SUM_EXP
     }.elsewhen(state === get_mean || state === get_variance) {
       next_state := Mux(divider_in.fire() && sum_to_divide_id === id.U, state.next, state)
       done := false.B
