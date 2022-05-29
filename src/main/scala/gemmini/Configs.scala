@@ -33,10 +33,10 @@ object GemminiConfigs {
     meshColumns = 16,
 
     // Spatial array PE options
-    dataflow = Dataflow.BOTH,
+    dataflow = Dataflow.WS,
 
     // Scratchpad and accumulator
-    sp_capacity = CapacityInKilobytes(256),
+    sp_capacity = CapacityInKilobytes(128),
     acc_capacity = CapacityInKilobytes(64),
 
     sp_banks = 4,
@@ -193,6 +193,9 @@ class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     (p: Parameters) => {
       implicit val q = p
       val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      InModuleBody {
+        println(gemmini.config.opcodes.opcodes, gemmini.config.dataflow)
+      }
       gemmini
     }
   )
@@ -269,5 +272,58 @@ class DualGemminiConfig extends Config((site, here, up) => {
       fp_gemmini
     }
     up(BuildRoCC) ++ Seq(int_fn, fp_fn)
+  }
+})
+
+
+// Gemmini config with 4 16x16 array
+class QuadGemminiConfig extends Config((site, here, up) => {
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+  case BuildRoCC => {
+    var int_gemmini0: Gemmini[_,_,_] = null
+    var int_gemmini1: Gemmini[_,_,_] = null
+    var int_gemmini2: Gemmini[_,_,_] = null
+    var int_gemmini3: Gemmini[_,_,_] = null
+    val int_fn0 = (p: Parameters) => {
+      implicit val q = p
+      int_gemmini0 = LazyModule(new Gemmini(GemminiConfigs.chipConfig.copy(
+        opcodes = OpcodeSet.custom0
+      )))
+      InModuleBody {
+        println(int_gemmini0.config.opcodes.opcodes, int_gemmini0.config.dataflow)
+      }
+      int_gemmini0
+    }
+    val int_fn1 = (p: Parameters) => {
+      implicit val q = p
+      int_gemmini1 = LazyModule(new Gemmini(GemminiConfigs.chipConfig.copy(
+        opcodes = OpcodeSet.custom1
+      )))
+      InModuleBody {
+        println(int_gemmini1.config.opcodes.opcodes, int_gemmini1.config.dataflow)
+      }
+      int_gemmini1
+    }
+    val int_fn2 = (p: Parameters) => {
+      implicit val q = p
+      int_gemmini2 = LazyModule(new Gemmini(GemminiConfigs.chipConfig.copy(
+        opcodes = OpcodeSet.custom2
+      )))
+      InModuleBody {
+        println(int_gemmini2.config.opcodes.opcodes, int_gemmini2.config.dataflow)
+      }
+      int_gemmini2
+    }
+    val int_fn3 = (p: Parameters) => {
+      implicit val q = p
+      int_gemmini3 = LazyModule(new Gemmini(GemminiConfigs.chipConfig.copy(
+        opcodes = OpcodeSet.custom3
+      )))
+      InModuleBody {
+        println(int_gemmini3.config.opcodes.opcodes, int_gemmini3.config.dataflow)
+      }
+      int_gemmini3
+    }
+    up(BuildRoCC) ++ Seq(int_fn0, int_fn1, int_fn2, int_fn3)
   }
 })

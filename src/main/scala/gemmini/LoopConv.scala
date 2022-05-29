@@ -15,6 +15,9 @@ class LoopConvOuterBounds(val large_iterator_bitwidth: Int, val small_iterator_b
   val in_channels = UInt(large_iterator_bitwidth.W)
   val out_channels = UInt(large_iterator_bitwidth.W)
   val out_dim = UInt(large_iterator_bitwidth.W)
+  val out_stride = UInt(large_iterator_bitwidth.W) //stride for output activation
+  val in_stride = UInt(large_iterator_bitwidth.W) //stride for input activation
+  val weight_stride = UInt(large_iterator_bitwidth.W) //stride for weight
   val pool_out_dim = UInt(small_iterator_bitwidth.W)
   val stride = UInt(tiny_iterator_bitwidth.W)
   val padding = UInt(tiny_iterator_bitwidth.W)
@@ -270,11 +273,11 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val icol_padded = icol +& undilated(lpad).zext()
   val is_zeros = irow < 0.S || irow >= irows_unpadded.zext() || icol < 0.S || icol >= icols_unpadded.zext()
 
-  val dram_stride = Mux(req.trans_input_3120, batch_size * (input_w/8).U, in_channels * (input_w/8).U)
+  val dram_stride = Mux(req.trans_input_3120, batch_size * (input_w/8).U, in_stride * (input_w/8).U)
 
   // Addresses
   val dram_offset = Mux(req.trans_input_3120, (((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U).asUInt(),
-    (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_channels +& ich) * (input_w/8).U).asUInt())
+    (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_stride +& ich) * (input_w/8).U).asUInt())
   val dram_addr = Mux(is_zeros, 0.U, req.dram_addr + LoopConv.castDramOffset(dram_offset))
   val spad_addr = Mux(req.trans_input_3120,
     // To prevent Verilator errors, we replace some "/ block_size.U" calls here with ">> log2Up(block_size)"
@@ -438,7 +441,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
     out_channels_per_bank * kcols * krows * kchs)
   val addr_start = req.addr_end - B_rows
 
-  val dram_stride = MuxCase(out_channels, Seq(
+  val dram_stride = MuxCase(weight_stride, Seq(
     req.trans_weight_1203 -> (kernel_dim * kernel_dim * out_channels),
     req.trans_weight_0132 -> in_channels
   )) * (input_w/8).U
@@ -450,7 +453,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val kch = Reg(UInt(large_iterator_bitwidth.W))
 
   // Addresses
-  val dram_offset = MuxCase(((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * out_channels +& och) * (input_w/8).U, Seq(
+  val dram_offset = MuxCase(((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * weight_stride +& och) * (input_w/8).U, Seq(
     req.trans_weight_1203 -> (((kch*kernel_dim*kernel_dim +& krow*kernel_dim +& kcol) * out_channels +& och) * (input_w/8).U),
     req.trans_weight_0132 -> (((krow*kernel_dim*out_channels +& kcol*out_channels +& och) * in_channels +& kch) * (input_w/8).U)
   ))
@@ -863,6 +866,8 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   // Derived parameters
   val skip = req.dram_addr === 0.U
 
+  //val och_stride = out_stride
+
   // Iterators
   val b = Reg(UInt(large_iterator_bitwidth.W))
   val orow = Reg(UInt(small_iterator_bitwidth.W))
@@ -871,12 +876,12 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
 
   // Addresses
   val dram_offset = Mux(req.trans_output_1203,
-    ((orow*out_dim*batch_size +& ocol*batch_size +& b) * out_channels +& och) * (input_w/8).U,
-    ((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_channels +& och) * (input_w/8).U)
+    ((orow*out_dim*batch_size +& ocol*batch_size +& b) * out_stride +& och) * (input_w/8).U,
+    ((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_stride +& och) * (input_w/8).U)
   val dram_addr = req.dram_addr + LoopConv.castDramOffset(dram_offset)
   val spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
-  val pool_dram_addr = req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_channels + och) * (input_w/8).U
+  val pool_dram_addr = req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_stride + och) * (input_w/8).U
   val pool_spad_addr = acc_addr_start +& (och / block_size.U) * batches * orows * ocols +& b * orows * ocols
 
   // Sizes
@@ -1280,11 +1285,14 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
       is (LOOP_CONV_WS_CONFIG_4) {
         loop_being_configured.inner_bounds.orows := cmd.bits.rs1(63, 48)
         loop_being_configured.inner_bounds.prad := cmd.bits.rs1(47, 32)
-        loop_being_configured.inner_bounds.pupad := cmd.bits.rs1(31, 16)
-        loop_being_configured.inner_bounds.pdpad := cmd.bits.rs1(15, 0)
+        loop_being_configured.inner_bounds.pupad := cmd.bits.rs1(31, 21)
+        loop_being_configured.inner_bounds.pdpad := cmd.bits.rs1(20, 10)
+        loop_being_configured.outer_bounds.kernel_dilation := cmd.bits.rs1(9, 0)
 
         loop_being_configured.inner_bounds.ocols := cmd.bits.rs2(15, 0)
-        loop_being_configured.outer_bounds.kernel_dilation := cmd.bits.rs2(31, 16)
+        loop_being_configured.outer_bounds.in_stride := cmd.bits.rs2(63, 48)
+        loop_being_configured.outer_bounds.weight_stride := cmd.bits.rs2(47, 32)
+        loop_being_configured.outer_bounds.out_stride := cmd.bits.rs2(31, 16)
       }
 
       is (LOOP_CONV_WS_CONFIG_5) {
