@@ -88,6 +88,7 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
   io.out.bits.last := last_sending
   io.out.bits.accumulate := req.bits.accumulate
   io.out.bits.has_acc_bitwidth := req.bits.has_acc_bitwidth
+  io.out.bits.direct_dram := req.bits.direct_dram
 
   when (bytesRead === (1.U << req.bits.lg_len_req).asUInt() &&
     bytesSent === req.bits.bytes_to_read) {
