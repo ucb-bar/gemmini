@@ -31,6 +31,8 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val block_stride = UInt(16.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
+  val direct_dram = Bool()
+
 }
 
 class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: Int, acc_rows: Int, aligned_to: Int, mvin_scale_t_bits: Int)
@@ -48,6 +50,8 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
   val last = Bool()
   val bytes_read = UInt(8.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
+
+  val direct_dram = Bool()
 
 }
 
@@ -339,6 +343,8 @@ class StreamWriteRequest(val dataWidth: Int, val maxBytes: Int)(implicit p: Para
   // Pooling variables
   val pool_en = Bool()
   val store_en = Bool()
+
+  val direct_dram = Bool()
 }
 
 class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: Int, dataWidth: Int, aligned_to: Int,

@@ -75,6 +75,8 @@ class LoopConvLdBiasReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: I
   val dram_addr = UInt(coreMaxAddrBits.W)
   val no_bias = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
+
+  val direct_dram = Bool()
 }
 
 class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_acc_addr: Int, acc_w: Int,
@@ -146,6 +148,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   config_cmd_rs1.state_id := 2.U
   config_cmd_rs1.shrink := 0.U
   config_cmd_rs1._unused := 1.U
+  config_cmd_rs1.direct_dram := req.direct_dram
   config_cmd.rs1 := config_cmd_rs1.asUInt
 
   config_cmd.rs2 := 0.U
@@ -226,6 +229,8 @@ class LoopConvLdInputReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: 
   val input_dilated = Bool()
   val trans_input_3120 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
+
+  val direct_dram = Bool()
 }
 
 class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_addr: Int, input_w: Int,
@@ -319,6 +324,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   config_cmd_rs1.state_id := 0.U
   config_cmd_rs1.shrink := 0.U
   config_cmd_rs1._unused := 1.U
+  config_cmd_rs1.direct_dram := req.direct_dram
   config_cmd.rs1 := config_cmd_rs1.asUInt()
 
   config_cmd.rs2 := dram_stride << req.downsample
@@ -401,6 +407,8 @@ class LoopConvLdWeightReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth:
   val trans_weight_1203 = Bool()
   val trans_weight_0132 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
+
+  val direct_dram = Bool()
 }
 
 class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_addr: Int, input_w: Int,
@@ -493,6 +501,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   config_cmd_rs1.state_id := 1.U
   config_cmd_rs1.shrink := 0.U
   config_cmd_rs1._unused := 1.U
+  config_cmd_rs1.direct_dram := req.direct_dram
   config_cmd.rs1 := config_cmd_rs1.asUInt
 
   config_cmd.rs2 := dram_stride
@@ -833,6 +842,8 @@ class LoopConvStReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: Int, 
   val activation = UInt(2.W) // TODO magic number
   val trans_output_1203 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
+
+  val direct_dram = Bool()
 }
 
 class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, concurrent_loops: Int, latency: Int, config_mvout_rs2_t: ConfigMvoutRs2, mvout_rs2_t: MvoutRs2)(implicit p: Parameters) extends Module {
@@ -925,6 +936,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   pre_pool_config_cmd_rs1.pool_stride := pool_stride
   pre_pool_config_cmd_rs1.activation := req.activation
   pre_pool_config_cmd_rs1._unused := CONFIG_STORE
+  pre_pool_config_cmd_rs1.direct_dram := req.direct_dram
   pre_pool_config_cmd.rs1 := pre_pool_config_cmd_rs1.asUInt()
 
   val pre_pool_config_cmd_rs2 = Wire(config_mvout_rs2_t.cloneType)
@@ -941,6 +953,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   post_pool_config_cmd_rs1 := DontCare
   post_pool_config_cmd_rs1.activation := req.activation
   post_pool_config_cmd_rs1._unused := CONFIG_STORE
+  post_pool_config_cmd_rs1.direct_dram := req.direct_dram
   post_pool_config_cmd.rs1 := post_pool_config_cmd_rs1.asUInt()
 
   val post_pool_config_cmd_rs2 = Wire(config_mvout_rs2_t.cloneType)
@@ -1053,6 +1066,11 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val weights_dram_addr = UInt(coreMaxAddrBits.W)
   val input_dram_addr = UInt(coreMaxAddrBits.W)
   val output_dram_addr = UInt(coreMaxAddrBits.W)
+
+  val input_direct_dram = Bool()
+  val weights_direct_dram = Bool()
+  val bias_direct_dram = Bool()
+  val output_direct_dram = Bool()
 
   val no_bias = Bool()
   val wrot180 = Bool()
@@ -1296,15 +1314,19 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
       }
 
       is (LOOP_CONV_WS_CONFIG_5) {
-        loop_being_configured.weights_dram_addr := cmd.bits.rs1
+        loop_being_configured.weights_dram_addr := cmd.bits.rs1(62, 0)
+        loop_being_configured.output_dram_addr := cmd.bits.rs2(62, 0)
 
-        loop_being_configured.output_dram_addr := cmd.bits.rs2
+        loop_being_configured.weights_direct_dram := cmd.bits.rs1(63)
+        loop_being_configured.output_direct_dram := cmd.bits.rs2(63)
       }
 
       is (LOOP_CONV_WS_CONFIG_6) {
-        loop_being_configured.bias_dram_addr := cmd.bits.rs1
+        loop_being_configured.bias_dram_addr := cmd.bits.rs1(62, 0)
+        loop_being_configured.input_dram_addr := cmd.bits.rs2(62, 0)
 
-        loop_being_configured.input_dram_addr := cmd.bits.rs2
+        loop_being_configured.bias_direct_dram := cmd.bits.rs1(63)
+        loop_being_configured.input_direct_dram := cmd.bits.rs2(63)
       }
 
       is (LOOP_CONV_WS) {

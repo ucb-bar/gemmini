@@ -34,6 +34,7 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     val idle = Output(Bool())
     val rob_overloaded = Input(Bool())
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
+    val direct_dram = Bool()
   })
 
   object State extends ChiselEnum {
@@ -126,6 +127,7 @@ class LoopMatmulLdBReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val transpose = Bool()
   val addr_end = UInt(log2Up(max_addr+1).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  //val direct_dram = Bool()
 }
 
 class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, input_w: Int,
@@ -234,6 +236,7 @@ class LoopMatmulLdDReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val low_d = Bool()
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  //val direct_dram = Bool()
 }
 
 class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int,
@@ -490,6 +493,7 @@ class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val full_c = Bool()
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  //val direct_dram = Bool()
 }
 
 class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int, mvout_rs2_t: MvoutRs2)
@@ -606,7 +610,12 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val b_dram_stride = UInt(coreMaxAddrBits.W)
   val d_dram_stride = UInt(coreMaxAddrBits.W)
   val c_dram_stride = UInt(coreMaxAddrBits.W)
-
+/*
+  val a_direct_dram = Bool()
+  val b_direct_dram = Bool()
+  val c_direct_dram = Bool()
+  val d_direct_dram = Bool()
+*/
   val a_transpose = Bool()
   val b_transpose = Bool()
 
@@ -783,13 +792,19 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: 
       }
 
       is (LOOP_WS_CONFIG_STRIDES_AB) {
-        loop_being_configured.a_dram_stride := cmd.bits.rs1
-        loop_being_configured.b_dram_stride := cmd.bits.rs2
+        loop_being_configured.a_dram_stride := cmd.bits.rs1//(62, 0)
+        loop_being_configured.b_dram_stride := cmd.bits.rs2//(62, 0)
+
+        //loop_being_configured.a_direct_dram := cmd.bits.rs1(63)
+        //loop_being_configured.b_direct_dram := cmd.bits.rs2(63)
       }
 
       is (LOOP_WS_CONFIG_STRIDES_DC) {
-        loop_being_configured.d_dram_stride := cmd.bits.rs1
-        loop_being_configured.c_dram_stride := cmd.bits.rs2
+        loop_being_configured.d_dram_stride := cmd.bits.rs1//(62, 0)
+        loop_being_configured.c_dram_stride := cmd.bits.rs2//(62, 0)
+
+        //loop_being_configured.d_direct_dram := cmd.bits.rs1(63)
+        //loop_being_configured.c_direct_dram := cmd.bits.rs2(63)
       }
 
       is (LOOP_WS) {

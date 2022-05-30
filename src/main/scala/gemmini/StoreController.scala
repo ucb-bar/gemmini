@@ -45,6 +45,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val activation = Reg(UInt(GemminiISA.CONFIG_MVOUT_RS1_ACTIVATION_WIDTH.W))
   val acc_scale = Reg(acc_scale_t)
 
+  val direct_dram = RegInit(false.B)
+
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
   val row_counter = RegInit(0.U(12.W)) // TODO magic number
   val block_counter = RegInit(0.U(8.W)) // TODO magic number
@@ -100,6 +102,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val config_upad = config_mvout_rs1.upad
   val config_lpad = config_mvout_rs1.lpad
 
+  val config_direct_dram = config_mvout_rs1.direct_dram
+
   val mstatus = cmd.bits.cmd.status
 
   val current_vaddr = vaddr + row_counter * stride
@@ -150,6 +154,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.pool_en := pooling_is_enabled && (wrow_counter =/= 0.U || wcol_counter =/= 0.U)
   io.dma.req.bits.store_en := Mux(pooling_is_enabled, wrow_counter === pool_size - 1.U && wcol_counter === pool_size - 1.U,
     block_counter === blocks - 1.U)
+  io.dma.req.bits.direct_dram := direct_dram
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore
@@ -198,6 +203,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
       when (cmd.valid) {
         when(DoConfig) {
           stride := config_stride
+          direct_dram := config_direct_dram
 
           activation := config_activation
           when (!config_acc_scale.asUInt().andR()) {
