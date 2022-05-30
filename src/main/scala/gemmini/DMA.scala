@@ -110,6 +110,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire)
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire)
     io.resp.bits.last := beatPacker.io.out.bits.last
+    io.resp.bits.direct_dram := beatPacker.io.out.bits.direct_dram
 
     io.counter.collect(core.module.io.counter)
     io.counter.collect(xactTracker.io.counter)
@@ -214,6 +215,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val tl_a = DataMirror.internal.chiselTypeClone[TLBundleA](tl.a.bits)
       val vaddr = Output(UInt(vaddrBits.W))
       val status = Output(new MStatus)
+
+      val direct_dram = Output(Bool())
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -221,6 +224,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     untranslated_a.bits.tl_a := get
     untranslated_a.bits.vaddr := read_vaddr
     untranslated_a.bits.status := req.status
+    untranslated_a.bits.direct_dram := req.direct_dram
 
     // 0 goes to retries, 1 goes to state machine
     val retry_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -248,7 +252,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits := translate_q.io.deq.bits.tl_a
-    tl.a.bits.address := io.tlb.resp.paddr
+    tl.a.bits.address := Mux(translate_q.io.deq.bits.direct_dram, (1.U << (2+32)).asUInt + io.tlb.resp.paddr, io.tlb.resp.paddr)
 
     io.reserve.valid := state === s_req_new_block && untranslated_a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
@@ -503,6 +507,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val tl_a = DataMirror.internal.chiselTypeClone[TLBundleA](tl.a.bits)
       val vaddr = Output(UInt(vaddrBits.W))
       val status = Output(new MStatus)
+
+      val direct_dram = Output(Bool())
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -511,6 +517,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     untranslated_a.bits.tl_a := Mux(write_full, putFull, putPartial)
     untranslated_a.bits.vaddr := write_vaddr
     untranslated_a.bits.status := req.status
+    untranslated_a.bits.direct_dram := req.direct_dram
 
     // 0 goes to retries, 1 goes to state machine
     val retry_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -547,7 +554,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits := translate_q.io.deq.bits.tl_a
-    tl.a.bits.address := RegEnableThru(io.tlb.resp.paddr, RegNext(io.tlb.req.fire))
+    tl.a.bits.address := RegEnableThru(Mux(translate_q.io.deq.bits.direct_dram, (1.U << (2+32)).asUInt + io.tlb.resp.paddr, io.tlb.resp.paddr), RegNext(io.tlb.req.fire))
 
     tl.d.ready := xactBusy.orR()
 

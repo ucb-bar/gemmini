@@ -14,6 +14,8 @@ class BeatMergerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, va
   val has_acc_bitwidth = Bool()
   val mask = Vec((spadWidth max accWidth)/(alignedTo*8) max 1, Bool())
   val last = Bool()
+
+  val direct_dram = Bool()
 }
 
 /*
