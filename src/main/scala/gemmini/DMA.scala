@@ -252,7 +252,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits := translate_q.io.deq.bits.tl_a
-    tl.a.bits.address := Mux(translate_q.io.deq.bits.direct_dram, (1.U << (2+32)).asUInt + io.tlb.resp.paddr, io.tlb.resp.paddr)
+    tl.a.bits.address := Mux(translate_q.io.deq.bits.direct_dram, (1.U << (5+32)).asUInt + io.tlb.resp.paddr, io.tlb.resp.paddr)
 
     io.reserve.valid := state === s_req_new_block && untranslated_a.ready // TODO decouple "reserve.valid" from "tl.a.ready"
     io.reserve.entry.shift := read_shift
@@ -555,7 +555,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     tl.a.valid := translate_q.io.deq.valid && !io.tlb.resp.miss
     tl.a.bits := translate_q.io.deq.bits.tl_a
-    tl.a.bits.address := RegEnableThru(Mux(translate_q.io.deq.bits.direct_dram, (1.U << (2+32)).asUInt + io.tlb.resp.paddr, io.tlb.resp.paddr), RegNext(io.tlb.req.fire))
+    tl.a.bits.address := RegEnableThru(Mux(translate_q.io.deq.bits.direct_dram, (1.U << (5+32)).asUInt + io.tlb.resp.paddr, io.tlb.resp.paddr), RegNext(io.tlb.req.fire))
 
     tl.d.ready := xactBusy.orR()
 
