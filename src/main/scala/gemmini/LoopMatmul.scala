@@ -559,12 +559,17 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val ln_norm_cmds = VecInit(VecInit(NormCmd.SUM, NormCmd.MEAN), VecInit(NormCmd.VARIANCE, NormCmd.INV_STDDEV),
     VecInit(NormCmd.RESET, NormCmd.RESET))
 
+  val sm_norm_cmds = VecInit(VecInit(NormCmd.MAX, NormCmd.MAX), VecInit(NormCmd.SUM_EXP, NormCmd.INV_SUM_EXP),
+    VecInit(NormCmd.RESET, NormCmd.RESET))
+
   val ln_stat_ids = Mux(rows -& ln_row > NORM_STAT_IDS.U, NORM_STAT_IDS.U, rows -& ln_row)
 
   val ln_r = ln_row +& ln_stat_id
 
   val ln_sp_addr = acc_addr_start +& (i * req.max_j +& j) * block_size.U +& ln_r
-  val ln_norm_cmd = Mux(j +& max_blocks >= req.max_j, ln_norm_cmds(ln_cmd)(1), ln_norm_cmds(ln_cmd)(0))
+  val ln_norm_cmd = Mux(j +& max_blocks >= req.max_j,
+    Mux(req.act === Activation.LAYERNORM, ln_norm_cmds(ln_cmd)(1), sm_norm_cmds(ln_cmd)(1)),
+    Mux(req.act === Activation.LAYERNORM, ln_norm_cmds(ln_cmd)(0), sm_norm_cmds(ln_cmd)(0)))
 
   // TODO we assume for now that full_C and layernorm aren't true at the same
   val ln_dram_offset = ((i * req.dram_stride +& j) * block_size.U +& ln_r * req.dram_stride) * (input_w/8).U
@@ -572,6 +577,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val ln_config_bert_rs1 = Wire(new GemminiISA.ConfigBertRs1)
   ln_config_bert_rs1 := DontCare
+  ln_config_bert_rs1.set_stats_id_only := 1.U
   ln_config_bert_rs1.cmd_type := CONFIG_BERT
   ln_config_bert_rs1.norm_stats_id := ln_stat_id
 
@@ -599,9 +605,9 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   io.i := i
   io.idle := state === idle
 
-  // The order here is k, j, i when not doing LAYERNORM
+  // The order here is k, j, i when not doing LAYERNORM or SOFTMAX
   val ex_ahead = io.ex_completed ||
-    (req.act =/= Activation.LAYERNORM &&
+    ((req.act =/= Activation.LAYERNORM) && (req.act =/= Activation.SOFTMAX) &&
       (io.ex_k === req.max_k - 1.U &&
         (io.ex_j >= j + blocks ||
           ((io.ex_j === j + blocks - 1.U) && io.ex_i > i))))
@@ -652,7 +658,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   when (io.req.fire) {
     req := io.req.bits
-    state := Mux(io.req.bits.act === Activation.LAYERNORM, ln_config, st)
+    state := Mux((io.req.bits.act === Activation.LAYERNORM) || (io.req.bits.act === Activation.SOFTMAX), ln_config, st)
 
     j := 0.U
     i := 0.U

@@ -146,8 +146,9 @@ object GemminiISA {
   }
 
   val CONFIG_BERT_RS1_Q_CONST_WIDTH = 32
-  val CONFIG_BERT_RS1_SPACER1_WIDTH = 14
-  val CONFIG_BERT_RS1_Q_CONST_TYPE = 1
+  val CONFIG_BERT_RS1_SPACER1_WIDTH = 13
+  val CONFIG_BERT_RS1_Q_CONST_TYPE_WIDTH = 1
+  val CONFIG_BERT_RS1_SET_STATS_ID_ONLY_WIDTH = 1
   val CONFIG_BERT_RS1_ACT_MSB_WIDTH = 1
   val CONFIG_BERT_RS1_NORM_STATS_ID_WIDTH = 8
   val CONFIG_BERT_RS1_SPACER0_WIDTH = 6
@@ -156,7 +157,8 @@ object GemminiISA {
   class ConfigBertRs1(acc_t_bits: Int = 32) extends Bundle {
     val q_const = UInt(acc_t_bits.W)
     val _spacer1 = UInt(CONFIG_BERT_RS1_SPACER1_WIDTH.W)
-    val q_const_type = UInt(CONFIG_BERT_RS1_Q_CONST_TYPE.W)
+    val q_const_type = UInt(CONFIG_BERT_RS1_Q_CONST_TYPE_WIDTH.W)
+    val set_stats_id_only = UInt(CONFIG_BERT_RS1_SET_STATS_ID_ONLY_WIDTH.W)
     val act_msb = UInt(CONFIG_BERT_RS1_ACT_MSB_WIDTH.W)
     val norm_stats_id = UInt(CONFIG_BERT_RS1_NORM_STATS_ID_WIDTH.W)
     val _spacer0 = UInt(CONFIG_BERT_RS1_SPACER0_WIDTH.W)
