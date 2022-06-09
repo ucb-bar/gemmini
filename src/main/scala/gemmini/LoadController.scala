@@ -24,7 +24,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
     val busy = Output(Bool())
 
-    val counter = new CounterEventIO()
+    //val counter = new CounterEventIO()
   })
 
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -180,13 +180,13 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   // Optimizations based on config parameters
   if (!has_first_layer_optimizations)
     pixel_repeats.foreach(_ := 1.U)
-
+/*
   // Performance counter
   CounterEventIO.init(io.counter)
   io.counter.connectEventSignal(CounterEvent.LOAD_ACTIVE_CYCLE, control_state === sending_rows)
   io.counter.connectEventSignal(CounterEvent.LOAD_DMA_WAIT_CYCLE, control_state === waiting_for_dma_req_ready)
   io.counter.connectEventSignal(CounterEvent.LOAD_SCRATCHPAD_WAIT_CYCLE, io.dma.req.valid && !io.dma.req.ready)
-
+*/
   if (use_firesim_simulation_counters) {
     PerfCounter(io.dma.req.valid && !io.dma.req.ready, "load_dma_wait_cycle", "cycles during which load controller is waiting for DMA to be available")
   }

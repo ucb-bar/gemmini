@@ -49,7 +49,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val solitary_preload = Input(Bool()) // TODO very hacky. from ExecuteController, to prevent infinite fence stalls. remove later
 
-    val counter = new CounterEventIO()
+    //val counter = new CounterEventIO()
   })
 
   // TODO make this a ChiselEnum
@@ -457,7 +457,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   // assert(min_pop_count < 2.U)
   dontTouch(pop_count_packed_deps)
   dontTouch(min_pop_count)
-
+/*
   val cycles_since_issue = RegInit(0.U(16.W))
 
   when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire() || !io.busy || io.completed.fire) {
@@ -466,11 +466,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < PlusArg("gemmini_timeout", 1000000), "pipeline stall")
-
+*/
   for (e <- entries) {
     dontTouch(e.bits.allocated_at)
   }
-
+/*
   val cntr = Counter(2000000)
   when (cntr.inc()) {
     printf(p"Utilization: $utilization\n")
@@ -498,15 +498,16 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     PerfCounter(io.busy, "reservation_station_busy", "cycles where reservation station has entries")
     PerfCounter(!io.alloc.ready, "reservation_station_full", "cycles where reservation station is full")
   }
-
+*/
   when (reset.asBool()) {
     entries.foreach(_.valid := false.B)
   }
-
+/*
   CounterEventIO.init(io.counter)
   io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_LD_COUNT, utilization_ld_q)
   io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_ST_COUNT, utilization_st_q)
   io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_EX_COUNT, utilization_ex_q)
   io.counter.connectEventSignal(CounterEvent.RESERVATION_STATION_ACTIVE_CYCLES, io.busy)
   io.counter.connectEventSignal(CounterEvent.RESERVATION_STATION_FULL_CYCLES, !io.alloc.ready)
+*/
 }

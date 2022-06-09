@@ -75,6 +75,7 @@ class LoopConvLdBiasReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: I
   val dram_addr = UInt(coreMaxAddrBits.W)
   val no_bias = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  val num_subarray = UInt(3.W)
 
   val direct_dram = Bool()
 }
@@ -185,6 +186,8 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
     io.cmd.bits.rs2 := mvin_cmd_rs2.asUInt()
   }
 
+  val och_block_size = Mux(req.num_subarray > 0.U, max_ochs_per_mvin.asUInt() * req.num_subarray, max_ochs_per_mvin.asUInt())
+
   // Sending outputs
   when (skip) {
     state := idle
@@ -192,7 +195,7 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
     when (state === config) {
       state := ld
     }.otherwise {
-      val next_och = floorAdd(och, max_ochs_per_mvin, ochs)
+      val next_och = floorAdd(och, och_block_size, ochs)
       val next_ocol = floorAdd(ocol, block_size.U, ocols, next_och === 0.U)
       val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U && next_och === 0.U)
       val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U && next_och === 0.U)
@@ -273,6 +276,8 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val icol = Reg(SInt(small_iterator_bitwidth.W))
   val ich = Reg(SInt(large_iterator_bitwidth.W))
 
+  val skip = req.dram_addr === 0.U
+
   // Calculated params
   val irow_padded = irow +& undilated(upad).zext()
   val icol_padded = icol +& undilated(lpad).zext()
@@ -340,7 +345,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   io.idle := state === idle && !command_p.io.busy
   io.loop_id := req.loop_id
 
-  command_p.io.in.valid := state =/= idle && !io.wait_for_prev_loop
+  command_p.io.in.valid := state =/= idle && !io.wait_for_prev_loop && !skip
   command_p.io.in.bits.cmd := Mux(state === config, config_cmd, mvin_cmd)
   command_p.io.in.bits.dram_addr := dram_addr
   command_p.io.in.bits.spad_addr := spad_addr
@@ -362,7 +367,9 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   }
 
   // Sending outputs
-  when(command_p.io.in.fire) {
+  when(skip){
+    state := idle
+  }.elsewhen(command_p.io.in.fire) {
     when (state === config) {
       state := ld
     }.otherwise {
@@ -460,6 +467,8 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val kcol = Reg(UInt(tiny_iterator_bitwidth.W))
   val kch = Reg(UInt(large_iterator_bitwidth.W))
 
+  val skip = req.dram_addr === 0.U
+
   // Addresses
   val dram_offset = MuxCase(((krow*kernel_dim*in_channels +& kcol*in_channels +& kch) * weight_stride +& och) * (input_w/8).U, Seq(
     req.trans_weight_1203 -> (((kch*kernel_dim*kernel_dim +& krow*kernel_dim +& kcol) * out_channels +& och) * (input_w/8).U),
@@ -517,7 +526,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   io.idle := state === idle && !command_p.io.busy
   io.loop_id := req.loop_id
 
-  command_p.io.in.valid := state =/= idle && !io.wait_for_prev_loop
+  command_p.io.in.valid := state =/= idle && !io.wait_for_prev_loop && !skip
   command_p.io.in.bits.cmd := Mux(state === config, config_cmd, mvin_cmd)
   command_p.io.in.bits.dram_addr := dram_addr
   command_p.io.in.bits.spad_addr := spad_addr
@@ -539,7 +548,9 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   }
 
   // Sending outputs
-  when(command_p.io.in.fire) {
+  when(skip){
+    state := idle
+  }.elsewhen(command_p.io.in.fire) {
     when (state === config) {
       state := ld
     }.otherwise {
@@ -842,6 +853,7 @@ class LoopConvStReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: Int, 
   val activation = UInt(2.W) // TODO magic number
   val trans_output_1203 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  val num_subarray = UInt(3.W)
 
   val direct_dram = Bool()
 }
@@ -942,7 +954,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val pre_pool_config_cmd_rs2 = Wire(config_mvout_rs2_t.cloneType)
   pre_pool_config_cmd_rs2 := DontCare
   pre_pool_config_cmd_rs2.acc_scale := ACC_SCALE_NO_CHANGE
-  pre_pool_config_cmd_rs2.stride := out_channels * (input_w / 8).U
+  pre_pool_config_cmd_rs2.stride := out_stride * (input_w / 8).U
   pre_pool_config_cmd.rs2 := pre_pool_config_cmd_rs2.asUInt()
 
   val post_pool_config_cmd = Wire(new RoCCCommand)
@@ -959,7 +971,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   val post_pool_config_cmd_rs2 = Wire(config_mvout_rs2_t.cloneType)
   post_pool_config_cmd_rs2 := DontCare
   post_pool_config_cmd_rs2.acc_scale := ACC_SCALE_NO_CHANGE
-  post_pool_config_cmd_rs2.stride := out_channels * (input_w / 8).U
+  post_pool_config_cmd_rs2.stride := out_stride * (input_w / 8).U
   post_pool_config_cmd.rs2 := post_pool_config_cmd_rs2.asUInt()
 
   val pool_cmd = Wire(new RoCCCommand)
@@ -1012,13 +1024,22 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
       io.cmd.bits.rs2 := mvout_cmd_rs2.asUInt()
     }
   }
+/*
+  val och_block_size = block_size.U
+  when(req.num_subarray > 0.U){
+    och_block_size := och_block_size * req.num_subarray
+  }
+
+ */
+  val och_block_size = Mux(req.num_subarray > 0.U, block_size.asUInt() * req.num_subarray, block_size.asUInt())
+
 
   // Sending outputs
   when (skip) {
     state := idle
   }.elsewhen(command_p.io.in.fire) {
     when (req.no_pool) {
-      val next_och = floorAdd(och, block_size.U, ochs)
+      val next_och = floorAdd(och, och_block_size, ochs)
       val next_ocol = floorAdd(ocol, block_size.U, ocols, next_och === 0.U)
       val next_orow = floorAdd(orow, 1.U, orows, next_ocol === 0.U && next_och === 0.U)
       val next_b = floorAdd(b, 1.U, batches, next_orow === 0.U && next_ocol === 0.U && next_och === 0.U)
@@ -1035,7 +1056,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
     }.elsewhen(state === post_pool_config) {
       state := idle
     }.otherwise {
-      val next_och = floorAdd(och, block_size.U, ochs)
+      val next_och = floorAdd(och, och_block_size, ochs)
       val next_b = floorAdd(b, 1.U, batches, next_och === 0.U)
 
       och := next_och
@@ -1084,6 +1105,7 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val trans_input_3120 = Bool()
 
   val max_pixels_per_row = UInt(small_iterator_bitwidth.W)
+  val num_subarray = UInt(3.W)
 
   val configured = Bool()
 
@@ -1337,6 +1359,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
         loop_being_configured.max_pixels_per_row := Mux(
           !has_first_layer_optimizations.B || config_max_pixels_per_row === 0.U,
           1.U, config_max_pixels_per_row)
+        loop_being_configured.num_subarray := cmd.bits.rs1(34, 32)
 
         loop_being_configured.wrot180 := has_training_convs.B && cmd.bits.rs1(1)
         loop_being_configured.input_dilated := has_training_convs.B && cmd.bits.rs2(2)
@@ -1371,6 +1394,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   ld_bias.io.req.bits.addr_start := ld_bias_addr_start
   ld_bias.io.req.bits.dram_addr := loop_requesting_ld_bias.bias_dram_addr
   ld_bias.io.req.bits.no_bias := loop_requesting_ld_bias.no_bias
+  ld_bias.io.req.bits.num_subarray := loop_requesting_ld_bias.num_subarray
   ld_bias.io.req.bits.loop_id := loop_requesting_ld_bias_id
   ld_bias.io.req.bits.direct_dram := loop_requesting_ld_bias.bias_direct_dram
 
@@ -1464,6 +1488,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: I
   st.io.req.bits.no_pool := loop_requesting_st.no_pool
   st.io.req.bits.activation := loop_requesting_st.activation
   st.io.req.bits.trans_output_1203 := loop_requesting_st.trans_output_1203
+  st.io.req.bits.num_subarray := loop_requesting_st.num_subarray
   st.io.req.bits.loop_id := loop_requesting_st_id
   st.io.req.bits.direct_dram := loop_requesting_st.output_direct_dram
 

@@ -172,6 +172,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
   val tree_reduction = use_tree_reduction_if_possible && dataflow == Dataflow.WS && tileRows > 1
 
+  val is_dummy = inputType.isInstanceOf[DummySInt]
+
   //==========================================================================
   // sanity check mesh size
   //==========================================================================
@@ -271,6 +273,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
       dataType match {
         case dt: SInt => ("-" + BigInt(2).pow(dt.getWidth - 1).toString, BigInt(2).pow(dt.getWidth - 1).-(1).toString)
+        case dt: DummySInt => ("-" + BigInt(2).pow(dt.getWidth - 1).toString, BigInt(2).pow(dt.getWidth - 1).-(1).toString)
         case dt: Float =>
           (dt.expWidth, dt.sigWidth) match {
             case (8, 24) => (scala.Float.MinValue.toString, scala.Float.MaxValue.toString)
@@ -285,6 +288,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     def c_type(dataType: Data): String = {
       dataType match {
         case dt: SInt => s"int${dt.getWidth}_t"
+        case dt: DummySInt => s"int${dt.getWidth}_t"
         case dt: Float =>
           (dt.expWidth, dt.sigWidth) match {
             case (8, 24) => "float"
@@ -299,6 +303,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       dataType match {
         case _: UInt => "uint64_t"
         case _: SInt => "int64_t"
+	case _: DummySInt => "int64_t"
         case _: Float => "double"
         case _ => "uint64_t"
         // case _ => throw new IllegalArgumentException(s"Data type $dataType is unknown")

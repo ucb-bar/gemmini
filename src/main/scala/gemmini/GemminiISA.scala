@@ -33,6 +33,7 @@ object GemminiISA {
   val LOOP_CONV_WS_CONFIG_6 = 21.U // *bias, *input
 
   val CLKGATE_EN = 22.U
+  val LOOP_ONE = 23.U
 
   // rs1[2:0] values
   val CONFIG_EX = 0.U

@@ -91,7 +91,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   n: Int, t: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U,
   acc_singleported: Boolean, acc_sub_banks: Int,
   use_shared_ext_mem: Boolean,
-  acc_latency: Int, acc_type: T
+  acc_latency: Int, acc_type: T, is_dummy: Boolean
 )
   (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
@@ -134,7 +134,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   val mask_len = t.getWidth / 8
   val mask_elem = UInt((t.getWidth / mask_len).W)
 
-  if (!acc_singleported) {
+  if (!acc_singleported && !is_dummy) {
     require(!use_shared_ext_mem)
     val mem = TwoPortSyncMem(n, t, mask_len) // TODO We assume byte-alignment here. Use aligned_to instead
     mem.io.waddr := oldest_pipelined_write.bits.addr
@@ -145,7 +145,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     rdata_for_read_resp := mem.io.rdata
     mem.io.raddr := Mux(io.write.fire && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
     mem.io.ren := io.read.req.fire || (io.write.fire && io.write.bits.acc)
-  } else {
+  } else if(!is_dummy) {
     val rmw_req = Wire(Decoupled(UInt()))
     rmw_req.valid := io.write.valid && io.write.bits.acc
     rmw_req.bits := io.write.bits.addr
@@ -293,6 +293,10 @@ class AccumulatorMem[T <: Data, U <: Data](
 
   val q = Module(new Queue(new AccumulatorReadResp(t, scale_t, log2Ceil(t.head.head.getWidth)),  1, true, true))
   q.io.enq.bits.data := rdata_for_read_resp
+  if (is_dummy) {
+    rdata_for_read_resp := DontCare
+    rdata_for_adder := DontCare
+  }
   q.io.enq.bits.scale := RegNext(io.read.req.bits.scale)
   q.io.enq.bits.relu6_shift := RegNext(io.read.req.bits.relu6_shift)
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)

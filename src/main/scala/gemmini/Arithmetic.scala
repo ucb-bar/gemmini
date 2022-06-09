@@ -14,6 +14,16 @@ case class Float(expWidth: Int, sigWidth: Int) extends Bundle {
   val bias: Int = (1 << (expWidth-1)) - 1
 }
 
+
+case class DummySInt(w: Int) extends Bundle {
+  val bits = UInt(w.W)
+  def dontCare: DummySInt = {
+    val o = Wire(new DummySInt(w))
+    o.bits := 0.U
+    o
+  }
+}
+
 // The Arithmetic typeclass which implements various arithmetic operations on custom datatypes
 abstract class Arithmetic[T <: Data] {
   implicit def cast(t: T): ArithmeticOps[T]
@@ -362,6 +372,22 @@ object Arithmetic {
 
       override def zero: Float = 0.U.asTypeOf(self)
       override def identity: Float = Cat(0.U(2.W), ~(0.U((self.expWidth-1).W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
+    }
+  }
+
+  implicit object DummySIntArithmetic extends Arithmetic[DummySInt] {
+    override implicit def cast(self: DummySInt) = new ArithmeticOps(self) {
+      override def *(t: DummySInt) = self.dontCare
+      override def mac(m1: DummySInt, m2: DummySInt) = self.dontCare
+      override def +(t: DummySInt) = self.dontCare
+      override def >>(t: UInt) = self.dontCare
+      override def >(t: DummySInt): Bool = false.B
+      override def identity = self.dontCare
+      override def withWidthOf(t: DummySInt) = self.dontCare
+      override def clippedToWidthOf(t: DummySInt) = self.dontCare
+      override def relu = self.dontCare
+      override def relu6(shift: UInt) = self.dontCare
+      override def zero = self.dontCare
     }
   }
 }

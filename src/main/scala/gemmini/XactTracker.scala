@@ -63,7 +63,7 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
     val peek = new XactTrackerPeekIO(nXacts, maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds)
     val busy = Output(Bool())
 
-    val counter = new CounterEventIO()
+    //val counter = new CounterEventIO()
   })
 
   val entries = Reg(Vec(nXacts, UDValid(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds))))
@@ -89,7 +89,7 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
   when (reset.asBool()) {
     entries.foreach(_.valid := false.B)
   }
-
+/*
   // Performance counters
   CounterEventIO.init(io.counter)
 
@@ -108,4 +108,5 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
       printf(SynthesizePrintf("RDMA total latency: %d\n", total_latency))
     }
   }
+  */
 }
