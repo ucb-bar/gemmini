@@ -61,7 +61,6 @@ class AccumulationLanes[T <: Data](num_stats: Int, acc_t: T, n_lanes: Int, laten
 
   val data = io.ins.bits.data.zipWithIndex.map { case (d, i) =>
     val iexp_result = iexp(d - io.ins.bits.max, iexp_c.qln2, iexp_c.qln2_inv, iexp_c.qb, iexp_c.qc)
-    dontTouch(iexp_result)
     Mux(i.U < io.ins.bits.len,
       MuxCase(d, Seq(
         (cmd === NormCmd.VARIANCE || cmd === NormCmd.INV_STDDEV) -> (d-mean)*(d-mean),
@@ -283,7 +282,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
     val stat = stats(max_out_lanes_stats_id)
 
-    when (max_lanes.io.out.fire()) { // TODO: MUST FIX
+    when (max_lanes.io.out.fire()) {
       stat.running_max := Mux(max_lanes.io.out.bits.result > stat.running_max, max_lanes.io.out.bits.result, stat.running_max)
       //stat.max := Mux(max_lanes.io.out.bits.result > stat.max, max_lanes.io.out.bits.result, stat.max)
     }
@@ -391,35 +390,9 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       (s.state === get_inv_sum_exp) -> i.U }
   )
   val sum_exp_to_inv = stats(sum_exp_to_inv_id).sum
-//  val (exp_reciprocal_in, exp_reciprocal_out) = sum_exp_to_inv.reciprocal(scale_t).get
-
-//  {
-//    // Reciprocal input
-//    val stat = stats(sum_exp_to_inv_id)
-//
-//    exp_reciprocal_in.valid := stat.state === get_inv_sum_exp
-//    exp_reciprocal_in.bits := DontCare
-//  }
-//
-//  {
-//    // Reciprocal output
-//    val waiting_for_reciprocal_id = MuxCase((num_stats-1).U,
-//      stats.zipWithIndex.map { case (s,i) =>
-//        (s.state === waiting_for_inv_sum_exp) -> i.U }
-//    )
-//    val stat = stats(waiting_for_reciprocal_id)
-//
-//    exp_reciprocal_out.ready := stat.state === waiting_for_inv_sum_exp
-//
-//    when (stat.state === waiting_for_inv_sum_exp) {
-//      stat.inv_sum_exp := exp_reciprocal_out.bits.asTypeOf(stat.inv_sum_exp)
-//    }
-//  }
-
   val exp_divider_in = Wire(Decoupled(UInt(0.W)))
   val exp_divider_out = Wire(Decoupled(scale_t.cloneType))
 
-  //  val (exp_divider_in, exp_divider_out) = 65536.S.asTypeOf(acc_t).divider(sum_exp_to_inv.asUInt()).get
   scale_t match {
     case Float(expWidth, sigWidth) =>
 
@@ -437,7 +410,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       }
 
       val self_rec = in_to_float(sum_exp_to_inv.asUInt().asSInt())
-      val one_rec = in_to_float(127.S)
+      val one_rec = in_to_float(127.S) // softmax maximum is 127 for signed int8
 
       // Instantiate the hardloat divider
       val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 0))
@@ -597,7 +570,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     }
 
     when (state =/= get_inv_sum_exp && next_state === get_inv_sum_exp) {
-      stat.running_max := (-2147483648L).S.asTypeOf(acc_t) // TODO: define minimum
+      stat.running_max := acc_t.minimum
     }
   }
 
@@ -614,8 +587,8 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
   when (reset.asBool()) {
     stats.foreach(_.state := idle)
     stats.foreach(_.sum := acc_t.zero)
-    stats.foreach(_.max := (-2147483648L).S.asTypeOf(acc_t)) // TODO: how to specify min value?
-    stats.foreach(_.running_max := (-2147483648L).S.asTypeOf(acc_t))
+    stats.foreach(_.max := acc_t.minimum)
+    stats.foreach(_.running_max := acc_t.minimum)
     stats.foreach(_.count := 0.U)
     stats.foreach(_.inv_sum_exp := acc_t.zero)
   }
