@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -558,20 +559,30 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
     val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
 
-    val acc_norm_unit = Module(new Normalizer(
+//    val acc_norm_unit = Module(new Normalizer(
+//      max_len = block_cols,
+//      num_reduce_lanes = -1,
+//      num_stats = 4,
+//      latency = 4,
+//      fullDataType = acc_row_t,
+//      scale_t = acc_scale_t,
+//    ))
+
+    val (acc_norm_unit_in, acc_norm_unit_out) = Normalizer(
+      is_passthru = !config.has_normalizations,
       max_len = block_cols,
       num_reduce_lanes = -1,
       num_stats = 4,
       latency = 4,
       fullDataType = acc_row_t,
       scale_t = acc_scale_t,
-    ))
+    )
 
-    acc_norm_unit.io.in.valid := false.B
-    acc_norm_unit.io.in.bits.len := write_norm_q.io.deq.bits.len
-    acc_norm_unit.io.in.bits.stats_id := write_norm_q.io.deq.bits.acc_norm_stats_id
-    acc_norm_unit.io.in.bits.cmd := write_norm_q.io.deq.bits.laddr.norm_cmd
-    acc_norm_unit.io.in.bits.acc_read_resp := DontCare
+    acc_norm_unit_in.valid := false.B
+    acc_norm_unit_in.bits.len := write_norm_q.io.deq.bits.len
+    acc_norm_unit_in.bits.stats_id := write_norm_q.io.deq.bits.acc_norm_stats_id
+    acc_norm_unit_in.bits.cmd := write_norm_q.io.deq.bits.laddr.norm_cmd
+    acc_norm_unit_in.bits.acc_read_resp := DontCare
 
     val acc_scale_unit = Module(new AccumulatorScale(
       acc_row_t,
@@ -583,6 +594,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       acc_scale_num_units,
       acc_scale_latency,
       has_nonlinear_activations,
+      has_normalizations,
     ))
 
     val acc_waiting_to_be_scaled = write_scale_q.io.deq.valid &&
@@ -590,9 +602,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       write_scale_q.io.deq.bits.laddr.is_acc_addr &&
       write_issue_q.io.enq.ready
 
-    acc_norm_unit.io.out.ready := acc_scale_unit.io.in.ready && acc_waiting_to_be_scaled
-    acc_scale_unit.io.in.valid := acc_norm_unit.io.out.valid && acc_waiting_to_be_scaled
-    acc_scale_unit.io.in.bits  := acc_norm_unit.io.out.bits
+    acc_norm_unit_out.ready := acc_scale_unit.io.in.ready && acc_waiting_to_be_scaled
+    acc_scale_unit.io.in.valid := acc_norm_unit_out.valid && acc_waiting_to_be_scaled
+    acc_scale_unit.io.in.bits  := acc_norm_unit_out.bits
 
     when (acc_scale_unit.io.in.fire()) {
       write_issue_q.io.enq <> write_scale_q.io.deq
@@ -692,7 +704,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.read.resp.ready := false.B
 
         when (write_norm_q.io.deq.valid &&
-          acc_norm_unit.io.in.ready &&
+          acc_norm_unit_in.ready &&
           bio.read.resp.valid &&
           write_scale_q.io.enq.ready &&
           write_norm_q.io.deq.bits.laddr.is_acc_addr &&
@@ -700,14 +712,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           write_norm_q.io.deq.bits.laddr.acc_bank() === i.U)
         {
           write_norm_q.io.deq.ready := true.B
-          acc_norm_unit.io.in.valid := true.B
+          acc_norm_unit_in.valid := true.B
           bio.read.resp.ready := true.B
 
           // Some normalizer commands don't write to main memory, so they don't need to be passed on to the scaling units
           write_scale_q.io.enq.valid := NormCmd.writes_to_main_memory(write_norm_q.io.deq.bits.laddr.norm_cmd)
 
-          acc_norm_unit.io.in.bits.acc_read_resp := bio.read.resp.bits
-          acc_norm_unit.io.in.bits.acc_read_resp.acc_bank_id := i.U
+          acc_norm_unit_in.bits.acc_read_resp := bio.read.resp.bits
+          acc_norm_unit_in.bits.acc_read_resp.acc_bank_id := i.U
         }
       }
 

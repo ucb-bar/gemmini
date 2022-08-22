@@ -11,8 +11,8 @@ import midas.targetutils.PerfCounter
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
 // TODO deal with errors when reading scratchpad responses
-class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], coreMaxAddrBits: Int, local_addr_t: LocalAddr)
-                     (implicit p: Parameters) extends Module {
+class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V],
+                                                                    coreMaxAddrBits: Int, local_addr_t: LocalAddr)(implicit p: Parameters) extends Module {
   import config._
 
   val io = IO(new Bundle {
@@ -121,7 +121,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val mstatus = cmd.bits.cmd.status
 
   val current_vaddr = vaddr + row_counter * stride
-  val current_localaddr = localaddr + (block_counter * block_stride + row_counter)
+  val current_localaddr = WireInit(localaddr + (block_counter * block_stride + row_counter))
 
   val pool_row_addr = localaddr + (orow * pool_ocols +& ocol)
   when (orow_is_negative || ocol_is_negative || orow >= pool_orows || ocol >= pool_ocols) {
@@ -131,7 +131,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val pool_vaddr = vaddr + (porow_counter * pool_out_dim + pocol_counter) * stride // TODO get rid of these multiplications
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE
-  val DoConfigBert = cmd.bits.cmd.inst.funct === CONFIG_CMD && config_cmd_type === CONFIG_BERT
+  val DoConfigBert = config.has_normalizations.B && cmd.bits.cmd.inst.funct === CONFIG_CMD && config_cmd_type === CONFIG_BERT
   val DoStore = !DoConfig && !DoConfigBert
 
   cmd.ready := false.B
@@ -160,7 +160,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.vaddr := Mux(pooling_is_enabled || mvout_1d_enabled, pool_vaddr, current_vaddr)
   io.dma.req.bits.laddr := Mux(pooling_is_enabled, pool_row_addr, current_localaddr) //Todo: laddr for 1D?
   io.dma.req.bits.laddr.norm_cmd := Mux(block_counter === blocks - 1.U, current_localaddr.norm_cmd,
-    NormCmd.non_reset_version(current_localaddr.norm_cmd))
+        NormCmd.non_reset_version(current_localaddr.norm_cmd))
 
   io.dma.req.bits.acc_act := activation
   io.dma.req.bits.acc_igelu_qb := igelu_qb.asTypeOf(io.dma.req.bits.acc_igelu_qb)
@@ -247,7 +247,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
           }
           cmd.ready := true.B
         }
-        .elsewhen(DoConfigBert) {
+        .elsewhen(config.has_normalizations.B && DoConfigBert) {
           when (!config_set_stats_id_only.asBool()) {
             igelu_qb := config_igelu_qb.asTypeOf(igelu_qb)
             igelu_qc := config_igelu_qc.asTypeOf(igelu_qc)
@@ -298,6 +298,17 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
         cmd.ready := true.B
       }
     }
+  }
+
+  // Optimizations when features are disabled
+  if (!config.has_normalizations) {
+    current_localaddr.norm_cmd := NormCmd.RESET
+
+    igelu_qb := DontCare
+    igelu_qc := DontCare
+    iexp_qln2 := DontCare
+    iexp_qln2_inv := DontCare
+    norm_stats_id := 0.U
   }
 
   // Performance counter

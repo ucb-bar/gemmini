@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -9,7 +10,7 @@ import hardfloat.{DivSqrtRecFN_small, INToRecFN, consts, fNFromRecFN}
 class NormalizedInput[T <: Data: Arithmetic, U <: Data](max_len: Int, num_stats: Int, fullDataType: Vec[Vec[T]],
                                                         scale_t: U) extends Bundle {
   val acc_read_resp = new AccumulatorReadResp[T,U](fullDataType, scale_t)
-  val len = UInt(log2Up(max_len+1).W)
+  val len = UInt(log2Up(max_len + 1).W)
   val stats_id = UInt(log2Up(num_stats).W)
   val cmd = NormCmd()
 }
@@ -29,7 +30,8 @@ class IExpConst[T <: Data](acc_t: T) extends Bundle {
   val qln2_inv = acc_t.cloneType
 }
 
-class AccumulationLanes[T <: Data](num_stats: Int, acc_t: T, n_lanes: Int, latency: Int)(implicit ev: Arithmetic[T]) extends Module {
+class AccumulationLanes[T <: Data](num_stats: Int, acc_t: T, n_lanes: Int, latency: Int)(implicit ev: Arithmetic[T])
+  extends Module {
   // Each lane computes a sum, or an error-squared sum
 
   import ev._
@@ -87,7 +89,8 @@ class AccumulationLanes[T <: Data](num_stats: Int, acc_t: T, n_lanes: Int, laten
   io.busy := pipe.io.busy
 }
 
-class MaxLanes[T <: Data](num_stats: Int, acc_t: T, n_lanes: Int, latency: Int)(implicit ev: Arithmetic[T]) extends Module {
+class MaxLanes[T <: Data](num_stats: Int, acc_t: T, n_lanes: Int, latency: Int)(implicit ev: Arithmetic[T])
+  extends Module {
   // Each lane computes a sum, or an error-squared sum
 
   import ev._
@@ -100,7 +103,7 @@ class MaxLanes[T <: Data](num_stats: Int, acc_t: T, n_lanes: Int, latency: Int)(
 
   val io = IO(new Bundle {
     val ins = Flipped(Valid(new Bundle {
-      val len = UInt(log2Up(n_lanes+1).W)
+      val len = UInt(log2Up(n_lanes + 1).W)
       val data = Vec(n_lanes, acc_t)
       val stats_id = UInt(log2Up(num_stats).W)
     }))
@@ -591,5 +594,42 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     stats.foreach(_.running_max := acc_t.minimum)
     stats.foreach(_.count := 0.U)
     stats.foreach(_.inv_sum_exp := acc_t.zero)
+  }
+}
+
+object Normalizer {
+  def apply[T <: Data, U <: Data](is_passthru: Boolean, max_len: Int, num_reduce_lanes: Int, num_stats: Int,
+                                  latency: Int, fullDataType: Vec[Vec[T]], scale_t: U)(implicit ev: Arithmetic[T]):
+  (DecoupledIO[NormalizedInput[T,U]], DecoupledIO[NormalizedOutput[T,U]]) = {
+    if (is_passthru) {
+      passthru(max_len = max_len, num_stats = num_stats, fullDataType = fullDataType, scale_t = scale_t)
+    } else {
+      gen(max_len = max_len, num_reduce_lanes = num_reduce_lanes, num_stats = num_stats, latency = latency,
+        fullDataType = fullDataType, scale_t = scale_t)
+    }
+  }
+
+  def gen[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_stats: Int, latency: Int,
+                                  fullDataType: Vec[Vec[T]], scale_t: U)(implicit ev: Arithmetic[T]): (DecoupledIO[NormalizedInput[T,U]], DecoupledIO[NormalizedOutput[T,U]]) = {
+    val norm_unit_module = Module(new Normalizer(max_len, num_reduce_lanes, num_stats, latency, fullDataType, scale_t))
+    (norm_unit_module.io.in, norm_unit_module.io.out)
+  }
+
+  def passthru[T <: Data, U <: Data](max_len: Int, num_stats: Int, fullDataType: Vec[Vec[T]], scale_t: U)
+                                    (implicit ev: Arithmetic[T]): (DecoupledIO[NormalizedInput[T,U]], DecoupledIO[NormalizedOutput[T,U]]) = {
+
+    val norm_unit_passthru_q = Module(new Queue(new NormalizedInput[T,U](max_len, num_stats, fullDataType, scale_t), 2))
+    val norm_unit_passthru_out = Wire(Decoupled(new NormalizedOutput(fullDataType, scale_t)))
+
+    norm_unit_passthru_out.valid := norm_unit_passthru_q.io.deq.valid
+    norm_unit_passthru_out.bits.acc_read_resp := norm_unit_passthru_q.io.deq.bits.acc_read_resp
+    norm_unit_passthru_out.bits.mean := DontCare
+    norm_unit_passthru_out.bits.max := DontCare
+    norm_unit_passthru_out.bits.inv_stddev := DontCare
+    norm_unit_passthru_out.bits.inv_sum_exp := DontCare
+
+    norm_unit_passthru_q.io.deq.ready := norm_unit_passthru_out.ready
+
+    (norm_unit_passthru_q.io.enq, norm_unit_passthru_out)
   }
 }

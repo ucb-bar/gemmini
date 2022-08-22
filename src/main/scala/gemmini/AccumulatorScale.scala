@@ -1,10 +1,12 @@
+
 package gemmini
 
 import chisel3._
 import chisel3.util._
 import Util._
 
-class AccumulatorReadRespWithFullData[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
+class AccumulatorReadRespWithFullData[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U)
+  extends Bundle {
   val resp = new AccumulatorReadResp(fullDataType, scale_t)
   val full_data = fullDataType.cloneType
 }
@@ -41,7 +43,9 @@ class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extend
   val index = UInt()
 }
 
-class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U, latency: Int, has_nonlinear_activations: Boolean)(implicit ev: Arithmetic[T]) extends Module {
+class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U,
+                                         latency: Int, has_nonlinear_activations: Boolean, has_normalizations: Boolean)
+                                        (implicit ev: Arithmetic[T]) extends Module {
   val u = scale_t
   val io = IO(new Bundle {
     val in = Input(Valid(new AccScaleDataWithIndex(t, u)(ev)))
@@ -54,11 +58,11 @@ class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_fun
 
   val e_act = MuxCase(e, Seq(
     (has_nonlinear_activations.B && io.in.bits.act === Activation.RELU) -> e.relu,
-    (has_nonlinear_activations.B && io.in.bits.act === Activation.LAYERNORM) ->
+    (has_nonlinear_activations.B && has_normalizations.B && io.in.bits.act === Activation.LAYERNORM) ->
       (e - io.in.bits.mean).mult_with_reciprocal(io.in.bits.inv_stddev),
-    (has_nonlinear_activations.B && io.in.bits.act === Activation.IGELU) ->
+    (has_nonlinear_activations.B && has_normalizations.B && io.in.bits.act === Activation.IGELU) ->
       AccumulatorScale.igelu(e, io.in.bits.igelu_qb, io.in.bits.igelu_qc),
-    (has_nonlinear_activations.B && io.in.bits.act === Activation.SOFTMAX) ->
+    (has_nonlinear_activations.B && has_normalizations.B && io.in.bits.act === Activation.SOFTMAX) ->
       scale_func(
         AccumulatorScale.iexp(e - io.in.bits.max, io.in.bits.iexp_qln2, io.in.bits.iexp_qln2_inv, io.in.bits.igelu_qb, io.in.bits.igelu_qc),
         io.in.bits.inv_sum_exp.asTypeOf(scale_t)),
@@ -79,7 +83,7 @@ class AccumulatorScale[T <: Data, U <: Data](
   scale_func: (T, U) => T,
   num_scale_units: Int,
   latency: Int,
-  has_nonlinear_activations: Boolean)(implicit ev: Arithmetic[T]) extends Module {
+  has_nonlinear_activations: Boolean, has_normalizations: Boolean)(implicit ev: Arithmetic[T]) extends Module {
 
   import ev._
 
@@ -103,11 +107,11 @@ class AccumulatorScale[T <: Data, U <: Data](
     val activated_data = VecInit(data.map(v => VecInit(v.map { e =>
       val e_act = MuxCase(e, Seq(
         (has_nonlinear_activations.B && act === Activation.RELU) -> e.relu,
-        (has_nonlinear_activations.B && act === Activation.LAYERNORM) ->
+        (has_nonlinear_activations.B && has_normalizations.B && act === Activation.LAYERNORM) ->
           (e - io.in.bits.mean).mult_with_reciprocal(io.in.bits.inv_stddev),
-        (has_nonlinear_activations.B && act === Activation.IGELU) ->
+        (has_nonlinear_activations.B && has_normalizations.B && act === Activation.IGELU) ->
           AccumulatorScale.igelu(e, igelu_qb, igelu_qc),
-        (has_nonlinear_activations.B && act === Activation.SOFTMAX) ->
+        (has_nonlinear_activations.B && has_normalizations.B && act === Activation.SOFTMAX) ->
           scale_func(
             AccumulatorScale.iexp(e - io.in.bits.max, iexp_qln2, iexp_qln2_inv, igelu_qb, igelu_qc),
             io.in.bits.inv_sum_exp.asTypeOf(scale_t)),
@@ -213,7 +217,8 @@ class AccumulatorScale[T <: Data, U <: Data](
       when (reset.asBool) {
         arbOut.valid := false.B
       }
-      val pipe = Module(new AccScalePipe(t, rDataType, scale_func, scale_t, latency, has_nonlinear_activations))
+      val pipe = Module(new AccScalePipe(t, rDataType, scale_func, scale_t, latency, has_nonlinear_activations,
+        has_normalizations))
       pipe.io.in := arbOut
       val pipe_out = pipe.io.out
 
