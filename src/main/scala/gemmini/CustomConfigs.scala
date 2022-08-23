@@ -41,6 +41,13 @@ object GemminiCustomConfigs {
     acc_capacity = CapacityInKilobytes(128),
   )
 
+ val bertInferenceConfig = defaultConfig.copy(
+    has_training_convs = false,
+    has_normalizations = true,
+
+    acc_capacity = CapacityInKilobytes(128),
+  )
+
   // Specify which of your custom configs you want to build here
   val customConfig = baselineInferenceConfig
 }
