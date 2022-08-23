@@ -43,6 +43,7 @@ object GemminiCustomConfigs {
 
  val bertInferenceConfig = defaultConfig.copy(
     has_training_convs = false,
+    has_max_pool =  false,
     has_normalizations = true,
 
     acc_capacity = CapacityInKilobytes(128),

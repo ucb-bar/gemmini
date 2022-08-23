@@ -106,17 +106,17 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val config_upad = config_mvout_rs1.upad
   val config_lpad = config_mvout_rs1.lpad
 
-  val config_bert_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigBertRs1(accType.getWidth))
-  val config_bert_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigBertRs2(accType.getWidth))
-  val config_stats_id = config_bert_rs1.norm_stats_id
-  val config_activation_msb = config_bert_rs1.act_msb
-  val config_set_stats_id_only = config_bert_rs1.set_stats_id_only
-  val config_iexp_q_const_type = config_bert_rs1.q_const_type
-  val config_iexp_q_const = config_bert_rs1.q_const
-  val config_igelu_qb = config_bert_rs2.qb
-  val config_igelu_qc = config_bert_rs2.qc
+  val config_norm_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigNormRs1(accType.getWidth))
+  val config_norm_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigNormRs2(accType.getWidth))
+  val config_stats_id = config_norm_rs1.norm_stats_id
+  val config_activation_msb = config_norm_rs1.act_msb
+  val config_set_stats_id_only = config_norm_rs1.set_stats_id_only
+  val config_iexp_q_const_type = config_norm_rs1.q_const_type
+  val config_iexp_q_const = config_norm_rs1.q_const
+  val config_igelu_qb = config_norm_rs2.qb
+  val config_igelu_qc = config_norm_rs2.qc
 
-  assert(config_bert_rs1.cmd_type === config_mvout_rs1.cmd_type)
+  assert(config_norm_rs1.cmd_type === config_mvout_rs1.cmd_type)
 
   val mstatus = cmd.bits.cmd.status
 
@@ -131,8 +131,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val pool_vaddr = vaddr + (porow_counter * pool_out_dim + pocol_counter) * stride // TODO get rid of these multiplications
 
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE
-  val DoConfigBert = config.has_normalizations.B && cmd.bits.cmd.inst.funct === CONFIG_CMD && config_cmd_type === CONFIG_BERT
-  val DoStore = !DoConfig && !DoConfigBert
+  val DoConfigNorm = config.has_normalizations.B && cmd.bits.cmd.inst.funct === CONFIG_CMD && config_cmd_type === CONFIG_NORM
+  val DoStore = !DoConfig && !DoConfigNorm
 
   cmd.ready := false.B
 
@@ -247,7 +247,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
           }
           cmd.ready := true.B
         }
-        .elsewhen(config.has_normalizations.B && DoConfigBert) {
+        .elsewhen(config.has_normalizations.B && DoConfigNorm) {
           when (!config_set_stats_id_only.asBool()) {
             igelu_qb := config_igelu_qb.asTypeOf(igelu_qb)
             igelu_qc := config_igelu_qc.asTypeOf(igelu_qc)

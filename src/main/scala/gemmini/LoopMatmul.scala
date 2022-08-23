@@ -523,7 +523,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(req.max_j <= max_block_len.U, req.max_j, max_block_len.U))
 
-  // Non-BERT-related iterators and calculations
+  // Non-normalization-related iterators and calculations
   val j = Reg(UInt(iterator_bitwidth.W))
   val i = Reg(UInt(iterator_bitwidth.W))
 
@@ -575,17 +575,17 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val ln_dram_offset = ((i * req.dram_stride +& j) * block_size.U +& ln_r * req.dram_stride) * (input_w/8).U
   val ln_dram_addr = req.dram_addr + LoopMatmul.castDramOffset(ln_dram_offset)
 
-  val ln_config_bert_rs1 = Wire(new GemminiISA.ConfigBertRs1)
-  ln_config_bert_rs1 := DontCare
-  ln_config_bert_rs1.set_stats_id_only := 1.U
-  ln_config_bert_rs1.cmd_type := CONFIG_BERT
-  ln_config_bert_rs1.norm_stats_id := ln_stat_id
+  val ln_config_norm_rs1 = Wire(new GemminiISA.ConfigNormRs1)
+  ln_config_norm_rs1 := DontCare
+  ln_config_norm_rs1.set_stats_id_only := 1.U
+  ln_config_norm_rs1.cmd_type := CONFIG_NORM
+  ln_config_norm_rs1.norm_stats_id := ln_stat_id
 
-  val ln_config_bert = Wire(new RoCCCommand)
-  ln_config_bert := DontCare
-  ln_config_bert.inst.funct := CONFIG_CMD
-  ln_config_bert.rs1 := ln_config_bert_rs1.asUInt()
-  ln_config_bert.rs2 := DontCare
+  val ln_config_norm = Wire(new RoCCCommand)
+  ln_config_norm := DontCare
+  ln_config_norm.inst.funct := CONFIG_CMD
+  ln_config_norm.rs1 := ln_config_norm_rs1.asUInt()
+  ln_config_norm.rs2 := DontCare
 
   val ln_mvout_cmd = Wire(new RoCCCommand)
   ln_mvout_cmd := DontCare
@@ -614,7 +614,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && ex_ahead && req.dram_addr =/= 0.U
   io.cmd.bits := MuxCase(mvout_cmd, Seq(
-    (state === ln_config) -> ln_config_bert,
+    (state === ln_config) -> ln_config_norm,
     (state === ln_st) -> ln_mvout_cmd,
   ))
 

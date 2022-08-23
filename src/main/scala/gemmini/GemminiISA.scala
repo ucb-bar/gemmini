@@ -38,7 +38,7 @@ object GemminiISA {
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U
   val CONFIG_STORE = 2.U
-  val CONFIG_BERT = 3.U
+  val CONFIG_NORM = 3.U
 
   //==========================================================================
   // cisc-gemmini opcodes
@@ -145,33 +145,33 @@ object GemminiISA {
     val stride = UInt(stride_bits.W)
   }
 
-  val CONFIG_BERT_RS1_Q_CONST_WIDTH = 32
-  val CONFIG_BERT_RS1_SPACER1_WIDTH = 13
-  val CONFIG_BERT_RS1_Q_CONST_TYPE_WIDTH = 1
-  val CONFIG_BERT_RS1_SET_STATS_ID_ONLY_WIDTH = 1
-  val CONFIG_BERT_RS1_ACT_MSB_WIDTH = 1
-  val CONFIG_BERT_RS1_NORM_STATS_ID_WIDTH = 8
-  val CONFIG_BERT_RS1_SPACER0_WIDTH = 6
-  val CONFIG_BERT_RS1_CMD_TYPE_WIDTH = 2
+  val CONFIG_NORM_RS1_Q_CONST_WIDTH = 32
+  val CONFIG_NORM_RS1_SPACER1_WIDTH = 13
+  val CONFIG_NORM_RS1_Q_CONST_TYPE_WIDTH = 1
+  val CONFIG_NORM_RS1_SET_STATS_ID_ONLY_WIDTH = 1
+  val CONFIG_NORM_RS1_ACT_MSB_WIDTH = 1
+  val CONFIG_NORM_RS1_NORM_STATS_ID_WIDTH = 8
+  val CONFIG_NORM_RS1_SPACER0_WIDTH = 6
+  val CONFIG_NORM_RS1_CMD_TYPE_WIDTH = 2
 
-  class ConfigBertRs1(acc_t_bits: Int = 32) extends Bundle {
+  class ConfigNormRs1(acc_t_bits: Int = 32) extends Bundle {
     val q_const = UInt(acc_t_bits.W)
-    val _spacer1 = UInt(CONFIG_BERT_RS1_SPACER1_WIDTH.W)
-    val q_const_type = UInt(CONFIG_BERT_RS1_Q_CONST_TYPE_WIDTH.W)
-    val set_stats_id_only = UInt(CONFIG_BERT_RS1_SET_STATS_ID_ONLY_WIDTH.W)
-    val act_msb = UInt(CONFIG_BERT_RS1_ACT_MSB_WIDTH.W)
-    val norm_stats_id = UInt(CONFIG_BERT_RS1_NORM_STATS_ID_WIDTH.W)
-    val _spacer0 = UInt(CONFIG_BERT_RS1_SPACER0_WIDTH.W)
-    val cmd_type = UInt(CONFIG_BERT_RS1_CMD_TYPE_WIDTH.W)
+    val _spacer1 = UInt(CONFIG_NORM_RS1_SPACER1_WIDTH.W)
+    val q_const_type = UInt(CONFIG_NORM_RS1_Q_CONST_TYPE_WIDTH.W)
+    val set_stats_id_only = UInt(CONFIG_NORM_RS1_SET_STATS_ID_ONLY_WIDTH.W)
+    val act_msb = UInt(CONFIG_NORM_RS1_ACT_MSB_WIDTH.W)
+    val norm_stats_id = UInt(CONFIG_NORM_RS1_NORM_STATS_ID_WIDTH.W)
+    val _spacer0 = UInt(CONFIG_NORM_RS1_SPACER0_WIDTH.W)
+    val cmd_type = UInt(CONFIG_NORM_RS1_CMD_TYPE_WIDTH.W)
   }
 
-  val CONFIG_BERT_RS2_QC_WIDTH = 32
-  val CONFIG_BERT_RS2_QB_WIDTH = 32
+  val CONFIG_NORM_RS2_QC_WIDTH = 32
+  val CONFIG_NORM_RS2_QB_WIDTH = 32
 
-  class ConfigBertRs2(acc_t_bits: Int) extends Bundle {
-    val _spacer1 = UInt((CONFIG_BERT_RS2_QC_WIDTH - acc_t_bits).W)
+  class ConfigNormRs2(acc_t_bits: Int) extends Bundle {
+    val _spacer1 = UInt((CONFIG_NORM_RS2_QC_WIDTH - acc_t_bits).W)
     val qc = UInt(acc_t_bits.W)
-    val _spacer0 = UInt((CONFIG_BERT_RS2_QB_WIDTH - acc_t_bits).W)
+    val _spacer0 = UInt((CONFIG_NORM_RS2_QB_WIDTH - acc_t_bits).W)
     val qb = UInt(acc_t_bits.W)
   }
 
