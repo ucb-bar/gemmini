@@ -86,7 +86,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_max_pool: Boolean = true,
                                                                              has_nonlinear_activations: Boolean = true,
                                                                              has_dw_convs: Boolean = true,
-
+                                                                             has_normalizations: Boolean = false,
                                                                              has_first_layer_optimizations: Boolean = true,
 
                                                                              use_firesim_simulation_counters: Boolean = false,
@@ -490,6 +490,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
     if (has_first_layer_optimizations) {
       header ++= "#define HAS_FIRST_LAYER_OPTIMIZATIONS\n\n"
+    }
+
+    if (has_normalizations) {
+      header ++= "#define HAS_NORMALIZATIONS\n"
+      header ++= "#define NORM_STAT_IDS 4\n\n"
     }
 
     header ++= s"#endif // $guard\n"
