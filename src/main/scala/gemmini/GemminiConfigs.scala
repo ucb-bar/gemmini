@@ -492,7 +492,10 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       header ++= "#define HAS_FIRST_LAYER_OPTIMIZATIONS\n\n"
     }
 
-    header ++= "#define NORM_STAT_IDS 4\n\n"
+    if (has_normalizations) {
+      header ++= "#define HAS_NORMALIZATIONS\n"
+      header ++= "#define NORM_STAT_IDS 4\n\n"
+    }
 
     header ++= s"#endif // $guard\n"
     header.toString()

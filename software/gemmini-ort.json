@@ -52,7 +52,7 @@
     "/output/mobilenet_optimized_ws_nhwc_out.txt"
   ],
   "overlay": "../onnxruntime-riscv/systolic_runner/imagenet_runner",
-  "rootfs-size": "1GiB",
+  "rootfs-size": "16GiB",
   "run": "run-ort.sh"
 }
 
