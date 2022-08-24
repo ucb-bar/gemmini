@@ -32,7 +32,7 @@ Run these steps to install Chipyard and Spike (make sure to checkout the correct
 ```shell
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
-git checkout 117624d8eea27bafd613eec09e9b9b3e31239e08
+git checkout 992664220d95edf610475031fd8a82d0cd743f7f
 ./scripts/init-submodules-no-riscv-tools.sh
 ./scripts/build-toolchains.sh esp-tools
 
@@ -44,7 +44,7 @@ git submodule update
 
 cd -
 cd toolchains/esp-tools/riscv-isa-sim/build
-git fetch && git checkout 090e82c473fd28b4eb2011ffcd771ead6076faab
+git fetch && git checkout 2ed403a70f65559a3c2a06bf724d4737edc73a23
 make && make install
 ```
 
