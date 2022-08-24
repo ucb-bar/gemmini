@@ -57,5 +57,5 @@ cd ../../sims/firesim/
 source sourceme-f1-manager.sh &> build.log
 
 cd sim/
-make ${simulator}${debug} TARGET_CONFIG=${dram_model}_WithDefaultFireSimBridges_WithFireSimConfigTweaks_chipyard.CustomGemminiSoCConfig
+FIRESIM_ENV_SOURCED=1 make ${simulator}${debug} TARGET_CONFIG=${dram_model}_WithDefaultFireSimBridges_WithFireSimConfigTweaks_chipyard.CustomGemminiSoCConfig
 
