@@ -32,14 +32,14 @@ Run these steps to install Chipyard and Spike (make sure to checkout the correct
 ```shell
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
-git checkout 992664220d95edf610475031fd8a82d0cd743f7f
+git checkout 481398b910fa95ec88dd578c67ba358a4d83129d
 ./scripts/init-submodules-no-riscv-tools.sh
 ./scripts/build-toolchains.sh esp-tools
 
 source env.sh
 
 cd generators/gemmini
-git fetch && git checkout v0.6.3
+git fetch && git checkout dev && git pull origin dev
 git submodule update
 
 cd -
