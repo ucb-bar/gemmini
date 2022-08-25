@@ -39,13 +39,21 @@ git checkout 481398b910fa95ec88dd578c67ba358a4d83129d
 source env.sh
 
 cd generators/gemmini
-git fetch && git checkout dev && git pull origin dev
+git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+git fetch --unshallow && git checkout dev && git pull origin dev
 git submodule update
 
 cd -
 cd toolchains/esp-tools/riscv-isa-sim/build
-git fetch && git checkout 2ed403a70f65559a3c2a06bf724d4737edc73a23
+git fetch --unshallow && git checkout 2ed403a70f65559a3c2a06bf724d4737edc73a23
 make && make install
+
+# The final step is only necessary if you want to run MIDAS simulations with
+# realistic DRAM models
+cd -
+cd sims/firesim
+git fetch --tags && git checkout 1.13.6
+./build-setup.sh --library --skip-validate
 ```
 
 Setting Up Gemmini

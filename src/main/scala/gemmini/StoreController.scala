@@ -88,7 +88,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val localaddr = mvout_rs2.local_addr
   val cols = mvout_rs2.num_cols
   val rows = mvout_rs2.num_rows
-  val blocks = (cols / block_cols.U) + (cols % block_cols.U =/= 0.U)
+  val blocks = (cols / block_cols.U(cols.getWidth.W)) + (cols % block_cols.U =/= 0.U)
 
   val config_mvout_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigMvoutRs1)
   val config_mvout_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigMvoutRs2(acc_scale_t_bits, 32))

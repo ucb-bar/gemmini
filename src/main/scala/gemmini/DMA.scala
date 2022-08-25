@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -120,10 +121,11 @@ class StreamReadBeat (val nXacts: Int, val beatBits: Int, val maxReqBytes: Int) 
 }
 
 // TODO StreamReaderCore and StreamWriter are actually very alike. Is there some parent class they could both inherit from?
-class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int,
-                                  spadWidth: Int, accWidth: Int, aligned_to: Int,
-                                  spad_rows: Int, acc_rows: Int, meshRows: Int, use_tlb_register_filter: Boolean,
-                                  use_firesim_simulation_counters: Boolean)
+class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int,
+                                                        maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
+                                                        spad_rows: Int, acc_rows: Int, meshRows: Int,
+                                                        use_tlb_register_filter: Boolean,
+                                                        use_firesim_simulation_counters: Boolean)
                                  (implicit p: Parameters) extends LazyModule {
   val node = TLHelper.makeClientNode(
     name = "stream-reader", sourceId = IdRange(0, nXacts))
@@ -263,9 +265,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.reserve.entry.addr := req.spaddr + req.block_stride *
       Mux(req.has_acc_bitwidth,
         // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
-        // "if" condition and the "else" clause
-        if (bytesRequested.getWidth >= log2Up(accWidthBytes+1)) bytesRequested / accWidthBytes.U else 0.U,
-        if (bytesRequested.getWidth >= log2Up(spadWidthBytes+1)) bytesRequested / spadWidthBytes.U else 0.U)
+        // "if" condition and the "else" clause. Similarly, the width expansions are also there to satisfy the Verilator
+        // linter, despite making the code uglier.
+        if (bytesRequested.getWidth >= log2Up(accWidthBytes+1)) bytesRequested / accWidthBytes.U(bytesRequested.getWidth.W) else 0.U,
+        if (bytesRequested.getWidth >= log2Up(spadWidthBytes+1)) bytesRequested / spadWidthBytes.U(bytesRequested.getWidth.W) else 0.U)
     io.reserve.entry.spad_row_offset := Mux(req.has_acc_bitwidth, bytesRequested % accWidthBytes.U, bytesRequested % spadWidthBytes.U)
 
     when (untranslated_a.fire) {
@@ -408,7 +411,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val bytes_written = UInt(log2Up(maxBytes+1).W)
       val bytes_written_per_beat = Vec(maxBeatsPerReq, UInt(log2Up(beatBytes+1).W))
 
-      def total_beats(dummy: Int = 0) = Mux(size < beatBytes.U, 1.U, size / beatBytes.U)
+      def total_beats(dummy: Int = 0) = Mux(size < beatBytes.U, 1.U, size / beatBytes.U(size.getWidth.W)) // The width expansion is added here solely to satsify Verilator's linter
     }
 
     val smallest_write_size = aligned_to max beatBytes
