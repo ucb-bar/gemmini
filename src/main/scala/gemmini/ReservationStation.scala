@@ -274,7 +274,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       val mvin_cols = cmd.rs2(32 + mvin_cols_bits - 1, 32)
       val mvin_rows = cmd.rs2(48 + mvin_rows_bits - 1, 48)
 
-      val mvin_mats = mvin_cols / block_cols.U(mvin_cols_bits) + (mvin_cols % block_cols.U =/= 0.U)
+      val mvin_mats = mvin_cols / block_cols.U(mvin_cols_bits.W) + (mvin_cols % block_cols.U =/= 0.U)
       val total_mvin_rows = ((mvin_mats - 1.U) * block_stride) + mvin_rows
 
       // TODO We have to know how the LoopConv's internals work here. Our abstractions are leaking
