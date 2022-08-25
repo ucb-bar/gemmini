@@ -53,6 +53,8 @@ if [ dram_model == "" ]; then
   echo DRAM model must be provided.
 fi
 
+export SYSLIBS="$SYSLIBS -l:libdwarf.so -l:libelf.so -lz -lgmp"
+
 cd ../../sims/firesim/
 source sourceme-f1-manager.sh &> build.log
 
