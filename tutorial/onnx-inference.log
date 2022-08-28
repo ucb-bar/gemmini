@@ -1,0 +1,90 @@
+Gemmini extension configured with:
+    dim = 16
+bbl loader
+Loaded runner program
+Using systolic in mode 2
+Using Onnxruntime C++ API
+Number of inputs = 1
+Input 0 : name=gpu_0/data_0, type=1, num_dims=4: [1, 3, 224, 224, ]
+Number of outputs = 1
+Output 0 : name=gpu_0/softmax_1, type=1, num_dims=2: [1, 1000, ]
+Loading image
+Image dimensions: 224 224 3
+First few image values 130.061005 126.060997 123.060997
+Called into systolic conv
+Using systolic pooling
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Called into systolic conv
+Called into systolic conv
+Called into systolic conv
+Called into systolic add
+Element count 1000. Top 5 classes:
+0.031456 giant schnauzer
+0.075702 curly-coated retriever
+0.087432 Great Dane
+0.271946 Labrador retriever
+0.361813 Rottweiler
+Done! Inference took 297272758 cycles 
