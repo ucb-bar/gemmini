@@ -9,7 +9,7 @@ help () {
   echo "Options:"
   echo " debug   Builds a VCS simulator which generates waveforms. Without this"
   echo "         option, the simulator will not generate any waveforms."
-  echo " j [N]   Allow N jobs at once; infinite jobs with no arg."
+  echo " j [N]   Allow N jobs at once. Default is 1."
   exit
 }
 
@@ -21,7 +21,7 @@ while [ $# -gt 0 ] ; do
   case $1 in
     -h | --help) show_help=1 ;;
     --debug) debug="debug" ;;
-    -j) j=$1
+    -j) j=$2; shift
   esac
 
   shift
