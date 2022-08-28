@@ -43,14 +43,15 @@ elif [[ $checkpoint == "build-onnx-inference" ]]; then
     cp $checkpoints_dir/ort_test $checkpoints_dir/resnet50_opt_quant.onnx $CHIP_TOP/generators/gemmini/software/onnxruntime-riscv/systolic_runner/imagenet_runner/
 
     cd $CHIP_TOP/generators/gemmini/
-    cp $checkpoints_dir/gemmini_params_int.h ../../toolchains/esp-tools/riscv-isa-sim/gemmini/gemmini_params.h
+    cp tutorial/gemmini_params_int.h ../../toolchains/esp-tools/riscv-isa-sim/gemmini/gemmini_params.h
     cd ../../toolchains/esp-tools/riscv-isa-sim/build
     make && make install
 elif [[ $checkpoint == "build-onnx-training" ]]; then
     cp $checkpoints_dir/resnet_train $CHIP_TOP/generators/gemmini/software/onnxruntime-riscv/systolic_runner/imagenet_trainer/
+    cp -r $checkpoints_dir/resnet50-training/batch_out.txt $checkpoints_dir/resnet50-training/imagenet2012_cropped $checkpoints_dir/resnet50-training/resnet50.onnx $CHIP_TOP/generators/gemmini/software/onnxruntime-riscv/systolic_runner/imagenet_trainer/
 
     cd $CHIP_TOP/generators/gemmini/
-    cp $checkpoints_dir/gemmini_params_fp.h ../../toolchains/esp-tools/riscv-isa-sim/gemmini/gemmini_params.h
+    cp tutorial/gemmini_params_fp.h ../../toolchains/esp-tools/riscv-isa-sim/gemmini/gemmini_params.h
     cd ../../toolchains/esp-tools/riscv-isa-sim/build
     make && make install
 else

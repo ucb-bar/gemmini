@@ -52,6 +52,15 @@ elif [[ $checkpoint == "build-onnx-inference" ]]; then
     cd $checkpoints_dir/
     wget https://github.com/ucb-bar/onnxruntime-riscv/releases/download/v0.01/resnet50_opt_quant.onnx
     mv gemm-mlsys resnet50_opt_quant.onnx
+elif [[ $checkpoint == "build-onnx-training" ]]; then
+    cp $CHIP_TOP/generators/gemmini/software/onnxruntime-riscv/systolic_runner/imagenet_trainer/resnet_train $checkpoints_dir/resnet_train
+
+    cd $checkpoints_dir/
+    rm -rf resnet50-training
+    mkdir resnet50-training
+    cd resnet50-training
+    wget https://github.com/ucb-bar/onnxruntime-riscv/releases/download/v0.01/resnet50-training.tar.gz
+    tar -xzvf resnet50-training.tar.gz && rm resnet50-training.tar.gz
 else
     echo Unknown checkpoint: $checkpoint
 fi
