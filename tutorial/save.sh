@@ -42,10 +42,16 @@ elif [[ $checkpoint == "build-complex" ]]; then
     rm -rf $checkpoints_dir/$rtl
     rm -rf $checkpoints_dir/baremetalc-complex
 
-    cp -r $CHIP_TOP/sims/verilator/simulator-chipyard-CustomGemminiSoCConfig $checkpoints_dir/$build 
+    cp -r $CHIP_TOP/sims/verilator/simulator-chipyard-CustomGemminiSoCConfig $checkpoints_dir/$build
     cp -r $CHIP_TOP/sims/verilator/generated-src $checkpoints_dir/$rtl
 
     cp -r $CHIP_TOP/generators/gemmini/software/gemmini-rocc-tests/build $checkpoints_dir/baremetalc-complex
+elif [[ $checkpoint == "build-onnx-inference" ]]; then
+    cp $CHIP_TOP/generators/gemmini/software/onnxruntime-riscv/systolic_runner/imagenet_runner/ort_test $checkpoints_dir/ort_test
+
+    cd $checkpoints_dir/
+    wget https://github.com/ucb-bar/onnxruntime-riscv/releases/download/v0.01/resnet50_opt_quant.onnx
+    mv gemm-mlsys resnet50_opt_quant.onnx
 else
     echo Unknown checkpoint: $checkpoint
 fi

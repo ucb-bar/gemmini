@@ -58,8 +58,7 @@ object GemminiCustomConfigs {
   )
 
   // Specify which of your custom configs you want to build here
-  // val customConfig = baselineInferenceConfig
-  val customConfig = complexConfig
+  val customConfig = baselineInferenceConfig
 }
 
 

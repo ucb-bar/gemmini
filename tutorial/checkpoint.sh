@@ -40,7 +40,7 @@ elif [[ $checkpoint == "build-midas" ]]; then
     cp -r $checkpoints_dir/$rtl $CHIP_TOP/sims/verilator/generated-src
     cp -r $checkpoints_dir/baremetalc-integer $CHIP_TOP/generators/gemmini/software/gemmini-rocc-tests/build
 elif [[ $checkpoint == "build-onnx-inference" ]]; then
-    cp $checkpoints_dir/ort_test $CHIP_TOP/generators/gemmini/software/onnxruntime-riscv/systolic_runner/imagenet_runner/
+    cp $checkpoints_dir/ort_test $checkpoints_dir/resnet50_opt_quant.onnx $CHIP_TOP/generators/gemmini/software/onnxruntime-riscv/systolic_runner/imagenet_runner/
 
     cd $CHIP_TOP/generators/gemmini/
     cp $checkpoints_dir/gemmini_params_int.h ../../toolchains/esp-tools/riscv-isa-sim/gemmini/gemmini_params.h
