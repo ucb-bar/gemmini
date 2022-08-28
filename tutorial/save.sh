@@ -34,6 +34,18 @@ elif [[ $checkpoint == "build-midas" ]]; then
     cp -r $target $build
     cp -r $CHIP_TOP/sims/verilator/generated-src $checkpoints_dir/$rtl
     cp -r $CHIP_TOP/generators/gemmini/software/gemmini-rocc-tests/build $checkpoints_dir/baremetalc-integer
+elif [[ $checkpoint == "build-complex" ]]; then
+    build=simulator-chipyard-CustomGemminiSoCConfig-Complex
+    rtl=generated-src-complex
+
+    rm -rf $checkpoints_dir/$build
+    rm -rf $checkpoints_dir/$rtl
+    rm -rf $checkpoints_dir/baremetalc-complex
+
+    cp -r $CHIP_TOP/sims/verilator/simulator-chipyard-CustomGemminiSoCConfig $checkpoints_dir/$build 
+    cp -r $CHIP_TOP/sims/verilator/generated-src $checkpoints_dir/$rtl
+
+    cp -r $CHIP_TOP/generators/gemmini/software/gemmini-rocc-tests/build $checkpoints_dir/baremetalc-complex
 else
     echo Unknown checkpoint: $checkpoint
 fi

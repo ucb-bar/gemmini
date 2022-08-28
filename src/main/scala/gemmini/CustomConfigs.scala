@@ -41,7 +41,7 @@ object GemminiCustomConfigs {
     acc_capacity = CapacityInKilobytes(128),
   )
 
- val bertInferenceConfig = defaultConfig.copy(
+ val ibertInferenceConfig = defaultConfig.copy(
     has_training_convs = false,
     has_max_pool =  false,
     has_normalizations = true,
@@ -49,8 +49,17 @@ object GemminiCustomConfigs {
     acc_capacity = CapacityInKilobytes(128),
   )
 
+  /* Complex number config for Gemmini tutorial */
+  val complexConfig = GemminiArrayConfig[Complex, Float, Float](
+    inputType = new Complex(16),
+    accType = new Complex(16),
+
+    spatialArrayOutputType = new Complex(16),
+  )
+
   // Specify which of your custom configs you want to build here
-  val customConfig = baselineInferenceConfig
+  // val customConfig = baselineInferenceConfig
+  val customConfig = complexConfig
 }
 
 
@@ -66,3 +75,4 @@ class GemminiCustomConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   )
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
+
