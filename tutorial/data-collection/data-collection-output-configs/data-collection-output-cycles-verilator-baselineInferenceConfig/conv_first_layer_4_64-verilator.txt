@@ -1,0 +1,6 @@
+Output dimension: 16
+
+Flatten weights...
+Gemmini conv...
+Gemmini conv took 233914 cycles
+[UART] UART0 is here (stdin/stdout).

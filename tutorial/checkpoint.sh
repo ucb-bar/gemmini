@@ -54,6 +54,10 @@ elif [[ $checkpoint == "build-onnx-training" ]]; then
     cp tutorial/gemmini_params_fp.h ../../toolchains/esp-tools/riscv-isa-sim/gemmini/gemmini_params.h
     cd ../../toolchains/esp-tools/riscv-isa-sim/build
     make && make install
+elif [[ $checkpoint == "data-collection" ]]; then
+    rm -rf data-collection-output-configs/
+    cp -r tutorial/data-collection/* .
+    mv clean.sh software/gemmini-rocc-tests/gemmini-data-collection/
 else
     echo Unknown checkpoint
     echo Supported checkpoints:

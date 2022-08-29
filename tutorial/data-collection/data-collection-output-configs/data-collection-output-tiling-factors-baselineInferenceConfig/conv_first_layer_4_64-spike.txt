@@ -1,0 +1,23 @@
+Gemmini extension configured with:
+    dim = 16
+Output dimension: 16
+
+Flatten weights...
+Gemmini conv...
+batches = 4
+orows   = 8
+ocols   = 16
+ochs    = 16
+krows   = 3
+kcols   = 3
+kchs    = 3
+
+total spad_rows reserved: 2502
+total acc_rows reserved: 1024
+
+scratchpad row utilization: 30%
+accumulator row utilization: 200%
+
+inner matmul size: i=16, j=16, k=3
+
+Gemmini conv took 278061 cycles
