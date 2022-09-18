@@ -146,9 +146,12 @@ object GemminiISA {
   }
 
   val CONFIG_NORM_RS1_Q_CONST_WIDTH = 32
-  val CONFIG_NORM_RS1_SPACER1_WIDTH = 13
+  val CONFIG_NORM_RS1_SPACER1_WIDTH = 3
   val CONFIG_NORM_RS1_Q_CONST_TYPE_WIDTH = 1
-  val CONFIG_NORM_RS1_SET_STATS_ID_ONLY_WIDTH = 1
+  val CONFIG_NORM_RS1_STORE_STATS = 1 // if either this or
+  val CONFIG_NORM_RS1_LOAD_STATS = 1 // this is set, we record stat_addr regardless of
+  val CONFIG_NORM_RS1_STAT_ADDR = 8
+  val CONFIG_NORM_RS1_SET_STATS_ID_ONLY_WIDTH = 1 // what this field says
   val CONFIG_NORM_RS1_ACT_MSB_WIDTH = 1
   val CONFIG_NORM_RS1_NORM_STATS_ID_WIDTH = 8
   val CONFIG_NORM_RS1_SPACER0_WIDTH = 6
@@ -157,6 +160,9 @@ object GemminiISA {
   class ConfigNormRs1(acc_t_bits: Int = 32) extends Bundle {
     val q_const = UInt(acc_t_bits.W)
     val _spacer1 = UInt(CONFIG_NORM_RS1_SPACER1_WIDTH.W)
+    val store_stats = UInt(CONFIG_NORM_RS1_STORE_STATS.W)
+    val load_stats = UInt(CONFIG_NORM_RS1_LOAD_STATS.W)
+    val stat_addr = UInt(CONFIG_NORM_RS1_STAT_ADDR.W)
     val q_const_type = UInt(CONFIG_NORM_RS1_Q_CONST_TYPE_WIDTH.W)
     val set_stats_id_only = UInt(CONFIG_NORM_RS1_SET_STATS_ID_ONLY_WIDTH.W)
     val act_msb = UInt(CONFIG_NORM_RS1_ACT_MSB_WIDTH.W)
