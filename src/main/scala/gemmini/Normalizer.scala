@@ -209,20 +209,29 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
   io.out.valid := stats(out_stats_id).state === output
   io.out.bits.acc_read_resp := stats(out_stats_id).req.acc_read_resp
 
-  when (io.in.bits.acc_read_resp.load_stats) {
-    io.out.bits.mean := ??? // read from io.in.bits.acc_read_resp.stat_addr
-    io.out.bits.max := ???
-    io.out.bits.inv_stddev := ???
-    io.out.bits.inv_sum_exp := ???
-  }.otherwise {
-    io.out.bits.mean := stats(out_stats_id).mean
-    io.out.bits.max := stats(out_stats_id).max
-    io.out.bits.inv_stddev := stats(out_stats_id).inv_stddev.asTypeOf(scale_t)
-    io.out.bits.inv_sum_exp := stats(out_stats_id).inv_sum_exp.asTypeOf(scale_t)
+  class SavedStats extends Bundle {
+    val mean = acc_t.cloneType
+    val inv_stddev = scale_t.cloneType
   }
 
+  // TODO: magic number
+  val stat_mem = Reg(Vec(128, new SavedStats))
+
+  when (io.in.bits.acc_read_resp.load_stats) {
+    val stat_mem_entry = stat_mem(io.in.bits.acc_read_resp.stat_addr(6, 0)) // TODO: magic number
+    io.out.bits.mean := RegNext(stat_mem_entry.mean)
+    io.out.bits.inv_stddev := RegNext(stat_mem_entry.inv_stddev)
+  }.otherwise {
+    io.out.bits.mean := stats(out_stats_id).mean
+    io.out.bits.inv_stddev := stats(out_stats_id).inv_stddev.asTypeOf(scale_t)
+  }
+  io.out.bits.max := stats(out_stats_id).max
+  io.out.bits.inv_sum_exp := stats(out_stats_id).inv_sum_exp.asTypeOf(scale_t)
+
   when (io.out.valid && io.in.bits.acc_read_resp.store_stats) {
-    // TODO: do storage stuff to io.in.bits.acc_read_resp.stat_addr
+    val stat_mem_entry = stat_mem(io.in.bits.acc_read_resp.stat_addr(6, 0))
+    stat_mem_entry.mean := io.out.bits.mean
+    stat_mem_entry.inv_stddev := io.out.bits.inv_stddev
   }
 
   // Lanes and functional units
