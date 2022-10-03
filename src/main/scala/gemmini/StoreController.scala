@@ -267,11 +267,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
             }
             activation := Cat(config_activation_msb, activation(1, 0)) // TODO: magic number
           }
-          when (config_load_stats.asBool() || config_store_stats.asBool()) {
-            stat_addr := config_stat_addr.asTypeOf(stat_addr)
-            load_stats := config_load_stats.asTypeOf(load_stats)
-            store_stats := config_store_stats.asTypeOf(store_stats)
-          }
+          stat_addr := config_stat_addr.asTypeOf(stat_addr)
+          load_stats := config_load_stats.asTypeOf(load_stats)
+          store_stats := config_store_stats.asTypeOf(store_stats)
           norm_stats_id := config_stats_id
           cmd.ready := true.B
         }
