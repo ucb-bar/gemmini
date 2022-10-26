@@ -61,7 +61,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val monitor_window = RegInit(0.U(16.W))
   val baseline_load = RegInit(0.U(16.W))
   val high_priority = RegInit(false.B)
-  val calm_reset = RegInit(false.B)
+  val moca_reset = RegInit(false.B)
   val monitor_conflict = monitor_window =/= 0.U
 
   val mstatus = cmd.bits.cmd.status
@@ -86,6 +86,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoLoad = !DoConfig // TODO change this if more commands are added
 
+  // get DMA config command for MOCA hardware
   val MOCA_Config = cmd.bits.cmd.rs1(1, 0) === CONFIG_MOCA && DoConfig
   dontTouch(MOCA_Config)
 
@@ -119,12 +120,12 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
   io.dma.req.bits.all_zeros := all_zeros
   io.dma.req.bits.status := mstatus
-  // for MOCA setup
+  // for MOCA setup (MOCA hardware configuration signals)
   io.dma.req.bits.monitor_conflict := monitor_conflict
   io.dma.req.bits.high_priority := high_priority
   io.dma.req.bits.target_load := baseline_load
   io.dma.req.bits.window := monitor_window
-  io.dma.req.bits.calm_reset := calm_reset
+  io.dma.req.bits.moca_reset := moca_reset
   io.dma.req.bits.pixel_repeats := pixel_repeat
 
   // Command tracker IO
@@ -158,11 +159,12 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     is (waiting_for_command) {
       when (cmd.valid) {
         when(DoConfig) {
+          // get new MOCA hardware config if the config command is MOCA_config
           when(MOCA_Config){
             monitor_window := config_monitor_window
             baseline_load := config_baseline_load
             high_priority := config_high_priority
-            calm_reset := true.B
+            moca_reset := true.B
             cmd.ready := true.B
           }.otherwise{
             stride := config_stride
@@ -176,7 +178,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
         .elsewhen(DoLoad && cmd_tracker.io.alloc.fire()) {
           control_state := Mux(io.dma.req.fire, sending_rows, waiting_for_dma_req_ready)
-          calm_reset := false.B
+          moca_reset := false.B
 
         }
       }

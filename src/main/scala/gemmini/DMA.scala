@@ -34,7 +34,7 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   // for conflict monitoring
   val monitor_conflict = Bool()
   val high_priority = Bool()
-  val calm_reset = Bool() // reset counter
+  val moca_reset = Bool() // reset counter
 
   val window = UInt(16.W)
   val target_load = UInt(16.W)
@@ -171,6 +171,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
 
+    // for MOCA hardware
+    // if MOCA is injecting bubbles, it blocks further load requests
     val bubble = RegInit(false.B)
     io.req.ready := state_machine_ready_for_req && !bubble
 
@@ -250,6 +252,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     translate_q.io.enq <> tlb_q.io.deq
     translate_q.io.deq.ready := true.B
 
+    // this is original DMA code without MOCA
     //retry_a.valid := translate_q.io.deq.valid && (io.tlb.resp.miss || !tl.a.ready)
     //retry_a.bits := translate_q.io.deq.bits
     //assert(retry_a.ready)
@@ -258,13 +261,14 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     //tl.a.bits := translate_q.io.deq.bits.tl_a
     //tl.a.bits.address := io.tlb.resp.paddr
 
-    /////////////////////////////////////////////////////////////////////////////////////////
-    // for contention
+    ////////////////////////////////////////Added for MOCA/////////////////////////////////////////////////
+    // for contention monitoring
     val kick_start = RegInit(false.B)
     val monitor_enable = req.monitor_conflict && kick_start
     dontTouch(monitor_enable)
     dontTouch(kick_start)
 
+    // load monitor & stall implemented in two level hardware counters
     val inner_load_counter = RegInit(0.S(25.W)) // counts load resp current time window
     val outer_load_counter = RegInit(0.S(25.W)) // piles up number of overflowing load (after it piles up till window, it pauses whole window and flushes it out)
     //val conflict_detected = RegInit(false.B)
@@ -289,10 +293,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val m_state = RegInit(s_reset)
 
     //PerfCounter(bubble, "bubble_injected", "bubble gets triggered and injected")
-    val req_size = ((1.U << tl.a.bits.size) >> 4.U).asUInt()
+    val req_size = ((1.U << tl.a.bits.size) >> 4.U).asUInt() // to count bytes
     dontTouch(req_size)
     //val bubble_cycles = Mux(high_priority, window/2.U, Mux(baseline_load =/= 0.S, baseline_load.asUInt(), window)) // encode cycles to inject bubble to baseline_load, if not inject window/2
-    val bubble_cycles = window / 2.U
+    val bubble_cycles = window / 2.U // due to double buffering
     //PerfCounter(tl.a.valid && !tl.a.ready, "reader_blocked_on_tilelink_port", "how many cycles was the reader ready to make a TL request but TL wasn't ready")
     //PerfCounter(tl.a.fire(), "reader_tl_req_cnt", "number of tilelink requests made in reader")
     val bubble_insert_cycles = RegInit(bubble_cycles)
@@ -309,9 +313,10 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         //high_priority := req.high_priority
         baseline_load := (req.target_load).zext()
       }
-    }.elsewhen(m_state === s_load_monitor_start){ // for high priority core
+    }.elsewhen(m_state === s_load_monitor_start){ // monitoring the number of loads during the Window time frame
       window_counter := wrappingAdd(window_counter, 1.U, window) // count cycles
       bubble := false.B
+      // counting load bytes
       when(tl.a.fire()){
         inner_load_counter := inner_load_counter + req_size.zext()
       }
@@ -321,7 +326,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         inner_load_counter := 0.S
       }
       // if the overflow piles up, move to halt
-      when(outer_load_counter * 2.U > baseline_load) {
+      when(outer_load_counter * 2.U > baseline_load) { // 2: to sync with bubble_cycles (window / 2)
         window_counter := 0.U
         m_state := s_detected
         bubble := true.B
@@ -340,25 +345,6 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         }
       }
     }
-      /*
-      .elsewhen(m_state === s_conflict_monitor_start){ // for low priority core
-      window_counter := wrappingAdd(window_counter, 1.U, window)
-      tl_miss_counter := wrappingAdd(tl_miss_counter, 1.U, window, tl_miss)
-      tl_fire_counter := wrappingAdd(tl_fire_counter, req_size, window, tl.a.fire())
-      bubble := false.B
-      when(window_counter === window - 1.U){
-        when(tl_miss_counter > tl_fire_counter){//} - tl_fire_counter / 8.U){
-          m_state := s_detected
-          bubble := true.B
-          bubble_insert_cycles := bubble_cycles
-        }.otherwise{
-          tl_miss_counter := 0.U
-          tl_fire_counter := 0.U
-        }
-        window_counter := 0.U
-      }
-    }
-    */
       .otherwise{ // need to make DMA idle for window frame
       window_counter := wrappingAdd(window_counter, 1.U, bubble_insert_cycles)
       bubble := true.B
@@ -374,7 +360,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       }
     }
 
-    when(req.calm_reset){
+    // receive new config for MOCA hardware
+    when(req.moca_reset){
       m_state := s_reset
       bubble := false.B
     }

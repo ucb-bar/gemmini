@@ -29,7 +29,7 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val high_priority = Bool()
   val window = UInt(16.W)
   val target_load = UInt(16.W)
-  val calm_reset = Bool()
+  val moca_reset = Bool()
 
   override def cloneType: this.type = new ScratchpadMemReadRequest(local_addr_t, scale_t_bits).asInstanceOf[this.type]
 }
@@ -361,7 +361,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     reader.module.io.req.bits.high_priority := read_issue_q.io.deq.bits.high_priority
     reader.module.io.req.bits.target_load := read_issue_q.io.deq.bits.target_load
     reader.module.io.req.bits.window := read_issue_q.io.deq.bits.window
-    reader.module.io.req.bits.calm_reset := read_issue_q.io.deq.bits.calm_reset
+    reader.module.io.req.bits.moca_reset := read_issue_q.io.deq.bits.moca_reset
     when(reset.toBool()){
       reader.module.io.req.bits.monitor_conflict := false.B
       reader.module.io.req.bits.target_load := 0.U
