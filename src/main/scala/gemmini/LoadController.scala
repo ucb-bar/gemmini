@@ -86,8 +86,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val DoConfig = cmd.bits.cmd.inst.funct === CONFIG_CMD
   val DoLoad = !DoConfig // TODO change this if more commands are added
 
-  val CALM_Config = cmd.bits.cmd.rs1(1, 0) === CONFIG_CALM && DoConfig
-  dontTouch(CALM_Config)
+  val MOCA_Config = cmd.bits.cmd.rs1(1, 0) === CONFIG_MOCA && DoConfig
+  dontTouch(MOCA_Config)
 
   cmd.ready := false.B
 
@@ -119,7 +119,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.has_acc_bitwidth := localaddr_plus_row_counter.is_acc_addr && !shrink
   io.dma.req.bits.all_zeros := all_zeros
   io.dma.req.bits.status := mstatus
-  // for CALM setup
+  // for MOCA setup
   io.dma.req.bits.monitor_conflict := monitor_conflict
   io.dma.req.bits.high_priority := high_priority
   io.dma.req.bits.target_load := baseline_load
@@ -158,7 +158,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     is (waiting_for_command) {
       when (cmd.valid) {
         when(DoConfig) {
-          when(CALM_Config){
+          when(MOCA_Config){
             monitor_window := config_monitor_window
             baseline_load := config_baseline_load
             high_priority := config_high_priority
