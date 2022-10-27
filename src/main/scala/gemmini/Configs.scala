@@ -175,8 +175,8 @@ object GemminiConfigs {
 
     dataflow     = Dataflow.WS,
 
-    sp_capacity  = CapacityInKilobytes(64),
-    acc_capacity = CapacityInKilobytes(32),
+    sp_capacity  = CapacityInKilobytes(128),
+    acc_capacity = CapacityInKilobytes(64),
 
     sp_banks     = defaultConfig.sp_banks,
     acc_banks    = defaultConfig.acc_banks,
@@ -194,7 +194,7 @@ object GemminiConfigs {
     st_queue_length = defaultConfig.st_queue_length,
     ex_queue_length = defaultConfig.ex_queue_length,
 
-    max_in_flight_mem_reqs = 64,
+    max_in_flight_mem_reqs = 16,
 
     dma_maxbytes = defaultConfig.dma_maxbytes,
     dma_buswidth = defaultConfig.dma_buswidth,
@@ -264,6 +264,18 @@ class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
+class MOCAGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.dummyConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
 // This Gemmini config has both an Int and an FP Gemmini side-by-side, sharing
 // the same scratchpad.
 class DualGemminiConfig extends Config((site, here, up) => {
