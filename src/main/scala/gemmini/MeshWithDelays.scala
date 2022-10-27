@@ -1,4 +1,4 @@
-/DO NOT TOUCH
+//DO NOT TOUCH
 package gemmini
 
 import chisel3._
