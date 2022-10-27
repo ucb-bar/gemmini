@@ -362,7 +362,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     reader.module.io.req.bits.target_load := read_issue_q.io.deq.bits.target_load
     reader.module.io.req.bits.window := read_issue_q.io.deq.bits.window
     reader.module.io.req.bits.moca_reset := read_issue_q.io.deq.bits.moca_reset
-    when(reset.toBool()){
+    when(reset.asBool()){
       reader.module.io.req.bits.monitor_conflict := false.B
       reader.module.io.req.bits.target_load := 0.U
       reader.module.io.req.bits.window := 0.U
