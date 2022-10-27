@@ -39,7 +39,6 @@ class StreamReadRequest[U <: Data](spad_rows: Int, acc_rows: Int, mvin_scale_t_b
   val window = UInt(16.W)
   val target_load = UInt(16.W)
 
-  override def cloneType: StreamReadRequest.this.type = new StreamReadRequest(spad_rows, acc_rows, mvin_scale_t_bits).asInstanceOf[this.type]
 }
 
 class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: Int, acc_rows: Int, aligned_to: Int, mvin_scale_t_bits: Int)
@@ -58,7 +57,6 @@ class StreamReadResponse[U <: Data](spadWidth: Int, accWidth: Int, spad_rows: In
   val bytes_read = UInt(8.W) // TODO magic number
   val cmd_id = UInt(8.W) // TODO magic number
 
-  override def cloneType: StreamReadResponse.this.type = new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to, mvin_scale_t_bits).asInstanceOf[this.type]
 }
 
 class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], nXacts: Int, beatBits: Int, maxBytes: Int, spadWidth: Int, accWidth: Int, aligned_to: Int,
