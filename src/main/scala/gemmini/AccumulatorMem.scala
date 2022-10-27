@@ -14,7 +14,6 @@ class AccumulatorReadReq[T <: Data](n: Int, shift_width: Int, scale_t: T) extend
 
   val fromDMA = Bool()
 
-  override def cloneType: this.type = new AccumulatorReadReq(n, shift_width, scale_t.cloneType).asInstanceOf[this.type]
 }
 
 class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U, shift_width: Int) extends Bundle {
@@ -24,14 +23,12 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val relu6_shift = UInt(shift_width.W)
   val act = UInt(2.W) // TODO magic number
   val acc_bank_id = UInt(2.W) // TODO don't hardcode
-  override def cloneType: this.type = new AccumulatorReadResp(fullDataType.cloneType, scale_t, shift_width).asInstanceOf[this.type]
 }
 
 class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, shift_width: Int, fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
   val req = Decoupled(new AccumulatorReadReq[U](n, shift_width, scale_t))
   val resp = Flipped(Decoupled(new AccumulatorReadResp[T, U](fullDataType, scale_t, shift_width)))
 
-  override def cloneType: this.type = new AccumulatorReadIO(n, shift_width, fullDataType.cloneType, scale_t.cloneType).asInstanceOf[this.type]
 }
 
 class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
@@ -41,7 +38,6 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
   val mask = Vec(t.getWidth / 8, Bool()) // TODO Use aligned_to here
   // val current_waddr = Flipped(Valid(UInt(log2Ceil(n).W))) // This is the raddr that is being fed into the SRAM right now
 
-  override def cloneType: this.type = new AccumulatorWriteReq(n, t).asInstanceOf[this.type]
 }
 
 
@@ -60,7 +56,6 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
     val sum = Input(t.cloneType)
   }
 
-  override def cloneType: this.type = new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem).asInstanceOf[this.type]
 }
 
 class AccPipe[T <: Data : Arithmetic](latency: Int, t: T)(implicit ev: Arithmetic[T]) extends Module {
@@ -117,7 +112,7 @@ class AccumulatorMem[T <: Data, U <: Data](
 
   val pipelined_writes = Reg(Vec(acc_latency, Valid(new AccumulatorWriteReq(n, t))))
   val oldest_pipelined_write = pipelined_writes(acc_latency-1)
-  pipelined_writes(0).valid := io.write.fire()
+  pipelined_writes(0).valid := io.write.fire
   pipelined_writes(0).bits  := io.write.bits
   for (i <- 1 until acc_latency) {
     pipelined_writes(i) := pipelined_writes(i-1)
@@ -148,10 +143,9 @@ class AccumulatorMem[T <: Data, U <: Data](
     mem.io.mask := oldest_pipelined_write.bits.mask
     rdata_for_adder := mem.io.rdata
     rdata_for_read_resp := mem.io.rdata
-
-    mem.io.raddr := Mux(io.write.fire() && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
-    mem.io.ren := io.read.req.fire() || (io.write.fire() && io.write.bits.acc)
-
+    mem.io.raddr := Mux(io.write.fire && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
+    mem.io.ren := io.read.req.fire || (io.write.fire && io.write.bits.acc)
+  } else if (!is_dummy) {
     val rmw_req = Wire(Decoupled(UInt()))
     rmw_req.valid := io.write.valid && io.write.bits.acc
     rmw_req.bits := io.write.bits.addr
@@ -204,14 +198,13 @@ class AccumulatorMem[T <: Data, U <: Data](
         val data = Vec(mask_len, mask_elem)
         val mask = Vec(mask_len, Bool())
         val addr = UInt(log2Ceil(n/acc_sub_banks).W)
-        override def cloneType: this.type = new W_Q_Entry(mask_len, mask_elem).asInstanceOf[this.type]
       }
 
       val w_q = Reg(Vec(nEntries, new W_Q_Entry(mask_len, mask_elem)))
       for (e <- w_q) {
         when (e.valid) {
           assert(!(
-            io.write.fire() && io.write.bits.acc &&
+            io.write.fire && io.write.bits.acc &&
             isThisBank(io.write.bits.addr) && getBankIdx(io.write.bits.addr) === e.addr &&
             ((io.write.bits.mask.asUInt & e.mask.asUInt) =/= 0.U)
           ), "you cannot accumulate to an AccumulatorMem address until previous writes to that address have completed")
@@ -277,7 +270,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       //   1. incoming reads for RMW
       //   2. writes from RMW
       //   3. incoming reads
-      when (rmw_req.fire() && isThisBank(rmw_req.bits)) {
+      when (rmw_req.fire && isThisBank(rmw_req.bits)) {
         ren := true.B
         when (isThisBank(only_read_req.bits)) {
           only_read_req.ready := false.B
@@ -288,7 +281,7 @@ class AccumulatorMem[T <: Data, U <: Data](
           only_read_req.ready := false.B
         }
       } .otherwise {
-        ren := isThisBank(only_read_req.bits) && only_read_req.fire()
+        ren := isThisBank(only_read_req.bits) && only_read_req.fire
         raddr := getBankIdx(only_read_req.bits)
       }
 
@@ -311,7 +304,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
   q.io.enq.bits.fromDMA := RegNext(io.read.req.bits.fromDMA)
   q.io.enq.bits.acc_bank_id := DontCare
-  q.io.enq.valid := RegNext(io.read.req.fire())
+  q.io.enq.valid := RegNext(io.read.req.fire)
 
   val p = q.io.deq
 
@@ -324,7 +317,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.read.resp.valid := p.valid
   p.ready := io.read.resp.ready
 
-  val q_will_be_empty = (q.io.count +& q.io.enq.fire()) - q.io.deq.fire() === 0.U
+  val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U
   io.read.req.ready := q_will_be_empty && (
       // Make sure we aren't accumulating, which would take over both ports
       !(io.write.valid && io.write.bits.acc) &&
@@ -340,5 +333,5 @@ class AccumulatorMem[T <: Data, U <: Data](
   }
 
   // assert(!(io.read.req.valid && io.write.en && io.write.acc), "reading and accumulating simultaneously is not supported")
-  assert(!(io.read.req.fire() && io.write.fire() && io.read.req.bits.addr === io.write.bits.addr), "reading from and writing to same address is not supported")
+  assert(!(io.read.req.fire && io.write.fire && io.read.req.bits.addr === io.write.bits.addr), "reading from and writing to same address is not supported")
 }
