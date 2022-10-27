@@ -16,7 +16,6 @@ class PixelRepeaterReq[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_c
 
   assert(block_cols <= 255, "len must be longer")
 
-  override def cloneType: PixelRepeaterReq.this.type = new PixelRepeaterReq(t, laddr_t, block_cols, aligned_to, tag_t).asInstanceOf[this.type]
 }
 
 class PixelRepeaterResp[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols: Int, aligned_to: Int, tag_t: Tag) extends Bundle {
@@ -26,7 +25,6 @@ class PixelRepeaterResp[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_
   val last: Bool = Bool()
   val tag: Tag = tag_t.cloneType
 
-  override def cloneType: PixelRepeaterResp.this.type = new PixelRepeaterResp(t, laddr_t, block_cols, aligned_to, tag_t).asInstanceOf[this.type]
 }
 
 class PixelRepeater[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols: Int, aligned_to: Int, tag_t: Tag, passthrough: Boolean) extends Module {
