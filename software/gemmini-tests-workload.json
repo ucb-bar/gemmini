@@ -5,5 +5,19 @@
   "overlay" : "overlay",
   "rootfs-size" : "8GiB",
   "host-init" : "host-init.sh",
-  "command" : "/root/run-tests-workload.sh"
+  "command" : "/root/run-tests-workload.sh",
+  "jobs" : [
+    {
+      "name": "default",
+      "command": "/root/run-tests-workload.sh"
+    },
+    {
+      "name": "workload_A",
+      "command": "/root/run-tests-workloada.sh"
+    },
+    {
+      "name": "workload_B",
+      "command": "/root/run-tests-workloadb.sh"
+    }
+  ]
 }
