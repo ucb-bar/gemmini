@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+echo "Test planaria_mp8a"
+/root/imagenet/planaria_mp8a-linux
 echo "Test priority_mp8_statica"
 /root/imagenet/priority_mp8_statica-linux
 echo "Test priority_mp8_dynamica"

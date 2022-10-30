@@ -8,8 +8,8 @@
 #echo "Test motivation_1"
 #/root/imagenet/motivation_1-linux
 
-#echo "Test planaria_mp8"
-#/root/imagenet/planaria_mp8-linux
+echo "Test planaria_mp8"
+/root/imagenet/planaria_mp8-linux
 #echo "Test planaria_mp8_h"
 #/root/imagenet/planaria_mp8_h-linux
 #echo "Test planaria_mp8_l"
