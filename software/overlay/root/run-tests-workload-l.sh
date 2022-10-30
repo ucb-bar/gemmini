@@ -23,8 +23,8 @@
 #/root/imagenet/priority_mp8_staticb2-linux
 #echo "Test priority_mp8_static1"
 #/root/imagenet/priority_mp8_static1-linux
-echo "Test priority_mp8_static_m"
-/root/imagenet/priority_mp8_static-linux
+echo "Test priority_mp8_static_l"
+/root/imagenet/priority_mp8_static_l-linux
 #echo "Test priority_mp8_static2"
 #/root/imagenet/priority_mp8_static2-linux
 #echo "Test priority_mp8_dynamicb_l"
@@ -44,8 +44,8 @@ echo "Test priority_mp8_static_m"
 #/root/imagenet/priority_mp8_static2-linux
 #echo "Test planaria_mp8"
 #/root/imagenet/planaria_mp8-linux
-echo "Test priority_mp8_dynamic_m"
-/root/imagenet/priority_mp8_dynamic-linux
+echo "Test priority_mp8_dynamic_l"
+/root/imagenet/priority_mp8_dynamic_l-linux
 #echo "Test priority_mp8_staticb"
 #/root/imagenet/priority_mp8_staticb-linux
 #echo "Test prema_mp8"
