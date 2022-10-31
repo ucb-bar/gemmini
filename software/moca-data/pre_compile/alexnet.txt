@@ -1,0 +1,84 @@
+Gemmini extension configured with:
+    dim = 16
+Gemmini extension configured with:
+    dim = 16
+Gemmini extension configured with:
+    dim = 16
+Gemmini extension configured with:
+    dim = 16
+Thread 0/4 starting
+Thread 1/4 starting
+Thread 2/4 starting
+Thread 3/4 starting
+window: 0, target load: 0, prediction cycles: 0, num tiles: 576 
+compute_ideal: 1464096, mem_ideal: 2781556, ideal prediction cycles: 3513604, ideal dram bw usage: 3, ideal dram bw util: 6, result dram bw util: -1
+total A load: 2527872, total B load: 123904, total D load: 3520, raw D: 256 
+A size: 50176, B size: 1452, C size: 12100 
+inner tile A: 50176, inner tile B: 726, outer loop iteration A: 2, outer loop iteration B: 1 
+number of tile: 576, target load per tile: 4609, ideal runtime: 1464096
+
+pool total load: 17596, C size: 2916, number of tile: 42, target load per tile: 418
+
+window: 0, target load: 0, prediction cycles: 0, num tiles: 33 
+compute_ideal: 874800, mem_ideal: 229272, ideal prediction cycles: 989436, ideal dram bw usage: 2, ideal dram bw util: 4, result dram bw util: -1
+total A load: 36000, total B load: 153600, total D load: 2592, raw D: 384 
+A size: 2916, B size: 19200, C size: 8748 
+inner tile A: 2916, inner tile B: 6400, outer loop iteration A: 3, outer loop iteration B: 1 
+number of tile: 36, target load per tile: 5338, ideal runtime: 874800
+
+pool total load: 10140, C size: 2028, number of tile: 24, target load per tile: 422
+
+window: 0, target load: 0, prediction cycles: 0, num tiles: 24 
+compute_ideal: 438048, mem_ideal: 176088, ideal prediction cycles: 526092, ideal dram bw usage: 8, ideal dram bw util: 16, result dram bw util: -1
+total A load: 42120, total B load: 82944, total D load: 1248, raw D: 192 
+A size: 2028, B size: 41472, C size: 4056 
+inner tile A: 2028, inner tile B: 6912, outer loop iteration A: 6, outer loop iteration B: 1 
+number of tile: 36, target load per tile: 3508, ideal runtime: 438048
+
+window: 0, target load: 0, prediction cycles: 0, num tiles: 24 
+compute_ideal: 584064, mem_ideal: 228416, ideal prediction cycles: 698272, ideal dram bw usage: 8, ideal dram bw util: 16, result dram bw util: -1
+total A load: 56160, total B load: 110592, total D load: 832, raw D: 128 
+A size: 4056, B size: 55296, C size: 2704 
+inner tile A: 4056, inner tile B: 13824, outer loop iteration A: 4, outer loop iteration B: 1 
+number of tile: 36, target load per tile: 4655, ideal runtime: 584064
+
+window: 0, target load: 0, prediction cycles: 0, num tiles: 16 
+compute_ideal: 389376, mem_ideal: 154400, ideal prediction cycles: 466576, ideal dram bw usage: 8, ideal dram bw util: 16, result dram bw util: -1
+total A load: 37440, total B load: 73728, total D load: 832, raw D: 128 
+A size: 2704, B size: 36864, C size: 2704 
+inner tile A: 2704, inner tile B: 9216, outer loop iteration A: 4, outer loop iteration B: 1 
+number of tile: 24, target load per tile: 4666, ideal runtime: 389376
+
+pool total load: 3088, C size: 576, number of tile: 12, target load per tile: 257
+
+orow divide: 1, batch divide: 1, dim I: 1, dim J: 4096
+window: 0, target load: 0, prediction cycles: 0 
+compute_ideal: 2360896, mem_ideal: 4722304, ideal prediction cycles: 5902752, ideal dram bw usage: 40, ideal dram bw util: 80, result dram bw util: -1
+total A load: 576, total B load: 2359296, total D load: 1024, raw D: 1024 
+A size: 576, B size: 2359296, C size: 256 
+inner tile A: 9216, inner tile B: 2359296, outer loop iteration A: 1, outer loop iteration B: 1 
+number of tile: 672, target load per tile: 3513, ideal runtime: 2360896
+
+orow divide: 1, batch divide: 1, dim I: 1, dim J: 4096, row divisible: 0
+orow divide: 1, batch divide: 1, dim I: 1, dim J: 4096
+window: 0, target load: 0, prediction cycles: 0 
+compute_ideal: 1049856, mem_ideal: 2100224, ideal prediction cycles: 2625152, ideal dram bw usage: 40, ideal dram bw util: 80, result dram bw util: -1
+total A load: 256, total B load: 1048576, total D load: 1024, raw D: 1024 
+A size: 256, B size: 1048576, C size: 256 
+inner tile A: 4096, inner tile B: 1048576, outer loop iteration A: 1, outer loop iteration B: 1 
+number of tile: 320, target load per tile: 3280, ideal runtime: 1049856
+
+orow divide: 1, batch divide: 1, dim I: 1, dim J: 4096, row divisible: 0
+orow divide: 1, batch divide: 1, dim I: 1, dim J: 1024
+window: 0, target load: 0, prediction cycles: 0 
+compute_ideal: 262656, mem_ideal: 525440, ideal prediction cycles: 656768, ideal dram bw usage: 40, ideal dram bw util: 80, result dram bw util: -1
+total A load: 256, total B load: 262144, total D load: 256, raw D: 256 
+A size: 256, B size: 262144, C size: 64 
+inner tile A: 4096, inner tile B: 262144, outer loop iteration A: 1, outer loop iteration B: 1 
+number of tile: 80, target load per tile: 3283, ideal runtime: 262656
+
+orow divide: 1, batch divide: 1, dim I: 1, dim J: 1024, row divisible: 0
+Thread 0/4 ending
+Thread 1/4 ending
+Thread 2/4 ending
+Thread 3/4 ending

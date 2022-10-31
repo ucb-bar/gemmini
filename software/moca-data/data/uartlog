@@ -1,0 +1,2165 @@
+Script started on Fri 28 Oct 2022 06:09:51 PM UTC
+AFI ID for Slot  0: agfi-001bd1f383ffdd9ff
+AFI PCI  Vendor ID: 0x1d0f, Device ID 0xf000
+Using xdma write queue: /dev/xdma0_h2c_0
+Using xdma read queue: /dev/xdma0_c2h_0
+UART0 is here (stdin/stdout).
+command line for program 0. argc=80:
++permissive +mm_relaxFunctionalModel_0=0 +mm_openPagePolicy_0=1 +mm_backendLatency_0=2 +mm_schedulerWindowSize_0=8 +mm_transactionQueueDepth_0=8 +mm_dramTimings_tAL_0=0 +mm_dramTimings_tCAS_0=14 +mm_dramTimings_tCMD_0=1 +mm_dramTimings_tCWD_0=10 +mm_dramTimings_tCCD_0=4 +mm_dramTimings_tFAW_0=25 +mm_dramTimings_tRAS_0=33 +mm_dramTimings_tREFI_0=7800 +mm_dramTimings_tRC_0=47 +mm_dramTimings_tRCD_0=14 +mm_dramTimings_tRFC_0=160 +mm_dramTimings_tRRD_0=8 +mm_dramTimings_tRP_0=14 +mm_dramTimings_tRTP_0=8 +mm_dramTimings_tRTRS_0=2 +mm_dramTimings_tWR_0=15 +mm_dramTimings_tWTR_0=8 +mm_rowAddr_offset_0=18 +mm_rowAddr_mask_0=65535 +mm_rankAddr_offset_0=16 +mm_rankAddr_mask_0=3 +mm_bankAddr_offset_0=13 +mm_bankAddr_mask_0=7 +mm_relaxFunctionalModel_1=0 +mm_openPagePolicy_1=1 +mm_backendLatency_1=2 +mm_schedulerWindowSize_1=8 +mm_transactionQueueDepth_1=8 +mm_dramTimings_tAL_1=0 +mm_dramTimings_tCAS_1=14 +mm_dramTimings_tCMD_1=1 +mm_dramTimings_tCWD_1=10 +mm_dramTimings_tCCD_1=4 +mm_dramTimings_tFAW_1=25 +mm_dramTimings_tRAS_1=33 +mm_dramTimings_tREFI_1=7800 +mm_dramTimings_tRC_1=47 +mm_dramTimings_tRCD_1=14 +mm_dramTimings_tRFC_1=160 +mm_dramTimings_tRRD_1=8 +mm_dramTimings_tRP_1=14 +mm_dramTimings_tRTP_1=8 +mm_dramTimings_tRTRS_1=2 +mm_dramTimings_tWR_1=15 +mm_dramTimings_tWTR_1=8 +mm_rowAddr_offset_1=18 +mm_rowAddr_mask_1=65535 +mm_rankAddr_offset_1=16 +mm_rankAddr_mask_1=3 +mm_bankAddr_offset_1=13 +mm_bankAddr_mask_1=7 +slotid=0 +profile-interval=-1 +macaddr0=00:12:6D:00:00:02 +blkdev0=gemmini-tests-NN0-gemmini-tests-NN.img +niclog0=niclog0 +blkdev-log0=blkdev-log0 +trace-select=1 +trace-start=0 +trace-end=-1 +trace-output-format=0 +dwarf-file-name=gemmini-tests-NN0-gemmini-tests-NN-bin-dwarf +autocounter-readrate=0 +autocounter-filename-base=AUTOCOUNTERFILE +drj_dtb=gemmini-tests-NN0-gemmini-tests-NN-bin.dtb +drj_bin=gemmini-tests-NN0-gemmini-tests-NN-bin +drj_rom=gemmini-tests-NN0-gemmini-tests-NN-bin.rom +print-start=0 +print-end=-1 +linklatency0=6405 +netbw0=200 +shmemportname0=default +permissive-off gemmini-tests-NN0-gemmini-tests-NN-bin 
+TraceRV 0: Tracing disabled, since +tracefile was not provided.
+TraceRV 1: Tracing disabled, since +tracefile was not provided.
+TraceRV 2: Tracing disabled, since +tracefile was not provided.
+TraceRV 3: Tracing disabled, since +tracefile was not provided.
+TraceRV 4: Tracing disabled, since +tracefile was not provided.
+TraceRV 5: Tracing disabled, since +tracefile was not provided.
+TraceRV 6: Tracing disabled, since +tracefile was not provided.
+TraceRV 7: Tracing disabled, since +tracefile was not provided.
+random min: 0x0, random max: 0xffffffffffffffff
+TracerV: Trigger enabled from 0 to 18446744073709551615 cycles
+TracerV: Trigger enabled from 0 to 18446744073709551615 cycles
+TracerV: Trigger enabled from 0 to 18446744073709551615 cycles
+TracerV: Trigger enabled from 0 to 18446744073709551615 cycles
+TracerV: Trigger enabled from 0 to 18446744073709551615 cycles
+TracerV: Trigger enabled from 0 to 18446744073709551615 cycles
+TracerV: Trigger enabled from 0 to 18446744073709551615 cycles
+TracerV: Trigger enabled from 0 to 18446744073709551615 cycles
+Commencing simulation.
+
+OpenSBI v0.8
+   ____                    _____ ____ _____
+  / __ \                  / ____|  _ \_   _|
+ | |  | |_ __   ___ _ __ | (___ | |_) || |
+ | |  | | '_ \ / _ \ '_ \ \___ \|  _ < | |
+ | |__| | |_) |  __/ | | |____) | |_) || |_
+  \____/| .__/ \___|_| |_|_____/|____/_____|
+        | |
+        |_|
+
+Platform Name       : freechips,rocketchip-unknown
+Platform Features   : timer,mfdeleg
+Platform HART Count : 8
+Boot HART ID        : 1
+Boot HART ISA       : rv64imafdcsux
+BOOT HART Features  : pmp,scounteren,mcounteren
+BOOT HART PMP Count : 16
+Firmware Base       : 0x80000000
+Firmware Size       : 148 KB
+Runtime SBI Version : 0.2
+
+MIDELEG : 0x0000000000000222
+MEDELEG : 0x000000000000b109
+PMP0    : 0x0000000080000000-0x000000008003ffff (A)
+PMP1    : 0x0000000000000000-0x0000000fffffffff (A,R,W,X)
+[    0.000000] OF: fdt: No chosen node found, continuing without
+[    0.000000] OF: fdt: Ignoring memory range 0x80000000 - 0x80200000
+[    0.000000] Forcing kernel command line to: console=hvc0 earlycon=sbi
+[    0.000000] Linux version 5.7.0-rc3-58539-g5f5fd87b36e2 (centos@ip-192-168-2-78.ec2.internal) (gcc version 9.2.0 (GCC), GNU ld (GNU Binutils) 2.32) #5 SMP Fri Oct 28 18:04:19 UTC 2022
+[    0.000000] earlycon: sbi0 at I/O port 0x0 (options '')
+[    0.000000] printk: bootconsole [sbi0] enabled
+[    0.000000] initrd not found or empty - disabling initrd
+[    0.000000] Zone ranges:
+[    0.000000]   DMA32    [mem 0x0000000080200000-0x00000000ffffffff]
+[    0.000000]   Normal   [mem 0x0000000100000000-0x000000047fffffff]
+[    0.000000] Movable zone start for each node
+[    0.000000] Early memory node ranges
+[    0.000000]   node   0: [mem 0x0000000080200000-0x000000047fffffff]
+[    0.000000] Initmem setup node 0 [mem 0x0000000080200000-0x000000047fffffff]
+[    0.000000] software IO TLB: mapped [mem 0xfbfff000-0xfffff000] (64MB)
+[    0.000000] SBI specification v0.2 detected
+[    0.000000] SBI implementation ID=0x1 Version=0x8
+[    0.000000] SBI v0.2 TIME extension detected
+[    0.000000] SBI v0.2 IPI extension detected
+[    0.000000] SBI v0.2 RFENCE extension detected
+[    0.000000] SBI v0.2 HSM extension detected
+[    0.000000] elf_hwcap is 0x112d
+[    0.000000] percpu: Embedded 18 pages/cpu s33832 r8192 d31704 u73728
+[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 4136455
+[    0.000000] Kernel command line: console=hvc0 earlycon=sbi
+[    0.000000] Dentry cache hash table entries: 2097152 (order: 12, 16777216 bytes, linear)
+[    0.000000] Inode-cache hash table entries: 1048576 (order: 11, 8388608 bytes, linear)
+[    0.000000] Sorting __ex_table...
+[    0.000000] mem auto-init: stack:off, heap alloc:off, heap free:off
+[    0.000000] Memory: 16437448K/16775168K available (6613K kernel code, 4069K rwdata, 4096K rodata, 1533K init, 327K bss, 337720K reserved, 0K cma-reserved)
+[    0.000000] Virtual kernel memory layout:
+[    0.000000]       fixmap : 0xffffffcefee00000 - 0xffffffceff000000   (2048 kB)
+[    0.000000]       pci io : 0xffffffceff000000 - 0xffffffcf00000000   (  16 MB)
+[    0.000000]      vmemmap : 0xffffffcf00000000 - 0xffffffcfffffffff   (4095 MB)
+[    0.000000]      vmalloc : 0xffffffd000000000 - 0xffffffdfffffffff   (65535 MB)
+[    0.000000]       lowmem : 0xffffffe000000000 - 0xffffffe3ffe00000   (16382 MB)
+[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=8, Nodes=1
+[    0.000000] rcu: Hierarchical RCU implementation.
+[    0.000000] rcu:     RCU debug extended QS entry/exit.
+[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+[    0.000000] NR_IRQS: 0, nr_irqs: 0, preallocated irqs: 0
+[    0.000000] plic: mapped 2 interrupts with 8 handlers for 16 contexts.
+[    0.000000] riscv_timer_init_dt: Registering clocksource cpuid [0] hartid [1]
+[    0.000000] clocksource: riscv_clocksource: mask: 0xffffffffffffffff max_cycles: 0x1d854df40, max_idle_ns: 3526361616960 ns
+[    0.000007] sched_clock: 64 bits at 1000kHz, resolution 1000ns, wraps every 2199023255500ns
+[    0.000268] Console: colour dummy device 80x25
+[    0.000320] printk: console [hvc0] enabled
+[    0.000320] printk: console [hvc0] enabled
+[    0.000399] printk: bootconsole [sbi0] disabled
+[    0.000399] printk: bootconsole [sbi0] disabled
+[    0.000699] Calibrating delay loop (skipped), value calculated using timer frequency.. 2.00 BogoMIPS (lpj=4000)
+[    0.000988] pid_max: default: 32768 minimum: 301
+[    0.001682] Mount-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.002144] Mountpoint-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+[    0.004061] rcu: Hierarchical SRCU implementation.
+[    0.004943] smp: Bringing up secondary CPUs ...
+[    0.009577] smp: Brought up 1 node, 8 CPUs
+[    0.011003] devtmpfs: initialized
+[    0.013137] random: get_random_u32 called from bucket_table_alloc.isra.0+0x4a/0xbe with crng_init=0
+[    0.013559] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+[    0.013737] futex hash table entries: 2048 (order: 5, 131072 bytes, linear)
+[    0.014336] thermal_sys: Registered thermal governor 'step_wise'
+[    0.014341] thermal_sys: Registered thermal governor 'user_space'
+[    0.014702] NET: Registered protocol family 16
+[    0.034013] vgaarb: loaded
+[    0.034387] SCSI subsystem initialized
+[    0.034853] usbcore: registered new interface driver usbfs
+[    0.034962] usbcore: registered new interface driver hub
+[    0.035123] usbcore: registered new device driver usb
+[    0.036052] clocksource: Switched to clocksource riscv_clocksource
+[    0.045690] NET: Registered protocol family 2
+[    0.046296] tcp_listen_portaddr_hash hash table entries: 8192 (order: 6, 327680 bytes, linear)
+[    0.047162] TCP established hash table entries: 131072 (order: 8, 1048576 bytes, linear)
+[    0.050107] TCP bind hash table entries: 65536 (order: 9, 2097152 bytes, linear)
+[    0.055398] TCP: Hash tables configured (established 131072 bind 65536)
+[    0.055795] UDP hash table entries: 8192 (order: 7, 786432 bytes, linear)
+[    0.057656] UDP-Lite hash table entries: 8192 (order: 7, 786432 bytes, linear)
+[    0.059686] NET: Registered protocol family 1
+[    0.060359] RPC: Registered named UNIX socket transport module.
+[    0.060419] RPC: Registered udp transport module.
+[    0.060467] RPC: Registered tcp transport module.
+[    0.060515] RPC: Registered tcp NFSv4.1 backchannel transport module.
+[    0.060579] PCI: CLS 0 bytes, default 64
+[    0.103897] workingset: timestamp_bits=62 max_order=22 bucket_order=0
+[    0.113695] NFS: Registering the id_resolver key type
+[    0.113765] Key type id_resolver registered
+[    0.113810] Key type id_legacy registered
+[    0.113862] nfs4filelayout_init: NFSv4 File Layout Driver Registering...
+[    0.114079] 9p: Installing v9fs 9p2000 file system support
+[    0.137283] NET: Registered protocol family 38
+[    0.137363] Block layer SCSI generic (bsg) driver version 0.4 loaded (major 252)
+[    0.137435] io scheduler mq-deadline registered
+[    0.137483] io scheduler kyber registered
+[    0.208238] Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+[    0.209670] [drm] radeon kernel modesetting enabled.
+[    0.225867] loop: module loaded
+[    0.226864] libphy: Fixed MDIO Bus: probed
+[    0.227706] e1000e: Intel(R) PRO/1000 Network Driver - 3.2.6-k
+[    0.227765] e1000e: Copyright(c) 1999 - 2015 Intel Corporation.
+[    0.227912] ehci_hcd: USB 2.0 'Enhanced' Host Controller (EHCI) Driver
+[    0.227977] ehci-pci: EHCI PCI platform driver
+[    0.228095] ehci-platform: EHCI generic platform driver
+[    0.228215] ohci_hcd: USB 1.1 'Open' Host Controller (OHCI) Driver
+[    0.228287] ohci-pci: OHCI PCI platform driver
+[    0.228370] ohci-platform: OHCI generic platform driver
+[    0.228852] usbcore: registered new interface driver uas
+[    0.228962] usbcore: registered new interface driver usb-storage
+[    0.229190] mousedev: PS/2 mouse device common for all mice
+[    0.229813] usbcore: registered new interface driver usbhid
+[    0.229869] usbhid: USB HID core driver
+[    0.230744] NET: Registered protocol family 10
+[    0.231761] Segment Routing with IPv6
+[    0.231868] sit: IPv6, IPv4 and MPLS over IPv4 tunneling driver
+[    0.232531] NET: Registered protocol family 17
+[    0.232783] 9pnet: Installing 9P2000 support
+[    0.232880] Key type dns_resolver registered
+[    0.235808] Freeing unused kernel memory: 1532K
+[    0.252809] Run /init as init process
+[    0.275257] icenet: loading out-of-tree module taints kernel.
+[    0.313708] disk [iceblk] of loaded; 16777216 sectors, 1 tags, 16 max request length
+Mounting /dev/iceblk as root device
+[    0.318791] EXT4-fs (iceblk): mounted filesystem without journal. Opts: (null)
+Loaded platform drivers, booting from disk:
+[    0.363743] random: fast init done
+[    0.377282] EXT4-fs (iceblk): re-mounted. Opts: (null)
+Starting syslogd: OK
+Starting klogd: OK
+Running sysctl: OK
+Starting mdev: OK
+Saving random seed: [    1.341339] random: dd: uninitialized urandom read (512 bytes read)
+OK
+Starting network: OK
+[    4.028107] random: crng init done
+AH00558: httpd: Could not reliably determine the server's fully qualified domain name, using 127.0.1.1. Set the 'ServerName' directive globally to suppress this message
+Starting dropbear sshd: OK
+launching firesim workload run/command
+=================================
+Test kwsnet batch1 1
+main cpu: 5 
+create threading 
+entered message thread
+print msg - cpu_id: 0 
+thread joined after message printing
+entered thread_matmul function - cid: 0
+thread joined after doing thread matmul
+
+kwsnet repeat 0 total thread cycles: 8551816
+kwsnet repeat 0 total cycles: 8229551
+kwsnet repeat 0 Conv layer 0 worst cycles: 505003 
+kwsnet repeat 0 Conv layer 1 worst cycles: 196259 
+kwsnet repeat 0 Conv layer 2 worst cycles: 196296 
+kwsnet repeat 0 Conv layer 3 worst cycles: 195727 
+kwsnet repeat 0 Conv layer 4 worst cycles: 196256 
+kwsnet repeat 0 Conv layer 5 worst cycles: 196554 
+kwsnet repeat 0 Conv layer 6 worst cycles: 196340 
+kwsnet repeat 0 Conv layer 7 worst cycles: 195299 
+kwsnet repeat 0 Conv layer 8 worst cycles: 196024 
+kwsnet repeat 0 Conv layer 9 worst cycles: 194969 
+kwsnet repeat 0 Conv layer 10 worst cycles: 195317 
+kwsnet repeat 0 Conv layer 11 worst cycles: 194694 
+kwsnet repeat 0 Conv layer 12 worst cycles: 195777 
+kwsnet repeat 0 Conv layer 13 worst cycles: 194733 
+kwsnet repeat 0 Conv layer 14 worst cycles: 197282 
+kwsnet repeat 0 Conv layer 15 worst cycles: 195297 
+kwsnet repeat 0 Conv layer 16 worst cycles: 196572 
+kwsnet repeat 0 Conv layer 17 worst cycles: 197274 
+kwsnet repeat 0 Conv layer 18 worst cycles: 196635 
+kwsnet repeat 0 Conv layer 19 worst cycles: 196539 
+kwsnet repeat 0 Conv layer 20 worst cycles: 197544 
+kwsnet repeat 0 Conv layer 21 worst cycles: 196038 
+kwsnet repeat 0 Conv layer 22 worst cycles: 196285 
+kwsnet repeat 0 Conv layer 23 worst cycles: 195947 
+kwsnet repeat 0 Conv layer 24 worst cycles: 196718 
+kwsnet repeat 0 Pool layer 0 worst cycles: 0 
+kwsnet repeat 0 Resadd layer 0 worst cycles: 271249 
+kwsnet repeat 0 Resadd layer 1 worst cycles: 298698 
+kwsnet repeat 0 Resadd layer 2 worst cycles: 270439 
+kwsnet repeat 0 Resadd layer 3 worst cycles: 270342 
+kwsnet repeat 0 Resadd layer 4 worst cycles: 270336 
+kwsnet repeat 0 Resadd layer 5 worst cycles: 270359 
+kwsnet repeat 0 Resadd layer 6 worst cycles: 270429 
+kwsnet repeat 0 Resadd layer 7 worst cycles: 285230 
+kwsnet repeat 0 Resadd layer 8 worst cycles: 270443 
+kwsnet repeat 0 Resadd layer 9 worst cycles: 270321 
+kwsnet repeat 0 Resadd layer 10 worst cycles: 270326 
+
+kwsnet repeat 1 total thread cycles: 8465969
+kwsnet repeat 1 total cycles: 8147100
+kwsnet repeat 1 Conv layer 0 worst cycles: 493549 
+kwsnet repeat 1 Conv layer 1 worst cycles: 193692 
+kwsnet repeat 1 Conv layer 2 worst cycles: 193094 
+kwsnet repeat 1 Conv layer 3 worst cycles: 192578 
+kwsnet repeat 1 Conv layer 4 worst cycles: 192766 
+kwsnet repeat 1 Conv layer 5 worst cycles: 192038 
+kwsnet repeat 1 Conv layer 6 worst cycles: 192763 
+kwsnet repeat 1 Conv layer 7 worst cycles: 193209 
+kwsnet repeat 1 Conv layer 8 worst cycles: 193379 
+kwsnet repeat 1 Conv layer 9 worst cycles: 193017 
+kwsnet repeat 1 Conv layer 10 worst cycles: 193561 
+kwsnet repeat 1 Conv layer 11 worst cycles: 192256 
+kwsnet repeat 1 Conv layer 12 worst cycles: 222852 
+kwsnet repeat 1 Conv layer 13 worst cycles: 193491 
+kwsnet repeat 1 Conv layer 14 worst cycles: 194832 
+kwsnet repeat 1 Conv layer 15 worst cycles: 192751 
+kwsnet repeat 1 Conv layer 16 worst cycles: 193086 
+kwsnet repeat 1 Conv layer 17 worst cycles: 192790 
+kwsnet repeat 1 Conv layer 18 worst cycles: 193050 
+kwsnet repeat 1 Conv layer 19 worst cycles: 191970 
+kwsnet repeat 1 Conv layer 20 worst cycles: 192323 
+kwsnet repeat 1 Conv layer 21 worst cycles: 191947 
+kwsnet repeat 1 Conv layer 22 worst cycles: 192245 
+kwsnet repeat 1 Conv layer 23 worst cycles: 211682 
+kwsnet repeat 1 Conv layer 24 worst cycles: 194355 
+kwsnet repeat 1 Pool layer 0 worst cycles: 0 
+kwsnet repeat 1 Resadd layer 0 worst cycles: 270576 
+kwsnet repeat 1 Resadd layer 1 worst cycles: 270339 
+kwsnet repeat 1 Resadd layer 2 worst cycles: 270264 
+kwsnet repeat 1 Resadd layer 3 worst cycles: 270279 
+kwsnet repeat 1 Resadd layer 4 worst cycles: 270281 
+kwsnet repeat 1 Resadd layer 5 worst cycles: 270472 
+kwsnet repeat 1 Resadd layer 6 worst cycles: 270336 
+kwsnet repeat 1 Resadd layer 7 worst cycles: 270390 
+kwsnet repeat 1 Resadd layer 8 worst cycles: 270267 
+kwsnet repeat 1 Resadd layer 9 worst cycles: 270279 
+kwsnet repeat 1 Resadd layer 10 worst cycles: 270341 
+
+kwsnet repeat 2 total thread cycles: 8425383
+kwsnet repeat 2 total cycles: 8107424
+kwsnet repeat 2 Conv layer 0 worst cycles: 473816 
+kwsnet repeat 2 Conv layer 1 worst cycles: 192718 
+kwsnet repeat 2 Conv layer 2 worst cycles: 192823 
+kwsnet repeat 2 Conv layer 3 worst cycles: 192183 
+kwsnet repeat 2 Conv layer 4 worst cycles: 192485 
+kwsnet repeat 2 Conv layer 5 worst cycles: 192009 
+kwsnet repeat 2 Conv layer 6 worst cycles: 192434 
+kwsnet repeat 2 Conv layer 7 worst cycles: 211940 
+kwsnet repeat 2 Conv layer 8 worst cycles: 193685 
+kwsnet repeat 2 Conv layer 9 worst cycles: 192383 
+kwsnet repeat 2 Conv layer 10 worst cycles: 192432 
+kwsnet repeat 2 Conv layer 11 worst cycles: 192174 
+kwsnet repeat 2 Conv layer 12 worst cycles: 192325 
+kwsnet repeat 2 Conv layer 13 worst cycles: 192051 
+kwsnet repeat 2 Conv layer 14 worst cycles: 193384 
+kwsnet repeat 2 Conv layer 15 worst cycles: 192182 
+kwsnet repeat 2 Conv layer 16 worst cycles: 192411 
+kwsnet repeat 2 Conv layer 17 worst cycles: 192040 
+kwsnet repeat 2 Conv layer 18 worst cycles: 192802 
+kwsnet repeat 2 Conv layer 19 worst cycles: 213126 
+kwsnet repeat 2 Conv layer 20 worst cycles: 193007 
+kwsnet repeat 2 Conv layer 21 worst cycles: 192316 
+kwsnet repeat 2 Conv layer 22 worst cycles: 192442 
+kwsnet repeat 2 Conv layer 23 worst cycles: 192005 
+kwsnet repeat 2 Conv layer 24 worst cycles: 192315 
+kwsnet repeat 2 Pool layer 0 worst cycles: 0 
+kwsnet repeat 2 Resadd layer 0 worst cycles: 270553 
+kwsnet repeat 2 Resadd layer 1 worst cycles: 270328 
+kwsnet repeat 2 Resadd layer 2 worst cycles: 270255 
+kwsnet repeat 2 Resadd layer 3 worst cycles: 270476 
+kwsnet repeat 2 Resadd layer 4 worst cycles: 270303 
+kwsnet repeat 2 Resadd layer 5 worst cycles: 270301 
+kwsnet repeat 2 Resadd layer 6 worst cycles: 270350 
+kwsnet repeat 2 Resadd layer 7 worst cycles: 270297 
+kwsnet repeat 2 Resadd layer 8 worst cycles: 270266 
+kwsnet repeat 2 Resadd layer 9 worst cycles: 270463 
+kwsnet repeat 2 Resadd layer 10 worst cycles: 270344 
+
+kwsnet repeat 3 total thread cycles: 8422784
+kwsnet repeat 3 total cycles: 8104690
+kwsnet repeat 3 Conv layer 0 worst cycles: 473577 
+kwsnet repeat 3 Conv layer 1 worst cycles: 192746 
+kwsnet repeat 3 Conv layer 2 worst cycles: 192543 
+kwsnet repeat 3 Conv layer 3 worst cycles: 193650 
+kwsnet repeat 3 Conv layer 4 worst cycles: 192858 
+kwsnet repeat 3 Conv layer 5 worst cycles: 192388 
+kwsnet repeat 3 Conv layer 6 worst cycles: 192391 
+kwsnet repeat 3 Conv layer 7 worst cycles: 192098 
+kwsnet repeat 3 Conv layer 8 worst cycles: 192422 
+kwsnet repeat 3 Conv layer 9 worst cycles: 192088 
+kwsnet repeat 3 Conv layer 10 worst cycles: 192403 
+kwsnet repeat 3 Conv layer 11 worst cycles: 192113 
+kwsnet repeat 3 Conv layer 12 worst cycles: 192260 
+kwsnet repeat 3 Conv layer 13 worst cycles: 191932 
+kwsnet repeat 3 Conv layer 14 worst cycles: 193565 
+kwsnet repeat 3 Conv layer 15 worst cycles: 193242 
+kwsnet repeat 3 Conv layer 16 worst cycles: 192647 
+kwsnet repeat 3 Conv layer 17 worst cycles: 192287 
+kwsnet repeat 3 Conv layer 18 worst cycles: 192838 
+kwsnet repeat 3 Conv layer 19 worst cycles: 192016 
+kwsnet repeat 3 Conv layer 20 worst cycles: 192329 
+kwsnet repeat 3 Conv layer 21 worst cycles: 191961 
+kwsnet repeat 3 Conv layer 22 worst cycles: 192192 
+kwsnet repeat 3 Conv layer 23 worst cycles: 191951 
+kwsnet repeat 3 Conv layer 24 worst cycles: 192365 
+kwsnet repeat 3 Pool layer 0 worst cycles: 0 
+kwsnet repeat 3 Resadd layer 0 worst cycles: 292186 
+kwsnet repeat 3 Resadd layer 1 worst cycles: 270428 
+kwsnet repeat 3 Resadd layer 2 worst cycles: 270284 
+kwsnet repeat 3 Resadd layer 3 worst cycles: 270279 
+kwsnet repeat 3 Resadd layer 4 worst cycles: 270275 
+kwsnet repeat 3 Resadd layer 5 worst cycles: 270281 
+kwsnet repeat 3 Resadd layer 6 worst cycles: 286750 
+kwsnet repeat 3 Resadd layer 7 worst cycles: 270430 
+kwsnet repeat 3 Resadd layer 8 worst cycles: 270282 
+kwsnet repeat 3 Resadd layer 9 worst cycles: 270290 
+kwsnet repeat 3 Resadd layer 10 worst cycles: 270343 
+
+kwsnet repeat 4 total thread cycles: 8425480
+kwsnet repeat 4 total cycles: 8105080
+kwsnet repeat 4 Conv layer 0 worst cycles: 473578 
+kwsnet repeat 4 Conv layer 1 worst cycles: 192742 
+kwsnet repeat 4 Conv layer 2 worst cycles: 192571 
+kwsnet repeat 4 Conv layer 3 worst cycles: 192312 
+kwsnet repeat 4 Conv layer 4 worst cycles: 192493 
+kwsnet repeat 4 Conv layer 5 worst cycles: 192073 
+kwsnet repeat 4 Conv layer 6 worst cycles: 192379 
+kwsnet repeat 4 Conv layer 7 worst cycles: 192011 
+kwsnet repeat 4 Conv layer 8 worst cycles: 192297 
+kwsnet repeat 4 Conv layer 9 worst cycles: 192146 
+kwsnet repeat 4 Conv layer 10 worst cycles: 212589 
+kwsnet repeat 4 Conv layer 11 worst cycles: 193345 
+kwsnet repeat 4 Conv layer 12 worst cycles: 192722 
+kwsnet repeat 4 Conv layer 13 worst cycles: 192201 
+kwsnet repeat 4 Conv layer 14 worst cycles: 193705 
+kwsnet repeat 4 Conv layer 15 worst cycles: 191997 
+kwsnet repeat 4 Conv layer 16 worst cycles: 192272 
+kwsnet repeat 4 Conv layer 17 worst cycles: 191937 
+kwsnet repeat 4 Conv layer 18 worst cycles: 192474 
+kwsnet repeat 4 Conv layer 19 worst cycles: 191996 
+kwsnet repeat 4 Conv layer 20 worst cycles: 192251 
+kwsnet repeat 4 Conv layer 21 worst cycles: 191951 
+kwsnet repeat 4 Conv layer 22 worst cycles: 211192 
+kwsnet repeat 4 Conv layer 23 worst cycles: 193048 
+kwsnet repeat 4 Conv layer 24 worst cycles: 192852 
+kwsnet repeat 4 Pool layer 0 worst cycles: 0 
+kwsnet repeat 4 Resadd layer 0 worst cycles: 270539 
+kwsnet repeat 4 Resadd layer 1 worst cycles: 270287 
+kwsnet repeat 4 Resadd layer 2 worst cycles: 270267 
+kwsnet repeat 4 Resadd layer 3 worst cycles: 270288 
+kwsnet repeat 4 Resadd layer 4 worst cycles: 270456 
+kwsnet repeat 4 Resadd layer 5 worst cycles: 270353 
+kwsnet repeat 4 Resadd layer 6 worst cycles: 270347 
+kwsnet repeat 4 Resadd layer 7 worst cycles: 270327 
+kwsnet repeat 4 Resadd layer 8 worst cycles: 270264 
+kwsnet repeat 4 Resadd layer 9 worst cycles: 270279 
+kwsnet repeat 4 Resadd layer 10 worst cycles: 270539 
+
+kwsnet repeat 5 total thread cycles: 8435256
+kwsnet repeat 5 total cycles: 8117049
+kwsnet repeat 5 Conv layer 0 worst cycles: 473719 
+kwsnet repeat 5 Conv layer 1 worst cycles: 192566 
+kwsnet repeat 5 Conv layer 2 worst cycles: 192698 
+kwsnet repeat 5 Conv layer 3 worst cycles: 192213 
+kwsnet repeat 5 Conv layer 4 worst cycles: 192517 
+kwsnet repeat 5 Conv layer 5 worst cycles: 192044 
+kwsnet repeat 5 Conv layer 6 worst cycles: 215619 
+kwsnet repeat 5 Conv layer 7 worst cycles: 193098 
+kwsnet repeat 5 Conv layer 8 worst cycles: 192821 
+kwsnet repeat 5 Conv layer 9 worst cycles: 192234 
+kwsnet repeat 5 Conv layer 10 worst cycles: 192476 
+kwsnet repeat 5 Conv layer 11 worst cycles: 192120 
+kwsnet repeat 5 Conv layer 12 worst cycles: 192394 
+kwsnet repeat 5 Conv layer 13 worst cycles: 191974 
+kwsnet repeat 5 Conv layer 14 worst cycles: 193340 
+kwsnet repeat 5 Conv layer 15 worst cycles: 192001 
+kwsnet repeat 5 Conv layer 16 worst cycles: 192326 
+kwsnet repeat 5 Conv layer 17 worst cycles: 219660 
+kwsnet repeat 5 Conv layer 18 worst cycles: 193981 
+kwsnet repeat 5 Conv layer 19 worst cycles: 192292 
+kwsnet repeat 5 Conv layer 20 worst cycles: 192434 
+kwsnet repeat 5 Conv layer 21 worst cycles: 192047 
+kwsnet repeat 5 Conv layer 22 worst cycles: 192244 
+kwsnet repeat 5 Conv layer 23 worst cycles: 191993 
+kwsnet repeat 5 Conv layer 24 worst cycles: 192382 
+kwsnet repeat 5 Pool layer 0 worst cycles: 0 
+kwsnet repeat 5 Resadd layer 0 worst cycles: 270541 
+kwsnet repeat 5 Resadd layer 1 worst cycles: 270287 
+kwsnet repeat 5 Resadd layer 2 worst cycles: 270460 
+kwsnet repeat 5 Resadd layer 3 worst cycles: 270314 
+kwsnet repeat 5 Resadd layer 4 worst cycles: 270275 
+kwsnet repeat 5 Resadd layer 5 worst cycles: 270298 
+kwsnet repeat 5 Resadd layer 6 worst cycles: 270325 
+kwsnet repeat 5 Resadd layer 7 worst cycles: 270316 
+kwsnet repeat 5 Resadd layer 8 worst cycles: 270460 
+kwsnet repeat 5 Resadd layer 9 worst cycles: 270290 
+kwsnet repeat 5 Resadd layer 10 worst cycles: 270290 
+
+kwsnet repeat 6 total thread cycles: 8425453
+kwsnet repeat 6 total cycles: 8107482
+kwsnet repeat 6 Conv layer 0 worst cycles: 473641 
+kwsnet repeat 6 Conv layer 1 worst cycles: 217277 
+kwsnet repeat 6 Conv layer 2 worst cycles: 193964 
+kwsnet repeat 6 Conv layer 3 worst cycles: 192516 
+kwsnet repeat 6 Conv layer 4 worst cycles: 192766 
+kwsnet repeat 6 Conv layer 5 worst cycles: 192114 
+kwsnet repeat 6 Conv layer 6 worst cycles: 192344 
+kwsnet repeat 6 Conv layer 7 worst cycles: 192066 
+kwsnet repeat 6 Conv layer 8 worst cycles: 192440 
+kwsnet repeat 6 Conv layer 9 worst cycles: 191991 
+kwsnet repeat 6 Conv layer 10 worst cycles: 192389 
+kwsnet repeat 6 Conv layer 11 worst cycles: 192060 
+kwsnet repeat 6 Conv layer 12 worst cycles: 192245 
+kwsnet repeat 6 Conv layer 13 worst cycles: 193310 
+kwsnet repeat 6 Conv layer 14 worst cycles: 194067 
+kwsnet repeat 6 Conv layer 15 worst cycles: 192322 
+kwsnet repeat 6 Conv layer 16 worst cycles: 192435 
+kwsnet repeat 6 Conv layer 17 worst cycles: 192057 
+kwsnet repeat 6 Conv layer 18 worst cycles: 192531 
+kwsnet repeat 6 Conv layer 19 worst cycles: 191959 
+kwsnet repeat 6 Conv layer 20 worst cycles: 192218 
+kwsnet repeat 6 Conv layer 21 worst cycles: 192032 
+kwsnet repeat 6 Conv layer 22 worst cycles: 192266 
+kwsnet repeat 6 Conv layer 23 worst cycles: 191986 
+kwsnet repeat 6 Conv layer 24 worst cycles: 192379 
+kwsnet repeat 6 Pool layer 0 worst cycles: 0 
+kwsnet repeat 6 Resadd layer 0 worst cycles: 270538 
+kwsnet repeat 6 Resadd layer 1 worst cycles: 270295 
+kwsnet repeat 6 Resadd layer 2 worst cycles: 270281 
+kwsnet repeat 6 Resadd layer 3 worst cycles: 270282 
+kwsnet repeat 6 Resadd layer 4 worst cycles: 270281 
+kwsnet repeat 6 Resadd layer 5 worst cycles: 286798 
+kwsnet repeat 6 Resadd layer 6 worst cycles: 270457 
+kwsnet repeat 6 Resadd layer 7 worst cycles: 270300 
+kwsnet repeat 6 Resadd layer 8 worst cycles: 270267 
+kwsnet repeat 6 Resadd layer 9 worst cycles: 270279 
+kwsnet repeat 6 Resadd layer 10 worst cycles: 270329 
+==================================
+Test resnet batch1 1
+main cpu: 6 
+create threading 
+entered message thread
+print msg - cpu_id: 0 
+thread joined after message printing
+entered thread_matmul function - cid: 0
+thread joined after doing thread matmul
+
+resnet repeat 0 total thread cycles: 24469642
+resnet repeat 0 total cycles: 24112834
+resnet repeat 0 Conv layer 0 worst cycles: 3564969 
+resnet repeat 0 Conv layer 1 worst cycles: 61805 
+resnet repeat 0 Conv layer 2 worst cycles: 477394 
+resnet repeat 0 Conv layer 3 worst cycles: 239437 
+resnet repeat 0 Conv layer 4 worst cycles: 237345 
+resnet repeat 0 Conv layer 5 worst cycles: 247347 
+resnet repeat 0 Conv layer 6 worst cycles: 479127 
+resnet repeat 0 Conv layer 7 worst cycles: 238915 
+resnet repeat 0 Conv layer 8 worst cycles: 210268 
+resnet repeat 0 Conv layer 9 worst cycles: 476113 
+resnet repeat 0 Conv layer 10 worst cycles: 237613 
+resnet repeat 0 Conv layer 11 worst cycles: 436498 
+resnet repeat 0 Conv layer 12 worst cycles: 502486 
+resnet repeat 0 Conv layer 13 worst cycles: 218984 
+resnet repeat 0 Conv layer 14 worst cycles: 645630 
+resnet repeat 0 Conv layer 15 worst cycles: 236648 
+resnet repeat 0 Conv layer 16 worst cycles: 479743 
+resnet repeat 0 Conv layer 17 worst cycles: 219415 
+resnet repeat 0 Conv layer 18 worst cycles: 235045 
+resnet repeat 0 Conv layer 19 worst cycles: 479883 
+resnet repeat 0 Conv layer 20 worst cycles: 220691 
+resnet repeat 0 Conv layer 21 worst cycles: 235287 
+resnet repeat 0 Conv layer 22 worst cycles: 476983 
+resnet repeat 0 Conv layer 23 worst cycles: 218279 
+resnet repeat 0 Conv layer 24 worst cycles: 493794 
+resnet repeat 0 Conv layer 25 worst cycles: 501990 
+resnet repeat 0 Conv layer 26 worst cycles: 223816 
+resnet repeat 0 Conv layer 27 worst cycles: 603997 
+resnet repeat 0 Conv layer 28 worst cycles: 237404 
+resnet repeat 0 Conv layer 29 worst cycles: 467439 
+resnet repeat 0 Conv layer 30 worst cycles: 223159 
+resnet repeat 0 Conv layer 31 worst cycles: 237642 
+resnet repeat 0 Conv layer 32 worst cycles: 467611 
+resnet repeat 0 Conv layer 33 worst cycles: 222666 
+resnet repeat 0 Conv layer 34 worst cycles: 237664 
+resnet repeat 0 Conv layer 35 worst cycles: 489262 
+resnet repeat 0 Conv layer 36 worst cycles: 224167 
+resnet repeat 0 Conv layer 37 worst cycles: 234035 
+resnet repeat 0 Conv layer 38 worst cycles: 469972 
+resnet repeat 0 Conv layer 39 worst cycles: 223282 
+resnet repeat 0 Conv layer 40 worst cycles: 237173 
+resnet repeat 0 Conv layer 41 worst cycles: 467851 
+resnet repeat 0 Conv layer 42 worst cycles: 222566 
+resnet repeat 0 Conv layer 43 worst cycles: 448022 
+resnet repeat 0 Conv layer 44 worst cycles: 596214 
+resnet repeat 0 Conv layer 45 worst cycles: 320395 
+resnet repeat 0 Conv layer 46 worst cycles: 551261 
+resnet repeat 0 Conv layer 47 worst cycles: 290359 
+resnet repeat 0 Conv layer 48 worst cycles: 595325 
+resnet repeat 0 Conv layer 49 worst cycles: 291767 
+resnet repeat 0 Conv layer 50 worst cycles: 288477 
+resnet repeat 0 Conv layer 51 worst cycles: 595289 
+resnet repeat 0 Conv layer 52 worst cycles: 289454 
+resnet repeat 0 Conv layer 53 worst cycles: 216134 
+resnet repeat 0 Resadd layer 0 worst cycles: 301994 
+resnet repeat 0 Resadd layer 1 worst cycles: 153652 
+resnet repeat 0 Resadd layer 2 worst cycles: 300776 
+resnet repeat 0 Resadd layer 3 worst cycles: 155888 
+resnet repeat 0 Resadd layer 4 worst cycles: 155603 
+resnet repeat 0 Resadd layer 5 worst cycles: 155034 
+resnet repeat 0 Resadd layer 6 worst cycles: 155131 
+resnet repeat 0 Resadd layer 7 worst cycles: 88154 
+resnet repeat 0 Resadd layer 8 worst cycles: 51016 
+resnet repeat 0 Resadd layer 9 worst cycles: 87696 
+resnet repeat 0 Resadd layer 10 worst cycles: 88372 
+resnet repeat 0 Resadd layer 11 worst cycles: 87572 
+resnet repeat 0 Resadd layer 12 worst cycles: 87844 
+resnet repeat 0 Resadd layer 13 worst cycles: 66617 
+resnet repeat 0 Resadd layer 14 worst cycles: 66633 
+resnet repeat 0 Resadd layer 15 worst cycles: 66754 
+
+resnet repeat 1 total thread cycles: 24262849
+resnet repeat 1 total cycles: 23907575
+resnet repeat 1 Conv layer 0 worst cycles: 3499377 
+resnet repeat 1 Conv layer 1 worst cycles: 60535 
+resnet repeat 1 Conv layer 2 worst cycles: 472700 
+resnet repeat 1 Conv layer 3 worst cycles: 236033 
+resnet repeat 1 Conv layer 4 worst cycles: 234685 
+resnet repeat 1 Conv layer 5 worst cycles: 209949 
+resnet repeat 1 Conv layer 6 worst cycles: 473037 
+resnet repeat 1 Conv layer 7 worst cycles: 236068 
+resnet repeat 1 Conv layer 8 worst cycles: 210157 
+resnet repeat 1 Conv layer 9 worst cycles: 532364 
+resnet repeat 1 Conv layer 10 worst cycles: 234749 
+resnet repeat 1 Conv layer 11 worst cycles: 435602 
+resnet repeat 1 Conv layer 12 worst cycles: 501189 
+resnet repeat 1 Conv layer 13 worst cycles: 217799 
+resnet repeat 1 Conv layer 14 worst cycles: 600209 
+resnet repeat 1 Conv layer 15 worst cycles: 232582 
+resnet repeat 1 Conv layer 16 worst cycles: 475499 
+resnet repeat 1 Conv layer 17 worst cycles: 217787 
+resnet repeat 1 Conv layer 18 worst cycles: 232059 
+resnet repeat 1 Conv layer 19 worst cycles: 509242 
+resnet repeat 1 Conv layer 20 worst cycles: 218775 
+resnet repeat 1 Conv layer 21 worst cycles: 232500 
+resnet repeat 1 Conv layer 22 worst cycles: 476310 
+resnet repeat 1 Conv layer 23 worst cycles: 218179 
+resnet repeat 1 Conv layer 24 worst cycles: 461904 
+resnet repeat 1 Conv layer 25 worst cycles: 492698 
+resnet repeat 1 Conv layer 26 worst cycles: 221893 
+resnet repeat 1 Conv layer 27 worst cycles: 574492 
+resnet repeat 1 Conv layer 28 worst cycles: 285601 
+resnet repeat 1 Conv layer 29 worst cycles: 468329 
+resnet repeat 1 Conv layer 30 worst cycles: 222560 
+resnet repeat 1 Conv layer 31 worst cycles: 230762 
+resnet repeat 1 Conv layer 32 worst cycles: 465821 
+resnet repeat 1 Conv layer 33 worst cycles: 221907 
+resnet repeat 1 Conv layer 34 worst cycles: 230796 
+resnet repeat 1 Conv layer 35 worst cycles: 466228 
+resnet repeat 1 Conv layer 36 worst cycles: 221947 
+resnet repeat 1 Conv layer 37 worst cycles: 230194 
+resnet repeat 1 Conv layer 38 worst cycles: 466215 
+resnet repeat 1 Conv layer 39 worst cycles: 221955 
+resnet repeat 1 Conv layer 40 worst cycles: 251499 
+resnet repeat 1 Conv layer 41 worst cycles: 468510 
+resnet repeat 1 Conv layer 42 worst cycles: 222831 
+resnet repeat 1 Conv layer 43 worst cycles: 444431 
+resnet repeat 1 Conv layer 44 worst cycles: 595687 
+resnet repeat 1 Conv layer 45 worst cycles: 289989 
+resnet repeat 1 Conv layer 46 worst cycles: 541392 
+resnet repeat 1 Conv layer 47 worst cycles: 289369 
+resnet repeat 1 Conv layer 48 worst cycles: 594006 
+resnet repeat 1 Conv layer 49 worst cycles: 323689 
+resnet repeat 1 Conv layer 50 worst cycles: 289290 
+resnet repeat 1 Conv layer 51 worst cycles: 596938 
+resnet repeat 1 Conv layer 52 worst cycles: 288896 
+resnet repeat 1 Conv layer 53 worst cycles: 192820 
+resnet repeat 1 Resadd layer 0 worst cycles: 301344 
+resnet repeat 1 Resadd layer 1 worst cycles: 152991 
+resnet repeat 1 Resadd layer 2 worst cycles: 301099 
+resnet repeat 1 Resadd layer 3 worst cycles: 155815 
+resnet repeat 1 Resadd layer 4 worst cycles: 155512 
+resnet repeat 1 Resadd layer 5 worst cycles: 155183 
+resnet repeat 1 Resadd layer 6 worst cycles: 155203 
+resnet repeat 1 Resadd layer 7 worst cycles: 87557 
+resnet repeat 1 Resadd layer 8 worst cycles: 51348 
+resnet repeat 1 Resadd layer 9 worst cycles: 87835 
+resnet repeat 1 Resadd layer 10 worst cycles: 87705 
+resnet repeat 1 Resadd layer 11 worst cycles: 87565 
+resnet repeat 1 Resadd layer 12 worst cycles: 88069 
+resnet repeat 1 Resadd layer 13 worst cycles: 66709 
+resnet repeat 1 Resadd layer 14 worst cycles: 66664 
+resnet repeat 1 Resadd layer 15 worst cycles: 66935 
+
+resnet repeat 2 total thread cycles: 24236723
+resnet repeat 2 total cycles: 23880627
+resnet repeat 2 Conv layer 0 worst cycles: 3526383 
+resnet repeat 2 Conv layer 1 worst cycles: 60432 
+resnet repeat 2 Conv layer 2 worst cycles: 472700 
+resnet repeat 2 Conv layer 3 worst cycles: 260184 
+resnet repeat 2 Conv layer 4 worst cycles: 234323 
+resnet repeat 2 Conv layer 5 worst cycles: 210023 
+resnet repeat 2 Conv layer 6 worst cycles: 475521 
+resnet repeat 2 Conv layer 7 worst cycles: 236100 
+resnet repeat 2 Conv layer 8 worst cycles: 210113 
+resnet repeat 2 Conv layer 9 worst cycles: 472660 
+resnet repeat 2 Conv layer 10 worst cycles: 231296 
+resnet repeat 2 Conv layer 11 worst cycles: 435453 
+resnet repeat 2 Conv layer 12 worst cycles: 498991 
+resnet repeat 2 Conv layer 13 worst cycles: 276086 
+resnet repeat 2 Conv layer 14 worst cycles: 600354 
+resnet repeat 2 Conv layer 15 worst cycles: 233483 
+resnet repeat 2 Conv layer 16 worst cycles: 475558 
+resnet repeat 2 Conv layer 17 worst cycles: 217806 
+resnet repeat 2 Conv layer 18 worst cycles: 232435 
+resnet repeat 2 Conv layer 19 worst cycles: 475084 
+resnet repeat 2 Conv layer 20 worst cycles: 217737 
+resnet repeat 2 Conv layer 21 worst cycles: 232332 
+resnet repeat 2 Conv layer 22 worst cycles: 474691 
+resnet repeat 2 Conv layer 23 worst cycles: 240192 
+resnet repeat 2 Conv layer 24 worst cycles: 462569 
+resnet repeat 2 Conv layer 25 worst cycles: 493792 
+resnet repeat 2 Conv layer 26 worst cycles: 221948 
+resnet repeat 2 Conv layer 27 worst cycles: 572349 
+resnet repeat 2 Conv layer 28 worst cycles: 230310 
+resnet repeat 2 Conv layer 29 worst cycles: 465450 
+resnet repeat 2 Conv layer 30 worst cycles: 221499 
+resnet repeat 2 Conv layer 31 worst cycles: 230231 
+resnet repeat 2 Conv layer 32 worst cycles: 465114 
+resnet repeat 2 Conv layer 33 worst cycles: 249080 
+resnet repeat 2 Conv layer 34 worst cycles: 231731 
+resnet repeat 2 Conv layer 35 worst cycles: 468847 
+resnet repeat 2 Conv layer 36 worst cycles: 222189 
+resnet repeat 2 Conv layer 37 worst cycles: 230134 
+resnet repeat 2 Conv layer 38 worst cycles: 466871 
+resnet repeat 2 Conv layer 39 worst cycles: 221957 
+resnet repeat 2 Conv layer 40 worst cycles: 230927 
+resnet repeat 2 Conv layer 41 worst cycles: 466091 
+resnet repeat 2 Conv layer 42 worst cycles: 222042 
+resnet repeat 2 Conv layer 43 worst cycles: 444198 
+resnet repeat 2 Conv layer 44 worst cycles: 623358 
+resnet repeat 2 Conv layer 45 worst cycles: 291237 
+resnet repeat 2 Conv layer 46 worst cycles: 543827 
+resnet repeat 2 Conv layer 47 worst cycles: 289571 
+resnet repeat 2 Conv layer 48 worst cycles: 594165 
+resnet repeat 2 Conv layer 49 worst cycles: 290418 
+resnet repeat 2 Conv layer 50 worst cycles: 288591 
+resnet repeat 2 Conv layer 51 worst cycles: 593863 
+resnet repeat 2 Conv layer 52 worst cycles: 288498 
+resnet repeat 2 Conv layer 53 worst cycles: 192322 
+resnet repeat 2 Resadd layer 0 worst cycles: 301235 
+resnet repeat 2 Resadd layer 1 worst cycles: 153101 
+resnet repeat 2 Resadd layer 2 worst cycles: 300775 
+resnet repeat 2 Resadd layer 3 worst cycles: 156005 
+resnet repeat 2 Resadd layer 4 worst cycles: 155562 
+resnet repeat 2 Resadd layer 5 worst cycles: 154960 
+resnet repeat 2 Resadd layer 6 worst cycles: 155386 
+resnet repeat 2 Resadd layer 7 worst cycles: 87964 
+resnet repeat 2 Resadd layer 8 worst cycles: 51000 
+resnet repeat 2 Resadd layer 9 worst cycles: 88176 
+resnet repeat 2 Resadd layer 10 worst cycles: 87820 
+resnet repeat 2 Resadd layer 11 worst cycles: 87470 
+resnet repeat 2 Resadd layer 12 worst cycles: 87822 
+resnet repeat 2 Resadd layer 13 worst cycles: 66929 
+resnet repeat 2 Resadd layer 14 worst cycles: 66582 
+resnet repeat 2 Resadd layer 15 worst cycles: 66718 
+
+resnet repeat 3 total thread cycles: 24239723
+resnet repeat 3 total cycles: 23885572
+resnet repeat 3 Conv layer 0 worst cycles: 3526096 
+resnet repeat 3 Conv layer 1 worst cycles: 60703 
+resnet repeat 3 Conv layer 2 worst cycles: 472857 
+resnet repeat 3 Conv layer 3 worst cycles: 233345 
+resnet repeat 3 Conv layer 4 worst cycles: 233308 
+resnet repeat 3 Conv layer 5 worst cycles: 210051 
+resnet repeat 3 Conv layer 6 worst cycles: 473186 
+resnet repeat 3 Conv layer 7 worst cycles: 235336 
+resnet repeat 3 Conv layer 8 worst cycles: 211474 
+resnet repeat 3 Conv layer 9 worst cycles: 474520 
+resnet repeat 3 Conv layer 10 worst cycles: 231560 
+resnet repeat 3 Conv layer 11 worst cycles: 434821 
+resnet repeat 3 Conv layer 12 worst cycles: 498995 
+resnet repeat 3 Conv layer 13 worst cycles: 217818 
+resnet repeat 3 Conv layer 14 worst cycles: 598759 
+resnet repeat 3 Conv layer 15 worst cycles: 232230 
+resnet repeat 3 Conv layer 16 worst cycles: 474850 
+resnet repeat 3 Conv layer 17 worst cycles: 273352 
+resnet repeat 3 Conv layer 18 worst cycles: 232804 
+resnet repeat 3 Conv layer 19 worst cycles: 476796 
+resnet repeat 3 Conv layer 20 worst cycles: 217815 
+resnet repeat 3 Conv layer 21 worst cycles: 232206 
+resnet repeat 3 Conv layer 22 worst cycles: 475365 
+resnet repeat 3 Conv layer 23 worst cycles: 217836 
+resnet repeat 3 Conv layer 24 worst cycles: 461510 
+resnet repeat 3 Conv layer 25 worst cycles: 491735 
+resnet repeat 3 Conv layer 26 worst cycles: 221825 
+resnet repeat 3 Conv layer 27 worst cycles: 598904 
+resnet repeat 3 Conv layer 28 worst cycles: 231279 
+resnet repeat 3 Conv layer 29 worst cycles: 467491 
+resnet repeat 3 Conv layer 30 worst cycles: 221723 
+resnet repeat 3 Conv layer 31 worst cycles: 230248 
+resnet repeat 3 Conv layer 32 worst cycles: 465544 
+resnet repeat 3 Conv layer 33 worst cycles: 221871 
+resnet repeat 3 Conv layer 34 worst cycles: 231064 
+resnet repeat 3 Conv layer 35 worst cycles: 465832 
+resnet repeat 3 Conv layer 36 worst cycles: 221890 
+resnet repeat 3 Conv layer 37 worst cycles: 230436 
+resnet repeat 3 Conv layer 38 worst cycles: 493457 
+resnet repeat 3 Conv layer 39 worst cycles: 222665 
+resnet repeat 3 Conv layer 40 worst cycles: 231698 
+resnet repeat 3 Conv layer 41 worst cycles: 468367 
+resnet repeat 3 Conv layer 42 worst cycles: 222050 
+resnet repeat 3 Conv layer 43 worst cycles: 444366 
+resnet repeat 3 Conv layer 44 worst cycles: 595069 
+resnet repeat 3 Conv layer 45 worst cycles: 289928 
+resnet repeat 3 Conv layer 46 worst cycles: 541236 
+resnet repeat 3 Conv layer 47 worst cycles: 288893 
+resnet repeat 3 Conv layer 48 worst cycles: 624939 
+resnet repeat 3 Conv layer 49 worst cycles: 290836 
+resnet repeat 3 Conv layer 50 worst cycles: 288906 
+resnet repeat 3 Conv layer 51 worst cycles: 596231 
+resnet repeat 3 Conv layer 52 worst cycles: 288881 
+resnet repeat 3 Conv layer 53 worst cycles: 191621 
+resnet repeat 3 Resadd layer 0 worst cycles: 301119 
+resnet repeat 3 Resadd layer 1 worst cycles: 184602 
+resnet repeat 3 Resadd layer 2 worst cycles: 300994 
+resnet repeat 3 Resadd layer 3 worst cycles: 155754 
+resnet repeat 3 Resadd layer 4 worst cycles: 155747 
+resnet repeat 3 Resadd layer 5 worst cycles: 155129 
+resnet repeat 3 Resadd layer 6 worst cycles: 155122 
+resnet repeat 3 Resadd layer 7 worst cycles: 88157 
+resnet repeat 3 Resadd layer 8 worst cycles: 51097 
+resnet repeat 3 Resadd layer 9 worst cycles: 87832 
+resnet repeat 3 Resadd layer 10 worst cycles: 87722 
+resnet repeat 3 Resadd layer 11 worst cycles: 87889 
+resnet repeat 3 Resadd layer 12 worst cycles: 87980 
+resnet repeat 3 Resadd layer 13 worst cycles: 66480 
+resnet repeat 3 Resadd layer 14 worst cycles: 66823 
+resnet repeat 3 Resadd layer 15 worst cycles: 66541 
+
+resnet repeat 4 total thread cycles: 24259644
+resnet repeat 4 total cycles: 23903830
+resnet repeat 4 Conv layer 0 worst cycles: 3476285 
+resnet repeat 4 Conv layer 1 worst cycles: 60838 
+resnet repeat 4 Conv layer 2 worst cycles: 494660 
+resnet repeat 4 Conv layer 3 worst cycles: 234298 
+resnet repeat 4 Conv layer 4 worst cycles: 233345 
+resnet repeat 4 Conv layer 5 worst cycles: 210112 
+resnet repeat 4 Conv layer 6 worst cycles: 474845 
+resnet repeat 4 Conv layer 7 worst cycles: 235715 
+resnet repeat 4 Conv layer 8 worst cycles: 209935 
+resnet repeat 4 Conv layer 9 worst cycles: 472350 
+resnet repeat 4 Conv layer 10 worst cycles: 230980 
+resnet repeat 4 Conv layer 11 worst cycles: 434730 
+resnet repeat 4 Conv layer 12 worst cycles: 561228 
+resnet repeat 4 Conv layer 13 worst cycles: 218987 
+resnet repeat 4 Conv layer 14 worst cycles: 600473 
+resnet repeat 4 Conv layer 15 worst cycles: 232757 
+resnet repeat 4 Conv layer 16 worst cycles: 475388 
+resnet repeat 4 Conv layer 17 worst cycles: 217601 
+resnet repeat 4 Conv layer 18 worst cycles: 232119 
+resnet repeat 4 Conv layer 19 worst cycles: 475180 
+resnet repeat 4 Conv layer 20 worst cycles: 217491 
+resnet repeat 4 Conv layer 21 worst cycles: 232160 
+resnet repeat 4 Conv layer 22 worst cycles: 507179 
+resnet repeat 4 Conv layer 23 worst cycles: 218836 
+resnet repeat 4 Conv layer 24 worst cycles: 461750 
+resnet repeat 4 Conv layer 25 worst cycles: 494718 
+resnet repeat 4 Conv layer 26 worst cycles: 221833 
+resnet repeat 4 Conv layer 27 worst cycles: 573216 
+resnet repeat 4 Conv layer 28 worst cycles: 230309 
+resnet repeat 4 Conv layer 29 worst cycles: 465735 
+resnet repeat 4 Conv layer 30 worst cycles: 221680 
+resnet repeat 4 Conv layer 31 worst cycles: 230143 
+resnet repeat 4 Conv layer 32 worst cycles: 521187 
+resnet repeat 4 Conv layer 33 worst cycles: 222565 
+resnet repeat 4 Conv layer 34 worst cycles: 231048 
+resnet repeat 4 Conv layer 35 worst cycles: 468794 
+resnet repeat 4 Conv layer 36 worst cycles: 222491 
+resnet repeat 4 Conv layer 37 worst cycles: 230558 
+resnet repeat 4 Conv layer 38 worst cycles: 467122 
+resnet repeat 4 Conv layer 39 worst cycles: 221997 
+resnet repeat 4 Conv layer 40 worst cycles: 231496 
+resnet repeat 4 Conv layer 41 worst cycles: 466235 
+resnet repeat 4 Conv layer 42 worst cycles: 221664 
+resnet repeat 4 Conv layer 43 worst cycles: 469237 
+resnet repeat 4 Conv layer 44 worst cycles: 597664 
+resnet repeat 4 Conv layer 45 worst cycles: 290627 
+resnet repeat 4 Conv layer 46 worst cycles: 541389 
+resnet repeat 4 Conv layer 47 worst cycles: 289504 
+resnet repeat 4 Conv layer 48 worst cycles: 594293 
+resnet repeat 4 Conv layer 49 worst cycles: 290052 
+resnet repeat 4 Conv layer 50 worst cycles: 289037 
+resnet repeat 4 Conv layer 51 worst cycles: 593881 
+resnet repeat 4 Conv layer 52 worst cycles: 325891 
+resnet repeat 4 Conv layer 53 worst cycles: 192633 
+resnet repeat 4 Resadd layer 0 worst cycles: 301219 
+resnet repeat 4 Resadd layer 1 worst cycles: 153058 
+resnet repeat 4 Resadd layer 2 worst cycles: 300820 
+resnet repeat 4 Resadd layer 3 worst cycles: 156035 
+resnet repeat 4 Resadd layer 4 worst cycles: 155521 
+resnet repeat 4 Resadd layer 5 worst cycles: 155019 
+resnet repeat 4 Resadd layer 6 worst cycles: 155413 
+resnet repeat 4 Resadd layer 7 worst cycles: 87691 
+resnet repeat 4 Resadd layer 8 worst cycles: 50939 
+resnet repeat 4 Resadd layer 9 worst cycles: 88188 
+resnet repeat 4 Resadd layer 10 worst cycles: 88033 
+resnet repeat 4 Resadd layer 11 worst cycles: 87454 
+resnet repeat 4 Resadd layer 12 worst cycles: 87830 
+resnet repeat 4 Resadd layer 13 worst cycles: 66832 
+resnet repeat 4 Resadd layer 14 worst cycles: 66506 
+resnet repeat 4 Resadd layer 15 worst cycles: 67022 
+
+resnet repeat 5 total thread cycles: 24238628
+resnet repeat 5 total cycles: 23884388
+resnet repeat 5 Conv layer 0 worst cycles: 3526900 
+resnet repeat 5 Conv layer 1 worst cycles: 59925 
+resnet repeat 5 Conv layer 2 worst cycles: 472394 
+resnet repeat 5 Conv layer 3 worst cycles: 233479 
+resnet repeat 5 Conv layer 4 worst cycles: 232815 
+resnet repeat 5 Conv layer 5 worst cycles: 210073 
+resnet repeat 5 Conv layer 6 worst cycles: 503544 
+resnet repeat 5 Conv layer 7 worst cycles: 236453 
+resnet repeat 5 Conv layer 8 worst cycles: 210273 
+resnet repeat 5 Conv layer 9 worst cycles: 474529 
+resnet repeat 5 Conv layer 10 worst cycles: 231619 
+resnet repeat 5 Conv layer 11 worst cycles: 434573 
+resnet repeat 5 Conv layer 12 worst cycles: 498871 
+resnet repeat 5 Conv layer 13 worst cycles: 217973 
+resnet repeat 5 Conv layer 14 worst cycles: 598187 
+resnet repeat 5 Conv layer 15 worst cycles: 289770 
+resnet repeat 5 Conv layer 16 worst cycles: 476741 
+resnet repeat 5 Conv layer 17 worst cycles: 218290 
+resnet repeat 5 Conv layer 18 worst cycles: 232489 
+resnet repeat 5 Conv layer 19 worst cycles: 476215 
+resnet repeat 5 Conv layer 20 worst cycles: 217754 
+resnet repeat 5 Conv layer 21 worst cycles: 232245 
+resnet repeat 5 Conv layer 22 worst cycles: 475167 
+resnet repeat 5 Conv layer 23 worst cycles: 217538 
+resnet repeat 5 Conv layer 24 worst cycles: 461706 
+resnet repeat 5 Conv layer 25 worst cycles: 516637 
+resnet repeat 5 Conv layer 26 worst cycles: 223029 
+resnet repeat 5 Conv layer 27 worst cycles: 573920 
+resnet repeat 5 Conv layer 28 worst cycles: 230377 
+resnet repeat 5 Conv layer 29 worst cycles: 466082 
+resnet repeat 5 Conv layer 30 worst cycles: 221510 
+resnet repeat 5 Conv layer 31 worst cycles: 230327 
+resnet repeat 5 Conv layer 32 worst cycles: 465519 
+resnet repeat 5 Conv layer 33 worst cycles: 221928 
+resnet repeat 5 Conv layer 34 worst cycles: 230729 
+resnet repeat 5 Conv layer 35 worst cycles: 465609 
+resnet repeat 5 Conv layer 36 worst cycles: 222182 
+resnet repeat 5 Conv layer 37 worst cycles: 231583 
+resnet repeat 5 Conv layer 38 worst cycles: 469711 
+resnet repeat 5 Conv layer 39 worst cycles: 222087 
+resnet repeat 5 Conv layer 40 worst cycles: 231216 
+resnet repeat 5 Conv layer 41 worst cycles: 467096 
+resnet repeat 5 Conv layer 42 worst cycles: 221817 
+resnet repeat 5 Conv layer 43 worst cycles: 444233 
+resnet repeat 5 Conv layer 44 worst cycles: 595110 
+resnet repeat 5 Conv layer 45 worst cycles: 289872 
+resnet repeat 5 Conv layer 46 worst cycles: 572886 
+resnet repeat 5 Conv layer 47 worst cycles: 290543 
+resnet repeat 5 Conv layer 48 worst cycles: 595494 
+resnet repeat 5 Conv layer 49 worst cycles: 290791 
+resnet repeat 5 Conv layer 50 worst cycles: 288477 
+resnet repeat 5 Conv layer 51 worst cycles: 594595 
+resnet repeat 5 Conv layer 52 worst cycles: 288324 
+resnet repeat 5 Conv layer 53 worst cycles: 191250 
+resnet repeat 5 Resadd layer 0 worst cycles: 301133 
+resnet repeat 5 Resadd layer 1 worst cycles: 153344 
+resnet repeat 5 Resadd layer 2 worst cycles: 300788 
+resnet repeat 5 Resadd layer 3 worst cycles: 155727 
+resnet repeat 5 Resadd layer 4 worst cycles: 155686 
+resnet repeat 5 Resadd layer 5 worst cycles: 155018 
+resnet repeat 5 Resadd layer 6 worst cycles: 155099 
+resnet repeat 5 Resadd layer 7 worst cycles: 87928 
+resnet repeat 5 Resadd layer 8 worst cycles: 50958 
+resnet repeat 5 Resadd layer 9 worst cycles: 87765 
+resnet repeat 5 Resadd layer 10 worst cycles: 112741 
+resnet repeat 5 Resadd layer 11 worst cycles: 87741 
+resnet repeat 5 Resadd layer 12 worst cycles: 87966 
+resnet repeat 5 Resadd layer 13 worst cycles: 66838 
+resnet repeat 5 Resadd layer 14 worst cycles: 66545 
+resnet repeat 5 Resadd layer 15 worst cycles: 66648 
+
+resnet repeat 6 total thread cycles: 24253709
+resnet repeat 6 total cycles: 23899749
+resnet repeat 6 Conv layer 0 worst cycles: 3499027 
+resnet repeat 6 Conv layer 1 worst cycles: 60732 
+resnet repeat 6 Conv layer 2 worst cycles: 472345 
+resnet repeat 6 Conv layer 3 worst cycles: 233773 
+resnet repeat 6 Conv layer 4 worst cycles: 233545 
+resnet repeat 6 Conv layer 5 worst cycles: 210052 
+resnet repeat 6 Conv layer 6 worst cycles: 473041 
+resnet repeat 6 Conv layer 7 worst cycles: 235194 
+resnet repeat 6 Conv layer 8 worst cycles: 210227 
+resnet repeat 6 Conv layer 9 worst cycles: 472216 
+resnet repeat 6 Conv layer 10 worst cycles: 230943 
+resnet repeat 6 Conv layer 11 worst cycles: 435928 
+resnet repeat 6 Conv layer 12 worst cycles: 500822 
+resnet repeat 6 Conv layer 13 worst cycles: 218002 
+resnet repeat 6 Conv layer 14 worst cycles: 599269 
+resnet repeat 6 Conv layer 15 worst cycles: 232501 
+resnet repeat 6 Conv layer 16 worst cycles: 475463 
+resnet repeat 6 Conv layer 17 worst cycles: 217941 
+resnet repeat 6 Conv layer 18 worst cycles: 232293 
+resnet repeat 6 Conv layer 19 worst cycles: 475497 
+resnet repeat 6 Conv layer 20 worst cycles: 249141 
+resnet repeat 6 Conv layer 21 worst cycles: 232601 
+resnet repeat 6 Conv layer 22 worst cycles: 476100 
+resnet repeat 6 Conv layer 23 worst cycles: 218122 
+resnet repeat 6 Conv layer 24 worst cycles: 461623 
+resnet repeat 6 Conv layer 25 worst cycles: 492775 
+resnet repeat 6 Conv layer 26 worst cycles: 221725 
+resnet repeat 6 Conv layer 27 worst cycles: 573468 
+resnet repeat 6 Conv layer 28 worst cycles: 230376 
+resnet repeat 6 Conv layer 29 worst cycles: 465481 
+resnet repeat 6 Conv layer 30 worst cycles: 277161 
+resnet repeat 6 Conv layer 31 worst cycles: 231150 
+resnet repeat 6 Conv layer 32 worst cycles: 467539 
+resnet repeat 6 Conv layer 33 worst cycles: 222209 
+resnet repeat 6 Conv layer 34 worst cycles: 231049 
+resnet repeat 6 Conv layer 35 worst cycles: 466692 
+resnet repeat 6 Conv layer 36 worst cycles: 222292 
+resnet repeat 6 Conv layer 37 worst cycles: 230421 
+resnet repeat 6 Conv layer 38 worst cycles: 466811 
+resnet repeat 6 Conv layer 39 worst cycles: 221615 
+resnet repeat 6 Conv layer 40 worst cycles: 230979 
+resnet repeat 6 Conv layer 41 worst cycles: 491389 
+resnet repeat 6 Conv layer 42 worst cycles: 223750 
+resnet repeat 6 Conv layer 43 worst cycles: 444785 
+resnet repeat 6 Conv layer 44 worst cycles: 597784 
+resnet repeat 6 Conv layer 45 worst cycles: 289782 
+resnet repeat 6 Conv layer 46 worst cycles: 541609 
+resnet repeat 6 Conv layer 47 worst cycles: 289544 
+resnet repeat 6 Conv layer 48 worst cycles: 593713 
+resnet repeat 6 Conv layer 49 worst cycles: 290458 
+resnet repeat 6 Conv layer 50 worst cycles: 288453 
+resnet repeat 6 Conv layer 51 worst cycles: 633590 
+resnet repeat 6 Conv layer 52 worst cycles: 290558 
+resnet repeat 6 Conv layer 53 worst cycles: 191585 
+resnet repeat 6 Resadd layer 0 worst cycles: 301211 
+resnet repeat 6 Resadd layer 1 worst cycles: 153070 
+resnet repeat 6 Resadd layer 2 worst cycles: 358126 
+resnet repeat 6 Resadd layer 3 worst cycles: 155919 
+resnet repeat 6 Resadd layer 4 worst cycles: 155488 
+resnet repeat 6 Resadd layer 5 worst cycles: 155214 
+resnet repeat 6 Resadd layer 6 worst cycles: 155164 
+resnet repeat 6 Resadd layer 7 worst cycles: 87561 
+resnet repeat 6 Resadd layer 8 worst cycles: 51323 
+resnet repeat 6 Resadd layer 9 worst cycles: 87744 
+resnet repeat 6 Resadd layer 10 worst cycles: 87807 
+resnet repeat 6 Resadd layer 11 worst cycles: 87383 
+resnet repeat 6 Resadd layer 12 worst cycles: 88361 
+resnet repeat 6 Resadd layer 13 worst cycles: 66503 
+resnet repeat 6 Resadd layer 14 worst cycles: 66461 
+resnet repeat 6 Resadd layer 15 worst cycles: 67267 
+==================================
+Test yolonet batch1 1
+main cpu: 2 
+create threading 
+entered message thread
+print msg - cpu_id: 0 
+thread joined after message printing
+entered thread_matmul function - cid: 0
+thread joined after doing thread matmul
+
+yolonet repeat 0 total thread cycles: 15167992
+yolonet repeat 0 total cycles: 258930200
+yolonet repeat 0 Conv layer 0 worst cycles: 1248802 
+yolonet repeat 0 Conv layer 1 worst cycles: 967189 
+yolonet repeat 0 Conv layer 2 worst cycles: 953495 
+yolonet repeat 0 Conv layer 3 worst cycles: 109110 
+yolonet repeat 0 Conv layer 4 worst cycles: 950529 
+yolonet repeat 0 Conv layer 5 worst cycles: 950823 
+yolonet repeat 0 Conv layer 6 worst cycles: 114048 
+yolonet repeat 0 Conv layer 7 worst cycles: 972157 
+yolonet repeat 0 Conv layer 8 worst cycles: 935234 
+yolonet repeat 0 Conv layer 9 worst cycles: 128351 
+yolonet repeat 0 Conv layer 10 worst cycles: 934437 
+yolonet repeat 0 Conv layer 11 worst cycles: 126765 
+yolonet repeat 0 Conv layer 12 worst cycles: 934463 
+yolonet repeat 0 Conv layer 13 worst cycles: 1223922 
+yolonet repeat 0 Conv layer 14 worst cycles: 144460 
+yolonet repeat 0 Conv layer 15 worst cycles: 1198819 
+yolonet repeat 0 Conv layer 16 worst cycles: 142615 
+yolonet repeat 0 Conv layer 17 worst cycles: 1196668 
+yolonet repeat 0 Conv layer 18 worst cycles: 309146 
+yolonet repeat 0 Pool layer 0 worst cycles: 690394 
+yolonet repeat 0 Pool layer 1 worst cycles: 345758 
+yolonet repeat 0 Pool layer 2 worst cycles: 173773 
+yolonet repeat 0 Pool layer 3 worst cycles: 86969 
+yolonet repeat 0 Pool layer 4 worst cycles: 244092273 
+
+yolonet repeat 1 total thread cycles: 14865622
+yolonet repeat 1 total cycles: 273609329
+yolonet repeat 1 Conv layer 0 worst cycles: 1060018 
+yolonet repeat 1 Conv layer 1 worst cycles: 945219 
+yolonet repeat 1 Conv layer 2 worst cycles: 944570 
+yolonet repeat 1 Conv layer 3 worst cycles: 108867 
+yolonet repeat 1 Conv layer 4 worst cycles: 980806 
+yolonet repeat 1 Conv layer 5 worst cycles: 942925 
+yolonet repeat 1 Conv layer 6 worst cycles: 113119 
+yolonet repeat 1 Conv layer 7 worst cycles: 942110 
+yolonet repeat 1 Conv layer 8 worst cycles: 932061 
+yolonet repeat 1 Conv layer 9 worst cycles: 125000 
+yolonet repeat 1 Conv layer 10 worst cycles: 953439 
+yolonet repeat 1 Conv layer 11 worst cycles: 125113 
+yolonet repeat 1 Conv layer 12 worst cycles: 934246 
+yolonet repeat 1 Conv layer 13 worst cycles: 1196192 
+yolonet repeat 1 Conv layer 14 worst cycles: 142024 
+yolonet repeat 1 Conv layer 15 worst cycles: 1228628 
+yolonet repeat 1 Conv layer 16 worst cycles: 141885 
+yolonet repeat 1 Conv layer 17 worst cycles: 1196712 
+yolonet repeat 1 Conv layer 18 worst cycles: 277450 
+yolonet repeat 1 Pool layer 0 worst cycles: 685552 
+yolonet repeat 1 Pool layer 1 worst cycles: 300202 
+yolonet repeat 1 Pool layer 2 worst cycles: 173680 
+yolonet repeat 1 Pool layer 3 worst cycles: 86745 
+yolonet repeat 1 Pool layer 4 worst cycles: 259072766 
+
+yolonet repeat 2 total thread cycles: 14841274
+yolonet repeat 2 total cycles: 288547721
+yolonet repeat 2 Conv layer 0 worst cycles: 1024035 
+yolonet repeat 2 Conv layer 1 worst cycles: 968529 
+yolonet repeat 2 Conv layer 2 worst cycles: 945542 
+yolonet repeat 2 Conv layer 3 worst cycles: 109021 
+yolonet repeat 2 Conv layer 4 worst cycles: 944446 
+yolonet repeat 2 Conv layer 5 worst cycles: 941674 
+yolonet repeat 2 Conv layer 6 worst cycles: 112577 
+yolonet repeat 2 Conv layer 7 worst cycles: 960700 
+yolonet repeat 2 Conv layer 8 worst cycles: 932416 
+yolonet repeat 2 Conv layer 9 worst cycles: 125314 
+yolonet repeat 2 Conv layer 10 worst cycles: 931891 
+yolonet repeat 2 Conv layer 11 worst cycles: 124607 
+yolonet repeat 2 Conv layer 12 worst cycles: 964544 
+yolonet repeat 2 Conv layer 13 worst cycles: 1197756 
+yolonet repeat 2 Conv layer 14 worst cycles: 142438 
+yolonet repeat 2 Conv layer 15 worst cycles: 1196158 
+yolonet repeat 2 Conv layer 16 worst cycles: 141042 
+yolonet repeat 2 Conv layer 17 worst cycles: 1225395 
+yolonet repeat 2 Conv layer 18 worst cycles: 277474 
+yolonet repeat 2 Pool layer 0 worst cycles: 684804 
+yolonet repeat 2 Pool layer 1 worst cycles: 300841 
+yolonet repeat 2 Pool layer 2 worst cycles: 173196 
+yolonet repeat 2 Pool layer 3 worst cycles: 87014 
+yolonet repeat 2 Pool layer 4 worst cycles: 274036307 
+
+yolonet repeat 3 total thread cycles: 14846198
+yolonet repeat 3 total cycles: 303481232
+yolonet repeat 3 Conv layer 0 worst cycles: 1059442 
+yolonet repeat 3 Conv layer 1 worst cycles: 944674 
+yolonet repeat 3 Conv layer 2 worst cycles: 944376 
+yolonet repeat 3 Conv layer 3 worst cycles: 108865 
+yolonet repeat 3 Conv layer 4 worst cycles: 967155 
+yolonet repeat 3 Conv layer 5 worst cycles: 942896 
+yolonet repeat 3 Conv layer 6 worst cycles: 113170 
+yolonet repeat 3 Conv layer 7 worst cycles: 942051 
+yolonet repeat 3 Conv layer 8 worst cycles: 959211 
+yolonet repeat 3 Conv layer 9 worst cycles: 125178 
+yolonet repeat 3 Conv layer 10 worst cycles: 932608 
+yolonet repeat 3 Conv layer 11 worst cycles: 124900 
+yolonet repeat 3 Conv layer 12 worst cycles: 931830 
+yolonet repeat 3 Conv layer 13 worst cycles: 1196256 
+yolonet repeat 3 Conv layer 14 worst cycles: 142004 
+yolonet repeat 3 Conv layer 15 worst cycles: 1220021 
+yolonet repeat 3 Conv layer 16 worst cycles: 142026 
+yolonet repeat 3 Conv layer 17 worst cycles: 1196955 
+yolonet repeat 3 Conv layer 18 worst cycles: 278142 
+yolonet repeat 3 Pool layer 0 worst cycles: 684432 
+yolonet repeat 3 Pool layer 1 worst cycles: 300330 
+yolonet repeat 3 Pool layer 2 worst cycles: 173646 
+yolonet repeat 3 Pool layer 3 worst cycles: 86886 
+yolonet repeat 3 Pool layer 4 worst cycles: 288964178 
+
+yolonet repeat 4 total thread cycles: 14849269
+yolonet repeat 4 total cycles: 318440658
+yolonet repeat 4 Conv layer 0 worst cycles: 1024964 
+yolonet repeat 4 Conv layer 1 worst cycles: 965139 
+yolonet repeat 4 Conv layer 2 worst cycles: 945415 
+yolonet repeat 4 Conv layer 3 worst cycles: 108929 
+yolonet repeat 4 Conv layer 4 worst cycles: 944515 
+yolonet repeat 4 Conv layer 5 worst cycles: 968357 
+yolonet repeat 4 Conv layer 6 worst cycles: 113122 
+yolonet repeat 4 Conv layer 7 worst cycles: 943319 
+yolonet repeat 4 Conv layer 8 worst cycles: 931694 
+yolonet repeat 4 Conv layer 9 worst cycles: 124992 
+yolonet repeat 4 Conv layer 10 worst cycles: 931233 
+yolonet repeat 4 Conv layer 11 worst cycles: 124467 
+yolonet repeat 4 Conv layer 12 worst cycles: 951366 
+yolonet repeat 4 Conv layer 13 worst cycles: 1197838 
+yolonet repeat 4 Conv layer 14 worst cycles: 142378 
+yolonet repeat 4 Conv layer 15 worst cycles: 1196519 
+yolonet repeat 4 Conv layer 16 worst cycles: 141068 
+yolonet repeat 4 Conv layer 17 worst cycles: 1240491 
+yolonet repeat 4 Conv layer 18 worst cycles: 278409 
+yolonet repeat 4 Pool layer 0 worst cycles: 684744 
+yolonet repeat 4 Pool layer 1 worst cycles: 300833 
+yolonet repeat 4 Pool layer 2 worst cycles: 173465 
+yolonet repeat 4 Pool layer 3 worst cycles: 87046 
+yolonet repeat 4 Pool layer 4 worst cycles: 303920355 
+
+yolonet repeat 5 total thread cycles: 14808347
+yolonet repeat 5 total cycles: 333355807
+yolonet repeat 5 Conv layer 0 worst cycles: 1024528 
+yolonet repeat 5 Conv layer 1 worst cycles: 942934 
+yolonet repeat 5 Conv layer 2 worst cycles: 986311 
+yolonet repeat 5 Conv layer 3 worst cycles: 109095 
+yolonet repeat 5 Conv layer 4 worst cycles: 945508 
+yolonet repeat 5 Conv layer 5 worst cycles: 941927 
+yolonet repeat 5 Conv layer 6 worst cycles: 112869 
+yolonet repeat 5 Conv layer 7 worst cycles: 942158 
+yolonet repeat 5 Conv layer 8 worst cycles: 949715 
+yolonet repeat 5 Conv layer 9 worst cycles: 125395 
+yolonet repeat 5 Conv layer 10 worst cycles: 932616 
+yolonet repeat 5 Conv layer 11 worst cycles: 124716 
+yolonet repeat 5 Conv layer 12 worst cycles: 931410 
+yolonet repeat 5 Conv layer 13 worst cycles: 1196451 
+yolonet repeat 5 Conv layer 14 worst cycles: 171258 
+yolonet repeat 5 Conv layer 15 worst cycles: 1197974 
+yolonet repeat 5 Conv layer 16 worst cycles: 142323 
+yolonet repeat 5 Conv layer 17 worst cycles: 1196239 
+yolonet repeat 5 Conv layer 18 worst cycles: 276672 
+yolonet repeat 5 Pool layer 0 worst cycles: 684356 
+yolonet repeat 5 Pool layer 1 worst cycles: 300142 
+yolonet repeat 5 Pool layer 2 worst cycles: 173656 
+yolonet repeat 5 Pool layer 3 worst cycles: 86605 
+yolonet repeat 5 Pool layer 4 worst cycles: 318860949 
+
+yolonet repeat 6 total thread cycles: 14843333
+yolonet repeat 6 total cycles: 348339869
+yolonet repeat 6 Conv layer 0 worst cycles: 1024660 
+yolonet repeat 6 Conv layer 1 worst cycles: 969287 
+yolonet repeat 6 Conv layer 2 worst cycles: 945226 
+yolonet repeat 6 Conv layer 3 worst cycles: 108892 
+yolonet repeat 6 Conv layer 4 worst cycles: 944302 
+yolonet repeat 6 Conv layer 5 worst cycles: 960659 
+yolonet repeat 6 Conv layer 6 worst cycles: 113235 
+yolonet repeat 6 Conv layer 7 worst cycles: 942846 
+yolonet repeat 6 Conv layer 8 worst cycles: 931860 
+yolonet repeat 6 Conv layer 9 worst cycles: 124996 
+yolonet repeat 6 Conv layer 10 worst cycles: 931649 
+yolonet repeat 6 Conv layer 11 worst cycles: 124515 
+yolonet repeat 6 Conv layer 12 worst cycles: 963871 
+yolonet repeat 6 Conv layer 13 worst cycles: 1198063 
+yolonet repeat 6 Conv layer 14 worst cycles: 142699 
+yolonet repeat 6 Conv layer 15 worst cycles: 1196223 
+yolonet repeat 6 Conv layer 16 worst cycles: 141193 
+yolonet repeat 6 Conv layer 17 worst cycles: 1224409 
+yolonet repeat 6 Conv layer 18 worst cycles: 278874 
+yolonet repeat 6 Pool layer 0 worst cycles: 685608 
+yolonet repeat 6 Pool layer 1 worst cycles: 300608 
+yolonet repeat 6 Pool layer 2 worst cycles: 173083 
+yolonet repeat 6 Pool layer 3 worst cycles: 87216 
+yolonet repeat 6 Pool layer 4 worst cycles: 333825895 
+==================================
+Test yololitenet batch1 1
+main cpu: 1 
+create threading 
+entered message thread
+print msg - cpu_id: 0 
+thread joined after message printing
+entered thread_matmul function - cid: 0
+thread joined after doing thread matmul
+
+yololitenet repeat 0 total thread cycles: 2496140
+yololitenet repeat 0 total cycles: 2391100
+yololitenet repeat 0 Conv layer 0 worst cycles: 720621 
+yololitenet repeat 0 Conv layer 1 worst cycles: 271266 
+yololitenet repeat 0 Conv layer 2 worst cycles: 238061 
+yololitenet repeat 0 Conv layer 3 worst cycles: 245139 
+yololitenet repeat 0 Conv layer 4 worst cycles: 121311 
+yololitenet repeat 0 Conv layer 5 worst cycles: 72025 
+yololitenet repeat 0 Conv layer 6 worst cycles: 16690 
+yololitenet repeat 0 Pool layer 0 worst cycles: 376141 
+yololitenet repeat 0 Pool layer 1 worst cycles: 178092 
+yololitenet repeat 0 Pool layer 2 worst cycles: 79999 
+yololitenet repeat 0 Pool layer 3 worst cycles: 56763 
+yololitenet repeat 0 Pool layer 4 worst cycles: 14992 
+
+yololitenet repeat 1 total thread cycles: 2271939
+yololitenet repeat 1 total cycles: 2174456
+yololitenet repeat 1 Conv layer 0 worst cycles: 542299 
+yololitenet repeat 1 Conv layer 1 worst cycles: 265591 
+yololitenet repeat 1 Conv layer 2 worst cycles: 233812 
+yololitenet repeat 1 Conv layer 3 worst cycles: 237707 
+yololitenet repeat 1 Conv layer 4 worst cycles: 116481 
+yololitenet repeat 1 Conv layer 5 worst cycles: 65773 
+yololitenet repeat 1 Conv layer 6 worst cycles: 15088 
+yololitenet repeat 1 Pool layer 0 worst cycles: 369894 
+yololitenet repeat 1 Pool layer 1 worst cycles: 175948 
+yololitenet repeat 1 Pool layer 2 worst cycles: 80088 
+yololitenet repeat 1 Pool layer 3 worst cycles: 56775 
+yololitenet repeat 1 Pool layer 4 worst cycles: 15000 
+
+yololitenet repeat 2 total thread cycles: 2265812
+yololitenet repeat 2 total cycles: 2169474
+yololitenet repeat 2 Conv layer 0 worst cycles: 540460 
+yololitenet repeat 2 Conv layer 1 worst cycles: 265275 
+yololitenet repeat 2 Conv layer 2 worst cycles: 233779 
+yololitenet repeat 2 Conv layer 3 worst cycles: 237454 
+yololitenet repeat 2 Conv layer 4 worst cycles: 115639 
+yololitenet repeat 2 Conv layer 5 worst cycles: 65691 
+yololitenet repeat 2 Conv layer 6 worst cycles: 14708 
+yololitenet repeat 2 Pool layer 0 worst cycles: 369274 
+yololitenet repeat 2 Pool layer 1 worst cycles: 176090 
+yololitenet repeat 2 Pool layer 2 worst cycles: 79506 
+yololitenet repeat 2 Pool layer 3 worst cycles: 56571 
+yololitenet repeat 2 Pool layer 4 worst cycles: 15027 
+
+yololitenet repeat 3 total thread cycles: 2265224
+yololitenet repeat 3 total cycles: 2168615
+yololitenet repeat 3 Conv layer 0 worst cycles: 539574 
+yololitenet repeat 3 Conv layer 1 worst cycles: 265357 
+yololitenet repeat 3 Conv layer 2 worst cycles: 233750 
+yololitenet repeat 3 Conv layer 3 worst cycles: 237516 
+yololitenet repeat 3 Conv layer 4 worst cycles: 115531 
+yololitenet repeat 3 Conv layer 5 worst cycles: 65420 
+yololitenet repeat 3 Conv layer 6 worst cycles: 14579 
+yololitenet repeat 3 Pool layer 0 worst cycles: 369229 
+yololitenet repeat 3 Pool layer 1 worst cycles: 175828 
+yololitenet repeat 3 Pool layer 2 worst cycles: 80210 
+yololitenet repeat 3 Pool layer 3 worst cycles: 56580 
+yololitenet repeat 3 Pool layer 4 worst cycles: 15041 
+
+yololitenet repeat 4 total thread cycles: 2264961
+yololitenet repeat 4 total cycles: 2168371
+yololitenet repeat 4 Conv layer 0 worst cycles: 539751 
+yololitenet repeat 4 Conv layer 1 worst cycles: 265326 
+yololitenet repeat 4 Conv layer 2 worst cycles: 233667 
+yololitenet repeat 4 Conv layer 3 worst cycles: 237569 
+yololitenet repeat 4 Conv layer 4 worst cycles: 115683 
+yololitenet repeat 4 Conv layer 5 worst cycles: 65531 
+yololitenet repeat 4 Conv layer 6 worst cycles: 14453 
+yololitenet repeat 4 Pool layer 0 worst cycles: 369237 
+yololitenet repeat 4 Pool layer 1 worst cycles: 175746 
+yololitenet repeat 4 Pool layer 2 worst cycles: 79899 
+yololitenet repeat 4 Pool layer 3 worst cycles: 56555 
+yololitenet repeat 4 Pool layer 4 worst cycles: 14954 
+
+yololitenet repeat 5 total thread cycles: 2297680
+yololitenet repeat 5 total cycles: 2200536
+yololitenet repeat 5 Conv layer 0 worst cycles: 571418 
+yololitenet repeat 5 Conv layer 1 worst cycles: 265689 
+yololitenet repeat 5 Conv layer 2 worst cycles: 233682 
+yololitenet repeat 5 Conv layer 3 worst cycles: 237476 
+yololitenet repeat 5 Conv layer 4 worst cycles: 115657 
+yololitenet repeat 5 Conv layer 5 worst cycles: 65383 
+yololitenet repeat 5 Conv layer 6 worst cycles: 14422 
+yololitenet repeat 5 Pool layer 0 worst cycles: 369232 
+yololitenet repeat 5 Pool layer 1 worst cycles: 175901 
+yololitenet repeat 5 Pool layer 2 worst cycles: 80065 
+yololitenet repeat 5 Pool layer 3 worst cycles: 56617 
+yololitenet repeat 5 Pool layer 4 worst cycles: 14994 
+
+yololitenet repeat 6 total thread cycles: 2288896
+yololitenet repeat 6 total cycles: 2191662
+yololitenet repeat 6 Conv layer 0 worst cycles: 561569 
+yololitenet repeat 6 Conv layer 1 worst cycles: 265899 
+yololitenet repeat 6 Conv layer 2 worst cycles: 233892 
+yololitenet repeat 6 Conv layer 3 worst cycles: 237618 
+yololitenet repeat 6 Conv layer 4 worst cycles: 115554 
+yololitenet repeat 6 Conv layer 5 worst cycles: 65341 
+yololitenet repeat 6 Conv layer 6 worst cycles: 14567 
+yololitenet repeat 6 Pool layer 0 worst cycles: 369337 
+yololitenet repeat 6 Pool layer 1 worst cycles: 175954 
+yololitenet repeat 6 Pool layer 2 worst cycles: 80150 
+yololitenet repeat 6 Pool layer 3 worst cycles: 56737 
+yololitenet repeat 6 Pool layer 4 worst cycles: 15044 
+==================================
+Test alexnet batch1 1
+main cpu: 2 
+create threading 
+entered message thread
+print msg - cpu_id: 0 
+thread joined after message printing
+entered thread_matmul function - cid: 0
+thread joined after doing thread matmul
+
+alexnet repeat 0 total thread cycles: 13146858
+alexnet repeat 0 total cycles: 1087091727
+alexnet repeat 0 Conv layer 0 worst cycles: 4065446 
+alexnet repeat 0 Conv layer 1 worst cycles: 835194 
+alexnet repeat 0 Conv layer 2 worst cycles: 480630 
+alexnet repeat 0 Conv layer 3 worst cycles: 615370 
+alexnet repeat 0 Conv layer 4 worst cycles: 411697 
+alexnet repeat 0 Matmul layer 0 worst cycles: 4371531 
+alexnet repeat 0 Matmul layer 1 worst cycles: 1616752 
+alexnet repeat 0 Matmul layer 2 worst cycles: 389794 
+alexnet repeat 0 Pool layer 0 worst cycles: 90004 
+alexnet repeat 0 Pool layer 1 worst cycles: 1074198298 
+alexnet repeat 0 Pool layer 2 worst cycles: 17011 
+
+alexnet repeat 1 total thread cycles: 12293836
+alexnet repeat 1 total cycles: 1099347163
+alexnet repeat 1 Conv layer 0 worst cycles: 3915332 
+alexnet repeat 1 Conv layer 1 worst cycles: 859854 
+alexnet repeat 1 Conv layer 2 worst cycles: 471930 
+alexnet repeat 1 Conv layer 3 worst cycles: 613212 
+alexnet repeat 1 Conv layer 4 worst cycles: 409537 
+alexnet repeat 1 Matmul layer 0 worst cycles: 3699261 
+alexnet repeat 1 Matmul layer 1 worst cycles: 1595554 
+alexnet repeat 1 Matmul layer 2 worst cycles: 387266 
+alexnet repeat 1 Pool layer 0 worst cycles: 89059 
+alexnet repeat 1 Pool layer 1 worst cycles: 1087289153 
+alexnet repeat 1 Pool layer 2 worst cycles: 17005 
+
+alexnet repeat 2 total thread cycles: 12264141
+alexnet repeat 2 total cycles: 1111688670
+alexnet repeat 2 Conv layer 0 worst cycles: 3894753 
+alexnet repeat 2 Conv layer 1 worst cycles: 831233 
+alexnet repeat 2 Conv layer 2 worst cycles: 470685 
+alexnet repeat 2 Conv layer 3 worst cycles: 613051 
+alexnet repeat 2 Conv layer 4 worst cycles: 409430 
+alexnet repeat 2 Matmul layer 0 worst cycles: 3674968 
+alexnet repeat 2 Matmul layer 1 worst cycles: 1639440 
+alexnet repeat 2 Matmul layer 2 worst cycles: 387202 
+alexnet repeat 2 Pool layer 0 worst cycles: 88913 
+alexnet repeat 2 Pool layer 1 worst cycles: 1099661953 
+alexnet repeat 2 Pool layer 2 worst cycles: 17042 
+
+alexnet repeat 3 total thread cycles: 12259198
+alexnet repeat 3 total cycles: 1124042706
+alexnet repeat 3 Conv layer 0 worst cycles: 3901628 
+alexnet repeat 3 Conv layer 1 worst cycles: 831188 
+alexnet repeat 3 Conv layer 2 worst cycles: 495502 
+alexnet repeat 3 Conv layer 3 worst cycles: 614518 
+alexnet repeat 3 Conv layer 4 worst cycles: 409554 
+alexnet repeat 3 Matmul layer 0 worst cycles: 3682916 
+alexnet repeat 3 Matmul layer 1 worst cycles: 1594971 
+alexnet repeat 3 Matmul layer 2 worst cycles: 387146 
+alexnet repeat 3 Pool layer 0 worst cycles: 88903 
+alexnet repeat 3 Pool layer 1 worst cycles: 1112018994 
+alexnet repeat 3 Pool layer 2 worst cycles: 17386 
+
+alexnet repeat 4 total thread cycles: 12259032
+alexnet repeat 4 total cycles: 1136430641
+alexnet repeat 4 Conv layer 0 worst cycles: 3894619 
+alexnet repeat 4 Conv layer 1 worst cycles: 830734 
+alexnet repeat 4 Conv layer 2 worst cycles: 470359 
+alexnet repeat 4 Conv layer 3 worst cycles: 613042 
+alexnet repeat 4 Conv layer 4 worst cycles: 409466 
+alexnet repeat 4 Matmul layer 0 worst cycles: 3690345 
+alexnet repeat 4 Matmul layer 1 worst cycles: 1619389 
+alexnet repeat 4 Matmul layer 2 worst cycles: 388480 
+alexnet repeat 4 Pool layer 0 worst cycles: 89077 
+alexnet repeat 4 Pool layer 1 worst cycles: 1124408170 
+alexnet repeat 4 Pool layer 2 worst cycles: 16960 
+
+alexnet repeat 5 total thread cycles: 12265346
+alexnet repeat 5 total cycles: 1148790193
+alexnet repeat 5 Conv layer 0 worst cycles: 3907558 
+alexnet repeat 5 Conv layer 1 worst cycles: 831016 
+alexnet repeat 5 Conv layer 2 worst cycles: 470609 
+alexnet repeat 5 Conv layer 3 worst cycles: 631741 
+alexnet repeat 5 Conv layer 4 worst cycles: 410556 
+alexnet repeat 5 Matmul layer 0 worst cycles: 3687302 
+alexnet repeat 5 Matmul layer 1 worst cycles: 1596213 
+alexnet repeat 5 Matmul layer 2 worst cycles: 387244 
+alexnet repeat 5 Pool layer 0 worst cycles: 88898 
+alexnet repeat 5 Pool layer 1 worst cycles: 1136761674 
+alexnet repeat 5 Pool layer 2 worst cycles: 17382 
+
+alexnet repeat 6 total thread cycles: 12307043
+alexnet repeat 6 total cycles: 1161210313
+alexnet repeat 6 Conv layer 0 worst cycles: 3900830 
+alexnet repeat 6 Conv layer 1 worst cycles: 861656 
+alexnet repeat 6 Conv layer 2 worst cycles: 471385 
+alexnet repeat 6 Conv layer 3 worst cycles: 613309 
+alexnet repeat 6 Conv layer 4 worst cycles: 409569 
+alexnet repeat 6 Matmul layer 0 worst cycles: 3683582 
+alexnet repeat 6 Matmul layer 1 worst cycles: 1596365 
+alexnet repeat 6 Matmul layer 2 worst cycles: 426994 
+alexnet repeat 6 Pool layer 0 worst cycles: 88850 
+alexnet repeat 6 Pool layer 1 worst cycles: 1149140638 
+alexnet repeat 6 Pool layer 2 worst cycles: 17135 
+==================================
+Test googlenet batch1 1
+main cpu: 3 
+create threading 
+entered message thread
+print msg - cpu_id: 0 
+thread joined after message printing
+entered thread_matmul function - cid: 0
+thread joined after doing thread matmul
+
+googlenet repeat 0 total thread cycles: 11609630
+googlenet repeat 0 total cycles: 5018956613
+googlenet repeat 0 Conv layer 0 worst cycles: 3424349 
+googlenet repeat 0 Conv layer 1 worst cycles: 61391 
+googlenet repeat 0 Conv layer 2 worst cycles: 1448390 
+googlenet repeat 0 Conv layer 3 worst cycles: 45337 
+googlenet repeat 0 Conv layer 4 worst cycles: 63036 
+googlenet repeat 0 Conv layer 5 worst cycles: 368776 
+googlenet repeat 0 Conv layer 6 worst cycles: 18164 
+googlenet repeat 0 Conv layer 7 worst cycles: 19413 
+googlenet repeat 0 Conv layer 8 worst cycles: 27444 
+googlenet repeat 0 Conv layer 9 worst cycles: 113414 
+googlenet repeat 0 Conv layer 10 worst cycles: 113234 
+googlenet repeat 0 Conv layer 11 worst cycles: 712587 
+googlenet repeat 0 Conv layer 12 worst cycles: 34180 
+googlenet repeat 0 Conv layer 13 worst cycles: 95594 
+googlenet repeat 0 Conv layer 14 worst cycles: 60074 
+googlenet repeat 0 Conv layer 15 worst cycles: 93074 
+googlenet repeat 0 Conv layer 16 worst cycles: 50493 
+googlenet repeat 0 Conv layer 17 worst cycles: 164585 
+googlenet repeat 0 Conv layer 18 worst cycles: 14052 
+googlenet repeat 0 Conv layer 19 worst cycles: 8687 
+googlenet repeat 0 Conv layer 20 worst cycles: 36848 
+googlenet repeat 0 Conv layer 21 worst cycles: 78480 
+googlenet repeat 0 Conv layer 22 worst cycles: 58917 
+googlenet repeat 0 Conv layer 23 worst cycles: 191775 
+googlenet repeat 0 Conv layer 24 worst cycles: 23006 
+googlenet repeat 0 Conv layer 25 worst cycles: 7176 
+googlenet repeat 0 Conv layer 26 worst cycles: 37468 
+googlenet repeat 0 Conv layer 27 worst cycles: 83784 
+googlenet repeat 0 Conv layer 28 worst cycles: 65067 
+googlenet repeat 0 Conv layer 29 worst cycles: 236173 
+googlenet repeat 0 Conv layer 30 worst cycles: 22700 
+googlenet repeat 0 Conv layer 31 worst cycles: 7412 
+googlenet repeat 0 Conv layer 32 worst cycles: 36393 
+googlenet repeat 0 Conv layer 33 worst cycles: 59104 
+googlenet repeat 0 Conv layer 34 worst cycles: 72550 
+googlenet repeat 0 Conv layer 35 worst cycles: 381397 
+googlenet repeat 0 Conv layer 36 worst cycles: 22944 
+googlenet repeat 0 Conv layer 37 worst cycles: 7092 
+googlenet repeat 0 Conv layer 38 worst cycles: 36590 
+googlenet repeat 0 Conv layer 39 worst cycles: 128275 
+googlenet repeat 0 Conv layer 40 worst cycles: 81652 
+googlenet repeat 0 Conv layer 41 worst cycles: 415267 
+googlenet repeat 0 Conv layer 42 worst cycles: 23266 
+googlenet repeat 0 Conv layer 43 worst cycles: 27106 
+googlenet repeat 0 Conv layer 44 worst cycles: 66382 
+googlenet repeat 0 Conv layer 45 worst cycles: 38140 
+googlenet repeat 0 Conv layer 46 worst cycles: 65449 
+googlenet repeat 0 Conv layer 47 worst cycles: 42414 
+googlenet repeat 0 Conv layer 48 worst cycles: 124715 
+googlenet repeat 0 Conv layer 49 worst cycles: 13164 
+googlenet repeat 0 Conv layer 50 worst cycles: 3313 
+googlenet repeat 0 Conv layer 51 worst cycles: 95254 
+googlenet repeat 0 Conv layer 52 worst cycles: 49921 
+googlenet repeat 0 Conv layer 53 worst cycles: 168345 
+googlenet repeat 0 Conv layer 54 worst cycles: 16441 
+googlenet repeat 0 Conv layer 55 worst cycles: 3232 
+googlenet repeat 0 Conv layer 56 worst cycles: 35042 
+googlenet repeat 0 Conv layer 57 worst cycles: 150717 
+googlenet repeat 0 Pool layer 0 worst cycles: 111775 
+googlenet repeat 0 Pool layer 1 worst cycles: 149247 
+googlenet repeat 0 Pool layer 2 worst cycles: 1250232261 
+googlenet repeat 0 Pool layer 3 worst cycles: 107577 
+googlenet repeat 0 Pool layer 4 worst cycles: 115431 
+googlenet repeat 0 Pool layer 5 worst cycles: 1251838664 
+googlenet repeat 0 Pool layer 6 worst cycles: 1252563073 
+googlenet repeat 0 Pool layer 7 worst cycles: 118181 
+googlenet repeat 0 Pool layer 8 worst cycles: 1253605896 
+googlenet repeat 0 Pool layer 9 worst cycles: 82450 
+googlenet repeat 0 Pool layer 10 worst cycles: 82807 
+
+googlenet repeat 1 total thread cycles: 11396117
+googlenet repeat 1 total cycles: 5065320470
+googlenet repeat 1 Conv layer 0 worst cycles: 3384363 
+googlenet repeat 1 Conv layer 1 worst cycles: 59600 
+googlenet repeat 1 Conv layer 2 worst cycles: 1418746 
+googlenet repeat 1 Conv layer 3 worst cycles: 43985 
+googlenet repeat 1 Conv layer 4 worst cycles: 62682 
+googlenet repeat 1 Conv layer 5 worst cycles: 362936 
+googlenet repeat 1 Conv layer 6 worst cycles: 17605 
+googlenet repeat 1 Conv layer 7 worst cycles: 18797 
+googlenet repeat 1 Conv layer 8 worst cycles: 27076 
+googlenet repeat 1 Conv layer 9 worst cycles: 112616 
+googlenet repeat 1 Conv layer 10 worst cycles: 112338 
+googlenet repeat 1 Conv layer 11 worst cycles: 737797 
+googlenet repeat 1 Conv layer 12 worst cycles: 34447 
+googlenet repeat 1 Conv layer 13 worst cycles: 94674 
+googlenet repeat 1 Conv layer 14 worst cycles: 58658 
+googlenet repeat 1 Conv layer 15 worst cycles: 93051 
+googlenet repeat 1 Conv layer 16 worst cycles: 49853 
+googlenet repeat 1 Conv layer 17 worst cycles: 158763 
+googlenet repeat 1 Conv layer 18 worst cycles: 14302 
+googlenet repeat 1 Conv layer 19 worst cycles: 8769 
+googlenet repeat 1 Conv layer 20 worst cycles: 36392 
+googlenet repeat 1 Conv layer 21 worst cycles: 77047 
+googlenet repeat 1 Conv layer 22 worst cycles: 56892 
+googlenet repeat 1 Conv layer 23 worst cycles: 186958 
+googlenet repeat 1 Conv layer 24 worst cycles: 22624 
+googlenet repeat 1 Conv layer 25 worst cycles: 7188 
+googlenet repeat 1 Conv layer 26 worst cycles: 37021 
+googlenet repeat 1 Conv layer 27 worst cycles: 63642 
+googlenet repeat 1 Conv layer 28 worst cycles: 63700 
+googlenet repeat 1 Conv layer 29 worst cycles: 233196 
+googlenet repeat 1 Conv layer 30 worst cycles: 22575 
+googlenet repeat 1 Conv layer 31 worst cycles: 7211 
+googlenet repeat 1 Conv layer 32 worst cycles: 36420 
+googlenet repeat 1 Conv layer 33 worst cycles: 57065 
+googlenet repeat 1 Conv layer 34 worst cycles: 70282 
+googlenet repeat 1 Conv layer 35 worst cycles: 361368 
+googlenet repeat 1 Conv layer 36 worst cycles: 22867 
+googlenet repeat 1 Conv layer 37 worst cycles: 7198 
+googlenet repeat 1 Conv layer 38 worst cycles: 36497 
+googlenet repeat 1 Conv layer 39 worst cycles: 128006 
+googlenet repeat 1 Conv layer 40 worst cycles: 78608 
+googlenet repeat 1 Conv layer 41 worst cycles: 390377 
+googlenet repeat 1 Conv layer 42 worst cycles: 22866 
+googlenet repeat 1 Conv layer 43 worst cycles: 25057 
+googlenet repeat 1 Conv layer 44 worst cycles: 65684 
+googlenet repeat 1 Conv layer 45 worst cycles: 37358 
+googlenet repeat 1 Conv layer 46 worst cycles: 63521 
+googlenet repeat 1 Conv layer 47 worst cycles: 40779 
+googlenet repeat 1 Conv layer 48 worst cycles: 115058 
+googlenet repeat 1 Conv layer 49 worst cycles: 13431 
+googlenet repeat 1 Conv layer 50 worst cycles: 3417 
+googlenet repeat 1 Conv layer 51 worst cycles: 93875 
+googlenet repeat 1 Conv layer 52 worst cycles: 48091 
+googlenet repeat 1 Conv layer 53 worst cycles: 162776 
+googlenet repeat 1 Conv layer 54 worst cycles: 15890 
+googlenet repeat 1 Conv layer 55 worst cycles: 3180 
+googlenet repeat 1 Conv layer 56 worst cycles: 33493 
+googlenet repeat 1 Conv layer 57 worst cycles: 110351 
+googlenet repeat 1 Pool layer 0 worst cycles: 109949 
+googlenet repeat 1 Pool layer 1 worst cycles: 148540 
+googlenet repeat 1 Pool layer 2 worst cycles: 1261927818 
+googlenet repeat 1 Pool layer 3 worst cycles: 107379 
+googlenet repeat 1 Pool layer 4 worst cycles: 115144 
+googlenet repeat 1 Pool layer 5 worst cycles: 1263489761 
+googlenet repeat 1 Pool layer 6 worst cycles: 1264186848 
+googlenet repeat 1 Pool layer 7 worst cycles: 118136 
+googlenet repeat 1 Pool layer 8 worst cycles: 1265221970 
+googlenet repeat 1 Pool layer 9 worst cycles: 82848 
+googlenet repeat 1 Pool layer 10 worst cycles: 83052 
+
+googlenet repeat 2 total thread cycles: 11378853
+googlenet repeat 2 total cycles: 5111355662
+googlenet repeat 2 Conv layer 0 worst cycles: 3392154 
+googlenet repeat 2 Conv layer 1 worst cycles: 59418 
+googlenet repeat 2 Conv layer 2 worst cycles: 1444818 
+googlenet repeat 2 Conv layer 3 worst cycles: 44422 
+googlenet repeat 2 Conv layer 4 worst cycles: 62689 
+googlenet repeat 2 Conv layer 5 worst cycles: 362522 
+googlenet repeat 2 Conv layer 6 worst cycles: 17517 
+googlenet repeat 2 Conv layer 7 worst cycles: 18736 
+googlenet repeat 2 Conv layer 8 worst cycles: 27116 
+googlenet repeat 2 Conv layer 9 worst cycles: 112737 
+googlenet repeat 2 Conv layer 10 worst cycles: 112272 
+googlenet repeat 2 Conv layer 11 worst cycles: 708434 
+googlenet repeat 2 Conv layer 12 worst cycles: 33736 
+googlenet repeat 2 Conv layer 13 worst cycles: 93127 
+googlenet repeat 2 Conv layer 14 worst cycles: 58135 
+googlenet repeat 2 Conv layer 15 worst cycles: 93275 
+googlenet repeat 2 Conv layer 16 worst cycles: 49646 
+googlenet repeat 2 Conv layer 17 worst cycles: 156727 
+googlenet repeat 2 Conv layer 18 worst cycles: 13920 
+googlenet repeat 2 Conv layer 19 worst cycles: 8641 
+googlenet repeat 2 Conv layer 20 worst cycles: 36528 
+googlenet repeat 2 Conv layer 21 worst cycles: 76656 
+googlenet repeat 2 Conv layer 22 worst cycles: 57039 
+googlenet repeat 2 Conv layer 23 worst cycles: 186695 
+googlenet repeat 2 Conv layer 24 worst cycles: 22756 
+googlenet repeat 2 Conv layer 25 worst cycles: 7176 
+googlenet repeat 2 Conv layer 26 worst cycles: 37148 
+googlenet repeat 2 Conv layer 27 worst cycles: 63799 
+googlenet repeat 2 Conv layer 28 worst cycles: 63875 
+googlenet repeat 2 Conv layer 29 worst cycles: 232695 
+googlenet repeat 2 Conv layer 30 worst cycles: 22395 
+googlenet repeat 2 Conv layer 31 worst cycles: 7157 
+googlenet repeat 2 Conv layer 32 worst cycles: 62634 
+googlenet repeat 2 Conv layer 33 worst cycles: 57959 
+googlenet repeat 2 Conv layer 34 worst cycles: 70567 
+googlenet repeat 2 Conv layer 35 worst cycles: 359097 
+googlenet repeat 2 Conv layer 36 worst cycles: 23130 
+googlenet repeat 2 Conv layer 37 worst cycles: 7607 
+googlenet repeat 2 Conv layer 38 worst cycles: 37082 
+googlenet repeat 2 Conv layer 39 worst cycles: 128085 
+googlenet repeat 2 Conv layer 40 worst cycles: 78772 
+googlenet repeat 2 Conv layer 41 worst cycles: 381712 
+googlenet repeat 2 Conv layer 42 worst cycles: 22862 
+googlenet repeat 2 Conv layer 43 worst cycles: 25308 
+googlenet repeat 2 Conv layer 44 worst cycles: 65838 
+googlenet repeat 2 Conv layer 45 worst cycles: 36775 
+googlenet repeat 2 Conv layer 46 worst cycles: 63406 
+googlenet repeat 2 Conv layer 47 worst cycles: 40759 
+googlenet repeat 2 Conv layer 48 worst cycles: 113440 
+googlenet repeat 2 Conv layer 49 worst cycles: 13394 
+googlenet repeat 2 Conv layer 50 worst cycles: 3278 
+googlenet repeat 2 Conv layer 51 worst cycles: 93894 
+googlenet repeat 2 Conv layer 52 worst cycles: 48003 
+googlenet repeat 2 Conv layer 53 worst cycles: 162228 
+googlenet repeat 2 Conv layer 54 worst cycles: 15871 
+googlenet repeat 2 Conv layer 55 worst cycles: 3078 
+googlenet repeat 2 Conv layer 56 worst cycles: 33511 
+googlenet repeat 2 Conv layer 57 worst cycles: 108775 
+googlenet repeat 2 Pool layer 0 worst cycles: 109477 
+googlenet repeat 2 Pool layer 1 worst cycles: 148102 
+googlenet repeat 2 Pool layer 2 worst cycles: 1273432305 
+googlenet repeat 2 Pool layer 3 worst cycles: 107459 
+googlenet repeat 2 Pool layer 4 worst cycles: 115095 
+googlenet repeat 2 Pool layer 5 worst cycles: 1274989672 
+googlenet repeat 2 Pool layer 6 worst cycles: 1275713086 
+googlenet repeat 2 Pool layer 7 worst cycles: 118129 
+googlenet repeat 2 Pool layer 8 worst cycles: 1276716030 
+googlenet repeat 2 Pool layer 9 worst cycles: 82417 
+googlenet repeat 2 Pool layer 10 worst cycles: 82858 
+
+googlenet repeat 3 total thread cycles: 11364544
+googlenet repeat 3 total cycles: 5157208932
+googlenet repeat 3 Conv layer 0 worst cycles: 3383692 
+googlenet repeat 3 Conv layer 1 worst cycles: 59567 
+googlenet repeat 3 Conv layer 2 worst cycles: 1417797 
+googlenet repeat 3 Conv layer 3 worst cycles: 43902 
+googlenet repeat 3 Conv layer 4 worst cycles: 62778 
+googlenet repeat 3 Conv layer 5 worst cycles: 361226 
+googlenet repeat 3 Conv layer 6 worst cycles: 17430 
+googlenet repeat 3 Conv layer 7 worst cycles: 18834 
+googlenet repeat 3 Conv layer 8 worst cycles: 27246 
+googlenet repeat 3 Conv layer 9 worst cycles: 112662 
+googlenet repeat 3 Conv layer 10 worst cycles: 112585 
+googlenet repeat 3 Conv layer 11 worst cycles: 708447 
+googlenet repeat 3 Conv layer 12 worst cycles: 33850 
+googlenet repeat 3 Conv layer 13 worst cycles: 93020 
+googlenet repeat 3 Conv layer 14 worst cycles: 58206 
+googlenet repeat 3 Conv layer 15 worst cycles: 93815 
+googlenet repeat 3 Conv layer 16 worst cycles: 49745 
+googlenet repeat 3 Conv layer 17 worst cycles: 157713 
+googlenet repeat 3 Conv layer 18 worst cycles: 14112 
+googlenet repeat 3 Conv layer 19 worst cycles: 8746 
+googlenet repeat 3 Conv layer 20 worst cycles: 36787 
+googlenet repeat 3 Conv layer 21 worst cycles: 76900 
+googlenet repeat 3 Conv layer 22 worst cycles: 56972 
+googlenet repeat 3 Conv layer 23 worst cycles: 186449 
+googlenet repeat 3 Conv layer 24 worst cycles: 22734 
+googlenet repeat 3 Conv layer 25 worst cycles: 7285 
+googlenet repeat 3 Conv layer 26 worst cycles: 37213 
+googlenet repeat 3 Conv layer 27 worst cycles: 63818 
+googlenet repeat 3 Conv layer 28 worst cycles: 63933 
+googlenet repeat 3 Conv layer 29 worst cycles: 232710 
+googlenet repeat 3 Conv layer 30 worst cycles: 22582 
+googlenet repeat 3 Conv layer 31 worst cycles: 7182 
+googlenet repeat 3 Conv layer 32 worst cycles: 36347 
+googlenet repeat 3 Conv layer 33 worst cycles: 57155 
+googlenet repeat 3 Conv layer 34 worst cycles: 70184 
+googlenet repeat 3 Conv layer 35 worst cycles: 357375 
+googlenet repeat 3 Conv layer 36 worst cycles: 22727 
+googlenet repeat 3 Conv layer 37 worst cycles: 7172 
+googlenet repeat 3 Conv layer 38 worst cycles: 37032 
+googlenet repeat 3 Conv layer 39 worst cycles: 128478 
+googlenet repeat 3 Conv layer 40 worst cycles: 78723 
+googlenet repeat 3 Conv layer 41 worst cycles: 381383 
+googlenet repeat 3 Conv layer 42 worst cycles: 22864 
+googlenet repeat 3 Conv layer 43 worst cycles: 25138 
+googlenet repeat 3 Conv layer 44 worst cycles: 65895 
+googlenet repeat 3 Conv layer 45 worst cycles: 37033 
+googlenet repeat 3 Conv layer 46 worst cycles: 63414 
+googlenet repeat 3 Conv layer 47 worst cycles: 40840 
+googlenet repeat 3 Conv layer 48 worst cycles: 113174 
+googlenet repeat 3 Conv layer 49 worst cycles: 13346 
+googlenet repeat 3 Conv layer 50 worst cycles: 3290 
+googlenet repeat 3 Conv layer 51 worst cycles: 93898 
+googlenet repeat 3 Conv layer 52 worst cycles: 48063 
+googlenet repeat 3 Conv layer 53 worst cycles: 188708 
+googlenet repeat 3 Conv layer 54 worst cycles: 16507 
+googlenet repeat 3 Conv layer 55 worst cycles: 4336 
+googlenet repeat 3 Conv layer 56 worst cycles: 33751 
+googlenet repeat 3 Conv layer 57 worst cycles: 108700 
+googlenet repeat 3 Pool layer 0 worst cycles: 109651 
+googlenet repeat 3 Pool layer 1 worst cycles: 148064 
+googlenet repeat 3 Pool layer 2 worst cycles: 1284917495 
+googlenet repeat 3 Pool layer 3 worst cycles: 107819 
+googlenet repeat 3 Pool layer 4 worst cycles: 115120 
+googlenet repeat 3 Pool layer 5 worst cycles: 1286478186 
+googlenet repeat 3 Pool layer 6 worst cycles: 1287170509 
+googlenet repeat 3 Pool layer 7 worst cycles: 118054 
+googlenet repeat 3 Pool layer 8 worst cycles: 1288173276 
+googlenet repeat 3 Pool layer 9 worst cycles: 82408 
+googlenet repeat 3 Pool layer 10 worst cycles: 82873 
+
+googlenet repeat 4 total thread cycles: 11360006
+googlenet repeat 4 total cycles: 5203134350
+googlenet repeat 4 Conv layer 0 worst cycles: 3382099 
+googlenet repeat 4 Conv layer 1 worst cycles: 59460 
+googlenet repeat 4 Conv layer 2 worst cycles: 1417613 
+googlenet repeat 4 Conv layer 3 worst cycles: 43928 
+googlenet repeat 4 Conv layer 4 worst cycles: 62872 
+googlenet repeat 4 Conv layer 5 worst cycles: 361187 
+googlenet repeat 4 Conv layer 6 worst cycles: 42733 
+googlenet repeat 4 Conv layer 7 worst cycles: 20279 
+googlenet repeat 4 Conv layer 8 worst cycles: 27584 
+googlenet repeat 4 Conv layer 9 worst cycles: 112506 
+googlenet repeat 4 Conv layer 10 worst cycles: 112540 
+googlenet repeat 4 Conv layer 11 worst cycles: 708729 
+googlenet repeat 4 Conv layer 12 worst cycles: 33449 
+googlenet repeat 4 Conv layer 13 worst cycles: 93262 
+googlenet repeat 4 Conv layer 14 worst cycles: 58260 
+googlenet repeat 4 Conv layer 15 worst cycles: 92795 
+googlenet repeat 4 Conv layer 16 worst cycles: 49808 
+googlenet repeat 4 Conv layer 17 worst cycles: 156551 
+googlenet repeat 4 Conv layer 18 worst cycles: 13981 
+googlenet repeat 4 Conv layer 19 worst cycles: 8690 
+googlenet repeat 4 Conv layer 20 worst cycles: 36647 
+googlenet repeat 4 Conv layer 21 worst cycles: 76886 
+googlenet repeat 4 Conv layer 22 worst cycles: 56873 
+googlenet repeat 4 Conv layer 23 worst cycles: 186052 
+googlenet repeat 4 Conv layer 24 worst cycles: 22389 
+googlenet repeat 4 Conv layer 25 worst cycles: 7178 
+googlenet repeat 4 Conv layer 26 worst cycles: 37234 
+googlenet repeat 4 Conv layer 27 worst cycles: 63913 
+googlenet repeat 4 Conv layer 28 worst cycles: 63841 
+googlenet repeat 4 Conv layer 29 worst cycles: 232553 
+googlenet repeat 4 Conv layer 30 worst cycles: 22600 
+googlenet repeat 4 Conv layer 31 worst cycles: 7275 
+googlenet repeat 4 Conv layer 32 worst cycles: 36403 
+googlenet repeat 4 Conv layer 33 worst cycles: 57137 
+googlenet repeat 4 Conv layer 34 worst cycles: 70413 
+googlenet repeat 4 Conv layer 35 worst cycles: 356705 
+googlenet repeat 4 Conv layer 36 worst cycles: 22630 
+googlenet repeat 4 Conv layer 37 worst cycles: 7150 
+googlenet repeat 4 Conv layer 38 worst cycles: 36985 
+googlenet repeat 4 Conv layer 39 worst cycles: 129069 
+googlenet repeat 4 Conv layer 40 worst cycles: 78771 
+googlenet repeat 4 Conv layer 41 worst cycles: 382470 
+googlenet repeat 4 Conv layer 42 worst cycles: 22971 
+googlenet repeat 4 Conv layer 43 worst cycles: 25543 
+googlenet repeat 4 Conv layer 44 worst cycles: 65818 
+googlenet repeat 4 Conv layer 45 worst cycles: 36936 
+googlenet repeat 4 Conv layer 46 worst cycles: 63629 
+googlenet repeat 4 Conv layer 47 worst cycles: 40802 
+googlenet repeat 4 Conv layer 48 worst cycles: 113378 
+googlenet repeat 4 Conv layer 49 worst cycles: 13467 
+googlenet repeat 4 Conv layer 50 worst cycles: 3394 
+googlenet repeat 4 Conv layer 51 worst cycles: 93898 
+googlenet repeat 4 Conv layer 52 worst cycles: 48061 
+googlenet repeat 4 Conv layer 53 worst cycles: 162170 
+googlenet repeat 4 Conv layer 54 worst cycles: 15834 
+googlenet repeat 4 Conv layer 55 worst cycles: 3102 
+googlenet repeat 4 Conv layer 56 worst cycles: 33450 
+googlenet repeat 4 Conv layer 57 worst cycles: 108549 
+googlenet repeat 4 Pool layer 0 worst cycles: 109761 
+googlenet repeat 4 Pool layer 1 worst cycles: 147941 
+googlenet repeat 4 Pool layer 2 worst cycles: 1296391683 
+googlenet repeat 4 Pool layer 3 worst cycles: 107556 
+googlenet repeat 4 Pool layer 4 worst cycles: 115096 
+googlenet repeat 4 Pool layer 5 worst cycles: 1297947813 
+googlenet repeat 4 Pool layer 6 worst cycles: 1298638983 
+googlenet repeat 4 Pool layer 7 worst cycles: 141472 
+googlenet repeat 4 Pool layer 8 worst cycles: 1299668278 
+googlenet repeat 4 Pool layer 9 worst cycles: 82440 
+googlenet repeat 4 Pool layer 10 worst cycles: 82819 
+
+googlenet repeat 5 total thread cycles: 11344209
+googlenet repeat 5 total cycles: 5249067080
+googlenet repeat 5 Conv layer 0 worst cycles: 3362566 
+googlenet repeat 5 Conv layer 1 worst cycles: 59434 
+googlenet repeat 5 Conv layer 2 worst cycles: 1440831 
+googlenet repeat 5 Conv layer 3 worst cycles: 44310 
+googlenet repeat 5 Conv layer 4 worst cycles: 62807 
+googlenet repeat 5 Conv layer 5 worst cycles: 362165 
+googlenet repeat 5 Conv layer 6 worst cycles: 17544 
+googlenet repeat 5 Conv layer 7 worst cycles: 18874 
+googlenet repeat 5 Conv layer 8 worst cycles: 26967 
+googlenet repeat 5 Conv layer 9 worst cycles: 112670 
+googlenet repeat 5 Conv layer 10 worst cycles: 112457 
+googlenet repeat 5 Conv layer 11 worst cycles: 708148 
+googlenet repeat 5 Conv layer 12 worst cycles: 33628 
+googlenet repeat 5 Conv layer 13 worst cycles: 92943 
+googlenet repeat 5 Conv layer 14 worst cycles: 58188 
+googlenet repeat 5 Conv layer 15 worst cycles: 92995 
+googlenet repeat 5 Conv layer 16 worst cycles: 49909 
+googlenet repeat 5 Conv layer 17 worst cycles: 156306 
+googlenet repeat 5 Conv layer 18 worst cycles: 14002 
+googlenet repeat 5 Conv layer 19 worst cycles: 8661 
+googlenet repeat 5 Conv layer 20 worst cycles: 36367 
+googlenet repeat 5 Conv layer 21 worst cycles: 76779 
+googlenet repeat 5 Conv layer 22 worst cycles: 57013 
+googlenet repeat 5 Conv layer 23 worst cycles: 217357 
+googlenet repeat 5 Conv layer 24 worst cycles: 23165 
+googlenet repeat 5 Conv layer 25 worst cycles: 8780 
+googlenet repeat 5 Conv layer 26 worst cycles: 37376 
+googlenet repeat 5 Conv layer 27 worst cycles: 63878 
+googlenet repeat 5 Conv layer 28 worst cycles: 63780 
+googlenet repeat 5 Conv layer 29 worst cycles: 233230 
+googlenet repeat 5 Conv layer 30 worst cycles: 22568 
+googlenet repeat 5 Conv layer 31 worst cycles: 7377 
+googlenet repeat 5 Conv layer 32 worst cycles: 36595 
+googlenet repeat 5 Conv layer 33 worst cycles: 57055 
+googlenet repeat 5 Conv layer 34 worst cycles: 70420 
+googlenet repeat 5 Conv layer 35 worst cycles: 356608 
+googlenet repeat 5 Conv layer 36 worst cycles: 22623 
+googlenet repeat 5 Conv layer 37 worst cycles: 7085 
+googlenet repeat 5 Conv layer 38 worst cycles: 37035 
+googlenet repeat 5 Conv layer 39 worst cycles: 128361 
+googlenet repeat 5 Conv layer 40 worst cycles: 78537 
+googlenet repeat 5 Conv layer 41 worst cycles: 381297 
+googlenet repeat 5 Conv layer 42 worst cycles: 22749 
+googlenet repeat 5 Conv layer 43 worst cycles: 25197 
+googlenet repeat 5 Conv layer 44 worst cycles: 65870 
+googlenet repeat 5 Conv layer 45 worst cycles: 36800 
+googlenet repeat 5 Conv layer 46 worst cycles: 63497 
+googlenet repeat 5 Conv layer 47 worst cycles: 40724 
+googlenet repeat 5 Conv layer 48 worst cycles: 113437 
+googlenet repeat 5 Conv layer 49 worst cycles: 13463 
+googlenet repeat 5 Conv layer 50 worst cycles: 3421 
+googlenet repeat 5 Conv layer 51 worst cycles: 93829 
+googlenet repeat 5 Conv layer 52 worst cycles: 48093 
+googlenet repeat 5 Conv layer 53 worst cycles: 161964 
+googlenet repeat 5 Conv layer 54 worst cycles: 15779 
+googlenet repeat 5 Conv layer 55 worst cycles: 3117 
+googlenet repeat 5 Conv layer 56 worst cycles: 33489 
+googlenet repeat 5 Conv layer 57 worst cycles: 108745 
+googlenet repeat 5 Pool layer 0 worst cycles: 109523 
+googlenet repeat 5 Pool layer 1 worst cycles: 147901 
+googlenet repeat 5 Pool layer 2 worst cycles: 1307858791 
+googlenet repeat 5 Pool layer 3 worst cycles: 107500 
+googlenet repeat 5 Pool layer 4 worst cycles: 115404 
+googlenet repeat 5 Pool layer 5 worst cycles: 1309450339 
+googlenet repeat 5 Pool layer 6 worst cycles: 1310141852 
+googlenet repeat 5 Pool layer 7 worst cycles: 118024 
+googlenet repeat 5 Pool layer 8 worst cycles: 1311143865 
+googlenet repeat 5 Pool layer 9 worst cycles: 82304 
+googlenet repeat 5 Pool layer 10 worst cycles: 82706 
+
+googlenet repeat 6 total thread cycles: 11360951
+googlenet repeat 6 total cycles: 5294987431
+googlenet repeat 6 Conv layer 0 worst cycles: 3383804 
+googlenet repeat 6 Conv layer 1 worst cycles: 59411 
+googlenet repeat 6 Conv layer 2 worst cycles: 1417609 
+googlenet repeat 6 Conv layer 3 worst cycles: 43786 
+googlenet repeat 6 Conv layer 4 worst cycles: 62831 
+googlenet repeat 6 Conv layer 5 worst cycles: 361047 
+googlenet repeat 6 Conv layer 6 worst cycles: 17288 
+googlenet repeat 6 Conv layer 7 worst cycles: 18752 
+googlenet repeat 6 Conv layer 8 worst cycles: 27192 
+googlenet repeat 6 Conv layer 9 worst cycles: 112648 
+googlenet repeat 6 Conv layer 10 worst cycles: 112461 
+googlenet repeat 6 Conv layer 11 worst cycles: 737703 
+googlenet repeat 6 Conv layer 12 worst cycles: 34451 
+googlenet repeat 6 Conv layer 13 worst cycles: 93960 
+googlenet repeat 6 Conv layer 14 worst cycles: 58529 
+googlenet repeat 6 Conv layer 15 worst cycles: 92994 
+googlenet repeat 6 Conv layer 16 worst cycles: 49849 
+googlenet repeat 6 Conv layer 17 worst cycles: 156392 
+googlenet repeat 6 Conv layer 18 worst cycles: 14042 
+googlenet repeat 6 Conv layer 19 worst cycles: 8698 
+googlenet repeat 6 Conv layer 20 worst cycles: 36561 
+googlenet repeat 6 Conv layer 21 worst cycles: 76829 
+googlenet repeat 6 Conv layer 22 worst cycles: 56990 
+googlenet repeat 6 Conv layer 23 worst cycles: 186200 
+googlenet repeat 6 Conv layer 24 worst cycles: 22413 
+googlenet repeat 6 Conv layer 25 worst cycles: 7339 
+googlenet repeat 6 Conv layer 26 worst cycles: 36964 
+googlenet repeat 6 Conv layer 27 worst cycles: 63860 
+googlenet repeat 6 Conv layer 28 worst cycles: 63824 
+googlenet repeat 6 Conv layer 29 worst cycles: 232390 
+googlenet repeat 6 Conv layer 30 worst cycles: 22747 
+googlenet repeat 6 Conv layer 31 worst cycles: 7172 
+googlenet repeat 6 Conv layer 32 worst cycles: 36340 
+googlenet repeat 6 Conv layer 33 worst cycles: 57179 
+googlenet repeat 6 Conv layer 34 worst cycles: 70286 
+googlenet repeat 6 Conv layer 35 worst cycles: 356930 
+googlenet repeat 6 Conv layer 36 worst cycles: 22896 
+googlenet repeat 6 Conv layer 37 worst cycles: 7163 
+googlenet repeat 6 Conv layer 38 worst cycles: 37080 
+googlenet repeat 6 Conv layer 39 worst cycles: 128480 
+googlenet repeat 6 Conv layer 40 worst cycles: 78558 
+googlenet repeat 6 Conv layer 41 worst cycles: 381103 
+googlenet repeat 6 Conv layer 42 worst cycles: 22871 
+googlenet repeat 6 Conv layer 43 worst cycles: 25182 
+googlenet repeat 6 Conv layer 44 worst cycles: 66531 
+googlenet repeat 6 Conv layer 45 worst cycles: 36888 
+googlenet repeat 6 Conv layer 46 worst cycles: 63572 
+googlenet repeat 6 Conv layer 47 worst cycles: 40819 
+googlenet repeat 6 Conv layer 48 worst cycles: 114593 
+googlenet repeat 6 Conv layer 49 worst cycles: 13636 
+googlenet repeat 6 Conv layer 50 worst cycles: 3401 
+googlenet repeat 6 Conv layer 51 worst cycles: 93918 
+googlenet repeat 6 Conv layer 52 worst cycles: 48068 
+googlenet repeat 6 Conv layer 53 worst cycles: 162503 
+googlenet repeat 6 Conv layer 54 worst cycles: 15807 
+googlenet repeat 6 Conv layer 55 worst cycles: 3206 
+googlenet repeat 6 Conv layer 56 worst cycles: 33341 
+googlenet repeat 6 Conv layer 57 worst cycles: 108730 
+googlenet repeat 6 Pool layer 0 worst cycles: 109839 
+googlenet repeat 6 Pool layer 1 worst cycles: 148641 
+googlenet repeat 6 Pool layer 2 worst cycles: 1319360906 
+googlenet repeat 6 Pool layer 3 worst cycles: 107429 
+googlenet repeat 6 Pool layer 4 worst cycles: 115005 
+googlenet repeat 6 Pool layer 5 worst cycles: 1320917023 
+googlenet repeat 6 Pool layer 6 worst cycles: 1321609102 
+googlenet repeat 6 Pool layer 7 worst cycles: 117977 
+googlenet repeat 6 Pool layer 8 worst cycles: 1322630066 
+googlenet repeat 6 Pool layer 9 worst cycles: 82491 
+googlenet repeat 6 Pool layer 10 worst cycles: 83129 
+==================================
+Test squeezenet batch1 1
+main cpu: 5 
+create threading 
+entered message thread
+print msg - cpu_id: 0 
+thread joined after message printing
+entered thread_matmul function - cid: 0
+thread joined after doing thread matmul
+
+squeezenet repeat 0 total thread cycles: 3969953
+squeezenet repeat 0 total cycles: 3859599
+squeezenet repeat 0 Conv layer 0 worst cycles: 1704411 
+squeezenet repeat 0 Conv layer 1 worst cycles: 26587 
+squeezenet repeat 0 Conv layer 2 worst cycles: 37622 
+squeezenet repeat 0 Conv layer 3 worst cycles: 125394 
+squeezenet repeat 0 Conv layer 4 worst cycles: 40219 
+squeezenet repeat 0 Conv layer 5 worst cycles: 75448 
+squeezenet repeat 0 Conv layer 6 worst cycles: 207746 
+squeezenet repeat 0 Conv layer 7 worst cycles: 18601 
+squeezenet repeat 0 Conv layer 8 worst cycles: 27194 
+squeezenet repeat 0 Conv layer 9 worst cycles: 111108 
+squeezenet repeat 0 Conv layer 10 worst cycles: 32129 
+squeezenet repeat 0 Conv layer 11 worst cycles: 41683 
+squeezenet repeat 0 Conv layer 12 worst cycles: 211951 
+squeezenet repeat 0 Conv layer 13 worst cycles: 14697 
+squeezenet repeat 0 Conv layer 14 worst cycles: 11790 
+squeezenet repeat 0 Conv layer 15 worst cycles: 71103 
+squeezenet repeat 0 Conv layer 16 worst cycles: 19314 
+squeezenet repeat 0 Conv layer 17 worst cycles: 11826 
+squeezenet repeat 0 Conv layer 18 worst cycles: 71061 
+squeezenet repeat 0 Conv layer 19 worst cycles: 24214 
+squeezenet repeat 0 Conv layer 20 worst cycles: 17096 
+squeezenet repeat 0 Conv layer 21 worst cycles: 91273 
+squeezenet repeat 0 Conv layer 22 worst cycles: 30649 
+squeezenet repeat 0 Conv layer 23 worst cycles: 17034 
+squeezenet repeat 0 Conv layer 24 worst cycles: 91267 
+squeezenet repeat 0 Conv layer 25 worst cycles: 438056 
+squeezenet repeat 0 Pool layer 0 worst cycles: 290126 
+
+squeezenet repeat 1 total thread cycles: 3953679
+squeezenet repeat 1 total cycles: 3844327
+squeezenet repeat 1 Conv layer 0 worst cycles: 1724116 
+squeezenet repeat 1 Conv layer 1 worst cycles: 24967 
+squeezenet repeat 1 Conv layer 2 worst cycles: 39077 
+squeezenet repeat 1 Conv layer 3 worst cycles: 124748 
+squeezenet repeat 1 Conv layer 4 worst cycles: 37301 
+squeezenet repeat 1 Conv layer 5 worst cycles: 75365 
+squeezenet repeat 1 Conv layer 6 worst cycles: 206432 
+squeezenet repeat 1 Conv layer 7 worst cycles: 17896 
+squeezenet repeat 1 Conv layer 8 worst cycles: 25367 
+squeezenet repeat 1 Conv layer 9 worst cycles: 109752 
+squeezenet repeat 1 Conv layer 10 worst cycles: 31838 
+squeezenet repeat 1 Conv layer 11 worst cycles: 41482 
+squeezenet repeat 1 Conv layer 12 worst cycles: 211410 
+squeezenet repeat 1 Conv layer 13 worst cycles: 14275 
+squeezenet repeat 1 Conv layer 14 worst cycles: 11459 
+squeezenet repeat 1 Conv layer 15 worst cycles: 70278 
+squeezenet repeat 1 Conv layer 16 worst cycles: 19170 
+squeezenet repeat 1 Conv layer 17 worst cycles: 11593 
+squeezenet repeat 1 Conv layer 18 worst cycles: 70294 
+squeezenet repeat 1 Conv layer 19 worst cycles: 24323 
+squeezenet repeat 1 Conv layer 20 worst cycles: 17016 
+squeezenet repeat 1 Conv layer 21 worst cycles: 91077 
+squeezenet repeat 1 Conv layer 22 worst cycles: 30663 
+squeezenet repeat 1 Conv layer 23 worst cycles: 16923 
+squeezenet repeat 1 Conv layer 24 worst cycles: 91033 
+squeezenet repeat 1 Conv layer 25 worst cycles: 416397 
+squeezenet repeat 1 Pool layer 0 worst cycles: 290075 
+
+squeezenet repeat 2 total thread cycles: 3961445
+squeezenet repeat 2 total cycles: 3851899
+squeezenet repeat 2 Conv layer 0 worst cycles: 1730894 
+squeezenet repeat 2 Conv layer 1 worst cycles: 25054 
+squeezenet repeat 2 Conv layer 2 worst cycles: 39134 
+squeezenet repeat 2 Conv layer 3 worst cycles: 124963 
+squeezenet repeat 2 Conv layer 4 worst cycles: 37312 
+squeezenet repeat 2 Conv layer 5 worst cycles: 75481 
+squeezenet repeat 2 Conv layer 6 worst cycles: 206505 
+squeezenet repeat 2 Conv layer 7 worst cycles: 17834 
+squeezenet repeat 2 Conv layer 8 worst cycles: 25329 
+squeezenet repeat 2 Conv layer 9 worst cycles: 109643 
+squeezenet repeat 2 Conv layer 10 worst cycles: 31801 
+squeezenet repeat 2 Conv layer 11 worst cycles: 41451 
+squeezenet repeat 2 Conv layer 12 worst cycles: 211450 
+squeezenet repeat 2 Conv layer 13 worst cycles: 14409 
+squeezenet repeat 2 Conv layer 14 worst cycles: 11498 
+squeezenet repeat 2 Conv layer 15 worst cycles: 70237 
+squeezenet repeat 2 Conv layer 16 worst cycles: 19198 
+squeezenet repeat 2 Conv layer 17 worst cycles: 11481 
+squeezenet repeat 2 Conv layer 18 worst cycles: 70429 
+squeezenet repeat 2 Conv layer 19 worst cycles: 24293 
+squeezenet repeat 2 Conv layer 20 worst cycles: 17014 
+squeezenet repeat 2 Conv layer 21 worst cycles: 91194 
+squeezenet repeat 2 Conv layer 22 worst cycles: 30871 
+squeezenet repeat 2 Conv layer 23 worst cycles: 16932 
+squeezenet repeat 2 Conv layer 24 worst cycles: 91225 
+squeezenet repeat 2 Conv layer 25 worst cycles: 416302 
+squeezenet repeat 2 Pool layer 0 worst cycles: 289965 
+
+squeezenet repeat 3 total thread cycles: 3959349
+squeezenet repeat 3 total cycles: 3849847
+squeezenet repeat 3 Conv layer 0 worst cycles: 1729736 
+squeezenet repeat 3 Conv layer 1 worst cycles: 25050 
+squeezenet repeat 3 Conv layer 2 worst cycles: 38983 
+squeezenet repeat 3 Conv layer 3 worst cycles: 125032 
+squeezenet repeat 3 Conv layer 4 worst cycles: 37376 
+squeezenet repeat 3 Conv layer 5 worst cycles: 75520 
+squeezenet repeat 3 Conv layer 6 worst cycles: 206368 
+squeezenet repeat 3 Conv layer 7 worst cycles: 17938 
+squeezenet repeat 3 Conv layer 8 worst cycles: 25360 
+squeezenet repeat 3 Conv layer 9 worst cycles: 109636 
+squeezenet repeat 3 Conv layer 10 worst cycles: 31806 
+squeezenet repeat 3 Conv layer 11 worst cycles: 41540 
+squeezenet repeat 3 Conv layer 12 worst cycles: 211351 
+squeezenet repeat 3 Conv layer 13 worst cycles: 14416 
+squeezenet repeat 3 Conv layer 14 worst cycles: 11491 
+squeezenet repeat 3 Conv layer 15 worst cycles: 70156 
+squeezenet repeat 3 Conv layer 16 worst cycles: 19218 
+squeezenet repeat 3 Conv layer 17 worst cycles: 11486 
+squeezenet repeat 3 Conv layer 18 worst cycles: 70310 
+squeezenet repeat 3 Conv layer 19 worst cycles: 24280 
+squeezenet repeat 3 Conv layer 20 worst cycles: 16960 
+squeezenet repeat 3 Conv layer 21 worst cycles: 91023 
+squeezenet repeat 3 Conv layer 22 worst cycles: 30761 
+squeezenet repeat 3 Conv layer 23 worst cycles: 16924 
+squeezenet repeat 3 Conv layer 24 worst cycles: 90923 
+squeezenet repeat 3 Conv layer 25 worst cycles: 416373 
+squeezenet repeat 3 Pool layer 0 worst cycles: 289830 
+
+squeezenet repeat 4 total thread cycles: 3955693
+squeezenet repeat 4 total cycles: 3846388
+squeezenet repeat 4 Conv layer 0 worst cycles: 1726362 
+squeezenet repeat 4 Conv layer 1 worst cycles: 24926 
+squeezenet repeat 4 Conv layer 2 worst cycles: 39033 
+squeezenet repeat 4 Conv layer 3 worst cycles: 124732 
+squeezenet repeat 4 Conv layer 4 worst cycles: 37312 
+squeezenet repeat 4 Conv layer 5 worst cycles: 75374 
+squeezenet repeat 4 Conv layer 6 worst cycles: 206482 
+squeezenet repeat 4 Conv layer 7 worst cycles: 17881 
+squeezenet repeat 4 Conv layer 8 worst cycles: 25335 
+squeezenet repeat 4 Conv layer 9 worst cycles: 109688 
+squeezenet repeat 4 Conv layer 10 worst cycles: 31797 
+squeezenet repeat 4 Conv layer 11 worst cycles: 41455 
+squeezenet repeat 4 Conv layer 12 worst cycles: 211424 
+squeezenet repeat 4 Conv layer 13 worst cycles: 14392 
+squeezenet repeat 4 Conv layer 14 worst cycles: 11478 
+squeezenet repeat 4 Conv layer 15 worst cycles: 70322 
+squeezenet repeat 4 Conv layer 16 worst cycles: 19189 
+squeezenet repeat 4 Conv layer 17 worst cycles: 11472 
+squeezenet repeat 4 Conv layer 18 worst cycles: 70285 
+squeezenet repeat 4 Conv layer 19 worst cycles: 24290 
+squeezenet repeat 4 Conv layer 20 worst cycles: 16959 
+squeezenet repeat 4 Conv layer 21 worst cycles: 91068 
+squeezenet repeat 4 Conv layer 22 worst cycles: 30906 
+squeezenet repeat 4 Conv layer 23 worst cycles: 16925 
+squeezenet repeat 4 Conv layer 24 worst cycles: 91100 
+squeezenet repeat 4 Conv layer 25 worst cycles: 416389 
+squeezenet repeat 4 Pool layer 0 worst cycles: 289812 
+
+squeezenet repeat 5 total thread cycles: 3960421
+squeezenet repeat 5 total cycles: 3850836
+squeezenet repeat 5 Conv layer 0 worst cycles: 1730073 
+squeezenet repeat 5 Conv layer 1 worst cycles: 24999 
+squeezenet repeat 5 Conv layer 2 worst cycles: 38980 
+squeezenet repeat 5 Conv layer 3 worst cycles: 124931 
+squeezenet repeat 5 Conv layer 4 worst cycles: 37255 
+squeezenet repeat 5 Conv layer 5 worst cycles: 75507 
+squeezenet repeat 5 Conv layer 6 worst cycles: 206560 
+squeezenet repeat 5 Conv layer 7 worst cycles: 17971 
+squeezenet repeat 5 Conv layer 8 worst cycles: 25319 
+squeezenet repeat 5 Conv layer 9 worst cycles: 109785 
+squeezenet repeat 5 Conv layer 10 worst cycles: 31759 
+squeezenet repeat 5 Conv layer 11 worst cycles: 41541 
+squeezenet repeat 5 Conv layer 12 worst cycles: 211353 
+squeezenet repeat 5 Conv layer 13 worst cycles: 14430 
+squeezenet repeat 5 Conv layer 14 worst cycles: 11495 
+squeezenet repeat 5 Conv layer 15 worst cycles: 70295 
+squeezenet repeat 5 Conv layer 16 worst cycles: 19235 
+squeezenet repeat 5 Conv layer 17 worst cycles: 11460 
+squeezenet repeat 5 Conv layer 18 worst cycles: 70392 
+squeezenet repeat 5 Conv layer 19 worst cycles: 24313 
+squeezenet repeat 5 Conv layer 20 worst cycles: 16969 
+squeezenet repeat 5 Conv layer 21 worst cycles: 91153 
+squeezenet repeat 5 Conv layer 22 worst cycles: 30735 
+squeezenet repeat 5 Conv layer 23 worst cycles: 16915 
+squeezenet repeat 5 Conv layer 24 worst cycles: 91099 
+squeezenet repeat 5 Conv layer 25 worst cycles: 416392 
+squeezenet repeat 5 Pool layer 0 worst cycles: 289920 
+
+squeezenet repeat 6 total thread cycles: 3955355
+squeezenet repeat 6 total cycles: 3846026
+squeezenet repeat 6 Conv layer 0 worst cycles: 1726000 
+squeezenet repeat 6 Conv layer 1 worst cycles: 24971 
+squeezenet repeat 6 Conv layer 2 worst cycles: 38974 
+squeezenet repeat 6 Conv layer 3 worst cycles: 124738 
+squeezenet repeat 6 Conv layer 4 worst cycles: 37288 
+squeezenet repeat 6 Conv layer 5 worst cycles: 75404 
+squeezenet repeat 6 Conv layer 6 worst cycles: 206414 
+squeezenet repeat 6 Conv layer 7 worst cycles: 17955 
+squeezenet repeat 6 Conv layer 8 worst cycles: 25366 
+squeezenet repeat 6 Conv layer 9 worst cycles: 109710 
+squeezenet repeat 6 Conv layer 10 worst cycles: 31763 
+squeezenet repeat 6 Conv layer 11 worst cycles: 41561 
+squeezenet repeat 6 Conv layer 12 worst cycles: 211427 
+squeezenet repeat 6 Conv layer 13 worst cycles: 14450 
+squeezenet repeat 6 Conv layer 14 worst cycles: 11484 
+squeezenet repeat 6 Conv layer 15 worst cycles: 70361 
+squeezenet repeat 6 Conv layer 16 worst cycles: 19162 
+squeezenet repeat 6 Conv layer 17 worst cycles: 11462 
+squeezenet repeat 6 Conv layer 18 worst cycles: 70240 
+squeezenet repeat 6 Conv layer 19 worst cycles: 24286 
+squeezenet repeat 6 Conv layer 20 worst cycles: 16946 
+squeezenet repeat 6 Conv layer 21 worst cycles: 91047 
+squeezenet repeat 6 Conv layer 22 worst cycles: 30745 
+squeezenet repeat 6 Conv layer 23 worst cycles: 16911 
+squeezenet repeat 6 Conv layer 24 worst cycles: 91126 
+squeezenet repeat 6 Conv layer 25 worst cycles: 416357 
+squeezenet repeat 6 Pool layer 0 worst cycles: 289878 
+==================================
+=================================
+[   32.634434] reboot: Power down
+
+Simulation complete.
+*** PASSED *** after 34143152717 cycles
+
+Emulation Performance Summary
+------------------------------
+Wallclock Time Elapsed: 3216.4 s
+Host Frequency: 69.999 MHz
+Target Cycles Emulated: 34143152717
+Effective Target Frequency: 10.615 MHz
+FMR: 6.59
+Note: The latter three figures are based on the fastest target clock.
+
+Script done on Fri 28 Oct 2022 07:03:27 PM UTC
