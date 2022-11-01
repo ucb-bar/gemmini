@@ -1,1 +1,9 @@
 Further instructions for MOCA artifact evaluators
+
+
+If there's problem cloning forked version of FireSim, please clone the recent FireSim repository, and check-out MOCA branch for Gemmini and gemmini-rocc-tests inside gemmini/software. If you are manually checking out Gemmini MoCA branches on default FireSim, you would also need to change RocketConfigs.scala (https://github.com/SeahK/chipyard/blob/4e7fe79e5947e425365cf0db46599d9b40a829d2/generators/chipyard/src/main/scala/config/RocketConfigs.scala#L53) and TargetConfigs.scala
+(https://github.com/SeahK/chipyard/blob/4e7fe79e5947e425365cf0db46599d9b40a829d2/generators/firechip/src/main/scala/TargetConfigs.scala#L205).
+
+
+
+Please contact if there are further issues.
