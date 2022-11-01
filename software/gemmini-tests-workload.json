@@ -3,32 +3,20 @@
   "workdir" : ".",
   "base" : "br-base.json",
   "overlay" : "overlay",
-  "rootfs-size" : "10GiB",
+  "rootfs-size" : "20GiB",
   "host-init" : "host-init.sh",
   "command" : "/root/run-tests-workload.sh",
   "jobs" : [
     {
-      "name": "workload_C_h",
-      "command": "/root/run-tests-workload-h.sh"
-    },
-    {
-      "name": "workload_A_h",
-      "command": "/root/run-tests-workloada-h.sh"
-    },
-    {
-      "name": "workload_B_h",
-      "command": "/root/run-tests-workloadb-h.sh"
-    },
-    {
-      "name": "workload_C_m",
-      "command": "/root/run-tests-workload.sh"
-    },
-    {
-      "name": "workload_A_m",
+      "name": "workload_a",
       "command": "/root/run-tests-workloada.sh"
+    }, 
+    {
+      "name": "workload_c",
+      "command": "/root/run-tests-workloadc.sh"
     },
     {
-      "name": "workload_B_m",
+      "name": "workload_b",
       "command": "/root/run-tests-workloadb.sh"
     }
   ]
