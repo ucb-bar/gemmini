@@ -7,8 +7,9 @@ If there's problem cloning forked version of FireSim, please clone the recent Fi
 
 * Problem compiling / running the binaries
 If there's any issue compiling and running the binaries, or do not want to compile binaries yourself, please try downloading the pre-built binaries that we have ran while preparing AE. We verified that the artifacts build and run without issue with reasonable results more than 5 consecutive turns prior to the AE submission, but just in case, would provide the latest pre-built binaries and FireSim run result.
-- Pre-built binaries: https://drive.google.com/file/d/1lNTEzUE_Loi3q_4Gy4ZqBiIgNoc2kZnT/view?usp=sharing
-- The result of running these binaries is here: https://github.com/SeahK/firesim/tree/main/deploy/results-workload, under EXAMPLE_RESULT
+- Pre-built binaries: https://drive.google.com/file/d/1olTavS5DSi8-0_L_JwPe0hUbrMSj2jqs/view?usp=sharing
+- The result of running these binaries, scripts and plots are here: https://github.com/ucb-bar/gemmini-rocc-tests/tree/MOCA/moca-ae-result
+- We also copied the result uartlog and plot scripts on forked FireSim: https://github.com/SeahK/firesim/tree/main/deploy/results-workload, under EXAMPLE_RESULT. If you have trouble accessing forked FireSim, then just copy from gemmini-rocc-tests directory.
 You can obtain result of the provided binary (above) by following these steps:
 1) Download, unzip and place this under gemmini/software/overlay/root, so that overlay/root/imagenet would have 18 -linux binaries.
 2) Run these commands:
@@ -50,6 +51,20 @@ firesim_eightcore_gemmini_moca:
         workload_name: gemmini-tests-workload.json
         terminate_on_completion: no
         suffix_tag: null
+
+* Running tests, parsing results
+By running firesim runworkloads, three f1.2xlarge instance would be launched.
+Each instance would be running each workload model set (A/B/C each).
+After the run finishes, please do "firesim terminaterunfarm" and then "yes" to terminate the run.
+Go to firesim/deploy/results-workload directory and run
+    ./build-sla.sh ($result-dir)
+    ./build-stp.sh ($result-dir)
+result-dir should be something look like 2022-11-02--05-47-28-gemmini-tests-workload, that contains three sub-directory (gemmini-tests-workloads-workload_A/B/C).
+The three instance's runtime would not be the same. If one or two finish earlier than others, and if you want to test the early finished ones first, run:
+    python3 parse_result_from_uartlog.py ($result-dir)/gemmini-tests-workload-workload_c/uartlog C
+    python3 make_fair.py ($result-dir)/gemmini-tests-workload-workload_c/uartlog C
+If workload C is the one that is finished early, and you would like to test it individually.
+(replace workload_c to workload_b and C to B, if workload_B is the one that you would like to plot first)
 
 
 Please contact the writer of this document if there are further issues.
