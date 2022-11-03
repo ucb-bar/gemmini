@@ -1,4 +1,5 @@
-Further instructions for MOCA artifact evaluators
+Further instructions, updates for MOCA artifact evaluators
+UPDATE: We forgot updating the instruction on the submitted AE material on the submission site when we were changing single f1 to 3 parallel f1 instances to speed up the evaluation. In case of running multiple parallel f1 instances, "default_hw_config" on config_runtime.yaml should be just left as the default one. (See line 49 of this text file)
 
 * Problem cloning forked FireSim repository
 If there's problem cloning forked version of FireSim, please clone the recent FireSim repository, and check-out MOCA branch for Gemmini and gemmini-rocc-tests inside gemmini/software. If you are manually checking out Gemmini MoCA branches on default FireSim, you would also need to change RocketConfigs.scala (https://github.com/SeahK/chipyard/blob/4e7fe79e5947e425365cf0db46599d9b40a829d2/generators/chipyard/src/main/scala/config/RocketConfigs.scala#L53) and TargetConfigs.scala
@@ -45,7 +46,7 @@ firesim_eightcore_gemmini_moca:
         net_bandwidth: 200
         profile_interval: -1
 
-    default_hw_config: firesim_eightcore_gemmini_moca
+    default_hw_config: firesim_rocket_quadcore_nic_l2_llc4mb_ddr3 => just leave this as given default one - should not be "firesim_eight_gemmini_moca"
 
     workload:
         workload_name: gemmini-tests-workload.json
