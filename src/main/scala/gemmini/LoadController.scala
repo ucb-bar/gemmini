@@ -114,7 +114,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
   cmd_tracker.io.alloc.bits.bytes_to_read :=
     Mux(io.dma.req.bits.has_acc_bitwidth, cols * actual_rows_read * config.accType.getWidth.U,
-      cols * actual_rows_read * config.inputType.getWidth.U) / 8.U
+      cols * actual_rows_read * config.inputType.getWidth.U) >> 3 // We replaced a very clear "/ 8.U" operation here with a ">> 3" operation, solely to satisfy Verilator's linter
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect

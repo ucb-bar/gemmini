@@ -51,7 +51,7 @@ jobs:
 
   prepare-gemmini-config:
     name: prepare-gemmini-config
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [prepare-build-environment, install-esp-toolchain]
     container:
       image: ucbbar/chipyard-ci-image:554b436

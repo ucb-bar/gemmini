@@ -473,6 +473,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.read_req(i).bits.igelu_qc := DontCare
       io.acc.read_req(i).bits.iexp_qln2 := DontCare
       io.acc.read_req(i).bits.iexp_qln2_inv := DontCare
+      io.acc.read_req(i).bits.stat_addr := DontCare
+      io.acc.read_req(i).bits.load_stats := DontCare
+      io.acc.read_req(i).bits.store_stats := DontCare
       io.acc.read_req(i).bits.act := activation
       io.acc.read_req(i).bits.fromDMA := false.B
       io.acc.read_req(i).bits.addr := MuxCase(a_address_rs1.acc_row() + a_fire_counter,
@@ -493,6 +496,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.read_req(i).bits.igelu_qc := DontCare
       io.acc.read_req(i).bits.iexp_qln2 := DontCare
       io.acc.read_req(i).bits.iexp_qln2_inv := DontCare
+      io.acc.read_req(i).bits.stat_addr := DontCare
+      io.acc.read_req(i).bits.load_stats := DontCare
+      io.acc.read_req(i).bits.store_stats := DontCare
       io.acc.read_req(i).bits.act := DontCare
       io.acc.read_req(i).bits.fromDMA := false.B
       io.acc.read_req(i).bits.addr := DontCare

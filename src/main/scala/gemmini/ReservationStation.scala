@@ -23,7 +23,8 @@ class ReservationStationIssue[T <: Data](cmd_t: T, id_width: Int) extends Bundle
 }
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
-class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: GemminiCmd) extends Module {
+class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V],
+                                                                       cmd_t: GemminiCmd) extends Module {
   import config._
 
   val block_rows = tileRows * meshRows
@@ -251,7 +252,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       val mvout_cols = cmd.rs2(32 + mvout_cols_bits - 1, 32)
       val mvout_rows = cmd.rs2(48 + mvout_rows_bits - 1, 48)
 
-      val mvout_mats = mvout_cols / block_cols.U + (mvout_cols % block_cols.U =/= 0.U)
+      val mvout_mats = mvout_cols / block_cols.U(mvout_cols_bits.W) + (mvout_cols % block_cols.U =/= 0.U)
       val total_mvout_rows = ((mvout_mats - 1.U) * block_stride) + mvout_rows
 
       op2.bits.end := op2.bits.start + total_mvout_rows
@@ -273,7 +274,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       val mvin_cols = cmd.rs2(32 + mvin_cols_bits - 1, 32)
       val mvin_rows = cmd.rs2(48 + mvin_rows_bits - 1, 48)
 
-      val mvin_mats = mvin_cols / block_cols.U + (mvin_cols % block_cols.U =/= 0.U)
+      val mvin_mats = mvin_cols / block_cols.U(mvin_cols_bits.W) + (mvin_cols % block_cols.U =/= 0.U)
       val total_mvin_rows = ((mvin_mats - 1.U) * block_stride) + mvin_rows
 
       // TODO We have to know how the LoopConv's internals work here. Our abstractions are leaking
