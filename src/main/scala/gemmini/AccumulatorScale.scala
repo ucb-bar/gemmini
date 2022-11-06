@@ -108,16 +108,20 @@ class AccumulatorScale[T <: Data, U <: Data](
       val e_act = MuxCase(e, Seq(
         (has_nonlinear_activations.B && act === Activation.RELU) -> e.relu,
         (has_nonlinear_activations.B && has_normalizations.B && act === Activation.LAYERNORM) ->
-          (e - io.in.bits.mean).mult_with_reciprocal(io.in.bits.inv_stddev),
+          (e - io.in.bits.mean),
         (has_nonlinear_activations.B && has_normalizations.B && act === Activation.IGELU) ->
           AccumulatorScale.igelu(e, igelu_qb, igelu_qc),
         (has_nonlinear_activations.B && has_normalizations.B && act === Activation.SOFTMAX) ->
-          scale_func(
-            AccumulatorScale.iexp(e - io.in.bits.max, iexp_qln2, iexp_qln2_inv, igelu_qb, igelu_qc),
-            io.in.bits.inv_sum_exp.asTypeOf(scale_t)),
+          AccumulatorScale.iexp(e - io.in.bits.max, iexp_qln2, iexp_qln2_inv, igelu_qb, igelu_qc),
       ))
 
-      val e_scaled = scale_func(e_act, scale)
+      val e_scaled = scale_func(e_act, MuxCase(scale, Seq(
+        (has_nonlinear_activations.B && has_normalizations.B && act === Activation.LAYERNORM) ->
+          io.in.bits.inv_stddev,
+        (has_nonlinear_activations.B && has_normalizations.B && act === Activation.SOFTMAX) ->
+          io.in.bits.inv_sum_exp.asTypeOf(scale_t)
+      )).asTypeOf(scale_t))
+
       val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
 
       e_clipped
