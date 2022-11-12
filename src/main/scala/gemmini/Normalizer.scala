@@ -211,6 +211,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     val get_scaled_inv_stddev, waiting_for_scaled_inv_stddev = Value
     val get_max = Value
     val get_inv_sum_exp, waiting_for_inv_sum_exp = Value
+    val get_scaled_inv_sum_exp, waiting_for_scaled_inv_sum_exp = Value
   }
   import State._
 
@@ -438,9 +439,6 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     }
   }
 
-
-
-
   val stddev_to_inv_id = MuxCase((num_stats-1).U,
     stats.zipWithIndex.map { case (s,i) =>
       (s.state === get_inv_stddev) -> i.U }
@@ -596,6 +594,67 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     }
   }
 
+  val inv_sum_exp_to_scale_id = MuxCase((num_stats-1).U,
+    stats.zipWithIndex.map { case (s,i) =>
+      (s.state === get_scaled_inv_sum_exp) -> i.U }
+  )
+  val inv_sum_exp_scale_in = Wire(Decoupled(scale_t.cloneType))
+  val inv_sum_exp_scale_out = Wire(Decoupled(scale_t.cloneType))
+
+  scale_t match {
+    case Float(expWidth, sigWidth) =>
+//      val mul_result = inv_sum_exp_scale_in.bits.asTypeOf(scale_t) *
+//        stats(inv_sum_exp_to_scale_id).req.acc_read_resp.scale.asTypeOf(scale_t)
+
+      val self_rec = recFNFromFN(expWidth, sigWidth, inv_sum_exp_scale_in.bits.asUInt())
+      val scale_rec = recFNFromFN(expWidth, sigWidth, stats(inv_sum_exp_to_scale_id).req.acc_read_resp.scale.asUInt())
+
+      val muladder = Module(new MulAddRecFN(expWidth, sigWidth))
+
+      muladder.io.op := 0.U
+      muladder.io.roundingMode := consts.round_near_even
+      muladder.io.detectTininess := consts.tininess_afterRounding
+
+      muladder.io.a := self_rec
+      muladder.io.b := scale_rec
+      muladder.io.c := 0.U
+
+      val mul_result = fNFromRecFN(expWidth, sigWidth, muladder.io.out).asTypeOf(scale_t)
+
+      val pipe = Module(new Pipeline(scale_t.cloneType, 2)())
+
+      pipe.io.in.valid := inv_sum_exp_scale_in.valid
+      pipe.io.in.bits := mul_result
+      pipe.io.out.ready := inv_sum_exp_scale_out.ready
+
+      inv_sum_exp_scale_in.ready := pipe.io.in.ready
+      inv_sum_exp_scale_out.bits := pipe.io.out.bits
+      inv_sum_exp_scale_out.valid := pipe.io.out.valid
+  }
+
+  {
+    // Scale input
+    val stat = stats(inv_sum_exp_to_scale_id)
+
+    inv_sum_exp_scale_in.valid := stat.state === get_scaled_inv_sum_exp
+    inv_sum_exp_scale_in.bits := stats(inv_sum_exp_to_scale_id).inv_sum_exp.asTypeOf(scale_t)
+  }
+
+  {
+    // Scale output
+    val waiting_for_scale_id = MuxCase((num_stats-1).U,
+      stats.zipWithIndex.map { case (s,i) =>
+        (s.state === waiting_for_scaled_inv_sum_exp) -> i.U }
+    )
+    val stat = stats(waiting_for_scale_id)
+
+    inv_sum_exp_scale_out.ready := stat.state === waiting_for_scaled_inv_sum_exp
+
+    when (stat.state === waiting_for_scaled_inv_sum_exp) {
+      stat.inv_sum_exp := inv_sum_exp_scale_out.bits.asTypeOf(stat.inv_sum_exp)
+    }
+  }
+
   // State transitions
   for (((stat, next_state), id) <- (stats zip next_states).zipWithIndex) {
     val state = stat.state
@@ -681,8 +740,14 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       next_state := Mux(exp_divider_in.fire() && sum_exp_to_inv_id === id.U, state.next, state)
       done := false.B
     }.elsewhen(state === waiting_for_inv_sum_exp) {
-      next_state := Mux(exp_divider_out.fire(), idle, state)
-      done := exp_divider_out.fire()
+      next_state := Mux(exp_divider_out.fire(), state.next, state)
+      done := false.B
+    }.elsewhen(state === get_scaled_inv_sum_exp) {
+      next_state := Mux(inv_sum_exp_scale_in.fire() && inv_sum_exp_to_scale_id === id.U, state.next, state)
+      done := false.B
+    }.elsewhen(state === waiting_for_scaled_inv_sum_exp) {
+      next_state := Mux(inv_sum_exp_scale_out.fire(), idle, state)
+      done := inv_sum_exp_scale_out.fire()
     }.otherwise {
       assert(false.B, "invalid state in Normalizer")
       next_state := DontCare
