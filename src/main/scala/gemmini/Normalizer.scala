@@ -5,7 +5,7 @@ import chisel3._
 import chisel3.experimental.ChiselEnum
 import chisel3.util._
 import gemmini.AccumulatorScale.iexp
-import hardfloat.{DivSqrtRecFN_small, INToRecFN, MulAddRecFN, consts, fNFromRecFN, recFNFromFN}
+import hardfloat.{DivSqrtRecFN_small, INToRecFN, MulRecFN, consts, fNFromRecFN, recFNFromFN}
 
 class NormalizedInput[T <: Data: Arithmetic, U <: Data](max_len: Int, num_stats: Int, fullDataType: Vec[Vec[T]],
                                                         scale_t: U) extends Bundle {
@@ -371,7 +371,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       (s.state === get_mean || s.state === get_variance) -> i.U }
   )
   val sum_to_divide = stats(sum_to_divide_id).sum
-  val (divider_in, divider_out) = sum_to_divide.divider(stats.head.count).get
+  val (divider_in, divider_out) = sum_to_divide.divider(stats.head.count, 16).get
 
   {
     // Divider input
@@ -444,7 +444,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       (s.state === get_inv_stddev) -> i.U }
   )
   val stddev_to_inv = stats(stddev_to_inv_id).inv_stddev
-  val (reciprocal_in, reciprocal_out) = stddev_to_inv.reciprocal(scale_t).get
+  val (reciprocal_in, reciprocal_out) = stddev_to_inv.reciprocal(scale_t, 16).get
 
   {
     // Reciprocal input
@@ -481,15 +481,13 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       val self_rec = recFNFromFN(expWidth, sigWidth, inv_stddev_scale_in.bits.asUInt())
       val scale_rec = recFNFromFN(expWidth, sigWidth, stats(inv_stddev_to_scale_id).req.acc_read_resp.scale.asUInt())
 
-      val muladder = Module(new MulAddRecFN(expWidth, sigWidth))
+      val muladder = Module(new MulRecFN(expWidth, sigWidth))
 
-      muladder.io.op := 0.U
       muladder.io.roundingMode := consts.round_near_even
       muladder.io.detectTininess := consts.tininess_afterRounding
 
       muladder.io.a := self_rec
       muladder.io.b := scale_rec
-      muladder.io.c := 0.U
 
       val mul_result = fNFromRecFN(expWidth, sigWidth, muladder.io.out).asTypeOf(scale_t)
 
@@ -556,7 +554,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       val one_rec = in_to_float(127.S) // softmax maximum is 127 for signed int8
 
       // Instantiate the hardloat divider
-      val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 0))
+      val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 16))
 
       exp_divider_in.ready := divider.io.inReady
       divider.io.inValid := exp_divider_in.valid
@@ -609,15 +607,13 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       val self_rec = recFNFromFN(expWidth, sigWidth, inv_sum_exp_scale_in.bits.asUInt())
       val scale_rec = recFNFromFN(expWidth, sigWidth, stats(inv_sum_exp_to_scale_id).req.acc_read_resp.scale.asUInt())
 
-      val muladder = Module(new MulAddRecFN(expWidth, sigWidth))
+      val muladder = Module(new MulRecFN(expWidth, sigWidth))
 
-      muladder.io.op := 0.U
       muladder.io.roundingMode := consts.round_near_even
       muladder.io.detectTininess := consts.tininess_afterRounding
 
       muladder.io.a := self_rec
       muladder.io.b := scale_rec
-      muladder.io.c := 0.U
 
       val mul_result = fNFromRecFN(expWidth, sigWidth, muladder.io.out).asTypeOf(scale_t)
 
