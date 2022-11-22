@@ -6,7 +6,7 @@ import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
-import freechips.rocketchip.tilelink.{TLIdentityNode, TLXbar, TLBuffer}
+import freechips.rocketchip.tilelink._
 
 import Util._
 
@@ -195,7 +195,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
   xbar_node := TLBuffer() := reader.node // TODO
   xbar_node := TLBuffer() := writer.node
-  id_node := TLBuffer() := xbar_node
+  id_node := TLWidthWidget(config.dma_buswidth/8) := TLBuffer() := xbar_node
 
   lazy val module = new LazyModuleImp(this) with HasCoreParameters {
 

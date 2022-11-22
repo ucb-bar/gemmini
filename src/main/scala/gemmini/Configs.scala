@@ -254,13 +254,11 @@ class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       gemmini
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 // This Gemmini config has both an Int and an FP Gemmini side-by-side, sharing
 // the same scratchpad.
 class DualGemminiConfig extends Config((site, here, up) => {
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
   case BuildRoCC => {
     var int_gemmini: Gemmini[_,_,_] = null
     var fp_gemmini: Gemmini[_,_,_] = null

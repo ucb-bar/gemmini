@@ -121,7 +121,6 @@ class GemminiFP32DefaultConfig extends Config((site, here, up) => {
         LazyModule(new Gemmini(GemminiFPConfigs.FP32DefaultConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 
@@ -134,7 +133,6 @@ class GemminiFP16DefaultConfig extends Config((site, here, up) => {
         LazyModule(new Gemmini(GemminiFPConfigs.FP16DefaultConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========BFLOAT16 Default Config=========
@@ -146,7 +144,6 @@ class GemminiBF16DefaultConfig extends Config((site, here, up) => {
         LazyModule(new Gemmini(GemminiFPConfigs.BF16DefaultConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 class GemminiBF16DefaultHighPerfConfig extends Config((site, here, up) => {
@@ -161,7 +158,6 @@ class GemminiBF16DefaultHighPerfConfig extends Config((site, here, up) => {
       gemmini
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========BFLOAT16 Default Config 8x8=========
@@ -173,6 +169,5 @@ class GemminiBF16Default8Config extends Config((site, here, up) => {
         LazyModule(new Gemmini(GemminiFPConfigs.BF16Default8Config))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
