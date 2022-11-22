@@ -32,14 +32,21 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def *(t: T): T
   def mac(m1: T, m2: T): T // Returns (m1 * m2 + self)
   def +(t: T): T
+  def -(t: T): T
   def >>(u: UInt): T // This is a rounding shift! Rounds away from 0
   def >(t: T): Bool
   def identity: T
   def withWidthOf(t: T): T
   def clippedToWidthOf(t: T): T // Like "withWidthOf", except that it saturates
   def relu: T
-  def relu6(shift: UInt): T
   def zero: T
+  def minimum: T
+
+  // Optional parameters, which only need to be defined if you want to enable various optimizations for transformers
+  def divider(denom_t: UInt): Option[(DecoupledIO[UInt], DecoupledIO[T])] = None
+  def sqrt: Option[(DecoupledIO[UInt], DecoupledIO[T])] = None
+  def reciprocal[U <: Data](u: U): Option[(DecoupledIO[UInt], DecoupledIO[U])] = None
+  def mult_with_reciprocal[U <: Data](reciprocal: U) = self
 }
 
 object Arithmetic {
@@ -48,6 +55,7 @@ object Arithmetic {
       override def *(t: UInt) = self * t
       override def mac(m1: UInt, m2: UInt) = m1 * m2 + self
       override def +(t: UInt) = self + t
+      override def -(t: UInt) = self - t
 
       override def >>(u: UInt) = {
         // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
@@ -72,15 +80,10 @@ object Arithmetic {
       }
 
       override def relu: UInt = self
-      override def relu6(shift: UInt): UInt = {
-        val max6 = (6.U << shift).asUInt()
-        val maxwidth = ((1 << (self.getWidth-1))-1).U
-        val max = Mux(max6 > maxwidth, maxwidth, max6)(self.getWidth-1, 0).asUInt()
-        Mux(self < max, self, max)
-      }
 
       override def zero: UInt = 0.U
       override def identity: UInt = 1.U
+      override def minimum: UInt = 0.U
     }
   }
 
@@ -89,6 +92,7 @@ object Arithmetic {
       override def *(t: SInt) = self * t
       override def mac(m1: SInt, m2: SInt) = m1 * m2 + self
       override def +(t: SInt) = self + t
+      override def -(t: SInt) = self - t
 
       override def >>(u: UInt) = {
         // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
@@ -122,15 +126,204 @@ object Arithmetic {
       }
 
       override def relu: SInt = Mux(self >= 0.S, self, 0.S)
-      override def relu6(shift: UInt): SInt = {
-        val max6 = (6.S << shift).asSInt()
-        val maxwidth = ((1 << (self.getWidth-1))-1).S
-        val max = Mux(max6 > maxwidth, maxwidth, max6)(self.getWidth-1, 0).asSInt()
-        MuxCase(self, Seq((self < 0.S) -> 0.S, (self > max) -> max))
-      }
 
       override def zero: SInt = 0.S
       override def identity: SInt = 1.S
+      override def minimum: SInt = (-(1 << (self.getWidth-1))).S
+
+      override def divider(denom_t: UInt): Option[(DecoupledIO[UInt], DecoupledIO[SInt])] = {
+        // TODO this uses a floating point divider, but we should use an integer divider instead
+
+        val input = Wire(Decoupled(denom_t.cloneType))
+        val output = Wire(Decoupled(self.cloneType))
+
+        // We translate our integer to floating-point form so that we can use the hardfloat divider
+        val expWidth = log2Up(self.getWidth) + 1
+        val sigWidth = self.getWidth
+
+        def sin_to_float(x: SInt) = {
+          val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
+          in_to_rec_fn.io.signedIn := true.B
+          in_to_rec_fn.io.in := x.asUInt()
+          in_to_rec_fn.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
+          in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+          in_to_rec_fn.io.out
+        }
+
+        def uin_to_float(x: UInt) = {
+          val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
+          in_to_rec_fn.io.signedIn := false.B
+          in_to_rec_fn.io.in := x
+          in_to_rec_fn.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
+          in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+          in_to_rec_fn.io.out
+        }
+
+        def float_to_in(x: UInt) = {
+          val rec_fn_to_in = Module(new RecFNToIN(expWidth = expWidth, sigWidth, self.getWidth))
+          rec_fn_to_in.io.signedOut := true.B
+          rec_fn_to_in.io.in := x
+          rec_fn_to_in.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
+
+          rec_fn_to_in.io.out.asSInt()
+        }
+
+        val self_rec = sin_to_float(self)
+        val denom_rec = uin_to_float(input.bits)
+
+        // Instantiate the hardloat divider
+        val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 0))
+
+        input.ready := divider.io.inReady
+        divider.io.inValid := input.valid
+        divider.io.sqrtOp := false.B
+        divider.io.a := self_rec
+        divider.io.b := denom_rec
+        divider.io.roundingMode := consts.round_minMag
+        divider.io.detectTininess := consts.tininess_afterRounding
+
+        output.valid := divider.io.outValid_div
+        output.bits := float_to_in(divider.io.out)
+
+        assert(!output.valid || output.ready)
+
+        Some((input, output))
+      }
+
+      override def sqrt: Option[(DecoupledIO[UInt], DecoupledIO[SInt])] = {
+        // TODO this uses a floating point divider, but we should use an integer divider instead
+
+        val input = Wire(Decoupled(UInt(0.W)))
+        val output = Wire(Decoupled(self.cloneType))
+
+        input.bits := DontCare
+
+        // We translate our integer to floating-point form so that we can use the hardfloat divider
+        val expWidth = log2Up(self.getWidth) + 1
+        val sigWidth = self.getWidth
+
+        def in_to_float(x: SInt) = {
+          val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
+          in_to_rec_fn.io.signedIn := true.B
+          in_to_rec_fn.io.in := x.asUInt()
+          in_to_rec_fn.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
+          in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+          in_to_rec_fn.io.out
+        }
+
+        def float_to_in(x: UInt) = {
+          val rec_fn_to_in = Module(new RecFNToIN(expWidth = expWidth, sigWidth, self.getWidth))
+          rec_fn_to_in.io.signedOut := true.B
+          rec_fn_to_in.io.in := x
+          rec_fn_to_in.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
+
+          rec_fn_to_in.io.out.asSInt()
+        }
+
+        val self_rec = in_to_float(self)
+
+        // Instantiate the hardloat sqrt
+        val sqrter = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 0))
+
+        input.ready := sqrter.io.inReady
+        sqrter.io.inValid := input.valid
+        sqrter.io.sqrtOp := true.B
+        sqrter.io.a := self_rec
+        sqrter.io.b := DontCare
+        sqrter.io.roundingMode := consts.round_minMag
+        sqrter.io.detectTininess := consts.tininess_afterRounding
+
+        output.valid := sqrter.io.outValid_sqrt
+        output.bits := float_to_in(sqrter.io.out)
+
+        assert(!output.valid || output.ready)
+
+        Some((input, output))
+      }
+
+      override def reciprocal[U <: Data](u: U): Option[(DecoupledIO[UInt], DecoupledIO[U])] = u match {
+        case Float(expWidth, sigWidth) =>
+          val input = Wire(Decoupled(UInt(0.W)))
+          val output = Wire(Decoupled(u.cloneType))
+
+          input.bits := DontCare
+
+          // We translate our integer to floating-point form so that we can use the hardfloat divider
+          def in_to_float(x: SInt) = {
+            val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
+            in_to_rec_fn.io.signedIn := true.B
+            in_to_rec_fn.io.in := x.asUInt()
+            in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+            in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+            in_to_rec_fn.io.out
+          }
+
+          val self_rec = in_to_float(self)
+          val one_rec = in_to_float(1.S)
+
+          // Instantiate the hardloat divider
+          val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 0))
+
+          input.ready := divider.io.inReady
+          divider.io.inValid := input.valid
+          divider.io.sqrtOp := false.B
+          divider.io.a := one_rec
+          divider.io.b := self_rec
+          divider.io.roundingMode := consts.round_near_even
+          divider.io.detectTininess := consts.tininess_afterRounding
+
+          output.valid := divider.io.outValid_div
+          output.bits := fNFromRecFN(expWidth, sigWidth, divider.io.out).asTypeOf(u)
+
+          assert(!output.valid || output.ready)
+
+          Some((input, output))
+
+        case _ => None
+      }
+
+      override def mult_with_reciprocal[U <: Data](reciprocal: U): SInt = reciprocal match {
+        case recip @ Float(expWidth, sigWidth) =>
+          def in_to_float(x: SInt) = {
+            val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
+            in_to_rec_fn.io.signedIn := true.B
+            in_to_rec_fn.io.in := x.asUInt()
+            in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+            in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+
+            in_to_rec_fn.io.out
+          }
+
+          def float_to_in(x: UInt) = {
+            val rec_fn_to_in = Module(new RecFNToIN(expWidth = expWidth, sigWidth, self.getWidth))
+            rec_fn_to_in.io.signedOut := true.B
+            rec_fn_to_in.io.in := x
+            rec_fn_to_in.io.roundingMode := consts.round_minMag
+
+            rec_fn_to_in.io.out.asSInt()
+          }
+
+          val self_rec = in_to_float(self)
+          val reciprocal_rec = recFNFromFN(expWidth, sigWidth, recip.bits)
+
+          // Instantiate the hardloat divider
+          val muladder = Module(new MulAddRecFN(expWidth, sigWidth))
+          muladder.io.op := 0.U
+          muladder.io.roundingMode := consts.round_near_even
+          muladder.io.detectTininess := consts.tininess_afterRounding
+
+          muladder.io.a := self_rec
+          muladder.io.b := reciprocal_rec
+          muladder.io.c := 0.U
+
+          float_to_in(muladder.io.out)
+
+        case _ => self
+      }
     }
   }
 
@@ -239,6 +432,12 @@ object Arithmetic {
         result
       }
 
+      override def -(t: Float): Float = {
+        val t_sgn = t.bits(t.getWidth-1)
+        val neg_t = Cat(~t_sgn, t.bits(t.getWidth-2,0)).asTypeOf(t)
+        self + neg_t
+      }
+
       override def >>(u: UInt): Float = {
         // Recode self
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
@@ -322,55 +521,9 @@ object Arithmetic {
         result
       }
 
-      override def relu6(shift: UInt): Float = {
-        // Get a constant 6 as a float
-        val in_to_rec_fn = Module(new INToRecFN(log2Up(6+1), self.expWidth, self.sigWidth))
-        in_to_rec_fn.io.signedIn := false.B
-        in_to_rec_fn.io.in := 6.U
-        in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-        in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
-
-        val six_rec = in_to_rec_fn.io.out
-
-        // Get 2^shift as a float
-        val shift_exp = self.bias.U(self.expWidth.W) + shift
-        val shift_fn = Cat(0.U(1.W), shift_exp, 0.U((self.sigWidth-1).W))
-        val shift_rec = recFNFromFN(self.expWidth, self.sigWidth, shift_fn)
-
-        // Get 6*(2^shift) as a float
-        val muladder = Module(new MulAddRecFN(self.expWidth, self.sigWidth))
-
-        muladder.io.op := 0.U
-        muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-        muladder.io.detectTininess := consts.tininess_afterRounding
-
-        muladder.io.a := six_rec
-        muladder.io.b := shift_rec
-        muladder.io.c := 0.U
-
-        val shifted_rec = muladder.io.out
-
-        // Now, compare self and 6*(2^shift) to calculate the activation function
-        val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
-        val self_raw = rawFloatFromFN(self.expWidth, self.sigWidth, self.bits)
-
-        val comparer = Module(new CompareRecFN(self.expWidth, self.sigWidth))
-        comparer.io.a := self_rec
-        comparer.io.b := shifted_rec
-        comparer.io.signaling := false.B
-
-        val larger_than_six = comparer.io.gt
-
-        val result_rec = Mux(!self_raw.isZero && self_raw.sign, 0.U,
-          Mux(larger_than_six, shifted_rec, self_rec))
-
-        val result = Wire(Float(self.expWidth, self.sigWidth))
-        result.bits := fNFromRecFN(self.expWidth, self.sigWidth, result_rec)
-        result
-      }
-
       override def zero: Float = 0.U.asTypeOf(self)
       override def identity: Float = Cat(0.U(2.W), ~(0.U((self.expWidth-1).W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
+      override def minimum: Float = Cat(1.U, ~(0.U(self.expWidth.W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
     }
   }
 
@@ -379,14 +532,15 @@ object Arithmetic {
       override def *(t: DummySInt) = self.dontCare
       override def mac(m1: DummySInt, m2: DummySInt) = self.dontCare
       override def +(t: DummySInt) = self.dontCare
+      override def -(t: DummySInt) = self.dontCare
       override def >>(t: UInt) = self.dontCare
       override def >(t: DummySInt): Bool = false.B
       override def identity = self.dontCare
       override def withWidthOf(t: DummySInt) = self.dontCare
       override def clippedToWidthOf(t: DummySInt) = self.dontCare
       override def relu = self.dontCare
-      override def relu6(shift: UInt) = self.dontCare
       override def zero = self.dontCare
+      override def minimum: DummySInt = self.dontCare
     }
   }
 }

@@ -24,7 +24,7 @@ object GemminiISA {
   val LOAD3_CMD = 14.U
 
   // TODO add orows and ocols to this as well
-  val LOOP_CONV_WS = 15.U // no_bias, wrot180, trans_output_1203, trans_weight_1203, trans_input_3120, max_pixels_per_row | no_pool, downsample, input_dilated, act
+  val LOOP_CONV_WS = 15.U // no_bias, wrot180, trans_output_1203, trans_weight_1203, trans_input_3120, dw, max_pixels_per_row | no_pool, downsample, input_dilated, act
   val LOOP_CONV_WS_CONFIG_1 = 16.U // batch_size, in_dim, in_channels, out_channels | out_dim, pool_out_dim, stride, padding
   val LOOP_CONV_WS_CONFIG_2 = 17.U // kernel_dim, pool_size, pool_stride, pool_padding | batches, porows, pocols, pochs
   val LOOP_CONV_WS_CONFIG_3 = 18.U // krows, kcols, kchs, lpad | rpad, upad, dpad, plpad
@@ -38,7 +38,7 @@ object GemminiISA {
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U
   val CONFIG_STORE = 2.U
-  val CONFIG_IM2COL = 3.U
+  val CONFIG_NORM = 3.U
 
   //==========================================================================
   // cisc-gemmini opcodes
@@ -107,7 +107,7 @@ object GemminiISA {
     val _unused = UInt(CONFIG_MVIN_RS1_UNUSED_WIDTH.W)
   }
 
-  val CONFIG_MVOUT_RS1_UNUSED_WIDTH = 2
+  val CONFIG_MVOUT_RS1_CMD_TYPE_WIDTH = 2
   val CONFIG_MVOUT_RS1_ACTIVATION_WIDTH = 2
   val CONFIG_MVOUT_RS1_MAX_POOLING_STRIDE_WIDTH = 2
   val CONFIG_MVOUT_RS1_MAX_POOLING_WINDOW_SIZE_WIDTH = 2
@@ -132,7 +132,7 @@ object GemminiISA {
     val pool_size = UInt(CONFIG_MVOUT_RS1_MAX_POOLING_WINDOW_SIZE_WIDTH.W)
     val pool_stride = UInt(CONFIG_MVOUT_RS1_MAX_POOLING_STRIDE_WIDTH.W)
     val activation = UInt(CONFIG_MVOUT_RS1_ACTIVATION_WIDTH.W)
-    val _unused = UInt(CONFIG_MVOUT_RS1_UNUSED_WIDTH.W)
+    val cmd_type = UInt(CONFIG_MVOUT_RS1_CMD_TYPE_WIDTH.W)
   }
 
   val CONFIG_MVOUT_RS2_ACC_SCALE_WIDTH = 32
@@ -143,6 +143,36 @@ object GemminiISA {
     val acc_scale = UInt(acc_scale_bits.W)
     val _spacer0 = UInt((CONFIG_MVOUT_RS2_STRIDE_WIDTH - stride_bits).W)
     val stride = UInt(stride_bits.W)
+  }
+
+  val CONFIG_NORM_RS1_Q_CONST_WIDTH = 32
+  val CONFIG_NORM_RS1_SPACER1_WIDTH = 13
+  val CONFIG_NORM_RS1_Q_CONST_TYPE_WIDTH = 1
+  val CONFIG_NORM_RS1_SET_STATS_ID_ONLY_WIDTH = 1
+  val CONFIG_NORM_RS1_ACT_MSB_WIDTH = 1
+  val CONFIG_NORM_RS1_NORM_STATS_ID_WIDTH = 8
+  val CONFIG_NORM_RS1_SPACER0_WIDTH = 6
+  val CONFIG_NORM_RS1_CMD_TYPE_WIDTH = 2
+
+  class ConfigNormRs1(acc_t_bits: Int = 32) extends Bundle {
+    val q_const = UInt(acc_t_bits.W)
+    val _spacer1 = UInt(CONFIG_NORM_RS1_SPACER1_WIDTH.W)
+    val q_const_type = UInt(CONFIG_NORM_RS1_Q_CONST_TYPE_WIDTH.W)
+    val set_stats_id_only = UInt(CONFIG_NORM_RS1_SET_STATS_ID_ONLY_WIDTH.W)
+    val act_msb = UInt(CONFIG_NORM_RS1_ACT_MSB_WIDTH.W)
+    val norm_stats_id = UInt(CONFIG_NORM_RS1_NORM_STATS_ID_WIDTH.W)
+    val _spacer0 = UInt(CONFIG_NORM_RS1_SPACER0_WIDTH.W)
+    val cmd_type = UInt(CONFIG_NORM_RS1_CMD_TYPE_WIDTH.W)
+  }
+
+  val CONFIG_NORM_RS2_QC_WIDTH = 32
+  val CONFIG_NORM_RS2_QB_WIDTH = 32
+
+  class ConfigNormRs2(acc_t_bits: Int) extends Bundle {
+    val _spacer1 = UInt((CONFIG_NORM_RS2_QC_WIDTH - acc_t_bits).W)
+    val qc = UInt(acc_t_bits.W)
+    val _spacer0 = UInt((CONFIG_NORM_RS2_QB_WIDTH - acc_t_bits).W)
+    val qb = UInt(acc_t_bits.W)
   }
 
   val CONFIG_EX_RS1_CMD_TYPE_WIDTH = 2

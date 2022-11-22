@@ -20,7 +20,6 @@ class DMACommandTracker[T <: Data](val nCmds: Int, val maxBytes: Int, tag_t: => 
         val tag = Input(tag_t.cloneType)
         val bytes_to_read = Input(UInt(log2Up(maxBytes+1).W))
         val cmd_id = Output(cmd_id_t.cloneType)
-
       }
 
       val bits = new BitsT(tag_t.cloneType, cmd_id_t.cloneType)
