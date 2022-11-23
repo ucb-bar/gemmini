@@ -232,8 +232,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val out_matmul_id = WireInit(shifted(mesh.io.out_id, outBanks, reverse = true)(0)(0))
   io.resp.bits.tag := Mux(tagq.io.deq.valid && out_matmul_id === tagq.io.deq.bits.id, tagq.io.deq.bits.tag, tag_garbage)
 
-  dontTouch(out_matmul_id)
-
   tagq.io.deq.ready := io.resp.valid && io.resp.bits.last && out_matmul_id === tagq.io.deq.bits.id
 
   val total_rows_q = Module(new Queue(new TagWithIdAndTotalRows, tagqlen))

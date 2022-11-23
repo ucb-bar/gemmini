@@ -463,9 +463,6 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
     val write_packet = RegEnableThru(best_write_packet, state === s_writing_new_block)
 
-    for (wp <- write_packets)
-      dontTouch(wp)
-
     val write_size = write_packet.size
     val lg_write_size = write_packet.lg_size
     val write_beats = write_packet.total_beats()
