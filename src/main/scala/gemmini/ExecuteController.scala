@@ -508,8 +508,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     when (read_a && !io.im2col.req.ready) {
       a_ready := false.B
     }
-    dontTouch(io.im2col.req.ready)
-    dontTouch(read_a)
 
     io.im2col.req.valid := read_a
     io.im2col.req.bits.addr := a_address_rs1
@@ -994,7 +992,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   when(io.completed.valid) {
     complete_bits_count := complete_bits_count + 1.U
   }
-  dontTouch(complete_bits_count)
 
   when (reset.asBool()) {
     // pending_completed_rob_id.valid := false.B

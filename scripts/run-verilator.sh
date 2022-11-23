@@ -73,7 +73,7 @@ fi
 path=""
 suffix=""
 
-for dir in bareMetalC mlps imagenet ; do
+for dir in bareMetalC mlps imagenet transformers ; do
     if [ -f "software/gemmini-rocc-tests/build/${dir}/${binary}$default_suffix" ]; then
         path="${ROOT}/software/gemmini-rocc-tests/build/${dir}/"
         suffix=$default_suffix

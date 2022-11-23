@@ -41,7 +41,7 @@ object GemminiCustomConfigs {
     acc_capacity = CapacityInKilobytes(128),
   )
 
- val bertInferenceConfig = defaultConfig.copy(
+  val ibertInferenceConfig = defaultConfig.copy(
     has_training_convs = false,
     has_max_pool =  false,
     has_normalizations = true,
@@ -65,3 +65,4 @@ class GemminiCustomConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     }
   )
 })
+
