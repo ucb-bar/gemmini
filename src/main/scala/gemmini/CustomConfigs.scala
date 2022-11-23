@@ -72,6 +72,5 @@ class GemminiCustomConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       gemmini
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
