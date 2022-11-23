@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -26,7 +27,8 @@ class BeatMergerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, va
   maxReqBytes: in bytes
   aligned_to: in bytes
  */
-class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, spadRows: Int, accRows: Int, maxReqBytes: Int, alignedTo: Int, meshRows: Int, mvin_scale_t_bits: Int, nCmds: Int)
+class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWidth: Int, spadRows: Int, accRows: Int,
+                            maxReqBytes: Int, alignedTo: Int, meshRows: Int, mvin_scale_t_bits: Int, nCmds: Int)
   extends Module {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds)))
@@ -75,9 +77,10 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
     val total_bytes_sent = req.bits.spad_row_offset + bytesSent
     Mux(req.bits.has_acc_bitwidth,
       // We only add "if" statements here to satisfy the Verilator linter. The code would be cleaner without the
-      // "if" condition and the "else" clause
-      if (total_bytes_sent.getWidth >= log2Up(accWidthBytes+1)) total_bytes_sent / accWidthBytes.U else 0.U,
-      if (total_bytes_sent.getWidth >= log2Up(spadWidthBytes+1)) total_bytes_sent / spadWidthBytes.U else 0.U)
+      // "if" condition and the "else" clause. Similarly, the width expansions are also there to satisfy the Verilator
+      // linter, despite making the code uglier.
+      if (total_bytes_sent.getWidth >= log2Up(accWidthBytes + 1)) total_bytes_sent / accWidthBytes.U(total_bytes_sent.getWidth.W) else 0.U,
+      if (total_bytes_sent.getWidth >= log2Up(spadWidthBytes + 1)) total_bytes_sent / spadWidthBytes.U(total_bytes_sent.getWidth.W) else 0.U)
   }
 
   io.out.bits.is_acc := req.bits.is_acc

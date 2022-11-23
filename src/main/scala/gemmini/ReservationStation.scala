@@ -23,7 +23,8 @@ class ReservationStationIssue[T <: Data](cmd_t: T, id_width: Int) extends Bundle
 }
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
-class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V], cmd_t: GemminiCmd) extends Module {
+class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V],
+                                                                       cmd_t: GemminiCmd) extends Module {
   import config._
 
   val block_rows = tileRows * meshRows
@@ -251,7 +252,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       val mvout_cols = cmd.rs2(32 + mvout_cols_bits - 1, 32)
       val mvout_rows = cmd.rs2(48 + mvout_rows_bits - 1, 48)
 
-      val mvout_mats = mvout_cols / block_cols.U + (mvout_cols % block_cols.U =/= 0.U)
+      val mvout_mats = mvout_cols / block_cols.U(mvout_cols_bits.W) + (mvout_cols % block_cols.U =/= 0.U)
       val total_mvout_rows = ((mvout_mats - 1.U) * block_stride) + mvout_rows
 
       op2.bits.end := op2.bits.start + total_mvout_rows
@@ -273,7 +274,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       val mvin_cols = cmd.rs2(32 + mvin_cols_bits - 1, 32)
       val mvin_rows = cmd.rs2(48 + mvin_rows_bits - 1, 48)
 
-      val mvin_mats = mvin_cols / block_cols.U + (mvin_cols % block_cols.U =/= 0.U)
+      val mvin_mats = mvin_cols / block_cols.U(mvin_cols_bits.W) + (mvin_cols % block_cols.U =/= 0.U)
       val total_mvin_rows = ((mvin_mats - 1.U) * block_stride) + mvin_rows
 
       // TODO We have to know how the LoopConv's internals work here. Our abstractions are leaking
@@ -293,9 +294,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
-    val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_STORE)
-    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_EX || config_cmd_type === CONFIG_IM2COL))
-    val is_im2col = funct === CONFIG_CMD && config_cmd_type === CONFIG_IM2COL // im2col commands are a subset of ex commands, so they still go in the ex queue
+    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
+    val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_STORE || config_cmd_type === CONFIG_NORM))
+    val is_norm = funct === CONFIG_CMD && config_cmd_type === CONFIG_NORM // normalization commands are a subset of store commands, so they still go in the store queue
 
     new_entry.q := Mux1H(Seq(
       is_load -> ldq,
@@ -364,7 +365,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       }
 
     when (io.alloc.fire) {
-      when (new_entry.is_config && new_entry.q === exq && !is_im2col) {
+      when (new_entry.is_config && new_entry.q === exq) {
         a_stride := new_entry.cmd.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
         c_stride := new_entry.cmd.cmd.rs2(63, 48) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
         val set_only_strides = new_entry.cmd.cmd.rs1(7) // TODO magic numbers
@@ -377,7 +378,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         val repeat_pixels = maxOf(new_entry.cmd.cmd.rs1(8 + pixel_repeats_bits - 1, 8), 1.U) // TODO we use a default value of pixel repeats here, for backwards compatibility. However, we should deprecate and remove this default value eventually
         ld_block_strides(id) := block_stride
         ld_pixel_repeats(id) := repeat_pixels - 1.U
-      }.elsewhen(new_entry.is_config && new_entry.q === stq) {
+      }.elsewhen(new_entry.is_config && new_entry.q === stq && !is_norm) {
         val pool_stride = new_entry.cmd.cmd.rs1(5, 4) // TODO magic numbers
         pooling_is_enabled := pool_stride =/= 0.U
       }.elsewhen(funct === PRELOAD_CMD) {

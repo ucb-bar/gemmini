@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -40,7 +41,7 @@ class ZeroWriter[T <: Data, U <: Data, V <: Data, Tag <: Data](config: GemminiAr
   io.req.ready := !req.valid
 
   io.resp.valid := req.valid
-  io.resp.bits.laddr := req.bits.laddr + req.bits.block_stride * (col_counter / block_cols.U)
+  io.resp.bits.laddr := req.bits.laddr + req.bits.block_stride * (col_counter / block_cols.U(col_counter.getWidth.W)) // The width expansion here is added solely to satisfy Verilator's linter
   io.resp.bits.mask.zipWithIndex.foreach { case (m, i) => m := col_counter + i.U < req.bits.cols }
   io.resp.bits.last := col_counter +& block_cols.U >= req.bits.cols
   io.resp.bits.tag := req.bits.tag
