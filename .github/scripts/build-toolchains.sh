@@ -30,6 +30,6 @@ if [ ! -d "$INSTALL_DIR" ]; then
     cd $HOME
 
     # init all submodules including the tools (doesn't use CI_MAKE_PROC due to mem. constraints)
-    CHIPYARD_DIR="$LOCAL_CHIPYARD_DIR" NPROC=$CI_MAKE_NPROC $LOCAL_CHIPYARD_DIR/scripts/build-toolchains.sh esp-tools
+    CHIPYARD_DIR="$LOCAL_CHIPYARD_DIR" NPROC=$CI_MAKE_NPROC $LOCAL_CHIPYARD_DIR/build-setup.sh --skip-conda esp-tools
 fi
 
