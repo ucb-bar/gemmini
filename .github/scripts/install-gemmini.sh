@@ -20,7 +20,6 @@ rm -rf chipyard
 git clone --progress --verbose https://github.com/ucb-bar/chipyard.git chipyard
 cd $LOCAL_CHIPYARD_DIR
 
-echo "Checking out Chipyard version: $(cat $LOCAL_CHECKOUT_DIR/CHIPYARD.hash)"
 git fetch
 git checkout $(cat $LOCAL_CHECKOUT_DIR/CHIPYARD.hash)
 
@@ -29,7 +28,6 @@ git checkout $(cat $LOCAL_CHECKOUT_DIR/CHIPYARD.hash)
 source env.sh
 
 cd toolchains/esp-tools/riscv-isa-sim/build
-echo "Checking out Spike version $(cat $LOCAL_CHECKOUT_DIR/SPIKE.hash)"
 git checkout $(cat $LOCAL_CHECKOUT_DIR/SPIKE.hash)
 make && make install
 
