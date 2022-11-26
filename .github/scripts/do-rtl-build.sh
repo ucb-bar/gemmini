@@ -7,20 +7,27 @@ set -ex
 SCRIPT_DIR="$( cd "$( dirname "$0" )" && pwd )"
 source $SCRIPT_DIR/defaults.sh
 
-rm -rf $LOCAL_CHIPYARD_DIR/generators/gemmini/*
-cd $LOCAL_CHECKOUT_DIR
-git submodule update --init --recursive software/gemmini-rocc-tests
-mv -f $LOCAL_CHECKOUT_DIR/* $LOCAL_CHIPYARD_DIR/generators/gemmini/
+source $SCRIPT_DIR/enable-conda.sh
 
+cd $LOCAL_CHIPYARD_DIR
+source env.sh
 
-TOOLS_DIR=$LOCAL_ESP_DIR
-LD_LIB_DIR=$LOCAL_ESP_DIR/lib
+cd $LOCAL_CHIPYARD_DIR
+echo Printing current chipyard commit
+git log -1 --format="%H"
 
-# enter the verilator directory and build the specific config on remote server
+cd $LOCAL_CHIPYARD_DIR/generators/gemmini
+echo Printing current gemmini commit
+git log -1 --format="%H"
+
+cd $LOCAL_CHIPYARD_DIR/generators/rocket-chip
+echo Printing rocket-chip commit
+git log -1 --format="%H"
+
+echo Printing rocket-chip sources
+ls src/main/scala/
+
+cd $LOCAL_SIM_DIR
 make -C $LOCAL_SIM_DIR clean
-export RISCV=$TOOLS_DIR
-export LD_LIBRARY_PATH=$LD_LIB_DIR
-export PATH=$LOCAL_VERILATOR_DIR/bin:$PATH
-export VERILATOR_ROOT=$LOCAL_VERILATOR_DIR
-export COURSIER_CACHE=$LOCAL_WORK_DIR/.coursier-cache
 make -j$LOCAL_MAKE_NPROC -C $LOCAL_SIM_DIR VERILATOR_OPT_FLAGS="-O0 -OG" JAVA_OPTS="-Xmx2500M -Xss8M" SBT_OPTS="-Dsbt.ivy.home=$LOCAL_CHIPYARD_DIR/.ivy2 -Dsbt.supershell=false -Dsbt.global.base=$LOCAL_CHIPYARD_DIR/.sbt -Dsbt.boot.directory=$LOCAL_CHIPYARD_DIR/.sbt/boot" CONFIG=GemminiRocketConfig
+

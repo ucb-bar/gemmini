@@ -5,14 +5,14 @@ set -ex
 SCRIPT_DIR="$( cd "$( dirname "$0" )" && pwd )"
 source $SCRIPT_DIR/defaults.sh
 
+source $SCRIPT_DIR/enable-conda.sh
 
-TOOLS_DIR=$LOCAL_ESP_DIR
-PATH=$PATH:$LOCAL_ESP_DIR/bin
+cd $LOCAL_CHIPYARD_DIR
+source env.sh
 
 cd $LOCAL_CHIPYARD_DIR/generators/gemmini/software/gemmini-rocc-tests
 CFLAGS=-DFAST ./build.sh
 
 cd build
 make test-baremetal-bareMetalC RUNNER="'make -C $LOCAL_CHIPYARD_DIR/sims/verilator/ CONFIG=GemminiRocketConfig run-binary-hex BINARY='"
-
 
