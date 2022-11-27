@@ -22,7 +22,7 @@ We provide here a quick guide to installing Gemmini's dependencies (Chipyard and
 Dependencies
 ---------
 
-Before beginning, install the [Chipyard dependencies](https://chipyard.readthedocs.io/en/latest/Chipyard-Basics/Initial-Repo-Setup.html#requirements) that are described here.
+Before beginning, install the [Chipyard dependencies](https://chipyard.readthedocs.io/en/latest/Chipyard-Basics/Initial-Repo-Setup.html#default-requirements-installation).
 
 Installing Chipyard and Spike
 -----------------------------
@@ -144,7 +144,7 @@ cd chipyard/generators/gemmini
 Next steps
 --------
 
-Check out [our IISWC 2021 tutorial](https://sites.google.com/berkeley.edu/gemminitutorialiiswc2021/) to learn how to:
+Check out our [MLSys 2022 tutorial](https://sites.google.com/berkeley.edu/gemmini-tutorial-mlsys-2022) (or our earlier but more out-of-date [IISWC 2021 tutorial](https://sites.google.com/berkeley.edu/gemminitutorialiiswc2021/)) to learn how to:
 * build different types of diverse accelerators using Gemmini.
 * add custom datatypes to Gemmini.
 * write your own Gemmini programs.
@@ -535,7 +535,7 @@ The parameters controlling this feature are:
 **Format:** `config_norm rs1 rs2`
 
 `config_norm` is an **experimental** command added primarily to support an integer-only variant of BERT called [I-BERT](https://arxiv.org/abs/2101.01321) on Gemmini.
-The command allows users to set scalar constants that are used by I-BERT's GELU, layernorm, softmax variants.
+The command allows users to set scalar constants that are used by I-BERT's GELU, layernorm, and softmax variants.
 
 ### `flush` flushes the TLB
 **Format:** `flush rs1`
