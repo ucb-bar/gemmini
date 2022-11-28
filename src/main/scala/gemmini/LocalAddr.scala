@@ -21,8 +21,13 @@ class LocalAddr(sp_banks: Int, sp_bank_entries: Int, acc_banks: Int, acc_bank_en
   val is_acc_addr = Bool()
   val accumulate = Bool()
   val read_full_acc_row = Bool()
-  val garbage = UInt(((localAddrBits - maxAddrBits - 4) max 0).W)
-  val garbage_bit = if (localAddrBits - maxAddrBits >= 4) UInt(1.W) else UInt(0.W)
+  val norm_cmd = NormCmd()
+
+  private val metadata_w = is_acc_addr.getWidth + accumulate.getWidth + read_full_acc_row.getWidth + norm_cmd.getWidth
+  assert(maxAddrBits + metadata_w < 32)
+
+  val garbage = UInt(((localAddrBits - maxAddrBits - metadata_w - 1) max 0).W)
+  val garbage_bit = if (localAddrBits - maxAddrBits >= metadata_w + 1) UInt(1.W) else UInt(0.W)
   val data = UInt(maxAddrBits.W)
 
   def sp_bank(dummy: Int = 0) = if (spAddrBits == spBankRowBits) 0.U else data(spAddrBits - 1, spBankRowBits)

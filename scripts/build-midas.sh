@@ -53,8 +53,10 @@ if [ dram_model == "" ]; then
   echo DRAM model must be provided.
 fi
 
+export SYSLIBS=" $SYSLIBS -l:libdwarf.so -l:libelf.so -lz -lgmp "
+
 cd ../../sims/firesim/
-source sourceme-f1-manager.sh &> build.log
+source sourceme-f1-manager.sh --skip-ssh-setup &> build.log
 
 cd sim/
 make ${simulator}${debug} TARGET_CONFIG=${dram_model}_WithDefaultFireSimBridges_WithFireSimConfigTweaks_chipyard.CustomGemminiSoCConfig

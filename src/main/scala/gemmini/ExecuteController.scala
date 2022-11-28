@@ -29,7 +29,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val acc = new Bundle {
       val read_req = Vec(acc_banks, Decoupled(new AccumulatorReadReq(
-          acc_bank_entries, log2Up(accType.getWidth), acc_scale_t
+          acc_bank_entries, accType, acc_scale_t
       )))
 
       val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
@@ -115,8 +115,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val acc_scale = Reg(acc_scale_t)
-  val relu6_shift = Reg(UInt(log2Up(accType.getWidth).W))
-  val activation = if (has_nonlinear_activations) Reg(UInt(2.W)) else Activation.NONE // TODO magic number
+  val activation = if (has_nonlinear_activations) Reg(UInt(Activation.bitwidth.W)) else Activation.NONE // TODO magic number
   val a_transpose = Reg(Bool())
   val bd_transpose = Reg(Bool())
   val config_initialized = RegInit(false.B)
@@ -470,7 +469,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.read_req(i).valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
       io.acc.read_req(i).bits.scale := acc_scale
       io.acc.read_req(i).bits.full := false.B
-      io.acc.read_req(i).bits.relu6_shift := relu6_shift
+      io.acc.read_req(i).bits.igelu_qb := DontCare
+      io.acc.read_req(i).bits.igelu_qc := DontCare
+      io.acc.read_req(i).bits.iexp_qln2 := DontCare
+      io.acc.read_req(i).bits.iexp_qln2_inv := DontCare
       io.acc.read_req(i).bits.act := activation
       io.acc.read_req(i).bits.fromDMA := false.B
       io.acc.read_req(i).bits.addr := MuxCase(a_address_rs1.acc_row() + a_fire_counter,
@@ -487,7 +489,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.read_req(i).valid := false.B
       io.acc.read_req(i).bits.scale := DontCare
       io.acc.read_req(i).bits.full := false.B
-      io.acc.read_req(i).bits.relu6_shift := relu6_shift
+      io.acc.read_req(i).bits.igelu_qb := DontCare
+      io.acc.read_req(i).bits.igelu_qc := DontCare
+      io.acc.read_req(i).bits.iexp_qln2 := DontCare
+      io.acc.read_req(i).bits.iexp_qln2_inv := DontCare
       io.acc.read_req(i).bits.act := DontCare
       io.acc.read_req(i).bits.fromDMA := false.B
       io.acc.read_req(i).bits.addr := DontCare
@@ -503,8 +508,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     when (read_a && !io.im2col.req.ready) {
       a_ready := false.B
     }
-    dontTouch(io.im2col.req.ready)
-    dontTouch(read_a)
 
     io.im2col.req.valid := read_a
     io.im2col.req.bits.addr := a_address_rs1
@@ -550,7 +553,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               }
               in_shift := config_ex_rs2.in_shift
               acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_t) // TODO magic number
-              relu6_shift := config_ex_rs2.relu6_shift
               a_transpose := config_ex_rs1.a_transpose
               bd_transpose := config_ex_rs1.b_transpose
 
@@ -614,7 +616,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
           start_inputting_a := !a_should_be_fed_into_transposer
           start_inputting_b := !b_should_be_fed_into_transposer
-          start_inputting_b := true.B
 
           control_state := compute
         }
@@ -924,8 +925,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val activated_wdata = VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map { e =>
       val e_clipped = e.clippedToWidthOf(inputType)
       val e_act = MuxCase(e_clipped, Seq(
-        (activation === Activation.RELU) -> e_clipped.relu,
-        (activation === Activation.RELU6) -> e_clipped.relu6(relu6_shift)))
+        (activation === Activation.RELU) -> e_clipped.relu))
 
       e_act
     })))
@@ -992,7 +992,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   when(io.completed.valid) {
     complete_bits_count := complete_bits_count + 1.U
   }
-  dontTouch(complete_bits_count)
 
   when (reset.asBool()) {
     // pending_completed_rob_id.valid := false.B

@@ -146,7 +146,7 @@ object GemminiConfigs {
 
         Mux(overflow, sat, rec_fn_to_in.io.out.asTypeOf(t))
       },
-      1, Float(8, 24), -1,
+      8, Float(8, 24), -1,
       identity = "1.0",
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
     )),
@@ -254,13 +254,11 @@ class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       gemmini
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 // This Gemmini config has both an Int and an FP Gemmini side-by-side, sharing
 // the same scratchpad.
 class DualGemminiConfig extends Config((site, here, up) => {
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
   case BuildRoCC => {
     var int_gemmini: Gemmini[_,_,_] = null
     var fp_gemmini: Gemmini[_,_,_] = null

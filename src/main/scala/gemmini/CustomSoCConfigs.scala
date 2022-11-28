@@ -10,10 +10,10 @@ class CustomGemminiSoCConfig extends Config(
   new chipyard.config.WithL2TLBs(512) ++
 
   new freechips.rocketchip.subsystem.WithInclusiveCache(
-    nBanks = 1,
     nWays = 8,
     capacityKB = 512,
-    outerLatencyCycles = 40
+    outerLatencyCycles = 40,
+    subBankingFactor = 4
   ) ++
 
   // Set the number of CPUs you want to create

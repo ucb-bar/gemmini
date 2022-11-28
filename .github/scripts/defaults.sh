@@ -28,6 +28,7 @@ LOCAL_ESP_DIR=$HOME/esp-tools-install
 LOCAL_CHIPYARD_DIR=$HOME/chipyard
 LOCAL_SIM_DIR=$LOCAL_CHIPYARD_DIR/sims/verilator
 LOCAL_VERILATOR_DIR=$HOME/verilator-install
+LOCAL_CONDA=/opt/conda/
 
 echo "::set-output name=LOCAL_WORK_DIR::$LOCAL_WORK_DIR"
 echo "::set-output name=LOCAL_CHECKOUT_DIR::$LOCAL_CHECKOUT_DIR"
@@ -36,3 +37,4 @@ echo "::set-output name=LOCAL_ESP_DIR::$LOCAL_ESP_DIR"
 echo "::set-output name=LOCAL_CHIPYARD_DIR::$LOCAL_CHIPYARD_DIR"
 echo "::set-output name=LOCAL_SIM_DIR::$LOCAL_SIM_DIR"
 echo "::set-output name=LOCAL_VERILATOR_DIR::$LOCAL_VERILATOR_DIR"
+echo "::set-output name=LOCAL_CONDA::$LOCAL_CONDA"
