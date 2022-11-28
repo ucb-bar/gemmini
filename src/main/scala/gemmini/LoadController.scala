@@ -31,6 +31,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val control_state = RegInit(waiting_for_command)
 
   val strides = Reg(Vec(load_states, UInt(coreMaxAddrBits.W)))
+  val padding_values = Reg(Vec(load_states, UInt(padding_value_bits.W)))
   val scales = Reg(Vec(load_states, UInt(mvin_scale_t_bits.W)))
   val shrinks = Reg(Vec(load_states, Bool())) // Shrink inputs to accumulator
   val block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W))) // Spad stride during block move-ins
@@ -47,10 +48,11 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val cols = mvin_rs2.num_cols
   val rows = mvin_rs2.num_rows
 
-  val config_stride = cmd.bits.cmd.rs2
+  val config_stride = cmd.bits.cmd.rs2(31,0)
 
   val config_mvin_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigMvinRs1(mvin_scale_t_bits, block_stride_bits, pixel_repeats_bits))
 
+  val config_padding_value = cmd.bits.cmd.rs2(63,32)
   val config_scale = config_mvin_rs1.scale
   val config_shrink = config_mvin_rs1.shrink
   val config_block_stride = config_mvin_rs1.stride
@@ -63,6 +65,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val config_state_id = config_mvin_rs1.state_id
   val state_id = Mux(cmd.bits.cmd.inst.funct === CONFIG_CMD, config_state_id, load_state_id)
 
+  val padding_value = padding_values(state_id)
   val stride = strides(state_id)
   val scale = scales(state_id)
   val shrink = shrinks(state_id)
@@ -109,6 +112,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.all_zeros := all_zeros
   io.dma.req.bits.status := mstatus
   io.dma.req.bits.pixel_repeats := pixel_repeat
+  io.dma.req.bits.padding_value := padding_value
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
@@ -141,6 +145,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     is (waiting_for_command) {
       when (cmd.valid) {
         when(DoConfig) {
+          padding_value := config_padding_value
           stride := config_stride
           scale := config_scale
           shrink := config_shrink

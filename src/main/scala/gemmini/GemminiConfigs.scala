@@ -170,6 +170,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
   val pixel_repeats_bits = 8 min log2Up(meshColumns * tileColumns + 1)
 
+  // Note: put here the min with 16 because there are only 16 bits left in the config mvin instruction
+  val padding_value_bits = inputType.getWidth min 16
+
   val hasIm2Col = false
 
   val tree_reduction = use_tree_reduction_if_possible && dataflow == Dataflow.WS && tileRows > 1
