@@ -45,14 +45,14 @@ source env.sh
 
 cd generators/gemmini
 git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
-git checkout v0.7.0
+git fetch && git checkout v0.7.0
 git submodule update --init --recursive
 
 SPIKE_HASH=$(cat SPIKE.hash)
 
 cd -
 cd toolchains/esp-tools/riscv-isa-sim/build
-git checkout $SPIKE_HASH
+git fetch && git checkout $SPIKE_HASH
 make && make install
 
 # The final step is only necessary if you want to run MIDAS simulations with
