@@ -2,6 +2,12 @@
   <img width="1000" src="./img/full-logo.svg">
 </p>
 
+Upcoming Tutorial
+===============================
+We will be presenting [a new tutorial](https://sites.google.com/berkeley.edu/gemmini-tutorial-mlsys-2022) for Gemmini at MLSys 2022, on August 29th, 2022.
+
+If you would like to attend, **then please register online** [at this link](https://docs.google.com/forms/d/1bdIXegBkEMJY88YuD80HN40haZ9tx_bZgmaN3FON5DI/edit). We're looking forward to meeting you all!
+
 Gemmini
 ====================================
 
