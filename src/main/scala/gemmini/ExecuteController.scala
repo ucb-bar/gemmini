@@ -115,7 +115,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val acc_scale = Reg(acc_scale_t)
-  val activation = if (has_nonlinear_activations) Reg(UInt(Activation.bitwidth.W)) else Activation.NONE // TODO magic number
+  val activation = if (has_nonlinear_activations) Reg(UInt(Activation.bitwidth.W)) else Activation.NONE
   val a_transpose = Reg(Bool())
   val bd_transpose = Reg(Bool())
   val config_initialized = RegInit(false.B)

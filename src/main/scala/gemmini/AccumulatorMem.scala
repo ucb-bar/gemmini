@@ -33,7 +33,7 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val stat_addr = UInt(8.W)
   val store_stats = Bool()
   val load_stats = Bool()
-  val act = UInt(Activation.bitwidth.W) // TODO magic number
+  val act = UInt(Activation.bitwidth.W)
   val acc_bank_id = UInt(2.W) // TODO magic number
 }
 
