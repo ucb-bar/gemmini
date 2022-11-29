@@ -94,7 +94,6 @@ class MaxLanes[T <: Data](num_stats: Int, acc_t: T, n_lanes: Int, latency: Int)(
   // Each lane computes a sum, or an error-squared sum
 
   import ev._
-  import NormCmd._
 
   class LaneOutput extends Bundle {
     val result = acc_t.cloneType
@@ -117,7 +116,17 @@ class MaxLanes[T <: Data](num_stats: Int, acc_t: T, n_lanes: Int, latency: Int)(
     Mux(i.U < io.ins.bits.len, d.withWidthOf(acc_t), d.minimum)
   }
 
-  val result = data.reduce({ (max, x) => Mux(x > max, x, max) })
+  def treeMax(x: Seq[T]): T = {
+    if (x.length == 1) {
+      x.head
+    } else {
+      val a = treeMax(x.slice(0, x.length / 2)) // ayy slice
+      val b = treeMax(x.slice(x.length / 2, x.length))
+      Mux(a > b, a, b)
+    }
+  }
+
+  val result = treeMax(data)
 
   val pipe = Module(new Pipeline[LaneOutput](new LaneOutput, latency)())
 
@@ -182,6 +191,46 @@ class IntSqrt(width: Int) extends Module {
       busy := true.B
       counter := (N - 1).U
     }
+  }
+}
+
+class MulPipe[T <: Data, U <: Data](scale_t: U)(implicit ev: Arithmetic[T])
+  extends Module {
+
+  val io = IO(new Bundle {
+    val ins = Flipped(Decoupled(new Bundle {
+      val x = scale_t.cloneType
+      val y = scale_t.cloneType
+    }))
+
+    val out = Decoupled(scale_t.cloneType)
+  })
+
+  scale_t match {
+    case Float(expWidth, sigWidth) =>
+      val self_rec = recFNFromFN(expWidth, sigWidth, io.ins.bits.x.asUInt())
+      val scale_rec = recFNFromFN(expWidth, sigWidth, io.ins.bits.y.asUInt())
+
+      val mul = Module(new MulRecFN(expWidth, sigWidth))
+
+      mul.io.roundingMode := consts.round_near_even
+      mul.io.detectTininess := consts.tininess_afterRounding
+
+      mul.io.a := self_rec
+      mul.io.b := scale_rec
+
+      val mul_result = fNFromRecFN(expWidth, sigWidth, mul.io.out).asTypeOf(scale_t)
+
+      val pipe = Module(new Pipeline(scale_t.cloneType, 2)())
+
+      pipe.io.in.valid := io.ins.valid
+      pipe.io.in.bits := mul_result
+      io.ins.ready := pipe.io.in.ready
+
+//      pipe.io.out.ready := io.out.ready
+//      io.out.bits := pipe.io.out.bits
+//      io.out.valid := pipe.io.out.valid
+      io.out <> pipe.io.out
   }
 }
 
@@ -361,8 +410,9 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     val stat = stats(max_out_lanes_stats_id)
 
     when (max_lanes.io.out.fire()) {
-      stat.running_max := Mux(max_lanes.io.out.bits.result > stat.running_max, max_lanes.io.out.bits.result, stat.running_max)
-      //stat.max := Mux(max_lanes.io.out.bits.result > stat.max, max_lanes.io.out.bits.result, stat.max)
+      val new_max = Mux(max_lanes.io.out.bits.result > stat.running_max, max_lanes.io.out.bits.result, stat.running_max)
+      stat.running_max := new_max
+      stat.max := new_max
     }
   }
 
@@ -473,41 +523,17 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     stats.zipWithIndex.map { case (s,i) =>
       (s.state === get_scaled_inv_stddev) -> i.U }
   )
-  val inv_stddev_scale_in = Wire(Decoupled(scale_t.cloneType))
-  val inv_stddev_scale_out = Wire(Decoupled(scale_t.cloneType))
 
-  scale_t match {
-    case Float(expWidth, sigWidth) =>
-      val self_rec = recFNFromFN(expWidth, sigWidth, inv_stddev_scale_in.bits.asUInt())
-      val scale_rec = recFNFromFN(expWidth, sigWidth, stats(inv_stddev_to_scale_id).req.acc_read_resp.scale.asUInt())
-
-      val muladder = Module(new MulRecFN(expWidth, sigWidth))
-
-      muladder.io.roundingMode := consts.round_near_even
-      muladder.io.detectTininess := consts.tininess_afterRounding
-
-      muladder.io.a := self_rec
-      muladder.io.b := scale_rec
-
-      val mul_result = fNFromRecFN(expWidth, sigWidth, muladder.io.out).asTypeOf(scale_t)
-
-      val pipe = Module(new Pipeline(scale_t.cloneType, 2)())
-
-      pipe.io.in.valid := inv_stddev_scale_in.valid
-      pipe.io.in.bits := mul_result
-      pipe.io.out.ready := inv_stddev_scale_out.ready
-
-      inv_stddev_scale_in.ready := pipe.io.in.ready
-      inv_stddev_scale_out.bits := pipe.io.out.bits
-      inv_stddev_scale_out.valid := pipe.io.out.valid
-  }
+  val inv_stddev_scale_mul_pipe = Module(new MulPipe(scale_t))
 
   {
     // Scale input
     val stat = stats(inv_stddev_to_scale_id)
 
-    inv_stddev_scale_in.valid := stat.state === get_scaled_inv_stddev
-    inv_stddev_scale_in.bits := stats(inv_stddev_to_scale_id).inv_stddev.asTypeOf(scale_t)
+    val ins = inv_stddev_scale_mul_pipe.io.ins
+    ins.bits.x := stats(inv_stddev_to_scale_id).inv_stddev.asTypeOf(scale_t)
+    ins.bits.y := stats(inv_stddev_to_scale_id).req.acc_read_resp.scale
+    ins.valid := stat.state === get_scaled_inv_stddev
   }
 
   {
@@ -518,10 +544,11 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     )
     val stat = stats(waiting_for_scale_id)
 
-    inv_stddev_scale_out.ready := stat.state === waiting_for_scaled_inv_stddev
+    val out = inv_stddev_scale_mul_pipe.io.out
+    out.ready := stat.state === waiting_for_scaled_inv_stddev
 
     when (stat.state === waiting_for_scaled_inv_stddev) {
-      stat.inv_stddev := inv_stddev_scale_out.bits.asTypeOf(stat.inv_stddev)
+      stat.inv_stddev := out.bits.asTypeOf(stat.inv_stddev)
     }
   }
 
@@ -596,44 +623,17 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     stats.zipWithIndex.map { case (s,i) =>
       (s.state === get_scaled_inv_sum_exp) -> i.U }
   )
-  val inv_sum_exp_scale_in = Wire(Decoupled(scale_t.cloneType))
-  val inv_sum_exp_scale_out = Wire(Decoupled(scale_t.cloneType))
 
-  scale_t match {
-    case Float(expWidth, sigWidth) =>
-//      val mul_result = inv_sum_exp_scale_in.bits.asTypeOf(scale_t) *
-//        stats(inv_sum_exp_to_scale_id).req.acc_read_resp.scale.asTypeOf(scale_t)
-
-      val self_rec = recFNFromFN(expWidth, sigWidth, inv_sum_exp_scale_in.bits.asUInt())
-      val scale_rec = recFNFromFN(expWidth, sigWidth, stats(inv_sum_exp_to_scale_id).req.acc_read_resp.scale.asUInt())
-
-      val muladder = Module(new MulRecFN(expWidth, sigWidth))
-
-      muladder.io.roundingMode := consts.round_near_even
-      muladder.io.detectTininess := consts.tininess_afterRounding
-
-      muladder.io.a := self_rec
-      muladder.io.b := scale_rec
-
-      val mul_result = fNFromRecFN(expWidth, sigWidth, muladder.io.out).asTypeOf(scale_t)
-
-      val pipe = Module(new Pipeline(scale_t.cloneType, 2)())
-
-      pipe.io.in.valid := inv_sum_exp_scale_in.valid
-      pipe.io.in.bits := mul_result
-      pipe.io.out.ready := inv_sum_exp_scale_out.ready
-
-      inv_sum_exp_scale_in.ready := pipe.io.in.ready
-      inv_sum_exp_scale_out.bits := pipe.io.out.bits
-      inv_sum_exp_scale_out.valid := pipe.io.out.valid
-  }
+  val inv_sum_exp_scale_mul_pipe = Module(new MulPipe(scale_t))
 
   {
     // Scale input
     val stat = stats(inv_sum_exp_to_scale_id)
 
-    inv_sum_exp_scale_in.valid := stat.state === get_scaled_inv_sum_exp
-    inv_sum_exp_scale_in.bits := stats(inv_sum_exp_to_scale_id).inv_sum_exp.asTypeOf(scale_t)
+    val ins = inv_sum_exp_scale_mul_pipe.io.ins
+    ins.bits.x := stats(inv_sum_exp_to_scale_id).inv_sum_exp.asTypeOf(scale_t)
+    ins.bits.y := stats(inv_sum_exp_to_scale_id).req.acc_read_resp.scale
+    ins.valid := stat.state === get_scaled_inv_sum_exp
   }
 
   {
@@ -644,10 +644,11 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     )
     val stat = stats(waiting_for_scale_id)
 
-    inv_sum_exp_scale_out.ready := stat.state === waiting_for_scaled_inv_sum_exp
+    val out = inv_sum_exp_scale_mul_pipe.io.out
+    out.ready := stat.state === waiting_for_scaled_inv_sum_exp
 
     when (stat.state === waiting_for_scaled_inv_sum_exp) {
-      stat.inv_sum_exp := inv_sum_exp_scale_out.bits.asTypeOf(stat.inv_sum_exp)
+      stat.inv_sum_exp := out.bits.asTypeOf(stat.inv_sum_exp)
     }
   }
 
@@ -727,11 +728,11 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       next_state := Mux(reciprocal_out.fire(), state.next, state)
       done := false.B
     }.elsewhen(state === get_scaled_inv_stddev) {
-      next_state := Mux(inv_stddev_scale_in.fire() && inv_stddev_to_scale_id === id.U, state.next, state)
+      next_state := Mux(inv_stddev_scale_mul_pipe.io.ins.fire() && inv_stddev_to_scale_id === id.U, state.next, state)
       done := false.B
     }.elsewhen(state === waiting_for_scaled_inv_stddev) {
-      next_state := Mux(inv_stddev_scale_out.fire(), idle, state)
-      done := inv_stddev_scale_out.fire()
+      next_state := Mux(inv_stddev_scale_mul_pipe.io.out.fire(), idle, state)
+      done := inv_stddev_scale_mul_pipe.io.out.fire()
     }.elsewhen(state === get_inv_sum_exp) {
       next_state := Mux(exp_divider_in.fire() && sum_exp_to_inv_id === id.U, state.next, state)
       done := false.B
@@ -739,11 +740,11 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       next_state := Mux(exp_divider_out.fire(), state.next, state)
       done := false.B
     }.elsewhen(state === get_scaled_inv_sum_exp) {
-      next_state := Mux(inv_sum_exp_scale_in.fire() && inv_sum_exp_to_scale_id === id.U, state.next, state)
+      next_state := Mux(inv_sum_exp_scale_mul_pipe.io.ins.fire() && inv_sum_exp_to_scale_id === id.U, state.next, state)
       done := false.B
     }.elsewhen(state === waiting_for_scaled_inv_sum_exp) {
-      next_state := Mux(inv_sum_exp_scale_out.fire(), idle, state)
-      done := inv_sum_exp_scale_out.fire()
+      next_state := Mux(inv_sum_exp_scale_mul_pipe.io.out.fire(), idle, state)
+      done := inv_sum_exp_scale_mul_pipe.io.out.fire()
     }.otherwise {
       assert(false.B, "invalid state in Normalizer")
       next_state := DontCare
@@ -753,9 +754,6 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     when (io.in.fire() && in_stats_id === id.U) {
       next_state := Mux(io.in.bits.cmd === NormCmd.RESET, output,
         Mux(io.in.bits.cmd === NormCmd.MAX, get_max, get_sum))
-      when (io.in.bits.cmd === NormCmd.SUM_EXP) {
-        stat.max := stat.running_max
-      }
     }
   }
 
@@ -779,11 +777,13 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     when(reset_running_state) {
       stat.sum := acc_t.zero
       stat.count := Mux(is_input, io.in.bits.len, 0.U)
-    }
-
-    when (state =/= get_inv_sum_exp && next_state === get_inv_sum_exp) {
       stat.running_max := acc_t.minimum
     }
+
+//    when (state =/= get_max && next_state === get_max) {
+//      stat.running_max := acc_t.minimum
+//      stat.max := acc_t.minimum
+//    }
   }
 
   dontTouch(stats)
@@ -792,7 +792,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
   assert(PopCount(stats.map(s => s.state === waiting_for_mean || s.state === waiting_for_variance)) <= 1.U, "we don't support pipelining the divider/sqrt-unit/inv-unit right now")
   assert(PopCount(stats.map(_.state === waiting_for_stddev)) <= 1.U, "we don't support pipelining the divider/sqrt-unit/inv-unit right now")
   assert(PopCount(stats.map(_.state === waiting_for_inv_stddev)) <= 1.U, "we don't support pipelining the divider/sqrt-unit/inv-unit right now")
-  assert(PopCount(stats.map(_.state === output)) <= 1.U, "multiple outputs at same time")
+//  assert(PopCount(stats.map(_.state === output)) <= 1.U, "multiple outputs at same time")
   assert(acc_t.getWidth == scale_t.getWidth, "we use the same variable to hold both the variance and the inv-stddev, so we need them to see the width")
 
   // Resets
