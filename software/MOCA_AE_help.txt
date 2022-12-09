@@ -13,6 +13,10 @@ If there's any issue compiling and running the binaries, or do not want to compi
 - We also copied the result uartlog and plot scripts on forked FireSim: https://github.com/SeahK/firesim/tree/main/deploy/results-workload, under EXAMPLE_RESULT. If you have trouble accessing forked FireSim, then just copy from gemmini-rocc-tests directory.
 You can obtain result of the provided binary (above) by following these steps:
 1) Download, unzip and place this under gemmini/software/overlay/root, so that overlay/root/imagenet would have 18 -linux binaries.
+ - First, cd gemmini/software/overlay/root
+ - download imagenet.zip, do unzip imagenet.zip
+ - rm -rf imagenet.zip && rm -rf __MACOSX
+ - You would be able to see imagenet dir with 18 -linux binaries in overlay/root/imagenet
 2) Run these commands:
 cd /home/centos/firesim/sw/firesim-software/
 rm images/gemmini-tests-workload*
