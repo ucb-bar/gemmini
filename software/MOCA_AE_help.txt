@@ -16,10 +16,8 @@ You can obtain result of the provided binary (above) by following these steps:
 2) Run these commands:
 cd /home/centos/firesim/sw/firesim-software/
 rm images/gemmini-tests-workload*
-./marshal -v --workdir /home/centos/firesim/target-design/chipyard/generators/gemmini/software
- build gemmini-tests-workload.json
-./marshal -v --workdir /home/centos/firesim/target-design/chipyard/generators/gemmini/software
- install gemmini-tests-workload.json
+./marshal -v --workdir /home/centos/firesim/target-design/chipyard/generators/gemmini/software build gemmini-tests-workload.json
+./marshal -v --workdir /home/centos/firesim/target-design/chipyard/generators/gemmini/software install gemmini-tests-workload.json
 
 
 * Need more detailed instruction of setting up config_runtime, config_hwdb to launch FireSim runs
