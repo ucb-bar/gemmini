@@ -12,8 +12,8 @@ If there's any issue compiling and running the binaries, or do not want to compi
 - The result of running these binaries, scripts and plots are here: https://github.com/ucb-bar/gemmini-rocc-tests/tree/MOCA/moca-ae-result
 - We also copied the result uartlog and plot scripts on forked FireSim: https://github.com/SeahK/firesim/tree/main/deploy/results-workload, under EXAMPLE_RESULT. If you have trouble accessing forked FireSim, then just copy from gemmini-rocc-tests directory.
 You can obtain result of the provided binary (above) by following these steps:
-1) Open gemmini-rocc-tests/imagenet/Makefile. Comment out or delete all the test names (start with "priority_mp8_") under "tests" (Line 5-22)
-2) Download, unzip and place this under gemmini/software/gemmini-rocc-tests/build, so that gemmini-rocc-tests/build/imagenet would have 18 -linux binaries.
+1) Open gemmini-rocc-tests/imagenet/Makefile. Comment out or delete all the test names (start with "priority_mp8_") under "tests" (Line 5-22, based on the latest commit)
+2) Download, unzip and place imagenet.zip under gemmini/software/gemmini-rocc-tests/build, so that gemmini-rocc-tests/build/imagenet would have 18 -linux binaries.
  - First, cd gemmini/software/gemmini-rocc-tests and run ./build.sh
  - cd build and download imagenet.zip, do unzip imagenet.zip
  - rm -rf imagenet.zip && rm -rf __MACOSX
