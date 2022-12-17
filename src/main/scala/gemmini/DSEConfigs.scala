@@ -119,7 +119,6 @@ class GemminiParamsDSE1 extends Config((site, here, up) => {
         LazyModule(new Gemmini(DSEConfigs.baseConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========DATAFLOW CHANGE: WS=========
@@ -131,7 +130,6 @@ class GemminiParamsDSE2 extends Config((site, here, up) => {
         LazyModule(new Gemmini(DSEConfigs.wsOnlyConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========DATAFLOW CHANGE: BOTH=========
@@ -143,7 +141,6 @@ class GemminiParamsDSE3 extends Config((site, here, up) => {
         LazyModule(new Gemmini(DSEConfigs.bothDataflowsConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========BITWIDTH CHANGE: 32 BITS=========
@@ -155,7 +152,6 @@ class GemminiParamsDSE4 extends Config((site, here, up) => {
         LazyModule(new Gemmini(DSEConfigs.highBitwidthConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========DIMENSIONS CHANGE: 32x32=========
@@ -167,7 +163,6 @@ class GemminiParamsDSE5 extends Config((site, here, up) => {
         LazyModule(new Gemmini(DSEConfigs.largerDimConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========PIPELINE DEPTH CHANGE: Fully Combinational=========
@@ -179,7 +174,6 @@ class GemminiParamsDSE6 extends Config((site, here, up) => {
         LazyModule(new Gemmini(DSEConfigs.fullyCombinationalConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========MEMORY CAPACITY CHANGE: 256 KB=========
@@ -191,7 +185,6 @@ class GemminiParamsDSE7 extends Config((site, here, up) => {
         LazyModule(new Gemmini(DSEConfigs.moreMemoryConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========MEMORY BANKS CHANGE: 33 Banks=========
@@ -203,7 +196,6 @@ class GemminiParamsDSE8 extends Config((site, here, up) => {
         LazyModule(new Gemmini(DSEConfigs.moreBanksConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========BUS WIDTH CHANGE: 64 bits=========
@@ -215,7 +207,6 @@ class GemminiParamsDSE10 extends Config((site, here, up) => {
         LazyModule(new Gemmini(DSEConfigs.narrowerBusConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 8)
 })
 
 //===========PnR 16-by-16=========
@@ -227,7 +218,6 @@ class GemminiParamsPnR16 extends Config((site, here, up) => {
       LazyModule(new Gemmini(DSEConfigs.pnr16Config))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========PnR 32-by-32=========
@@ -239,7 +229,6 @@ class GemminiParamsPnR32 extends Config((site, here, up) => {
       LazyModule(new Gemmini(DSEConfigs.pnr32Config))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 //===========Scalar Processor Change=========
@@ -251,7 +240,6 @@ class GemminiParamsDSE11 extends Config((site, here, up) => {
         LazyModule(new Gemmini(DSEConfigs.baseConfig))
     }
   )
-  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
 })
 
 // -----------------------------

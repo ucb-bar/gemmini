@@ -2,6 +2,12 @@
   <img width="1000" src="./img/full-logo.svg">
 </p>
 
+Upcoming Tutorial
+===============================
+We will be presenting [a new tutorial](https://sites.google.com/berkeley.edu/gemmini-tutorial-mlsys-2022) for Gemmini at MLSys 2022, on August 29th, 2022.
+
+If you would like to attend, **then please register online** [at this link](https://docs.google.com/forms/d/1bdIXegBkEMJY88YuD80HN40haZ9tx_bZgmaN3FON5DI/edit). We're looking forward to meeting you all!
+
 Gemmini
 ====================================
 
@@ -22,7 +28,7 @@ We provide here a quick guide to installing Gemmini's dependencies (Chipyard and
 Dependencies
 ---------
 
-Before beginning, install the [Chipyard dependencies](https://chipyard.readthedocs.io/en/latest/Chipyard-Basics/Initial-Repo-Setup.html#requirements) that are described here.
+Before beginning, install the [Chipyard dependencies](https://chipyard.readthedocs.io/en/latest/Chipyard-Basics/Initial-Repo-Setup.html#default-requirements-installation).
 
 Installing Chipyard and Spike
 -----------------------------
@@ -32,27 +38,28 @@ Run these steps to install Chipyard and Spike (make sure to checkout the correct
 ```shell
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
-git checkout 481398b910fa95ec88dd578c67ba358a4d83129d
-./scripts/init-submodules-no-riscv-tools.sh
-./scripts/build-toolchains.sh esp-tools
+git checkout 1.8.1
+./build-setup.sh esp-tools
 
 source env.sh
 
 cd generators/gemmini
 git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
-git fetch --unshallow && git checkout dev && git pull origin dev
-git submodule update
+git checkout dev && git pull origin dev
+git submodule update --init --recursive
+
+SPIKE_HASH=$(cat SPIKE.hash)
 
 cd -
 cd toolchains/esp-tools/riscv-isa-sim/build
-git fetch --unshallow && git checkout 2ed403a70f65559a3c2a06bf724d4737edc73a23
+git checkout $SPIKE_HASH
 make && make install
 
 # The final step is only necessary if you want to run MIDAS simulations with
 # realistic DRAM models
 cd -
 cd sims/firesim
-git fetch --tags && git checkout 1.13.6
+source sourceme-f1-manager.sh --skip-ssh-setup # Ignore error messages from this command
 ./build-setup.sh --library --skip-validate
 ```
 
@@ -143,7 +150,7 @@ cd chipyard/generators/gemmini
 Next steps
 --------
 
-Check out [our IISWC 2021 tutorial](https://sites.google.com/berkeley.edu/gemminitutorialiiswc2021/) to learn how to:
+Check out our [MLSys 2022 tutorial](https://sites.google.com/berkeley.edu/gemmini-tutorial-mlsys-2022) (or our earlier but more out-of-date [IISWC 2021 tutorial](https://sites.google.com/berkeley.edu/gemminitutorialiiswc2021/)) to learn how to:
 * build different types of diverse accelerators using Gemmini.
 * add custom datatypes to Gemmini.
 * write your own Gemmini programs.
@@ -466,7 +473,7 @@ When calling `config_mvin` (described below), the programmer can choose which `m
 **Format:** `config_ex rs1 rs2`
 - `rs1[1:0]` must be `00`
 - `rs1[2]` determines if output (0) or weight (1) stationary
-- `rs1[4:3]` = activation function: either relu (1), relu6 (2), or no activation function (0)
+- `rs1[3]` = activation function: either relu (1) or no activation function (0)
 - `rs1[8]` = should A be transposed?
 - `rs1[9]` = should B be transposed?
 - `rs1[31:16]` = the stride (in scratchpad addresses) by which the rows of A are fed into the systolic array.
@@ -477,8 +484,6 @@ If the stride is 2, then we feed every other row into the systolic array instead
     - In the default config, `rs1[63:32]` is of type `float32`
 - `rs2[31:0]` = the number of bits by which the accumulated result of a matmul is right-shifted when leaving the systolic array
     - This parameter is only relevant in output-stationary mode, when partial sums must be accumulated within the systolic array itself, and scaled-down when leaving the systolic array and being written into the scratchpad.
-- `rs2[63:32]` = the number of bits by which 6 should be left-shifted before applying relu6
-    - This parameter is ignored if the relu6 activation function is not being used.
 - `funct` = 0
 
 **Action:** mode <= rs1(2); shift <= rs2; A_stride <= rs1[31:16]
@@ -531,6 +536,12 @@ The parameters controlling this feature are:
 - `rs1[63:56]` = number of unpooled columns to pool
 
 **Action:** stride <= rs2; max-pooling parameters <= rs1
+
+### `config_norm` configures normalization commands
+**Format:** `config_norm rs1 rs2`
+
+`config_norm` is an **experimental** command added primarily to support an integer-only variant of BERT called [I-BERT](https://arxiv.org/abs/2101.01321) on Gemmini.
+The command allows users to set scalar constants that are used by I-BERT's GELU, layernorm, and softmax variants.
 
 ### `flush` flushes the TLB
 **Format:** `flush rs1`

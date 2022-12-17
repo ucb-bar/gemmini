@@ -180,7 +180,6 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   val alloc_fire = io.alloc.fire()
 
-  dontTouch(new_entry)
   io.alloc.ready := false.B
   when (io.alloc.valid) {
     val spAddrBits = 32
