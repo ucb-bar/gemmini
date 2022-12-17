@@ -557,7 +557,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val ln_cmd = Reg(UInt(iterator_bitwidth.W))
   val ln_stat_id = Reg(UInt(iterator_bitwidth.W))
 
-  val NORM_STAT_IDS = 4 // TODO magic number
+  val NORM_STAT_IDS = 2 // TODO magic number
 
   val ln_norm_cmds = VecInit(VecInit(NormCmd.SUM, NormCmd.MEAN), VecInit(NormCmd.VARIANCE, NormCmd.INV_STDDEV),
     VecInit(NormCmd.RESET, NormCmd.RESET))
