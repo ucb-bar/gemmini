@@ -160,7 +160,7 @@ class AccumulatorScale[T <: Data, U <: Data](
           regs(i).valid := false.B
         }
       }
-      head_oh := (head_oh << 1).asUInt() | head_oh(nEntries-1)
+      head_oh := (head_oh << 1).asUInt | head_oh(nEntries-1)
     }
 
     io.in.ready := !Mux1H(tail_oh.asBools, regs.map(_.valid)) || (tail_oh === head_oh && out.fire)
@@ -175,7 +175,7 @@ class AccumulatorScale[T <: Data, U <: Data](
           completed_masks(i).foreach(_ := false.B)
         }
       }
-      tail_oh := (tail_oh << 1).asUInt() | tail_oh(nEntries-1)
+      tail_oh := (tail_oh << 1).asUInt | tail_oh(nEntries-1)
     }
 
     val inputs = Seq.fill(width*nEntries) { Wire(Decoupled(new AccScaleDataWithIndex(t, scale_t)(ev))) }
@@ -282,10 +282,10 @@ object AccumulatorScale {
     // qln2_inv / S / (2 ** 16) = 1 / ln2
     // q * qln2_inv = x / S / ln2 * S * (2 ** 16) = x / ln2 * (2 ** 16)
     val neg_q_iexp = neg(q)
-    val z_iexp = (neg_q_iexp * qln2_inv).asUInt().do_>>(16).asTypeOf(q) // q is non-positive
+    val z_iexp = (neg_q_iexp * qln2_inv).asUInt.do_>>(16).asTypeOf(q) // q is non-positive
     val qp_iexp = q.mac(z_iexp, qln2).withWidthOf(q)
     val q_poly_iexp = qc.mac(qp_iexp + qb, qp_iexp + qb).withWidthOf(q)
     // we dont want a rounding shift
-    (q_poly_iexp.asUInt().do_>>(z_iexp.asUInt()(5, 0))).asTypeOf(q)
+    (q_poly_iexp.asUInt.do_>>(z_iexp.asUInt(5, 0))).asTypeOf(q)
   }}
 

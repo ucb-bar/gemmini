@@ -230,7 +230,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       val wmask = Mux1H(w_q_head.asBools, w_q.map(_.mask))
       val waddr = Mux1H(w_q_head.asBools, w_q.map(_.addr))
       when (wen) {
-        w_q_head := (w_q_head << 1).asUInt() | w_q_head(nEntries-1)
+        w_q_head := (w_q_head << 1).asUInt | w_q_head(nEntries-1)
         for (i <- 0 until nEntries) {
           when (w_q_head(i)) {
             w_q(i).valid := false.B
@@ -243,7 +243,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       when (w_q_push) {
         assert(!w_q_full || wen, "we ran out of acc-sub-bank write q entries")
 
-        w_q_tail := (w_q_tail << 1).asUInt() | w_q_tail(nEntries-1)
+        w_q_tail := (w_q_tail << 1).asUInt | w_q_tail(nEntries-1)
         for (i <- 0 until nEntries) {
           when (w_q_tail(i)) {
             w_q(i).valid := true.B
@@ -334,7 +334,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.write.ready := !block_write_req &&
     !pipelined_writes.map(r => r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc).reduce(_||_)
 
-  when (reset.asBool()) {
+  when (reset.asBool) {
     pipelined_writes.foreach(_.valid := false.B)
   }
 

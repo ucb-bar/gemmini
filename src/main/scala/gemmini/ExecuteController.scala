@@ -801,8 +801,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh_cntl_signals_q.io.enq.bits.first := !a_fire_started && !b_fire_started && !d_fire_started
 
   val readData = VecInit(io.srams.read.map(_.resp.bits.data))
-  val accReadData = if (ex_read_from_acc) VecInit(io.acc.read_resp.map(_.bits.data.asUInt())) else readData
-  val im2ColData = io.im2col.resp.bits.a_im2col.asUInt()
+  val accReadData = if (ex_read_from_acc) VecInit(io.acc.read_resp.map(_.bits.data.asUInt)) else readData
+  val im2ColData = io.im2col.resp.bits.a_im2col.asUInt
 
   val readValid = VecInit(io.srams.read.map(bank => ex_read_from_spad.B && bank.resp.valid && !bank.resp.bits.fromDMA))
   val accReadValid = VecInit(io.acc.read_resp.map(bank => ex_read_from_acc.B && bank.valid && !bank.bits.fromDMA))
@@ -933,7 +933,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     if (ex_write_to_spad) {
       io.srams.write(i).en := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
       io.srams.write(i).addr := w_row
-      io.srams.write(i).data := activated_wdata.asUInt()
+      io.srams.write(i).data := activated_wdata.asUInt
       io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(inputType.getWidth / (aligned_to * 8))(b))
     } else {
       io.srams.write(i).en := false.B
@@ -993,7 +993,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     complete_bits_count := complete_bits_count + 1.U
   }
 
-  when (reset.asBool()) {
+  when (reset.asBool) {
     // pending_completed_rob_id.valid := false.B
     pending_completed_rob_ids.foreach(_.valid := false.B)
   }

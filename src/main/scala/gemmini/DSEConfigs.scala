@@ -51,12 +51,12 @@ object DSEBaseConfig {
 
         // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
         val point_five = Mux(u === 0.U, 0.U, t(u - 1.U))
-        val zeros = Mux(u <= 1.U, 0.U, t.asUInt() & ((1.U << (u - 1.U)).asUInt() - 1.U)) =/= 0.U
+        val zeros = Mux(u <= 1.U, 0.U, t.asUInt & ((1.U << (u - 1.U)).asUInt - 1.U)) =/= 0.U
         val ones_digit = t(u)
 
-        val r = (point_five & (zeros | ones_digit)).asBool()
+        val r = (point_five & (zeros | ones_digit)).asBool
 
-        (t >> u).asSInt() + Mux(r, 1.S, 0.S)
+        (t >> u).asSInt + Mux(r, 1.S, 0.S)
       }, 0, UInt(8.W), -1)),
     acc_read_full_width = true,
     acc_read_small_width = true,

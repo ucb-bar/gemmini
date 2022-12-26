@@ -90,12 +90,12 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
 
 
   //how much horizonal turn we have to compute (input_channel*kernel_dim/16)
-  //val turn = Mux(im2col_width(3,0) === 0.U, (im2col_width >> (log2Up(block_size)).U).asUInt(), (im2col_width >> (log2Up(block_size)).U).asUInt + 1.U)
+  //val turn = Mux(im2col_width(3,0) === 0.U, (im2col_width >> (log2Up(block_size)).U).asUInt, (im2col_width >> (log2Up(block_size)).U).asUInt + 1.U)
   val turn = filter_dim2//Mux(channel(3,0) === 0.U, filter_dim2*channel(6, 4), filter_dim2*channel(6, 4) + 1.U)
 
   //Seah: added for more than 16 rows of output
   //how much vertical turn we have to compute (output_dim/16)
-  //val row_turn = Mux(output_dim(3,0) === 0.U, (output_dim >> (log2Up(block_size)).U).asUInt - 1.U, (output_dim >> (log2Up(block_size)).U).asUInt()) //im2col height
+  //val row_turn = Mux(output_dim(3,0) === 0.U, (output_dim >> (log2Up(block_size)).U).asUInt - 1.U, (output_dim >> (log2Up(block_size)).U).asUInt) //im2col height
   val row_turn = io.req.bits.row_turn
   val row_left = io.req.bits.row_left
 
