@@ -601,6 +601,57 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   ln_mvout_cmd_rs2.local_addr.norm_cmd := ln_norm_cmd
   ln_mvout_cmd.rs2 := ln_mvout_cmd_rs2.asUInt
 
+  // Layernorm iterators and calculations
+  val ln_row = Reg(UInt(iterator_bitwidth.W))
+  val ln_cmd = Reg(UInt(iterator_bitwidth.W))
+  val ln_stat_id = Reg(UInt(iterator_bitwidth.W))
+
+  val NORM_STAT_IDS = 4 // TODO magic number
+
+  val ln_norm_cmds = VecInit(VecInit(NormCmd.SUM, NormCmd.MEAN), VecInit(NormCmd.VARIANCE, NormCmd.INV_STDDEV),
+    VecInit(NormCmd.RESET, NormCmd.RESET))
+
+  val sm_norm_cmds = VecInit(VecInit(NormCmd.MAX, NormCmd.MAX), VecInit(NormCmd.SUM_EXP, NormCmd.INV_SUM_EXP),
+    VecInit(NormCmd.RESET, NormCmd.RESET))
+
+  val ln_stat_ids = Mux(rows -& ln_row > NORM_STAT_IDS.U, NORM_STAT_IDS.U, rows -& ln_row)
+
+  val ln_r = ln_row +& ln_stat_id
+
+  val ln_sp_addr = acc_addr_start +& (i * req.max_j +& j) * block_size.U +& ln_r
+  val ln_norm_cmd = Mux(j +& max_blocks >= req.max_j,
+    Mux(req.act === Activation.LAYERNORM, ln_norm_cmds(ln_cmd)(1), sm_norm_cmds(ln_cmd)(1)),
+    Mux(req.act === Activation.LAYERNORM, ln_norm_cmds(ln_cmd)(0), sm_norm_cmds(ln_cmd)(0)))
+
+  // TODO we assume for now that full_C and layernorm aren't true at the same
+  val ln_dram_offset = ((i * req.dram_stride +& j) * block_size.U +& ln_r * req.dram_stride) * (input_w/8).U
+  val ln_dram_addr = req.dram_addr + LoopMatmul.castDramOffset(ln_dram_offset)
+
+  val ln_config_norm_rs1 = Wire(new GemminiISA.ConfigNormRs1)
+  ln_config_norm_rs1 := DontCare
+  ln_config_norm_rs1.set_stats_id_only := 1.U
+  ln_config_norm_rs1.cmd_type := CONFIG_NORM
+  ln_config_norm_rs1.norm_stats_id := ln_stat_id
+
+  val ln_config_norm = Wire(new RoCCCommand)
+  ln_config_norm := DontCare
+  ln_config_norm.inst.funct := CONFIG_CMD
+  ln_config_norm.rs1 := ln_config_norm_rs1.asUInt()
+  ln_config_norm.rs2 := DontCare
+
+  val ln_mvout_cmd = Wire(new RoCCCommand)
+  ln_mvout_cmd := DontCare
+  ln_mvout_cmd.inst.funct := STORE_CMD
+  ln_mvout_cmd.rs1 := ln_dram_addr
+
+  val ln_mvout_cmd_rs2 = Wire(mvout_rs2_t.cloneType)
+  ln_mvout_cmd_rs2 := DontCare
+  ln_mvout_cmd_rs2.num_rows := 1.U
+  ln_mvout_cmd_rs2.num_cols := cols.asUInt()
+  ln_mvout_cmd_rs2.local_addr := cast_to_acc_addr(ln_mvout_cmd_rs2.local_addr, ln_sp_addr, accumulate = false.B, read_full = req.full_c)
+  ln_mvout_cmd_rs2.local_addr.norm_cmd := ln_norm_cmd
+  ln_mvout_cmd.rs2 := ln_mvout_cmd_rs2.asUInt()
+
   io.req.ready := state === idle
   io.j := j
   io.i := i
