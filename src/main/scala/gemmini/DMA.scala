@@ -58,7 +58,8 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
   val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows, use_tlb_register_filter, use_firesim_simulation_counters))
   val node = core.node
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
 
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits)))
@@ -134,7 +135,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
   // TODO when we request data from multiple rows which are actually contiguous in main memory, we should merge them into fewer requests
 
-  lazy val module = new LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
     val (tl, edge) = node.out(0)
 
     val spadWidthBytes = spadWidth / 8
@@ -353,7 +355,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
   require(isPow2(aligned_to))
 
-  lazy val module = new LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
     val (tl, edge) = node.out(0)
     val dataBytes = dataWidth / 8
     val beatBytes = beatBits / 8
