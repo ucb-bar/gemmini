@@ -119,7 +119,7 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_fi
     val last_translated_vpn = RegInit(0.U(vaddrBits.W))
     val last_translated_ppn = RegInit(0.U(paddrBits.W))
 
-    val l0_tlb_hit = last_translated_valid && ((client.req.bits.tlb_req.vaddr >> pgIdxBits).asUInt() === (last_translated_vpn >> pgIdxBits).asUInt())
+    val l0_tlb_hit = last_translated_valid && ((client.req.bits.tlb_req.vaddr >> pgIdxBits).asUInt === (last_translated_vpn >> pgIdxBits).asUInt)
     val l0_tlb_paddr = Cat(last_translated_ppn >> pgIdxBits, client.req.bits.tlb_req.vaddr(pgIdxBits-1,0))
 
     val tlb = if (use_shared_tlb) tlbs.head else tlbs(i)

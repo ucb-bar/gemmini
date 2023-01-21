@@ -40,7 +40,7 @@ class InstCompressor(implicit p: Parameters) extends Module {
     buf(waddr).push(io.in.bits)
   }
 
-  when (reset.asBool()) {
+  when (reset.asBool) {
     buf.foreach(_.valid := false.B)
   }
 }
@@ -79,7 +79,7 @@ class InstDecompressor(rob_entries: Int)(implicit p: Parameters) extends Module 
     pushed_preload := false.B
   }
 
-  when (reset.asBool()) {
+  when (reset.asBool) {
     buf.valid := false.B
   }
 }

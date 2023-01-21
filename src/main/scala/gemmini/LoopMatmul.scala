@@ -76,10 +76,10 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val mvin_cmd_rs2 = Wire(mvin_rs2_t.cloneType)
   mvin_cmd_rs2 := DontCare
-  mvin_cmd_rs2.num_rows := rows.asUInt()
-  mvin_cmd_rs2.num_cols := cols.asUInt()
+  mvin_cmd_rs2.num_rows := rows.asUInt
+  mvin_cmd_rs2.num_cols := cols.asUInt
   mvin_cmd_rs2.local_addr := cast_to_sp_addr(mvin_cmd_rs2.local_addr, sp_addr)
-  mvin_cmd.rs2 := mvin_cmd_rs2.asUInt()
+  mvin_cmd.rs2 := mvin_cmd_rs2.asUInt
 
   io.req.ready := state === idle
   io.i := i
@@ -184,10 +184,10 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val mvin_cmd_rs2 = Wire(mvin_rs2_t.cloneType)
   mvin_cmd_rs2 := DontCare
-  mvin_cmd_rs2.num_rows := rows.asUInt()
-  mvin_cmd_rs2.num_cols := cols.asUInt()
+  mvin_cmd_rs2.num_rows := rows.asUInt
+  mvin_cmd_rs2.num_cols := cols.asUInt
   mvin_cmd_rs2.local_addr := cast_to_sp_addr(mvin_cmd_rs2.local_addr, sp_addr)
-  mvin_cmd.rs2 := mvin_cmd_rs2.asUInt()
+  mvin_cmd.rs2 := mvin_cmd_rs2.asUInt
 
   io.req.ready := state === idle
   io.k := k
@@ -281,10 +281,10 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val mvin_cmd_rs2 = Wire(mvin_rs2_t.cloneType)
   mvin_cmd_rs2 := DontCare
-  mvin_cmd_rs2.num_rows := rows.asUInt()
-  mvin_cmd_rs2.num_cols := cols.asUInt()
+  mvin_cmd_rs2.num_rows := rows.asUInt
+  mvin_cmd_rs2.num_cols := cols.asUInt
   mvin_cmd_rs2.local_addr := cast_to_acc_addr(mvin_cmd_rs2.local_addr, sp_addr, accumulate = false.B, read_full = false.B)
-  mvin_cmd.rs2 := mvin_cmd_rs2.asUInt()
+  mvin_cmd.rs2 := mvin_cmd_rs2.asUInt
 
   io.req.ready := state === idle
   io.idle := state === idle
@@ -401,19 +401,19 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
   val pre_cmd_rs1 = Wire(preload_rs1_t.cloneType)
   pre_cmd_rs1 := DontCare
-  pre_cmd_rs1.num_rows := b_rows.asUInt()
-  pre_cmd_rs1.num_cols := b_cols.asUInt()
+  pre_cmd_rs1.num_rows := b_rows.asUInt
+  pre_cmd_rs1.num_cols := b_cols.asUInt
   pre_cmd_rs1.local_addr := Mux(i === 0.U, cast_to_sp_addr(pre_cmd_rs1.local_addr, b_addr),
     garbage_addr(pre_cmd_rs1.local_addr))
 
   val pre_cmd_rs2 = Wire(preload_rs2_t.cloneType)
   pre_cmd_rs2 := DontCare
-  pre_cmd_rs2.num_rows := c_rows.asUInt()
-  pre_cmd_rs2.num_cols := c_cols.asUInt()
+  pre_cmd_rs2.num_rows := c_rows.asUInt
+  pre_cmd_rs2.num_cols := c_cols.asUInt
   pre_cmd_rs2.local_addr := cast_to_acc_addr(pre_cmd_rs2.local_addr, c_addr, accumulate = req.accumulate || k =/= 0.U, read_full = false.B)
 
-  pre_cmd.rs1 := pre_cmd_rs1.asUInt()
-  pre_cmd.rs2 := pre_cmd_rs2.asUInt()
+  pre_cmd.rs1 := pre_cmd_rs1.asUInt
+  pre_cmd.rs2 := pre_cmd_rs2.asUInt
 
   val comp_cmd = Wire(new RoCCCommand())
   comp_cmd := DontCare
@@ -421,8 +421,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
   val comp_cmd_rs1 = Wire(compute_rs1_t.cloneType)
   comp_cmd_rs1 := DontCare
-  comp_cmd_rs1.num_rows := a_rows.asUInt()
-  comp_cmd_rs1.num_cols := a_cols.asUInt()
+  comp_cmd_rs1.num_rows := a_rows.asUInt
+  comp_cmd_rs1.num_cols := a_cols.asUInt
   comp_cmd_rs1.local_addr := cast_to_sp_addr(comp_cmd_rs1.local_addr, a_addr)
 
   val comp_cmd_rs2 = Wire(compute_rs2_t.cloneType)
@@ -431,8 +431,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   comp_cmd_rs2.num_cols := block_size.U
   comp_cmd_rs2.local_addr := garbage_addr(comp_cmd_rs2.local_addr)
 
-  comp_cmd.rs1 := comp_cmd_rs1.asUInt()
-  comp_cmd.rs2 := comp_cmd_rs2.asUInt()
+  comp_cmd.rs1 := comp_cmd_rs1.asUInt
+  comp_cmd.rs2 := comp_cmd_rs2.asUInt
 
   io.req.ready := state === idle
   io.k := k
@@ -528,7 +528,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val j = Reg(UInt(iterator_bitwidth.W))
   val i = Reg(UInt(iterator_bitwidth.W))
 
-  val acc_addr_start = /*(BigInt(1) << 31).U | (req.full_c << 29.U).asUInt() |*/ req.addr_start
+  val acc_addr_start = /*(BigInt(1) << 31).U | (req.full_c << 29.U).asUInt |*/ req.addr_start
 
   val dram_offset = Mux(req.full_c, (i * req.dram_stride + j) * block_size.U * (acc_w/8).U,
     (i * req.dram_stride + j) * block_size.U * (input_w/8).U)
@@ -545,10 +545,61 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val mvout_cmd_rs2 = Wire(mvout_rs2_t.cloneType)
   mvout_cmd_rs2 := DontCare
-  mvout_cmd_rs2.num_rows := rows.asUInt()
-  mvout_cmd_rs2.num_cols := cols.asUInt()
+  mvout_cmd_rs2.num_rows := rows.asUInt
+  mvout_cmd_rs2.num_cols := cols.asUInt
   mvout_cmd_rs2.local_addr := cast_to_acc_addr(mvout_cmd_rs2.local_addr, sp_addr, accumulate = false.B, read_full = req.full_c)
-  mvout_cmd.rs2 := mvout_cmd_rs2.asUInt()
+  mvout_cmd.rs2 := mvout_cmd_rs2.asUInt
+
+  // Layernorm iterators and calculations
+  val ln_row = Reg(UInt(iterator_bitwidth.W))
+  val ln_cmd = Reg(UInt(iterator_bitwidth.W))
+  val ln_stat_id = Reg(UInt(iterator_bitwidth.W))
+
+  val NORM_STAT_IDS = 4 // TODO magic number
+
+  val ln_norm_cmds = VecInit(VecInit(NormCmd.SUM, NormCmd.MEAN), VecInit(NormCmd.VARIANCE, NormCmd.INV_STDDEV),
+    VecInit(NormCmd.RESET, NormCmd.RESET))
+
+  val sm_norm_cmds = VecInit(VecInit(NormCmd.MAX, NormCmd.MAX), VecInit(NormCmd.SUM_EXP, NormCmd.INV_SUM_EXP),
+    VecInit(NormCmd.RESET, NormCmd.RESET))
+
+  val ln_stat_ids = Mux(rows -& ln_row > NORM_STAT_IDS.U, NORM_STAT_IDS.U, rows -& ln_row)
+
+  val ln_r = ln_row +& ln_stat_id
+
+  val ln_sp_addr = acc_addr_start +& (i * req.max_j +& j) * block_size.U +& ln_r
+  val ln_norm_cmd = Mux(j +& max_blocks >= req.max_j,
+    Mux(req.act === Activation.LAYERNORM, ln_norm_cmds(ln_cmd)(1), sm_norm_cmds(ln_cmd)(1)),
+    Mux(req.act === Activation.LAYERNORM, ln_norm_cmds(ln_cmd)(0), sm_norm_cmds(ln_cmd)(0)))
+
+  // TODO we assume for now that full_C and layernorm aren't true at the same
+  val ln_dram_offset = ((i * req.dram_stride +& j) * block_size.U +& ln_r * req.dram_stride) * (input_w/8).U
+  val ln_dram_addr = req.dram_addr + LoopMatmul.castDramOffset(ln_dram_offset)
+
+  val ln_config_norm_rs1 = Wire(new GemminiISA.ConfigNormRs1)
+  ln_config_norm_rs1 := DontCare
+  ln_config_norm_rs1.set_stats_id_only := 1.U
+  ln_config_norm_rs1.cmd_type := CONFIG_NORM
+  ln_config_norm_rs1.norm_stats_id := ln_stat_id
+
+  val ln_config_norm = Wire(new RoCCCommand)
+  ln_config_norm := DontCare
+  ln_config_norm.inst.funct := CONFIG_CMD
+  ln_config_norm.rs1 := ln_config_norm_rs1.asUInt
+  ln_config_norm.rs2 := DontCare
+
+  val ln_mvout_cmd = Wire(new RoCCCommand)
+  ln_mvout_cmd := DontCare
+  ln_mvout_cmd.inst.funct := STORE_CMD
+  ln_mvout_cmd.rs1 := ln_dram_addr
+
+  val ln_mvout_cmd_rs2 = Wire(mvout_rs2_t.cloneType)
+  ln_mvout_cmd_rs2 := DontCare
+  ln_mvout_cmd_rs2.num_rows := 1.U
+  ln_mvout_cmd_rs2.num_cols := cols.asUInt
+  ln_mvout_cmd_rs2.local_addr := cast_to_acc_addr(ln_mvout_cmd_rs2.local_addr, ln_sp_addr, accumulate = false.B, read_full = req.full_c)
+  ln_mvout_cmd_rs2.local_addr.norm_cmd := ln_norm_cmd
+  ln_mvout_cmd.rs2 := ln_mvout_cmd_rs2.asUInt
 
   // Layernorm iterators and calculations
   val ln_row = Reg(UInt(iterator_bitwidth.W))
@@ -760,7 +811,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val concurrent_loops = 2
   val loops = Reg(Vec(concurrent_loops, new LoopMatmulState(iterator_bitwidth, coreMaxAddrBits, max_addr, max_acc_addr)))
   val head_loop_id = Reg(UInt(log2Up(concurrent_loops).W))
-  val tail_loop_id = (~head_loop_id).asUInt() // This is the loop that we always try to configure if available
+  val tail_loop_id = (~head_loop_id).asUInt // This is the loop that we always try to configure if available
   val head_loop = loops(head_loop_id)
   val tail_loop = loops(tail_loop_id)
 
@@ -1052,7 +1103,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   }
 
   // Resets
-  when (reset.asBool()) {
+  when (reset.asBool) {
     loops.zipWithIndex.foreach { case (l, i) =>
       l.reset()
       l.a_addr_start := (i * (max_addr / concurrent_loops)).U
