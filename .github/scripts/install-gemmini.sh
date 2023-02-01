@@ -27,10 +27,6 @@ git checkout $(cat $LOCAL_CHECKOUT_DIR/CHIPYARD.hash)
 
 source env.sh
 
-cd toolchains/esp-tools/riscv-isa-sim/build
-git checkout $(cat $LOCAL_CHECKOUT_DIR/SPIKE.hash)
-make && make install
-
 cd $LOCAL_CHECKOUT_DIR
 chown -R $(whoami) .
 git config --global --add safe.directory $LOCAL_CHECKOUT_DIR
