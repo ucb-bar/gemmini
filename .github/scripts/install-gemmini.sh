@@ -23,7 +23,7 @@ cd $LOCAL_CHIPYARD_DIR
 git fetch
 git checkout $(cat $LOCAL_CHECKOUT_DIR/CHIPYARD.hash)
 
-./build-setup.sh esp-tools -f
+./build-setup.sh esp-tools -f -s 6 -s 7 -s 8 -s 9
 
 source env.sh
 
