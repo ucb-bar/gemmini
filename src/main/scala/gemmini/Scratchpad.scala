@@ -201,8 +201,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   xbar_node := TLBuffer() := writer.node
   id_node := TLWidthWidget(config.dma_buswidth/8) := TLBuffer() := xbar_node
 
-  lazy val module = new LazyModuleImp(this) with HasCoreParameters {
-
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) with HasCoreParameters {
     val io = IO(new Bundle {
       // DMA ports
       val dma = new Bundle {
