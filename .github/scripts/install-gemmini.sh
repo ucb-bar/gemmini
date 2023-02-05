@@ -28,6 +28,7 @@ git checkout $(cat $LOCAL_CHECKOUT_DIR/CHIPYARD.hash)
 source env.sh
 
 cd $LOCAL_CHECKOUT_DIR
+git config --global --add safe.directory $LOCAL_CHECKOUT_DIR
 git submodule update --init software/libgemmini
 make -C software/libgemmini
 
