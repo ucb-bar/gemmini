@@ -28,13 +28,15 @@ git checkout $(cat $LOCAL_CHECKOUT_DIR/CHIPYARD.hash)
 source env.sh
 
 cd $LOCAL_CHECKOUT_DIR
+chown -R $(whoami) .
 git config --global --add safe.directory $LOCAL_CHECKOUT_DIR
+git config --global --add safe.directory '*'
+
+cd $LOCAL_CHECKOUT_DIR
 git submodule update --init software/libgemmini
 make -C software/libgemmini
 
 cd $LOCAL_CHECKOUT_DIR
-chown -R $(whoami) .
-git config --global --add safe.directory $LOCAL_CHECKOUT_DIR
 git submodule update --init --recursive software/gemmini-rocc-tests
 rm -rf $LOCAL_CHIPYARD_DIR/generators/gemmini/* $LOCAL_CHIPYARD_DIR/generators/gemmini/.git*
 mv -f $LOCAL_CHECKOUT_DIR/* $LOCAL_CHECKOUT_DIR/.git* $LOCAL_CHIPYARD_DIR/generators/gemmini/
