@@ -27,7 +27,9 @@ git checkout $(cat $LOCAL_CHECKOUT_DIR/CHIPYARD.hash)
 
 source env.sh
 
-make -C $LOCAL_CHECKOUT_DIR/software/libgemmini
+cd $LOCAL_CHECKOUT_DIR
+git submodule update --init software/libgemmini
+make -C software/libgemmini
 
 cd $LOCAL_CHECKOUT_DIR
 chown -R $(whoami) .
