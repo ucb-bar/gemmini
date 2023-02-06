@@ -33,12 +33,6 @@ git config --global --add safe.directory $LOCAL_CHECKOUT_DIR
 git config --global --add safe.directory '*'
 
 cd $LOCAL_CHECKOUT_DIR
-# Delete the stale libgemmini first installed by chipyard, switch to the one submoduled here
-rm -rf $RISCV/lib/libgemmini.so
-git submodule update --init software/libgemmini
-make -C software/libgemmini
-
-cd $LOCAL_CHECKOUT_DIR
 git submodule update --init --recursive software/gemmini-rocc-tests
 rm -rf $LOCAL_CHIPYARD_DIR/generators/gemmini/* $LOCAL_CHIPYARD_DIR/generators/gemmini/.git*
 mv -f $LOCAL_CHECKOUT_DIR/* $LOCAL_CHECKOUT_DIR/.git* $LOCAL_CHIPYARD_DIR/generators/gemmini/
