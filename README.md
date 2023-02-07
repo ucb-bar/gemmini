@@ -33,7 +33,7 @@ Run these steps to install Chipyard and Spike (make sure to checkout the correct
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
 git checkout 1.8.1
-./build-setup.sh esp-tools
+./build-setup.sh riscv-tools
 
 source env.sh
 
@@ -42,12 +42,7 @@ git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
 git checkout dev && git pull origin dev
 git submodule update --init --recursive
 
-SPIKE_HASH=$(cat SPIKE.hash)
-
-cd -
-cd toolchains/esp-tools/riscv-isa-sim/build
-git fetch && git checkout $SPIKE_HASH
-make && make install
+make -C software/libgemmini install
 
 # The final step is only necessary if you want to run MIDAS simulations with
 # realistic DRAM models
@@ -368,9 +363,8 @@ Afterwards, the test binaries will be found in `software/gemmini-rocc-tests/buil
 Binaries whose names end in `-baremetal` are meant to be run in a bare-metal environment, while binaries whose names end in `-linux` are meant to run in a Linux environment.
 You can run the tests either on a cycle-accurate RTL simulator, or on a (much faster) functional ISA simulator called Spike.
 
-We use a special fork of Spike, found [here](https://github.com/ucb-bar/esp-isa-sim), which has support for Gemmini instructions.
-(You can find the required commit hash in `SPIKE.hash`).
-If you are using Chipyard, you can easily build Spike by running `./scripts/build-toolchains.sh esp-tools` from Chipyard's root directory.
+We use a special extension of Spike, found [here](https://github.com/ucb-bar/libgemmini), which has support for Gemmini instructions.
+If you are using Chipyard, you can easily build Spike by running `./scripts/build-toolchains.sh riscv-tools` from Chipyard's root directory, then by running `make -C software/libgemmini install` in the Gemmini directory.
 Then, to run the `mvin_mvout` test, which simply moves a matrix into Gemmini's scratchpad before moving it back out into main memory, run the following commands:
 
 ```shell
