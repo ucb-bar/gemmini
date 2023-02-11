@@ -58,7 +58,8 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
   val core = LazyModule(new StreamReaderCore(config, nXacts, beatBits, maxBytes, spadWidth, accWidth, aligned_to, spad_rows, acc_rows, meshRows, use_tlb_register_filter, use_firesim_simulation_counters))
   val node = core.node
 
-  lazy val module = new LazyModuleImp(this) {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) {
 
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits)))
@@ -134,7 +135,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
   // TODO when we request data from multiple rows which are actually contiguous in main memory, we should merge them into fewer requests
 
-  lazy val module = new LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
     val (tl, edge) = node.out(0)
 
     val spadWidthBytes = spadWidth / 8
@@ -353,7 +355,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
   require(isPow2(aligned_to))
 
-  lazy val module = new LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
     val (tl, edge) = node.out(0)
     val dataBytes = dataWidth / 8
     val beatBytes = beatBits / 8
@@ -380,7 +383,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     // TODO use the same register to hold data_blocks and data_single_block, so that this Mux here is not necessary
     val data_blocks = Reg(Vec(maxBlocks, UInt((inputTypeRowBytes * 8).W)))
     val data_single_block = Reg(UInt(dataWidth.W)) // For data that's just one-block-wide
-    val data = Mux(req.block === 0.U, data_single_block, data_blocks.asUInt())
+    val data = Mux(req.block === 0.U, data_single_block, data_blocks.asUInt)
 
     val bytesSent = Reg(UInt(log2Ceil((dataBytes max maxBytes)+1).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
     val bytesLeft = req.len - bytesSent
@@ -390,9 +393,9 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val xactId = OHToUInt(xactOnehot)
 
     val xactBusy_fire = WireInit(false.B)
-    val xactBusy_add = Mux(xactBusy_fire, (1.U << xactId).asUInt(), 0.U)
-    val xactBusy_remove = ~Mux(tl.d.fire, (1.U << tl.d.bits.source).asUInt(), 0.U)
-    xactBusy := (xactBusy | xactBusy_add) & xactBusy_remove.asUInt()
+    val xactBusy_add = Mux(xactBusy_fire, (1.U << xactId).asUInt, 0.U)
+    val xactBusy_remove = ~Mux(tl.d.fire, (1.U << tl.d.bits.source).asUInt, 0.U)
+    xactBusy := (xactBusy | xactBusy_add) & xactBusy_remove.asUInt
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
     io.req.ready := state_machine_ready_for_req
@@ -482,15 +485,15 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       fromSource = RegEnableThru(xactId, state === s_writing_new_block),
       toAddress = 0.U,
       lgSize = lg_write_size,
-      data = (data >> (bytesSent * 8.U)).asUInt()
+      data = (data >> (bytesSent * 8.U)).asUInt
     )._2
 
     val putPartial = edge.Put(
       fromSource = RegEnableThru(xactId, state === s_writing_new_block),
       toAddress = 0.U,
       lgSize = lg_write_size,
-      data = ((data >> (bytesSent * 8.U)) << (write_shift * 8.U)).asUInt(),
-      mask = write_mask.asUInt()
+      data = ((data >> (bytesSent * 8.U)) << (write_shift * 8.U)).asUInt,
+      mask = write_mask.asUInt
     )._2
 
     class TLBundleAWithInfo extends Bundle {
@@ -501,7 +504,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
     xactBusy_fire := untranslated_a.fire && state === s_writing_new_block
-    untranslated_a.valid := (state === s_writing_new_block || state === s_writing_beats) && !xactBusy.andR()
+    untranslated_a.valid := (state === s_writing_new_block || state === s_writing_beats) && !xactBusy.andR
     untranslated_a.bits.tl_a := Mux(write_full, putFull, putPartial)
     untranslated_a.bits.vaddr := write_vaddr
     untranslated_a.bits.status := req.status
@@ -543,7 +546,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     tl.a.bits := translate_q.io.deq.bits.tl_a
     tl.a.bits.address := RegEnableThru(io.tlb.resp.paddr, RegNext(io.tlb.req.fire))
 
-    tl.d.ready := xactBusy.orR()
+    tl.d.ready := xactBusy.orR
 
     when (untranslated_a.fire) {
       when (state === s_writing_new_block) {
@@ -588,7 +591,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         val v1 = io.req.bits.data.asTypeOf(Vec(cols, inputType))
         val v2 = data_single_block.asTypeOf(Vec(cols, inputType))
         val m = v1.zip(v2)
-        VecInit(m.zipWithIndex.map{case ((x, y), i) => if (i < block_cols) maxOf(x, y) else y}).asUInt()
+        VecInit(m.zipWithIndex.map{case ((x, y), i) => if (i < block_cols) maxOf(x, y) else y}).asUInt
       }
 
       req := io.req.bits

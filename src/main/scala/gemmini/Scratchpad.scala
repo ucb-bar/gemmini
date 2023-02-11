@@ -149,9 +149,9 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   val ren = io.read.req.fire
   val rdata = if (single_ported) {
     assert(!(ren && io.write.en))
-    read(raddr, ren && !io.write.en).asUInt()
+    read(raddr, ren && !io.write.en).asUInt
   } else {
-    read(raddr, ren).asUInt()
+    read(raddr, ren).asUInt
   }
 
   val fromDMA = io.read.req.bits.fromDMA
@@ -201,8 +201,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   xbar_node := TLBuffer() := writer.node
   id_node := TLWidthWidget(config.dma_buswidth/8) := TLBuffer() := xbar_node
 
-  lazy val module = new LazyModuleImp(this) with HasCoreParameters {
-
+  lazy val module = new Impl
+  class Impl extends LazyModuleImp(this) with HasCoreParameters {
     val io = IO(new Bundle {
       // DMA ports
       val dma = new Bundle {
@@ -537,7 +537,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.mask := io.srams.write(i).mask
         }.elsewhen (dmaread) {
           bio.write.addr := laddr.sp_row()
-          bio.write.data := mvin_scale_pixel_repeater.io.resp.bits.out.asUInt()
+          bio.write.data := mvin_scale_pixel_repeater.io.resp.bits.out.asUInt
           bio.write.mask := mvin_scale_pixel_repeater.io.resp.bits.mask take ((spad_w / (aligned_to * 8)) max 1)
 
           mvin_scale_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
