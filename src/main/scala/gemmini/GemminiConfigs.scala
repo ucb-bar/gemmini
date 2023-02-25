@@ -18,8 +18,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              opcodes: OpcodeSet = OpcodeSet.custom3,
 
                                                                              inputType: T,
-                                                                             spatialArrayOutputType: T,
                                                                              accType: T,
+
+                                                                             spatialArrayInputType: T,
+                                                                             spatialArrayWeightType: T,
+                                                                             spatialArrayOutputType: T,
 
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
 

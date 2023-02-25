@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -48,9 +49,13 @@ object GemminiFPConfigs {
     max_in_flight_mem_reqs = 16,
     use_dedicated_tl_port = false,
     use_shared_ext_mem = false,
+
     inputType = Float(8, 24),
-    spatialArrayOutputType = Float(8, 24),
     accType = Float(8, 24),
+
+    spatialArrayInputType = Float(8, 24),
+    spatialArrayWeightType = Float(8, 24),
+    spatialArrayOutputType = Float(8, 24),
 
     mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
     mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
@@ -81,28 +86,32 @@ object GemminiFPConfigs {
   )
   
   //FP32 Single Precision Configuration
-  val FP32DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 24), spatialArrayOutputType = Float(8, 24), accType = Float(8, 24),
+  val FP32DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 24), accType = Float(8, 24),
+                                               spatialArrayInputType = Float(8, 24), spatialArrayWeightType = Float(8, 24), spatialArrayOutputType = Float(8, 24),
                                                tile_latency = 2,
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
  
   //FP16 Half Precision Configuration
-  val FP16DefaultConfig = defaultFPConfig.copy(inputType = Float(5, 11), spatialArrayOutputType = Float(5, 11), accType = Float(8, 24),
+  val FP16DefaultConfig = defaultFPConfig.copy(inputType = Float(5, 11), accType = Float(8, 24),
+                                               spatialArrayInputType = Float(5, 11), spatialArrayWeightType = Float(5, 11), spatialArrayOutputType = Float(5, 11),
                                                tile_latency = 2,
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
   
   //Bfloat16 Brain-half Precision Configuration
-  val BF16DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 8), spatialArrayOutputType = Float(8, 8), accType = Float(8, 24),
+  val BF16DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 8), accType = Float(8, 24),
+                                               spatialArrayInputType = Float(8, 8), spatialArrayWeightType = Float(8, 8), spatialArrayOutputType = Float(8, 8),
                                                tile_latency = 2,
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
 
   //Bfloat16 Brain-half Precision Configuration 8x8 array
-  val BF16Default8Config = defaultFPConfig.copy(inputType = Float(8, 8), spatialArrayOutputType = Float(8, 8), accType = Float(8, 24),
+  val BF16Default8Config = defaultFPConfig.copy(inputType = Float(8, 8), accType = Float(8, 24),
+                                               spatialArrayInputType = Float(8, 8), spatialArrayWeightType = Float(8, 8), spatialArrayOutputType = Float(8, 8),
                                                meshRows = 8, meshColumns = 8,
                                                tile_latency = 2,
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),

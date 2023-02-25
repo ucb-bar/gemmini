@@ -24,6 +24,8 @@ object GemminiConfigs {
     inputType = SInt(8.W),
     accType = SInt(32.W),
 
+    spatialArrayInputType = SInt(8.W),
+    spatialArrayWeightType = SInt(8.W),
     spatialArrayOutputType = SInt(20.W),
 
     // Spatial array size options
@@ -167,6 +169,8 @@ object GemminiConfigs {
   val dummyConfig = GemminiArrayConfig[DummySInt, Float, Float](
     inputType = DummySInt(8),
     accType = DummySInt(32),
+    spatialArrayInputType = DummySInt(8),
+    spatialArrayWeightType = DummySInt(8),
     spatialArrayOutputType = DummySInt(20),
     tileRows     = defaultConfig.tileRows,
     tileColumns  = defaultConfig.tileColumns,

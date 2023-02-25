@@ -26,7 +26,7 @@ object DSEBaseConfig {
     reservation_station_entries_ex = 16,
 
 
-  sp_banks = 4, // TODO support one-bank designs
+    sp_banks = 4, // TODO support one-bank designs
     acc_banks = 1,
     acc_singleported = false,
     acc_latency = 2,
@@ -39,9 +39,14 @@ object DSEBaseConfig {
     dma_maxbytes = 128, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 16,
+
     inputType = SInt(8.W),
-    spatialArrayOutputType = SInt(19.W),
     accType = SInt(32.W),
+
+    spatialArrayInputType = SInt(8.W),
+    spatialArrayWeightType = SInt(8.W),
+    spatialArrayOutputType = SInt(19.W),
+
     mvin_scale_args = None,
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,

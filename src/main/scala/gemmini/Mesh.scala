@@ -14,15 +14,15 @@ import chisel3.experimental._
   * @param meshRows
   * @param meshColumns
   */
-class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
+class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, accType: T,
                                    df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int,
                                    max_simultaneous_matmuls: Int, output_delay: Int,
                                    val tileRows: Int, val tileColumns: Int,
                                    val meshRows: Int, val meshColumns: Int) extends Module {
   val io = IO(new Bundle {
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
-    val in_b = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
-    val in_d = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
+    val in_b = Input(Vec(meshColumns, Vec(tileColumns, weightType)))
+    val in_d = Input(Vec(meshColumns, Vec(tileColumns, weightType))) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
     val in_control = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
     val in_id = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Up(max_simultaneous_matmuls).W)))) // The unique id of this particular matmul
     val in_last = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
@@ -36,7 +36,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   })
 
   // mesh(r)(c) => Tile at row r, column c
-  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns)))
+  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, weightType, outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns)))
   val meshT = mesh.transpose
 
   def pipe[T <: Data](valid: Bool, t: T, latency: Int): T = {
