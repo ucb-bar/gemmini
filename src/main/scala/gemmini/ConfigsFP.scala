@@ -122,7 +122,7 @@ object GemminiFPConfigs {
   val FP8TransformerConfig = defaultFPConfig.copy(
     inputType = Float(4, 4), weightType = Float(4, 4), accType = Float(8, 24),
 
-    spatialArrayInputType = Float(4, 4), spatialArrayWeightType = Float(4, 4), spatialArrayOutputType = Float(5, 11),
+    spatialArrayInputType = Float(4, 4, isRecoded = true), spatialArrayWeightType = Float(4, 4, isRecoded = true), spatialArrayOutputType = Float(5, 11, isRecoded = true),
 
     has_normalizations = false, // TODO this should be true
     has_dw_convs = false, has_training_convs = false, has_max_pool = false, has_first_layer_optimizations = false, has_nonlinear_activations = false,
@@ -137,7 +137,7 @@ object GemminiFPConfigs {
 
   val HybridFP8TransformerConfig = FP8TransformerConfig.copy(
     weightType = Float(5, 3),
-    spatialArrayInputType = Float(5, 4), spatialArrayWeightType = Float(5, 4),
+    spatialArrayInputType = Float(5, 4, isRecoded = true), spatialArrayWeightType = Float(5, 4, isRecoded = true),
   )
 }
 
