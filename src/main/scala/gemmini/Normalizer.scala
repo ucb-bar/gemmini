@@ -397,7 +397,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
   val exp_divider_out = Wire(Decoupled(scale_t.cloneType))
 
   scale_t match {
-    case Float(expWidth, sigWidth) =>
+    case Float(expWidth, sigWidth, false) =>
 
       exp_divider_in.bits := DontCare
 

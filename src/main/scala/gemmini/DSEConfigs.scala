@@ -25,7 +25,6 @@ object DSEBaseConfig {
     reservation_station_entries_st = 4,
     reservation_station_entries_ex = 16,
 
-
     sp_banks = 4, // TODO support one-bank designs
     acc_banks = 1,
     acc_singleported = false,
@@ -41,6 +40,7 @@ object DSEBaseConfig {
     aligned_to = 16,
 
     inputType = SInt(8.W),
+    weightType = SInt(8.W),
     accType = SInt(32.W),
 
     spatialArrayInputType = SInt(8.W),

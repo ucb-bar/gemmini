@@ -21,6 +21,7 @@ object GemminiConfigs {
   val defaultConfig = GemminiArrayConfig[SInt, Float, Float](
     // Datatypes
     inputType = SInt(8.W),
+    weightType = SInt(8.W),
     accType = SInt(32.W),
 
     spatialArrayInputType = SInt(8.W),
@@ -167,6 +168,7 @@ object GemminiConfigs {
 
   val dummyConfig = GemminiArrayConfig[DummySInt, Float, Float](
     inputType = DummySInt(8),
+    weightType = DummySInt(8),
     accType = DummySInt(32),
     spatialArrayInputType = DummySInt(8),
     spatialArrayWeightType = DummySInt(8),
