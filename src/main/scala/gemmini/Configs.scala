@@ -10,7 +10,6 @@ import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.system._
 import freechips.rocketchip.diplomacy._
-
 import gemmini.Arithmetic.SIntArithmetic
 import hardfloat._
 
