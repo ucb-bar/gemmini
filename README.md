@@ -32,7 +32,7 @@ Run these steps:
 ```shell
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
-git checkout gemmini-fp8-exploration
+git checkout gemmini-fp8-exploration-2
 ./build-setup.sh riscv-tools
 
 source env.sh
