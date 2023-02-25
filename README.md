@@ -32,7 +32,7 @@ Run these steps to install Chipyard and Spike (make sure to checkout the correct
 ```shell
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
-git checkout 1.8.1
+git checkout bcbe3b7f1f40d1c388aca68df498fd7dd4d16e89
 ./build-setup.sh riscv-tools
 
 source env.sh
