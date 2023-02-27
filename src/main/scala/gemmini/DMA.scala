@@ -8,8 +8,7 @@ import chisel3.experimental.DataMirror
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
 import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters}
-import freechips.rocketchip.tilelink.TLBundleA
-import testchipip.TLHelper
+import freechips.rocketchip.tilelink._
 import freechips.rocketchip.rocket.MStatus
 import freechips.rocketchip.rocket.constants.MemoryOpConstants
 
@@ -128,8 +127,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
                                                         use_tlb_register_filter: Boolean,
                                                         use_firesim_simulation_counters: Boolean)
                                  (implicit p: Parameters) extends LazyModule {
-  val node = TLHelper.makeClientNode(
-    name = "stream-reader", sourceId = IdRange(0, nXacts))
+  val node = TLClientNode(Seq(TLMasterPortParameters.v1(Seq(TLClientParameters(
+    name = "stream-reader", sourceId = IdRange(0, nXacts))))))
 
   require(isPow2(aligned_to))
 
@@ -350,8 +349,8 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
                                           inputType: T, block_cols: Int, use_tlb_register_filter: Boolean,
                                           use_firesim_simulation_counters: Boolean)
                   (implicit p: Parameters) extends LazyModule {
-  val node = TLHelper.makeClientNode(
-    name = "stream-writer", sourceId = IdRange(0, nXacts))
+  val node = TLClientNode(Seq(TLMasterPortParameters.v1(Seq(TLClientParameters(
+    name = "stream-writer", sourceId = IdRange(0, nXacts))))))
 
   require(isPow2(aligned_to))
 
