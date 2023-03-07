@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chipsalliance.rocketchip.config.{Config, Parameters}
@@ -42,15 +43,22 @@ object GemminiCustomConfigs {
   )
 
   val ibertInferenceConfig = defaultConfig.copy(
-    has_training_convs = false,
-    has_max_pool =  false,
+    // TODO change these back
+//    has_training_convs = false,
+//    has_max_pool =  false,
+//    has_normalizations = true,
+//
+//    acc_capacity = CapacityInKilobytes(128),
+
     has_normalizations = true,
+    has_dw_convs = false, has_training_convs = false, has_max_pool = false, has_first_layer_optimizations = false, has_nonlinear_activations = false,
+    dataflow=Dataflow.WS, max_in_flight_mem_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true,
 
     acc_capacity = CapacityInKilobytes(128),
   )
 
   // Specify which of your custom configs you want to build here
-  val customConfig = baselineInferenceConfig
+  val customConfig = ibertInferenceConfig
 }
 
 

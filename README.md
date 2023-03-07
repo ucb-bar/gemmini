@@ -24,41 +24,26 @@ Dependencies
 
 Before beginning, install the [Chipyard dependencies](https://chipyard.readthedocs.io/en/latest/Chipyard-Basics/Initial-Repo-Setup.html#default-requirements-installation).
 
-Installing Chipyard and Spike
+Installing Gemmini
 -----------------------------
 
-Run these steps to install Chipyard and Spike (make sure to checkout the correct Chipyard and Spike commits as shown below):
+Run these steps:
 
 ```shell
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
-git checkout 1.8.1
+git checkout gemmini-fp8-exploration-2
 ./build-setup.sh riscv-tools
 
 source env.sh
 
 cd generators/gemmini
 git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
-git checkout dev && git pull origin dev
+git checkout fp8-recoding && git pull origin fp8-recoding
 git submodule update --init --recursive
 
 make -C software/libgemmini install
 
-# The final step is only necessary if you want to run MIDAS simulations with
-# realistic DRAM models
-cd -
-cd sims/firesim
-source sourceme-f1-manager.sh --skip-ssh-setup # Ignore error messages from this command
-./build-setup.sh --library --skip-validate
-```
-
-Setting Up Gemmini
-------------------
-
-Run the steps below to set up Gemmini configuration files, symlinks, and subdirectories:
-
-```shell
-cd chipyard/generators/gemmini
 ./scripts/setup-paths.sh
 ```
 

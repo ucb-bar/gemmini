@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -48,9 +49,14 @@ object GemminiFPConfigs {
     max_in_flight_mem_reqs = 16,
     use_dedicated_tl_port = false,
     use_shared_ext_mem = false,
+
     inputType = Float(8, 24),
-    spatialArrayOutputType = Float(8, 24),
+    weightType = Float(8, 24),
     accType = Float(8, 24),
+
+    spatialArrayInputType = Float(8, 24),
+    spatialArrayWeightType = Float(8, 24),
+    spatialArrayOutputType = Float(8, 24),
 
     mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
     mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
@@ -81,34 +87,58 @@ object GemminiFPConfigs {
   )
   
   //FP32 Single Precision Configuration
-  val FP32DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 24), spatialArrayOutputType = Float(8, 24), accType = Float(8, 24),
+  val FP32DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 24), weightType = Float(8, 24), accType = Float(8, 24),
+                                               spatialArrayInputType = Float(8, 24), spatialArrayWeightType = Float(8, 24), spatialArrayOutputType = Float(8, 24),
                                                tile_latency = 2,
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
  
   //FP16 Half Precision Configuration
-  val FP16DefaultConfig = defaultFPConfig.copy(inputType = Float(5, 11), spatialArrayOutputType = Float(5, 11), accType = Float(8, 24),
+  val FP16DefaultConfig = defaultFPConfig.copy(inputType = Float(5, 11), weightType = Float(5, 11), accType = Float(8, 24),
+                                               spatialArrayInputType = Float(5, 11), spatialArrayWeightType = Float(5, 11), spatialArrayOutputType = Float(5, 11),
                                                tile_latency = 2,
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
   
   //Bfloat16 Brain-half Precision Configuration
-  val BF16DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 8), spatialArrayOutputType = Float(8, 8), accType = Float(8, 24),
+  val BF16DefaultConfig = defaultFPConfig.copy(inputType = Float(8, 8), weightType = Float(8, 8), accType = Float(8, 24),
+                                               spatialArrayInputType = Float(8, 8), spatialArrayWeightType = Float(8, 8), spatialArrayOutputType = Float(8, 8),
                                                tile_latency = 2,
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
 
   //Bfloat16 Brain-half Precision Configuration 8x8 array
-  val BF16Default8Config = defaultFPConfig.copy(inputType = Float(8, 8), spatialArrayOutputType = Float(8, 8), accType = Float(8, 24),
+  val BF16Default8Config = defaultFPConfig.copy(inputType = Float(8, 8), weightType = Float(8, 8), accType = Float(8, 24),
+                                               spatialArrayInputType = Float(8, 8), spatialArrayWeightType = Float(8, 8), spatialArrayOutputType = Float(8, 8),
                                                meshRows = 8, meshColumns = 8,
                                                tile_latency = 2,
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
 
+  val FP8TransformerConfig = defaultFPConfig.copy(
+    inputType = Float(4, 4), weightType = Float(4, 4), accType = Float(8, 24),
+
+    spatialArrayInputType = Float(4, 4, isRecoded = true), spatialArrayWeightType = Float(4, 4, isRecoded = true), spatialArrayOutputType = Float(5, 11, isRecoded = true),
+
+    has_normalizations = false, // TODO this should be true
+    has_dw_convs = false, has_training_convs = false, has_max_pool = false, has_first_layer_optimizations = false, has_nonlinear_activations = false,
+
+    dataflow=Dataflow.WS, max_in_flight_mem_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true,
+
+    meshRows = 16, meshColumns = 16,
+    acc_capacity = CapacityInKilobytes(128),
+
+    tile_latency = 2,
+  )
+
+  val HybridFP8TransformerConfig = FP8TransformerConfig.copy(
+    weightType = Float(5, 3),
+    spatialArrayInputType = Float(5, 4, isRecoded = true), spatialArrayWeightType = Float(5, 4, isRecoded = true),
+  )
 }
 
 
@@ -171,3 +201,23 @@ class GemminiBF16Default8Config extends Config((site, here, up) => {
   )
 })
 
+// FP8 Transformer configs
+class GemminiFP8TransformerConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      implicit val v = implicitly[ValName]
+      LazyModule(new Gemmini(GemminiFPConfigs.FP8TransformerConfig))
+    }
+  )
+})
+
+class GemminiHybridFP8TransformerConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      implicit val v = implicitly[ValName]
+      LazyModule(new Gemmini(GemminiFPConfigs.HybridFP8TransformerConfig))
+    }
+  )
+})

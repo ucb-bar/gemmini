@@ -30,16 +30,16 @@ class MeshWithDelaysResp[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](o
 // TODO make all inputs go straight into registers to help with physical design
 
 class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
-  (inputType: T, val outputType: T, accType: T,
+  (val inputType: T, val weightType: T, val outputType: T, accType: T,
    tagType: U, df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int, output_delay: Int,
    tileRows: Int, tileColumns: Int, meshRows: Int, meshColumns: Int,
    leftBanks: Int, upBanks: Int, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1)
   extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
-  val B_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
+  val B_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
   val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType))
-  val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
+  val D_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
 
   assert(meshRows*tileRows == meshColumns*tileColumns)
@@ -67,7 +67,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val tags_in_progress = Output(Vec(tagqlen, tagType))
   })
 
-  def shifted[T <: Data](x: Vec[Vec[T]], banks: Int, reverse: Boolean = false) = {
+  def shifted[T <: Data](x: Vec[Vec[T]], banks: Int, reverse: Boolean = false): Seq[Vec[T]] = {
     assert(x.size % banks == 0, "cannot bank without clean divisors")
 
     val banked_len = x.size / banks
@@ -164,7 +164,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val transposer_out = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
 
   // Wire up mesh's IO to this module's IO
-  val mesh = Module(new Mesh(inputType, outputType, accType, df, tree_reduction, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns))
+  val mesh = Module(new Mesh(inputType, weightType, outputType, accType, df, tree_reduction, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns))
 
   // TODO wire only to *_buf here, instead of io.*.bits
   val a_shifter_in = WireInit(Mux(a_is_from_transposer, transposer_out.asTypeOf(A_TYPE), a_buf))
