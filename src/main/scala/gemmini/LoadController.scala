@@ -5,7 +5,7 @@ import chisel3._
 import chisel3.util._
 import GemminiISA._
 import Util._
-import freechips.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 import midas.targetutils.PerfCounter
 
 // TODO we need to check for WAW errors here

@@ -6,7 +6,7 @@ import chisel3.util._
 import chisel3.experimental._
 import GemminiISA._
 import Util._
-import freechips.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 import midas.targetutils.PerfCounter
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class

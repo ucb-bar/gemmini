@@ -1,7 +1,7 @@
 /*
 package chipyard
 
-import freechips.rocketchip.config.{Config}
+import org.chipsalliance.cde.config.{Config}
 
 class CustomGemminiSoCConfig extends Config(
   new gemmini.GemminiCustomConfig ++

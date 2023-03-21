@@ -5,7 +5,7 @@ import chisel3._
 import chisel3.util._
 import chisel3.experimental._
 import freechips.rocketchip.tile.RoCCCommand
-import freechips.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 import GemminiISA._
 import LocalAddr._
 import Util._

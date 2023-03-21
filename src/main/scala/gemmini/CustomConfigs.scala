@@ -1,6 +1,6 @@
 package gemmini
 
-import chipsalliance.rocketchip.config.{Config, Parameters}
+import org.chipsalliance.cde.config.{Config, Parameters}
 import chisel3._
 import freechips.rocketchip.diplomacy.LazyModule
 import freechips.rocketchip.subsystem.SystemBusKey
