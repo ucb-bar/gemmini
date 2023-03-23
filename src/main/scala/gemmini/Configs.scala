@@ -32,10 +32,10 @@ object GemminiConfigs {
     meshColumns = 16,
 
     // Spatial array PE options
-    dataflow = Dataflow.BOTH,
+    dataflow = Dataflow.WS,
 
     // Scratchpad and accumulator
-    sp_capacity = CapacityInKilobytes(256),
+    sp_capacity = CapacityInKilobytes(128),
     acc_capacity = CapacityInKilobytes(64),
 
     sp_banks = 4,
@@ -45,7 +45,7 @@ object GemminiConfigs {
     acc_singleported = false,
 
     // DNN options
-    has_training_convs = true,
+    has_training_convs = false,
     has_max_pool = true,
     has_nonlinear_activations = true,
 
@@ -60,7 +60,7 @@ object GemminiConfigs {
     ex_queue_length = 8,
 
     // DMA options
-    max_in_flight_mem_reqs = 16,
+    max_in_flight_mem_reqs = 64,
 
     dma_maxbytes = 64,
     dma_buswidth = 128,
@@ -151,15 +151,18 @@ object GemminiConfigs {
     )),
 
     // SoC counters options
-    num_counter = 8,
+    num_counter = 0,
+
+    // firesim counter (enable for firesim)
+    use_firesim_simulation_counters = false,
 
     // Scratchpad and Accumulator input/output options
-    acc_read_full_width = true,
+    acc_read_full_width = false,
     acc_read_small_width = true,
 
     ex_read_from_spad = true,
-    ex_read_from_acc = true,
-    ex_write_to_spad = true,
+    ex_read_from_acc = false,
+    ex_write_to_spad = false,
     ex_write_to_acc = true,
   )
 
@@ -172,15 +175,15 @@ object GemminiConfigs {
     meshRows     = defaultConfig.meshRows,
     meshColumns  = defaultConfig.meshColumns,
     dataflow     = defaultConfig.dataflow,
-    sp_capacity  = defaultConfig.sp_capacity,
-    acc_capacity = defaultConfig.acc_capacity,
+    sp_capacity  = CapacityInKilobytes(128),//defaultConfig.sp_capacity,
+    acc_capacity = CapacityInKilobytes(64),//defaultConfig.acc_capacity,
     sp_banks     = defaultConfig.sp_banks,
     acc_banks    = defaultConfig.acc_banks,
     sp_singleported = defaultConfig.sp_singleported,
     acc_singleported = defaultConfig.acc_singleported,
     has_training_convs = defaultConfig.has_training_convs,
     has_max_pool = defaultConfig.has_max_pool,
-    has_nonlinear_activations = defaultConfig.has_nonlinear_activations,
+    has_nonlinear_activations = false,//defaultConfig.has_nonlinear_activations,
     reservation_station_entries_ld = defaultConfig.reservation_station_entries_ld,
     reservation_station_entries_st = defaultConfig.reservation_station_entries_st,
     reservation_station_entries_ex = defaultConfig.reservation_station_entries_ex,
@@ -250,10 +253,33 @@ class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     (p: Parameters) => {
       implicit val q = p
       val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      InModuleBody {
+        println(gemmini.config.opcodes.opcodes, gemmini.config.dataflow)
+      }
       gemmini
     }
   )
 })
+
+class DefaultGemminiVectorConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.defaultConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig.copy(opcodes=OpcodeSet.custom2,
+        sp_capacity=CapacityInKilobytes(64), 
+        acc_capacity=CapacityInKilobytes(32),
+        headerFileName="gemmini_vector_params.h")))
+      InModuleBody {
+        println(gemmini.config.opcodes.opcodes, gemmini.config.dataflow)
+      }
+      gemmini
+    }
+  )
+  case SystemBusKey => up(SystemBusKey).copy(beatBytes = 16)
+})
+
 
 /**
  * Mixin which sets the default lean parameters for a systolic array accelerator.
@@ -269,6 +295,22 @@ class LeanGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     }
   )
 })
+
+class DummyDefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.dummyConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig.copy(opcodes=OpcodeSet.custom3)))
+      InModuleBody {
+        println(gemmini.config.opcodes.opcodes, gemmini.config.dataflow)
+      }
+      gemmini
+    }
+  )
+})
+
 
 // This Gemmini config has both an Int and an FP Gemmini side-by-side, sharing
 // the same scratchpad.

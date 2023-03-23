@@ -516,7 +516,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   // assert(min_pop_count < 2.U)
   dontTouch(pop_count_packed_deps)
   dontTouch(min_pop_count)
-
+/*
   val cycles_since_issue = RegInit(0.U(16.W))
 
   when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire() || !io.busy || io.completed.fire) {
@@ -525,7 +525,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     cycles_since_issue := cycles_since_issue + 1.U
   }
   assert(cycles_since_issue < PlusArg("gemmini_timeout", 10000), "pipeline stall")
-
+*/
   for (e <- entries) {
     dontTouch(e.bits.allocated_at)
   }

@@ -25,6 +25,7 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
   val status = new MStatus
 
+  val direct_dram = Bool()
 }
 
 class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)
@@ -50,6 +51,8 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
   val pool_en = Bool()
   val store_en = Bool()
 
+  // bypass cache
+  val direct_dram = Bool()
 }
 
 class ScratchpadMemWriteResponse extends Bundle {
@@ -306,6 +309,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
     writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
 
+    writer.module.io.req.bits.direct_dram := write_issue_q.io.deq.bits.direct_dram
+
+
     io.dma.write.resp.valid := false.B
     io.dma.write.resp.bits.cmd_id := write_dispatch_q.bits.cmd_id
     when (write_dispatch_q.bits.laddr.is_garbage() && write_dispatch_q.fire) {
@@ -360,6 +366,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     reader.module.io.req.bits.block_stride := read_issue_q.io.deq.bits.block_stride
     reader.module.io.req.bits.status := read_issue_q.io.deq.bits.status
     reader.module.io.req.bits.cmd_id := read_issue_q.io.deq.bits.cmd_id
+
+    reader.module.io.req.bits.direct_dram := read_issue_q.io.deq.bits.direct_dram
+
 
     val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(
       config.mvin_scale_args,

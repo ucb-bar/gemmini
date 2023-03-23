@@ -159,7 +159,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
 
-  val unrolled_cmd = Queue(loop_cmd)
+  val unrolled_cmd_risc = withClock (gated_clock) {LoopUnroller(loop_cmd, meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
+    inputType.getWidth, accType.getWidth, dma_maxbytes,  new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t))}
+
+  val unrolled_cmd = Queue(unrolled_cmd_risc)
   unrolled_cmd.ready := false.B
   counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
 

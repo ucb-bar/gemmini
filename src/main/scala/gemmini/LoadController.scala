@@ -39,6 +39,9 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val block_cols = meshColumns * tileColumns
   val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
 
+  val direct_drams = Reg(Vec(load_states, Bool())) // config directly from dram
+
+
   val cmd = Queue(io.cmd, ld_queue_length)
 
   val vaddr = cmd.bits.cmd.rs1
@@ -55,6 +58,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val config_shrink = config_mvin_rs1.shrink
   val config_block_stride = config_mvin_rs1.stride
   val config_pixel_repeats = config_mvin_rs1.pixel_repeats
+  val config_direct_dram = config_mvin_rs1.direct_dram
+
 
   val mstatus = cmd.bits.cmd.status
 
@@ -68,6 +73,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   val shrink = shrinks(state_id)
   val block_stride = block_strides(state_id)
   val pixel_repeat = pixel_repeats(state_id)
+  val direct_dram = direct_drams(state_id)
 
   val all_zeros = vaddr === 0.U
 
@@ -109,6 +115,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.all_zeros := all_zeros
   io.dma.req.bits.status := mstatus
   io.dma.req.bits.pixel_repeats := pixel_repeat
+  io.dma.req.bits.direct_dram := direct_dram
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
@@ -147,6 +154,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
           block_stride := config_block_stride
           pixel_repeat := Mux(config_pixel_repeats === 0.U, 1.U, config_pixel_repeats) // TODO this default value was just added to maintain backwards compatibility. we should deprecate and remove it later
           cmd.ready := true.B
+          direct_dram := config_direct_dram
         }
 
         .elsewhen(DoLoad && cmd_tracker.io.alloc.fire()) {

@@ -15,6 +15,8 @@ class BeatMergerOut(val spadWidth: Int, val accWidth: Int, val spadRows: Int, va
   val has_acc_bitwidth = Bool()
   val mask = Vec((spadWidth max accWidth)/(alignedTo*8) max 1, Bool())
   val last = Bool()
+
+  val direct_dram = Bool()
 }
 
 /*
@@ -89,6 +91,8 @@ class BeatMerger[U <: Data](beatBits: Int, maxShift: Int, spadWidth: Int, accWid
   io.out.bits.last := last_sending
   io.out.bits.accumulate := req.bits.accumulate
   io.out.bits.has_acc_bitwidth := req.bits.has_acc_bitwidth
+  io.out.bits.direct_dram := req.bits.direct_dram
+
 
   when (bytesRead === (1.U << req.bits.lg_len_req).asUInt &&
     bytesSent === req.bits.bytes_to_read) {
