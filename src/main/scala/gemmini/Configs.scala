@@ -172,15 +172,15 @@ object GemminiConfigs {
     meshRows     = defaultConfig.meshRows,
     meshColumns  = defaultConfig.meshColumns,
     dataflow     = defaultConfig.dataflow,
-    sp_capacity  = defaultConfig.sp_capacity,
-    acc_capacity = defaultConfig.acc_capacity,
+    sp_capacity  = CapacityInKilobytes(128),
+    acc_capacity = CapacityInKilobytes(128),
     sp_banks     = defaultConfig.sp_banks,
     acc_banks    = defaultConfig.acc_banks,
     sp_singleported = defaultConfig.sp_singleported,
     acc_singleported = defaultConfig.acc_singleported,
-    has_training_convs = defaultConfig.has_training_convs,
+    has_training_convs = false,
     has_max_pool = defaultConfig.has_max_pool,
-    has_nonlinear_activations = defaultConfig.has_nonlinear_activations,
+    has_nonlinear_activations = false,
     reservation_station_entries_ld = defaultConfig.reservation_station_entries_ld,
     reservation_station_entries_st = defaultConfig.reservation_station_entries_st,
     reservation_station_entries_ex = defaultConfig.reservation_station_entries_ex,
@@ -209,14 +209,14 @@ object GemminiConfigs {
       c_str = "({float y = ROUND_NEAR_EVEN((x) * (scale)); y > INT8_MAX ? INT8_MAX : (y < INT8_MIN ? INT8_MIN : (acc_t)y);})"
     )),
 
-    num_counter = defaultConfig.num_counter,
+    num_counter = 0,
 
-    acc_read_full_width = defaultConfig.acc_read_full_width,
+    acc_read_full_width = false,
     acc_read_small_width = defaultConfig.acc_read_small_width,
 
     ex_read_from_spad = defaultConfig.ex_read_from_spad,
-    ex_read_from_acc = defaultConfig.ex_read_from_acc,
-    ex_write_to_spad = defaultConfig.ex_write_to_spad,
+    ex_read_from_acc = false,
+    ex_write_to_spad = false,
     ex_write_to_acc = defaultConfig.ex_write_to_acc,
   )
 
@@ -260,6 +260,18 @@ class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
  */
 class LeanGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.leanConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+})
+
+class DummyDefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.dummyConfig
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
     (p: Parameters) => {
