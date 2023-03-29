@@ -273,7 +273,7 @@ class LeanGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   )
 })
 
-class LeanGemminiPrintfConfig[T <: Data : Arithmetic, U <: Data, V <: Data]
+class LeanGemminiPrintfConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.leanPrintfConfig
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
