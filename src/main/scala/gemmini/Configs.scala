@@ -250,7 +250,7 @@ object GemminiConfigs {
    allow for the default 16x16 8-bit systolic array to be attached.
  */
 class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
-  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.defaultConfig
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.leanConfig
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
     (p: Parameters) => {

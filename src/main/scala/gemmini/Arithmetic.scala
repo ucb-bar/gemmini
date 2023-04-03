@@ -43,9 +43,9 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def minimum: T
 
   // Optional parameters, which only need to be defined if you want to enable various optimizations for transformers
-  def divider(denom_t: UInt): Option[(DecoupledIO[UInt], DecoupledIO[T])] = None
+  def divider(denom_t: UInt, options: Int = 0): Option[(DecoupledIO[UInt], DecoupledIO[T])] = None
   def sqrt: Option[(DecoupledIO[UInt], DecoupledIO[T])] = None
-  def reciprocal[U <: Data](u: U): Option[(DecoupledIO[UInt], DecoupledIO[U])] = None
+  def reciprocal[U <: Data](u: U, options: Int = 0): Option[(DecoupledIO[UInt], DecoupledIO[U])] = None
   def mult_with_reciprocal[U <: Data](reciprocal: U) = self
 }
 
@@ -131,7 +131,7 @@ object Arithmetic {
       override def identity: SInt = 1.S
       override def minimum: SInt = (-(1 << (self.getWidth-1))).S
 
-      override def divider(denom_t: UInt): Option[(DecoupledIO[UInt], DecoupledIO[SInt])] = {
+      override def divider(denom_t: UInt, options: Int = 0): Option[(DecoupledIO[UInt], DecoupledIO[SInt])] = {
         // TODO this uses a floating point divider, but we should use an integer divider instead
 
         val input = Wire(Decoupled(denom_t.cloneType))
@@ -174,7 +174,7 @@ object Arithmetic {
         val denom_rec = uin_to_float(input.bits)
 
         // Instantiate the hardloat divider
-        val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 0))
+        val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, options))
 
         input.ready := divider.io.inReady
         divider.io.inValid := input.valid
@@ -244,7 +244,7 @@ object Arithmetic {
         Some((input, output))
       }
 
-      override def reciprocal[U <: Data](u: U): Option[(DecoupledIO[UInt], DecoupledIO[U])] = u match {
+      override def reciprocal[U <: Data](u: U, options: Int = 0): Option[(DecoupledIO[UInt], DecoupledIO[U])] = u match {
         case Float(expWidth, sigWidth, false) =>
           val input = Wire(Decoupled(UInt(0.W)))
           val output = Wire(Decoupled(u.cloneType))
@@ -266,7 +266,7 @@ object Arithmetic {
           val one_rec = in_to_float(1.S)
 
           // Instantiate the hardloat divider
-          val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, 0))
+          val divider = Module(new DivSqrtRecFN_small(expWidth, sigWidth, options))
 
           input.ready := divider.io.inReady
           divider.io.inValid := input.valid
@@ -311,14 +311,12 @@ object Arithmetic {
           val reciprocal_rec = recFNFromFN(expWidth, sigWidth, recip.bits)
 
           // Instantiate the hardloat divider
-          val muladder = Module(new MulAddRecFN(expWidth, sigWidth))
-          muladder.io.op := 0.U
+          val muladder = Module(new MulRecFN(expWidth, sigWidth))
           muladder.io.roundingMode := consts.round_near_even
           muladder.io.detectTininess := consts.tininess_afterRounding
 
           muladder.io.a := self_rec
           muladder.io.b := reciprocal_rec
-          muladder.io.c := 0.U
 
           float_to_in(muladder.io.out)
 
@@ -339,15 +337,13 @@ object Arithmetic {
         t_resizer.io.detectTininess := consts.tininess_afterRounding
         val t_rec_resized = t_resizer.io.out
 
-        val muladder = Module(new MulAddRecFN(self.expWidth, self.sigWidth))
+        val muladder = Module(new MulRecFN(self.expWidth, self.sigWidth))
 
-        muladder.io.op := 0.U
         muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
         muladder.io.detectTininess := consts.tininess_afterRounding
 
         muladder.io.a := self_rec
         muladder.io.b := t_rec_resized
-        muladder.io.c := 0.U
 
         val out = Wire(Float(self.expWidth, self.sigWidth, self.isRecoded))
         out.bits := (if (out.isRecoded) muladder.io.out else fNFromRecFN(self.expWidth, self.sigWidth, muladder.io.out))
@@ -449,15 +445,13 @@ object Arithmetic {
         assert(shift_exp =/= 0.U, "scaling by denormalized numbers is not currently supported")
 
         // Multiply self and 2^(-u)
-        val muladder = Module(new MulAddRecFN(self.expWidth, self.sigWidth))
+        val muladder = Module(new MulRecFN(self.expWidth, self.sigWidth))
 
-        muladder.io.op := 0.U
         muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
         muladder.io.detectTininess := consts.tininess_afterRounding
 
         muladder.io.a := self_rec
         muladder.io.b := shift_rec
-        muladder.io.c := 0.U
 
         val result = Wire(Float(self.expWidth, self.sigWidth, self.isRecoded))
         result.bits := (if (result.isRecoded) muladder.io.out else fNFromRecFN(self.expWidth, self.sigWidth, muladder.io.out))

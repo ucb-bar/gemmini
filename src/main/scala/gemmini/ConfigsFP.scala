@@ -62,7 +62,7 @@ object GemminiFPConfigs {
     mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
     mvin_scale_shared = false,
 
-    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0",
+    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 8, Float(8, 24), -1, identity = "1.0",
       c_str = "((x) * (scale))"
     )),
     acc_read_full_width = true,

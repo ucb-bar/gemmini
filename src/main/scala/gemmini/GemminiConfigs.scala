@@ -502,7 +502,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
     if (has_normalizations) {
       header ++= "#define HAS_NORMALIZATIONS\n"
-      header ++= "#define NORM_STAT_IDS 4\n\n"
+      header ++= "#define NORM_STAT_IDS 2\n\n"
     }
 
     header ++= s"#endif // $guard\n"

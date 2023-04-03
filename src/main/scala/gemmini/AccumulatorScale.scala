@@ -28,7 +28,7 @@ class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
 
 class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extends Bundle {
   val scale = u.cloneType
-  val act = UInt(2.W) // TODO magic number
+  val act = UInt(Activation.bitwidth.W)
   val igelu_qb = t.cloneType
   val igelu_qc = t.cloneType
   val iexp_qln2 = t.cloneType
@@ -56,19 +56,28 @@ class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_fun
 
   val e = io.in.bits.data
 
+  val act = io.in.bits.act
+  // make sure no normalizations gets passed in if no functional units present
+  assert(has_normalizations.B || (!io.in.fire) ||
+    (act =/= Activation.LAYERNORM && act =/= Activation.SOFTMAX && act =/= Activation.IGELU))
+
   val e_act = MuxCase(e, Seq(
-    (has_nonlinear_activations.B && io.in.bits.act === Activation.RELU) -> e.relu,
-    (has_nonlinear_activations.B && has_normalizations.B && io.in.bits.act === Activation.LAYERNORM) ->
-      (e - io.in.bits.mean).mult_with_reciprocal(io.in.bits.inv_stddev),
-    (has_nonlinear_activations.B && has_normalizations.B && io.in.bits.act === Activation.IGELU) ->
+    (has_nonlinear_activations.B && act === Activation.RELU) -> e.relu,
+    (has_nonlinear_activations.B && has_normalizations.B && act === Activation.LAYERNORM) ->
+      (e - io.in.bits.mean),
+    (has_nonlinear_activations.B && has_normalizations.B && act === Activation.IGELU) ->
       AccumulatorScale.igelu(e, io.in.bits.igelu_qb, io.in.bits.igelu_qc),
-    (has_nonlinear_activations.B && has_normalizations.B && io.in.bits.act === Activation.SOFTMAX) ->
-      scale_func(
-        AccumulatorScale.iexp(e - io.in.bits.max, io.in.bits.iexp_qln2, io.in.bits.iexp_qln2_inv, io.in.bits.igelu_qb, io.in.bits.igelu_qc),
-        io.in.bits.inv_sum_exp.asTypeOf(scale_t)),
+    (has_nonlinear_activations.B && has_normalizations.B && act === Activation.SOFTMAX) ->
+      AccumulatorScale.iexp(e - io.in.bits.max, io.in.bits.iexp_qln2, io.in.bits.iexp_qln2_inv, io.in.bits.igelu_qb, io.in.bits.igelu_qc),
   ))
 
-  val e_scaled = scale_func(e_act, io.in.bits.scale)
+  val e_scaled = scale_func(e_act, MuxCase(io.in.bits.scale, Seq(
+    (has_nonlinear_activations.B && has_normalizations.B && act === Activation.LAYERNORM) ->
+      io.in.bits.inv_stddev,
+    (has_nonlinear_activations.B && has_normalizations.B && act === Activation.SOFTMAX) ->
+      io.in.bits.inv_sum_exp.asTypeOf(scale_t)
+  )).asTypeOf(scale_t))
+
   val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
 
   out.bits.data := e_clipped
@@ -108,16 +117,20 @@ class AccumulatorScale[T <: Data, U <: Data](
       val e_act = MuxCase(e, Seq(
         (has_nonlinear_activations.B && act === Activation.RELU) -> e.relu,
         (has_nonlinear_activations.B && has_normalizations.B && act === Activation.LAYERNORM) ->
-          (e - io.in.bits.mean).mult_with_reciprocal(io.in.bits.inv_stddev),
+          (e - io.in.bits.mean),
         (has_nonlinear_activations.B && has_normalizations.B && act === Activation.IGELU) ->
           AccumulatorScale.igelu(e, igelu_qb, igelu_qc),
         (has_nonlinear_activations.B && has_normalizations.B && act === Activation.SOFTMAX) ->
-          scale_func(
-            AccumulatorScale.iexp(e - io.in.bits.max, iexp_qln2, iexp_qln2_inv, igelu_qb, igelu_qc),
-            io.in.bits.inv_sum_exp.asTypeOf(scale_t)),
+          AccumulatorScale.iexp(e - io.in.bits.max, iexp_qln2, iexp_qln2_inv, igelu_qb, igelu_qc),
       ))
 
-      val e_scaled = scale_func(e_act, scale)
+      val e_scaled = scale_func(e_act, MuxCase(scale, Seq(
+        (has_nonlinear_activations.B && has_normalizations.B && act === Activation.LAYERNORM) ->
+          io.in.bits.inv_stddev,
+        (has_nonlinear_activations.B && has_normalizations.B && act === Activation.SOFTMAX) ->
+          io.in.bits.inv_sum_exp.asTypeOf(scale_t)
+      )).asTypeOf(scale_t))
+
       val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
 
       e_clipped
@@ -178,15 +191,66 @@ class AccumulatorScale[T <: Data, U <: Data](
       tail_oh := (tail_oh << 1).asUInt | tail_oh(nEntries-1)
     }
 
-    val inputs = Seq.fill(width*nEntries) { Wire(Decoupled(new AccScaleDataWithIndex(t, scale_t)(ev))) }
+    val num_units_with_norm = 4 // TODO: move to configs
+
+    val inputs_norm = Seq.fill(width*nEntries) { Wire(Decoupled(new AccScaleDataWithIndex(t, scale_t)(ev))) }
+    val inputs_non_norm = Seq.fill(width*nEntries) { Wire(Decoupled(new AccScaleDataWithIndex(t, scale_t)(ev))) }
+
+    val norm_mask = regs.map(r => r.valid && (
+      (r.bits.acc_read_resp.act === Activation.SOFTMAX) ||
+      (r.bits.acc_read_resp.act === Activation.LAYERNORM) ||
+      (r.bits.acc_read_resp.act === Activation.IGELU)
+    ))
+
+    // input: norm_mask
+    // output: {b2, b1, b0} <-> b_i = whether entry i should use functional units with norm (1 = should)
+    val static_assignment_policy = Wire(Vec(1 << nEntries, UInt(nEntries.W)))
+    println("static policy for " + num_units_with_norm + " norm units:")
+    for (i <- 0 until (1 << nEntries)) {
+      val binaryString = String.format("%" + nEntries + "s", i.toBinaryString)
+        .replace(' ', '0').toCharArray.toList
+      val num_norm : Int = binaryString.count(_ == '1')
+      val ratio_of_norm_entries = num_norm.toFloat / nEntries.toFloat
+      val ratio_of_norm_units = num_units_with_norm.toFloat / num_scale_units.toFloat
+      if (ratio_of_norm_entries >= ratio_of_norm_units) {
+        // use norm units for all norm entries
+        static_assignment_policy(i.U) := i.U
+        println("input pattern " + binaryString.mkString("") + ": " + binaryString.mkString(""))
+      } else {
+        def flip_n_zeros (s: List[Char], n: Int): List[Char] = {
+          if (s.nonEmpty) {
+            if ((s.head == '0') && (n > 0))
+              '1' :: flip_n_zeros(s.tail, n - 1)
+            else
+              s.head :: flip_n_zeros(s.tail, n)
+          } else {
+            assert(n == 0, "cannot flip " + n + " zeros in an empty string")
+            List.empty
+          }
+        }
+        val flippedString = flip_n_zeros(
+          binaryString, Math.round(ratio_of_norm_units * nEntries) - num_norm)
+        val flipped = Integer.parseInt(flippedString.mkString(""), 2)
+        static_assignment_policy(i.U) := flipped.U
+        println("input pattern " + binaryString.mkString("") + ": " + flipped.toBinaryString)
+      }
+    }
+
+    //    val inputs = Seq.fill(width*nEntries) { Wire(Decoupled(new AccScaleDataWithIndex(t, scale_t)(ev))) }
+    val current_policy = Wire(UInt(nEntries.W))
+    val norm_mask_int = Wire(UInt(nEntries.W))
+    norm_mask_int := VecInit(norm_mask).asUInt()
+    dontTouch(norm_mask_int)
+    current_policy := static_assignment_policy(norm_mask_int)
+
 
     for (i <- 0 until nEntries) {
       for (w <- 0 until width) {
-        val input = inputs(i*width+w)
+        val input = inputs_norm(i*width+w)
 
         val acc_read_resp = regs(i).bits.acc_read_resp
 
-        input.valid       := regs(i).valid && !fired_masks(i)(w)
+        input.valid       := regs(i).valid && !fired_masks(i)(w) && /*norm_mask(i)*/ current_policy(i)
         input.bits.data   := acc_read_resp.data(w / acc_read_data(0).size)(w % acc_read_data(0).size)
         input.bits.full_data := acc_read_resp.data(w / acc_read_data(0).size)(w % acc_read_data(0).size)
         input.bits.scale  := acc_read_resp.scale
@@ -206,8 +270,47 @@ class AccumulatorScale[T <: Data, U <: Data](
         }
       }
     }
+
+    for (i <- 0 until nEntries) {
+      for (w <- 0 until width) {
+        val input = inputs_non_norm(i*width+w)
+
+        val acc_read_resp = regs(i).bits.acc_read_resp
+
+        input.valid       := regs(i).valid && !fired_masks(i)(w) && (!current_policy(i))
+        input.bits.data   := acc_read_resp.data(w / acc_read_data(0).size)(w % acc_read_data(0).size)
+        input.bits.full_data := acc_read_resp.data(w / acc_read_data(0).size)(w % acc_read_data(0).size)
+        input.bits.scale  := acc_read_resp.scale
+        input.bits.act    := acc_read_resp.act
+        input.bits.igelu_qb := DontCare
+        input.bits.igelu_qc := DontCare
+        input.bits.iexp_qln2 := DontCare
+        input.bits.iexp_qln2_inv := DontCare
+        input.bits.mean := DontCare
+        input.bits.max := DontCare
+        input.bits.inv_stddev := DontCare
+        input.bits.inv_sum_exp := DontCare
+        input.bits.id := i.U
+        input.bits.index := w.U
+        if (num_scale_units == num_units_with_norm) {
+          input.ready := false.B
+        }
+        when (input.fire) {
+          fired_masks(i)(w) := true.B
+        }
+      }
+    }
+
     for (i <- 0 until num_scale_units) {
-      val arbIn = inputs.zipWithIndex.filter({ case (_, w) => w % num_scale_units == i }).map(_._1)
+      val norm_supported = (i < num_units_with_norm) && has_normalizations
+
+      val arbIn =
+        if (norm_supported)
+          // for norm units, prioritize norm operations
+          inputs_norm.zipWithIndex.filter({ case (_, w) => w % num_units_with_norm == i }).map(_._1)
+        else
+          inputs_non_norm.zipWithIndex.filter({ case (_, w) => w % (num_scale_units - num_units_with_norm) == (i - num_units_with_norm) }).map(_._1)
+
       val arb = Module(new RRArbiter(new AccScaleDataWithIndex(t, scale_t)(ev), arbIn.length))
       arb.io.in <> arbIn
       arb.io.out.ready := true.B
@@ -217,22 +320,34 @@ class AccumulatorScale[T <: Data, U <: Data](
       when (reset.asBool) {
         arbOut.valid := false.B
       }
-      val pipe = Module(new AccScalePipe(t, rDataType, scale_func, scale_t, latency, has_nonlinear_activations,
-        has_normalizations))
+      val pipe = Module(new AccScalePipe(t, rDataType, scale_func, scale_t, latency,
+            has_nonlinear_activations, norm_supported))
+
       pipe.io.in := arbOut
       val pipe_out = pipe.io.out
 
       for (j <- 0 until nEntries) {
         for (w <- 0 until width) {
-          if ((j*width+w) % num_scale_units == i) {
-            val id0 = w % acc_read_data(0).size
-            val id1 = w / acc_read_data(0).size
-            when (pipe_out.fire && pipe_out.bits.id === j.U && pipe_out.bits.index === w.U) {
-              out_regs(j).data     (id1)(id0) := pipe_out.bits.data
-              out_regs(j).full_data(id1)(id0) := pipe_out.bits.full_data
-              completed_masks(j)(w) := true.B
+          val id0 = w % acc_read_data(0).size
+          val id1 = w / acc_read_data(0).size
+            if ((j*width+w) % num_units_with_norm == i) {
+              when (pipe_out.fire && pipe_out.bits.id === j.U && pipe_out.bits.index === w.U) {
+                out_regs(j).data     (id1)(id0) := pipe_out.bits.data
+                out_regs(j).full_data(id1)(id0) := pipe_out.bits.full_data
+                completed_masks(j)(w) := true.B
+              }
             }
-          }
+            if (num_scale_units > num_units_with_norm) {
+              if ((j*width+w) % (num_scale_units - num_units_with_norm) == (i - num_units_with_norm)) {
+                val id0 = w % acc_read_data(0).size
+                val id1 = w / acc_read_data(0).size
+                when (pipe_out.fire && pipe_out.bits.id === j.U && pipe_out.bits.index === w.U) {
+                  out_regs(j).data     (id1)(id0) := pipe_out.bits.data
+                  out_regs(j).full_data(id1)(id0) := pipe_out.bits.full_data
+                  completed_masks(j)(w) := true.B
+                }
+              }
+            }
         }
       }
     }
@@ -276,16 +391,17 @@ object AccumulatorScale {
     val zero = q.zero
     def neg(x: T) = zero-x
 
-    // qln2_inv needs scale to be
-    // 1 / (2 ** 16) / S
-
+    // qln2_inv needs scale to be 1 / (2 ** 16) / S
     // qln2_inv / S / (2 ** 16) = 1 / ln2
     // q * qln2_inv = x / S / ln2 * S * (2 ** 16) = x / ln2 * (2 ** 16)
     val neg_q_iexp = neg(q)
     val z_iexp = (neg_q_iexp * qln2_inv).asUInt.do_>>(16).asTypeOf(q) // q is non-positive
+    val z_iexp_saturated = Wire(z_iexp.cloneType)
+    z_iexp_saturated := Mux((5 until 16).map(z_iexp.asUInt(_)).reduce(_ | _), 32.S, z_iexp.asUInt.asSInt).asTypeOf(z_iexp_saturated)
     val qp_iexp = q.mac(z_iexp, qln2).withWidthOf(q)
     val q_poly_iexp = qc.mac(qp_iexp + qb, qp_iexp + qb).withWidthOf(q)
     // we dont want a rounding shift
-    (q_poly_iexp.asUInt.do_>>(z_iexp.asUInt(5, 0))).asTypeOf(q)
+    //  TODO: z overflow
+    (q_poly_iexp.asUInt.do_>>(z_iexp_saturated.asUInt)).asTypeOf(q)
   }}
 

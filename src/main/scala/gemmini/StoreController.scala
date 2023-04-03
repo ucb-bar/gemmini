@@ -42,11 +42,14 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val block_cols = meshColumns * tileColumns
   val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
 
-  val activation = Reg(UInt(Activation.bitwidth.W)) // TODO magic number
+  val activation = Reg(UInt(Activation.bitwidth.W))
   val igelu_qb = Reg(accType)
   val igelu_qc = Reg(accType)
   val iexp_qln2 = Reg(accType)
   val iexp_qln2_inv = Reg(accType)
+  val stat_addr = Reg(UInt(8.W))
+  val load_stats = Reg(Bool())
+  val store_stats = Reg(Bool())
   val norm_stats_id = Reg(UInt(8.W)) // TODO magic number
   val acc_scale = Reg(acc_scale_t)
 
@@ -111,6 +114,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val config_stats_id = config_norm_rs1.norm_stats_id
   val config_activation_msb = config_norm_rs1.act_msb
   val config_set_stats_id_only = config_norm_rs1.set_stats_id_only
+  val config_stat_addr = config_norm_rs1.stat_addr
+  val config_load_stats = config_norm_rs1.load_stats
+  val config_store_stats = config_norm_rs1.store_stats
   val config_iexp_q_const_type = config_norm_rs1.q_const_type
   val config_iexp_q_const = config_norm_rs1.q_const
   val config_igelu_qb = config_norm_rs2.qb
@@ -167,6 +173,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.acc_igelu_qc := igelu_qc.asTypeOf(io.dma.req.bits.acc_igelu_qc)
   io.dma.req.bits.acc_iexp_qln2 := iexp_qln2.asTypeOf(io.dma.req.bits.acc_iexp_qln2)
   io.dma.req.bits.acc_iexp_qln2_inv := iexp_qln2_inv.asTypeOf(io.dma.req.bits.acc_iexp_qln2_inv)
+  io.dma.req.bits.acc_stat_addr := stat_addr.asTypeOf(io.dma.req.bits.acc_stat_addr)
+  io.dma.req.bits.acc_load_stats := load_stats.asTypeOf(io.dma.req.bits.acc_load_stats)
+  io.dma.req.bits.acc_store_stats := store_stats.asTypeOf(io.dma.req.bits.acc_store_stats)
   io.dma.req.bits.acc_norm_stats_id := norm_stats_id
   io.dma.req.bits.acc_scale := acc_scale.asTypeOf(io.dma.req.bits.acc_scale)
 
@@ -258,6 +267,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
             }
             activation := Cat(config_activation_msb, activation(1, 0)) // TODO: magic number
           }
+          stat_addr := config_stat_addr.asTypeOf(stat_addr)
+          load_stats := config_load_stats.asTypeOf(load_stats)
+          store_stats := config_store_stats.asTypeOf(store_stats)
           norm_stats_id := config_stats_id
           cmd.ready := true.B
         }
