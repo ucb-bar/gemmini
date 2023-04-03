@@ -93,6 +93,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_normalizations: Boolean = false,
                                                                              has_first_layer_optimizations: Boolean = true,
 
+                                                                             programmable_datatypes: Boolean = false,
+
                                                                              use_firesim_simulation_counters: Boolean = false,
 
                                                                              use_shared_ext_mem: Boolean = false,

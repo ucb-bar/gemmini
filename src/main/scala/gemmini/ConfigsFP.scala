@@ -135,9 +135,18 @@ object GemminiFPConfigs {
     tile_latency = 2,
   )
 
+  val FP8TransformerWithoutDenormalRecodingsConfig = FP8TransformerConfig.copy(
+    spatialArrayInputType = Float(4, 4, isRecoded = false), spatialArrayWeightType = Float(4, 4, isRecoded = false), spatialArrayOutputType = Float(5, 11, isRecoded = false),
+  )
+
   val HybridFP8TransformerConfig = FP8TransformerConfig.copy(
     weightType = Float(5, 3),
     spatialArrayInputType = Float(5, 4, isRecoded = true), spatialArrayWeightType = Float(5, 4, isRecoded = true),
+    programmable_datatypes = true
+  )
+
+  val NonProgrammableHybridFP8TransformerConfig = HybridFP8TransformerConfig.copy(
+    programmable_datatypes = false
   )
 }
 
@@ -212,12 +221,32 @@ class GemminiFP8TransformerConfig extends Config((site, here, up) => {
   )
 })
 
+class GemminiFP8TransformerNoRecodingConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      implicit val v = implicitly[ValName]
+      LazyModule(new Gemmini(GemminiFPConfigs.FP8TransformerWithoutDenormalRecodingsConfig))
+    }
+  )
+})
+
 class GemminiHybridFP8TransformerConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq(
     (p: Parameters) => {
       implicit val q = p
       implicit val v = implicitly[ValName]
       LazyModule(new Gemmini(GemminiFPConfigs.HybridFP8TransformerConfig))
+    }
+  )
+})
+
+class GemminiNonProgrammableHybridFP8TransformerConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      implicit val v = implicitly[ValName]
+      LazyModule(new Gemmini(GemminiFPConfigs.NonProgrammableHybridFP8TransformerConfig))
     }
   )
 })

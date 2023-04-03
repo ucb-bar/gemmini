@@ -118,7 +118,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val activation = if (has_nonlinear_activations) Reg(UInt(Activation.bitwidth.W)) else Activation.NONE // TODO magic number
   val a_transpose = Reg(Bool())
   val bd_transpose = Reg(Bool())
-  val datatypes = Reg(Vec(2, Bool()))
+  val datatypes = if (programmable_datatypes) Reg(Vec(2, Bool())) else VecInit(false.B, true.B)
   val config_initialized = RegInit(false.B)
 
   val a_should_be_fed_into_transposer = Mux(current_dataflow === Dataflow.OS.id.U, !a_transpose, a_transpose)
@@ -557,7 +557,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               a_transpose := config_ex_rs1.a_transpose
               bd_transpose := config_ex_rs1.b_transpose
 
-              datatypes := config_ex_rs1.datatypes
+              if (programmable_datatypes) {
+                datatypes := config_ex_rs1.datatypes
+              }
 
               if (dataflow == Dataflow.BOTH) {
                 current_dataflow := config_ex_rs1.dataflow
@@ -837,8 +839,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val dataD_unpadded = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
 
   val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, inputType.zero)}.map(d => Mux(datatypes(0), d.asTypeOf(inputType), d.asTypeOf(weightType)).withWidthOf(spatialArrayInputType)))
-  val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)}.map(d => Mux(datatypes(0), d.asTypeOf(inputType), d.asTypeOf(weightType)).withWidthOf(spatialArrayWeightType)))
-  val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)}.map(d => Mux(datatypes(0), d.asTypeOf(inputType), d.asTypeOf(weightType)).withWidthOf(spatialArrayWeightType)))
+  val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)}.map(d => Mux(datatypes(1), d.asTypeOf(inputType), d.asTypeOf(weightType)).withWidthOf(spatialArrayWeightType)))
+  val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)}.map(d => Mux(datatypes(1), d.asTypeOf(inputType), d.asTypeOf(weightType)).withWidthOf(spatialArrayWeightType)))
 
   // Pop responses off the scratchpad io ports
   when (mesh_cntl_signals_q.io.deq.fire) {
