@@ -5,7 +5,7 @@ import chisel3._
 import chisel3.util._
 import chisel3.experimental._
 import freechips.rocketchip.tile.RoCCCommand
-import freechips.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 import GemminiISA._
 import LocalAddr._
 import Util._
@@ -661,12 +661,12 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
 
   // val new_weights = b === 0.U && orow === 0.U && ocol === 0.U
   val new_weights = Reg(Bool())
-  val krow_ = Mux(req.wrot180, krows - krow - 1.U, krow)
-  val kcol_ = Mux(req.wrot180, kcols - kcol - 1.U, kcol)
+  val krow_rot = Mux(req.wrot180, krows - krow - 1.U, krow)
+  val kcol_rot = Mux(req.wrot180, kcols - kcol - 1.U, kcol)
 
   val b_addr = Mux(req.trans_weight_0132,
-    b_addr_start +& (kch / block_size.U(och.getWidth.W)) * krows * kcols * ochs +& krow_ * kcols * ochs +& kcol_ * ochs +& och,
-    b_addr_start +& (och / block_size.U(och.getWidth.W)) * krows * kcols * kchs +& krow_ * kcols * kchs +& kcol_ * kchs +& kch)
+    b_addr_start +& (kch / block_size.U(och.getWidth.W)) * krows * kcols * ochs +& krow_rot * kcols * ochs +& kcol_rot * ochs +& och,
+    b_addr_start +& (och / block_size.U(och.getWidth.W)) * krows * kcols * kchs +& krow_rot * kcols * kchs +& kcol_rot * kchs +& kch)
 
   class RoCCCommandWithAddr extends Bundle {
     val cmd = new RoCCCommand

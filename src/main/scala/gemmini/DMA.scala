@@ -5,7 +5,7 @@ import chisel3._
 import chisel3.util._
 import chisel3.experimental.DataMirror
 
-import freechips.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
 import freechips.rocketchip.tile.{CoreBundle, HasCoreParameters}
 import freechips.rocketchip.tilelink._

@@ -5,7 +5,7 @@ import chisel3._
 import chisel3.util._
 import GemminiISA._
 import Util._
-import freechips.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 import midas.targetutils.PerfCounter
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
