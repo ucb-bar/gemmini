@@ -221,6 +221,7 @@ class LoopConvLdInputReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: 
   val dram_addr = UInt(coreMaxAddrBits.W)
   val downsample = Bool()
   val max_pixels_per_row = UInt(small_iterator_bitwidth.W)
+  val padding_value = UInt(8.W) // TODO magic number
   val input_dilated = Bool()
   val trans_input_3120 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
@@ -320,7 +321,10 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   config_cmd_rs1._unused := 1.U
   config_cmd.rs1 := config_cmd_rs1.asUInt()
 
-  config_cmd.rs2 := dram_stride << req.downsample
+  val config_rs2 = Wire(Vec(2,UInt(32.W)))
+  config_rs2(0) := dram_stride << req.downsample
+  config_rs2(1) := req.padding_value
+  config_cmd.rs2 := config_rs2.asUInt
 
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
@@ -499,7 +503,10 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   config_cmd_rs1._unused := 1.U
   config_cmd.rs1 := config_cmd_rs1.asUInt
 
-  config_cmd.rs2 := dram_stride
+  val config_rs2 = Wire(Vec(2,UInt(32.W)))
+  config_rs2(0) := dram_stride
+  config_rs2(1) := 0.U
+  config_cmd.rs2 := config_rs2.asUInt
 
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
@@ -1070,6 +1077,7 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val dw = Bool()
 
   val max_pixels_per_row = UInt(small_iterator_bitwidth.W)
+  val padding_value = UInt(8.W) // TODO magic number
 
   val configured = Bool()
 
@@ -1327,6 +1335,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
 
       is (LOOP_CONV_WS) {
         loop_being_configured.no_bias := cmd.bits.cmd.rs1(0)
+        loop_being_configured.padding_value := cmd.bits.rs1(55, 48)
 
         // TODO we added a default value for max_pixels_per_row just to maintain backwards compatibility. we should deprecate and remove it later
         val config_max_pixels_per_row = cmd.bits.cmd.rs1(15, 8)
@@ -1394,6 +1403,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   ld_input.io.req.bits.input_dilated := loop_requesting_ld_input.input_dilated
   ld_input.io.req.bits.trans_input_3120 := loop_requesting_ld_input.trans_input_3120
   ld_input.io.req.bits.loop_id := loop_requesting_ld_input_id
+  ld_input.io.req.bits.padding_value := loop_requesting_ld_input.padding_value
 
   ld_input.io.req.valid := !loop_requesting_ld_input.ld_input_started && loop_requesting_ld_input.configured
 

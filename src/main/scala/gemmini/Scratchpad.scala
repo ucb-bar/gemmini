@@ -24,7 +24,7 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val pixel_repeats = UInt(8.W) // TODO magic numbers
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
   val status = new MStatus
-
+  val padding_value = UInt(8.W) // TODO magic numbers
 }
 
 class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)
@@ -543,7 +543,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           mvin_scale_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
         }.elsewhen (zerowrite) {
           bio.write.addr := zero_writer_pixel_repeater.io.resp.bits.laddr.sp_row()
-          bio.write.data := 0.U
+          val paddingdata = VecInit(Seq.fill(spad_w/8)(zero_writer_pixel_repeater.io.req.bits.tag.padding_value))
+          bio.write.data := paddingdata.asUInt
           bio.write.mask := zero_writer_pixel_repeater.io.resp.bits.mask
 
           zero_writer_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
