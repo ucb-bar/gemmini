@@ -336,7 +336,7 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   io.idle := state === idle && !command_p.io.busy
   io.loop_id := req.loop_id
 
-  command_p.io.in.valid := state =/= idle && !io.wait_for_prev_loop
+  command_p.io.in.valid := state =/= idle && !io.wait_for_prev_loop && (req.dram_addr =/= 0.U)
   command_p.io.in.bits.cmd := Mux(state === config, config_cmd, mvin_cmd)
   command_p.io.in.bits.dram_addr := dram_addr
   command_p.io.in.bits.spad_addr := spad_addr
@@ -358,7 +358,9 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   }
 
   // Sending outputs
-  when(command_p.io.in.fire) {
+  when(req.dram_addr === 0.U){
+    state := idle
+  }.elsewhen(command_p.io.in.fire) {
     when (state === config) {
       state := ld
     }.otherwise {
@@ -515,7 +517,7 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   io.idle := state === idle && !command_p.io.busy
   io.loop_id := req.loop_id
 
-  command_p.io.in.valid := state =/= idle && !io.wait_for_prev_loop
+  command_p.io.in.valid := state =/= idle && !io.wait_for_prev_loop && (req.dram_addr =/= 0.U)
   command_p.io.in.bits.cmd := Mux(state === config, config_cmd, mvin_cmd)
   command_p.io.in.bits.dram_addr := dram_addr
   command_p.io.in.bits.spad_addr := spad_addr
@@ -537,7 +539,9 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   }
 
   // Sending outputs
-  when(command_p.io.in.fire) {
+  when(req.dram_addr === 0.U){
+    state := idle
+  }.elsewhen(command_p.io.in.fire) {
     when (state === config) {
       state := ld
     }.otherwise {
@@ -1073,6 +1077,8 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val dw = Bool()
 
   val max_pixels_per_row = UInt(small_iterator_bitwidth.W)
+  val a_ex_spad_id = UInt(2.W)
+  val b_ex_spad_id = UInt(2.W)
 
   val configured = Bool()
 
@@ -1340,6 +1346,9 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
           !has_first_layer_optimizations.B || config_max_pixels_per_row === 0.U,
           1.U, config_max_pixels_per_row)
 
+        loop_being_configured.a_ex_spad_id := cmd.bits.cmd.rs1(19, 18)
+        loop_being_configured.b_ex_spad_id := cmd.bits.cmd.rs1(17, 16) 
+        
         loop_being_configured.wrot180 := has_training_convs.B && cmd.bits.cmd.rs1(1)
         loop_being_configured.input_dilated := has_training_convs.B && cmd.bits.cmd.rs2(2)
         loop_being_configured.trans_output_1203 := has_training_convs.B && cmd.bits.cmd.rs1(2)
@@ -1393,7 +1402,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   ld_input.io.req.bits.outer_bounds := loop_requesting_ld_input.outer_bounds
   ld_input.io.req.bits.inner_bounds := loop_requesting_ld_input.inner_bounds
   ld_input.io.req.bits.derived_params := loop_requesting_ld_input.derived_params()
-  ld_input.io.req.bits.addr_start := loop_requesting_ld_input.a_addr_start
+  ld_input.io.req.bits.addr_start := Mux(loop_requesting_ld_input.a_ex_spad_id === 0.U, loop_requesting_ld_input.a_addr_start, (loop_requesting_ld_input.a_ex_spad_id - 1.U) * (max_addr / concurrent_loops).U)
   ld_input.io.req.bits.dram_addr := loop_requesting_ld_input.input_dram_addr
   ld_input.io.req.bits.downsample := loop_requesting_ld_input.downsample
   ld_input.io.req.bits.max_pixels_per_row := loop_requesting_ld_input.max_pixels_per_row
@@ -1413,7 +1422,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   ld_weights.io.req.bits.outer_bounds := loop_requesting_ld_weights.outer_bounds
   ld_weights.io.req.bits.inner_bounds := loop_requesting_ld_weights.inner_bounds
   ld_weights.io.req.bits.derived_params := loop_requesting_ld_weights.derived_params()
-  ld_weights.io.req.bits.addr_end := loop_requesting_ld_weights.b_addr_end
+  ld_weights.io.req.bits.addr_end :=  Mux(loop_requesting_ld_weights.b_ex_spad_id === 0.U, loop_requesting_ld_weights.b_addr_end, (loop_requesting_ld_weights.b_ex_spad_id) * (max_addr / concurrent_loops).U)
   ld_weights.io.req.bits.dram_addr := loop_requesting_ld_weights.weights_dram_addr
   ld_weights.io.req.bits.trans_weight_1203 := loop_requesting_ld_weights.trans_weight_1203
   ld_weights.io.req.bits.trans_weight_0132 := loop_requesting_ld_weights.trans_weight_0132
@@ -1432,8 +1441,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   ex.io.req.bits.outer_bounds := loop_requesting_ex.outer_bounds
   ex.io.req.bits.inner_bounds := loop_requesting_ex.inner_bounds
   ex.io.req.bits.derived_params := loop_requesting_ex.derived_params()
-  ex.io.req.bits.a_addr_start := loop_requesting_ex.a_addr_start
-  ex.io.req.bits.b_addr_end := loop_requesting_ex.b_addr_end
+  ex.io.req.bits.a_addr_start := Mux(loop_requesting_ex.a_ex_spad_id === 0.U, loop_requesting_ex.a_addr_start, (loop_requesting_ex.a_ex_spad_id - 1.U) * (max_addr / concurrent_loops).U)
+  ex.io.req.bits.b_addr_end := Mux(loop_requesting_ex.b_ex_spad_id === 0.U, loop_requesting_ex.b_addr_end, (loop_requesting_ex.b_ex_spad_id) * (max_addr / concurrent_loops).U)
   ex.io.req.bits.c_addr_start := ex_c_addr_start
   ex.io.req.bits.wrot180 := loop_requesting_ex.wrot180
   ex.io.req.bits.downsample := loop_requesting_ex.downsample
