@@ -1,7 +1,8 @@
 /*
 package chipyard
 
-import freechips.rocketchip.config.{Config}
+import org.chipsalliance.cde.config.Config
+import gemmini.{GemminiCustomConfig, GemminiCustomConfigs}
 
 class CustomGemminiSoCConfig extends Config(
   new gemmini.GemminiCustomConfig ++
@@ -19,6 +20,7 @@ class CustomGemminiSoCConfig extends Config(
   // Set the number of CPUs you want to create
   new chipyard.CustomGemmminiCPUConfigs.CustomCPU(1) ++
 
+  new chipyard.config.WithSystemBusWidth(GemminiCustomConfigs.customConfig.dma_buswidth) ++
   new chipyard.config.AbstractConfig
 )
 */

@@ -48,8 +48,8 @@ class PixelRepeater[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols
     val out_shift = Wire(UInt(log2Up(block_cols / 2 + 1).W))
     out_shift := req.bits.pixel_repeats * req.bits.len
 
-    io.resp.bits.out := (req.bits.in.asUInt() << (out_shift * t.getWidth.U)).asTypeOf(io.resp.bits.out)
-    io.resp.bits.mask := (req.bits.mask.asUInt() << (out_shift * ((t.getWidth / 8) / aligned_to).U)).asTypeOf(io.resp.bits.mask)
+    io.resp.bits.out := (req.bits.in.asUInt << (out_shift * t.getWidth.U)).asTypeOf(io.resp.bits.out)
+    io.resp.bits.mask := (req.bits.mask.asUInt << (out_shift * ((t.getWidth / 8) / aligned_to).U)).asTypeOf(io.resp.bits.mask)
 
     io.resp.bits.last := req.bits.last && (req.bits.pixel_repeats === 0.U)
     io.resp.bits.tag := req.bits.tag
@@ -84,7 +84,7 @@ class PixelRepeater[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols
       req.bits.pixel_repeats := io.req.bits.pixel_repeats - 1.U
     }
 
-    when(reset.asBool()) {
+    when(reset.asBool) {
       req.pop()
     }
   }

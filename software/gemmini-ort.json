@@ -53,6 +53,6 @@
   ],
   "overlay": "../onnxruntime-riscv/systolic_runner/imagenet_runner",
   "rootfs-size": "16GiB",
-  "run": "run-ort.sh"
+  "run": "run-ort.sh",
+  "spike-args": "--extension=gemmini"
 }
-

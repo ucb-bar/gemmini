@@ -1,7 +1,7 @@
 package gemmini
 
 import chisel3._
-import freechips.rocketchip.config.{Config, Parameters}
+import org.chipsalliance.cde.config.{Config, Parameters}
 import freechips.rocketchip.diplomacy.{LazyModule, ValName}
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.tile.{BuildRoCC, OpcodeSet}

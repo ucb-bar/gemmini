@@ -23,17 +23,16 @@ cd $LOCAL_CHIPYARD_DIR
 git fetch
 git checkout $(cat $LOCAL_CHECKOUT_DIR/CHIPYARD.hash)
 
-./build-setup.sh esp-tools
+./build-setup.sh riscv-tools -f -s 6 -s 7 -s 8 -s 9
 
 source env.sh
-
-cd toolchains/esp-tools/riscv-isa-sim/build
-git checkout $(cat $LOCAL_CHECKOUT_DIR/SPIKE.hash)
-make && make install
 
 cd $LOCAL_CHECKOUT_DIR
 chown -R $(whoami) .
 git config --global --add safe.directory $LOCAL_CHECKOUT_DIR
+git config --global --add safe.directory '*'
+
+cd $LOCAL_CHECKOUT_DIR
 git submodule update --init --recursive software/gemmini-rocc-tests
 rm -rf $LOCAL_CHIPYARD_DIR/generators/gemmini/* $LOCAL_CHIPYARD_DIR/generators/gemmini/.git*
 mv -f $LOCAL_CHECKOUT_DIR/* $LOCAL_CHECKOUT_DIR/.git* $LOCAL_CHIPYARD_DIR/generators/gemmini/

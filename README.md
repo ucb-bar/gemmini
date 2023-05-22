@@ -32,22 +32,17 @@ Run these steps to install Chipyard and Spike (make sure to checkout the correct
 ```shell
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
-git checkout 1.8.1
-./build-setup.sh esp-tools
+git checkout 1.9.1
+./build-setup.sh riscv-tools
 
 source env.sh
 
 cd generators/gemmini
 git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
-git fetch && git checkout v0.7.0
+git fetch && git checkout v0.7.1
 git submodule update --init --recursive
 
-SPIKE_HASH=$(cat SPIKE.hash)
-
-cd -
-cd toolchains/esp-tools/riscv-isa-sim/build
-git fetch && git checkout $SPIKE_HASH
-make && make install
+make -C software/libgemmini install
 
 # The final step is only necessary if you want to run MIDAS simulations with
 # realistic DRAM models
@@ -368,9 +363,8 @@ Afterwards, the test binaries will be found in `software/gemmini-rocc-tests/buil
 Binaries whose names end in `-baremetal` are meant to be run in a bare-metal environment, while binaries whose names end in `-linux` are meant to run in a Linux environment.
 You can run the tests either on a cycle-accurate RTL simulator, or on a (much faster) functional ISA simulator called Spike.
 
-We use a special fork of Spike, found [here](https://github.com/ucb-bar/esp-isa-sim), which has support for Gemmini instructions.
-(You can find the required commit hash in `SPIKE.hash`).
-If you are using Chipyard, you can easily build Spike by running `./scripts/build-toolchains.sh esp-tools` from Chipyard's root directory.
+We use a special extension of Spike, found [here](https://github.com/ucb-bar/libgemmini), which has support for Gemmini instructions.
+If you are using Chipyard, you can easily build Spike by running `./scripts/build-toolchains.sh riscv-tools` from Chipyard's root directory, then by running `make -C software/libgemmini install` in the Gemmini directory.
 Then, to run the `mvin_mvout` test, which simply moves a matrix into Gemmini's scratchpad before moving it back out into main memory, run the following commands:
 
 ```shell
@@ -502,8 +496,9 @@ This limitation may be lifted in the future.
 - `rs1[1:0]` must be `01`
 - `rs1[2]` is 0 if `mvin`s to the accumulator are of type `accType`, and 1 if they are `inputType`
 - `rs1[4:3]` is 0 if the stride is being set for `mvin`, 1 if the stride is being set for `mvin2`, and 2 if the stride is being set for `mvin3`
+- `rs1[31:16]` is the scratchpad-memory stride (also called the "private-memory stride" above)
 - `rs1[63:32]` is the "scale" by which to multiply data as it's being moved in to the scratchpad. This is ignored if Gemmini isn't configured to have the ability to scale values during `mvin`s.
-- `rs2` = the stride in bytes
+- `rs2` is the main-memory stride in bytes
 - `funct` = 0
 
 **Action:** stride <= rs2; scale <= rs1[63:32]

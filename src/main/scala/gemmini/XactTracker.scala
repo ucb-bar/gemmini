@@ -84,7 +84,7 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
     assert(entries(io.peek.xactid).valid)
   }
 
-  when (reset.asBool()) {
+  when (reset.asBool) {
     entries.foreach(_.valid := false.B)
   }
 

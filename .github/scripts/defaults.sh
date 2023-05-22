@@ -30,6 +30,8 @@ LOCAL_SIM_DIR=$LOCAL_CHIPYARD_DIR/sims/verilator
 LOCAL_VERILATOR_DIR=$HOME/verilator-install
 LOCAL_CONDA=/opt/conda/
 
+CICONFIG=chipyard.config.WithNoDebug_GemminiRocketConfig
+
 echo "::set-output name=LOCAL_WORK_DIR::$LOCAL_WORK_DIR"
 echo "::set-output name=LOCAL_CHECKOUT_DIR::$LOCAL_CHECKOUT_DIR"
 echo "::set-output name=LOCAL_RISCV_DIR::$LOCAL_RISCV_DIR"

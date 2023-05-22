@@ -5,7 +5,7 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import freechips.rocketchip.config._
+import org.chipsalliance.cde.config._
 import freechips.rocketchip.tile._
 import GemminiISA._
 import Util._
@@ -253,7 +253,7 @@ class TilerScheduler[T <: Data: Arithmetic, U <: Data, V <: Data]
                        Cat(older_in_same_q) |
                        Cat(is_st_and_must_wait_for_prior_ex_config) |
                        Cat(is_ex_config_and_must_wait_for_prior_st)
-                      ).asBools().reverse
+                      ).asBools.reverse
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
 
@@ -440,7 +440,7 @@ class TilerScheduler[T <: Data: Arithmetic, U <: Data, V <: Data]
     printf(p"Last allocated: $last_allocated\n\n")
   }
 
-  when (reset.asBool()) {
+  when (reset.asBool) {
     entries.foreach(_.valid := false.B)
   }
 }
