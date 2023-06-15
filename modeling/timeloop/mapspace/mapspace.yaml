@@ -1,0 +1,50 @@
+mapspace_constraints:
+  - target: Registers
+    type: bypass
+    bypass:
+    - Outputs
+    - Inputs
+    keep:
+    - Weights
+  - target: Accumulator
+    type: bypass
+    bypass:
+    - Weights
+    - Inputs
+    keep:
+    - Outputs
+  - target: Scratchpad
+    type: bypass
+    keep:
+    - Inputs
+    - Weights
+    bypass:
+    - Outputs
+  - target: DRAM
+    type: bypass
+    keep:
+    - Weights
+    - Inputs
+    - Outputs
+    bypass: []
+  - target: Registers
+    type: temporal
+    factors: R=1 S=1 P=1 Q=1 C=1 K=1 N=1
+    permutation: PQRSCKN
+  - target: Accumulator
+    type: spatial
+    factors: R=1 S=1 P=1 Q=1 C<=16 K=1 N=1
+    permutation: QKC
+  - target: Accumulator
+    type: temporal
+    permutation: QPNCSRK
+  - target: Scratchpad
+    type: spatial
+    factors: R=1 S=1 P=1 Q=1 N=1 C=1 K<=16
+  - target: Scratchpad
+    type: temporal
+    factors: R=1 S=1 P=1 Q=1 C=1 K=1 N=1
+  - target: DRAM
+    type: temporal
+    permutation: CSRKQPN
+

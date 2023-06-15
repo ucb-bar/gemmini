@@ -39,7 +39,7 @@ source env.sh
 
 cd generators/gemmini
 git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
-git checkout dev && git pull origin dev
+git fetch && git checkout v0.7.1
 git submodule update --init --recursive
 
 make -C software/libgemmini install
@@ -496,8 +496,9 @@ This limitation may be lifted in the future.
 - `rs1[1:0]` must be `01`
 - `rs1[2]` is 0 if `mvin`s to the accumulator are of type `accType`, and 1 if they are `inputType`
 - `rs1[4:3]` is 0 if the stride is being set for `mvin`, 1 if the stride is being set for `mvin2`, and 2 if the stride is being set for `mvin3`
+- `rs1[31:16]` is the scratchpad-memory stride (also called the "private-memory stride" above)
 - `rs1[63:32]` is the "scale" by which to multiply data as it's being moved in to the scratchpad. This is ignored if Gemmini isn't configured to have the ability to scale values during `mvin`s.
-- `rs2` = the stride in bytes
+- `rs2` is the main-memory stride in bytes
 - `funct` = 0
 
 **Action:** stride <= rs2; scale <= rs1[63:32]
