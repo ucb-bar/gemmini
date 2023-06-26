@@ -506,8 +506,6 @@ class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val dram_stride = UInt(coreMaxAddrBits.W)
   val full_c = Bool()
   val act = UInt(Activation.bitwidth.W)
-  val use_approx_norm = Bool()
-  val tile_row_idx = UInt(8.W) // TODO: magic number
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
   val is_resadd = Bool()
@@ -588,12 +586,8 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val ln_sp_addr = acc_addr_start +& (i * req.max_j +& j) * block_size.U +& ln_r
   val ln_norm_cmd = Mux(j +& max_blocks >= req.max_j,
-    Mux(req.act === Activation.LAYERNORM,
-      Mux(req.use_approx_norm, NormCmd.RESET, ln_norm_cmds(ln_cmd)(1)),
-      sm_norm_cmds(ln_cmd)(1)),
-    Mux(req.act === Activation.LAYERNORM,
-      Mux(req.use_approx_norm, NormCmd.RESET, ln_norm_cmds(ln_cmd)(0)),
-      sm_norm_cmds(ln_cmd)(0)))
+    Mux(req.act === Activation.LAYERNORM, ln_norm_cmds(ln_cmd)(1), sm_norm_cmds(ln_cmd)(1)),
+    Mux(req.act === Activation.LAYERNORM, ln_norm_cmds(ln_cmd)(0), sm_norm_cmds(ln_cmd)(0)))
 
   // TODO we assume for now that full_C and layernorm aren't true at the same
   val ln_dram_offset = ((i * req.dram_stride +& j) * block_size.U +& ln_r * req.dram_stride) * (input_w/8).U
@@ -601,12 +595,9 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val ln_config_norm_rs1 = Wire(new GemminiISA.ConfigNormRs1)
   ln_config_norm_rs1 := DontCare
-  ln_config_norm_rs1.set_stats_id_only := req.act === Activation.SOFTMAX
+  ln_config_norm_rs1.set_stats_id_only := 1.U
   ln_config_norm_rs1.cmd_type := CONFIG_NORM
-  ln_config_norm_rs1.norm_stats_id := Mux(req.act === Activation.LAYERNORM && req.use_approx_norm, 0.U, ln_stat_id)
-  ln_config_norm_rs1.stat_addr := (i +& req.tile_row_idx) * block_size.U +& ln_r
-  ln_config_norm_rs1.load_stats := (req.act === Activation.LAYERNORM) && req.use_approx_norm
-  ln_config_norm_rs1.store_stats := (req.act === Activation.LAYERNORM) && (!req.use_approx_norm)
+  ln_config_norm_rs1.norm_stats_id := ln_stat_id
 
   val ln_config_norm = Wire(new RoCCCommand)
   ln_config_norm := DontCare
@@ -668,9 +659,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   }.elsewhen (io.cmd.fire() && state === ln_st) {
     val next_j = floorAdd(j, max_blocks, req.max_j)
     val next_stat_id = floorAdd(ln_stat_id, 1.U, ln_stat_ids, next_j === 0.U)
-    val next_cmd = floorAdd(ln_cmd, 1.U,
-      Mux(req.act === Activation.LAYERNORM && req.use_approx_norm, 1.U, ln_norm_cmds.size.U),
-      next_j === 0.U && next_stat_id === 0.U)
+    val next_cmd = floorAdd(ln_cmd, 1.U, ln_norm_cmds.size.U, next_j === 0.U && next_stat_id === 0.U)
     val next_row = floorAdd(ln_row, NORM_STAT_IDS.U, rows, next_j === 0.U && next_stat_id === 0.U && next_cmd === 0.U)
     val next_i = floorAdd(i, 1.U, req.max_i,
       next_j === 0.U && next_stat_id === 0.U && next_cmd === 0.U && next_row === 0.U)
@@ -719,9 +708,6 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val b_dram_stride = UInt(coreMaxAddrBits.W)
   val d_dram_stride = UInt(coreMaxAddrBits.W)
   val c_dram_stride = UInt(coreMaxAddrBits.W)
-
-  val use_approx_norm = Bool()
-  val tile_row_idx = UInt(8.W) // TODO: magic number
 
   val a_transpose = Bool()
   val b_transpose = Bool()
@@ -957,9 +943,6 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.b_transpose := cmd.bits.cmd.rs2(1)
         is_resadd := cmd.bits.cmd.rs2(2)
 
-        loop_being_configured.use_approx_norm := cmd.bits.cmd.rs2(2)
-        loop_being_configured.tile_row_idx := cmd.bits.cmd.rs2(15, 8) // TODO magic number
-
         loop_being_configured.configured := true.B
 
         loops_configured := loops_configured + 1.U
@@ -1075,8 +1058,6 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.dram_stride := loop_requesting_st.c_dram_stride
   stC.io.req.bits.full_c := loop_requesting_st.full_c
   stC.io.req.bits.act := loop_requesting_st.act
-  stC.io.req.bits.use_approx_norm := loop_requesting_st.use_approx_norm
-  stC.io.req.bits.tile_row_idx := loop_requesting_st.tile_row_idx
   stC.io.req.bits.addr_start := st_c_addr_start
   stC.io.req.bits.loop_id := loop_requesting_st_id
   stC.io.req.bits.is_resadd := is_resadd

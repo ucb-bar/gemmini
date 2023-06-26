@@ -45,7 +45,7 @@ class ZeroWriter[T <: Data, U <: Data, V <: Data, Tag <: Data](config: GemminiAr
     // This code block was originally just "col_counter / block_cols.U". We
     // changed it to satisfy Verilator's linter
     if (col_counter.getWidth >= log2Ceil(block_cols+1))
-      (col_counter / block_cols.U((col_counter.getWidth+1).W))
+      (col_counter / block_cols.U(col_counter.getWidth.W))
     else
       0.U
   }

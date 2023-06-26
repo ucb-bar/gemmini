@@ -312,30 +312,10 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
   io.out.valid := stats(out_stats_id).state === output
   io.out.bits.acc_read_resp := stats(out_stats_id).req.acc_read_resp
 
-  class SavedStats extends Bundle {
-    val mean = acc_t.cloneType
-    val inv_stddev = scale_t.cloneType
-  }
-
-  // TODO: magic number
-  val stat_mem = Reg(Vec(128, new SavedStats))
-
-  when (stats(out_stats_id).req.acc_read_resp.load_stats) {
-    val stat_mem_entry = stat_mem(stats(out_stats_id).req.acc_read_resp.stat_addr(6, 0)) // TODO: magic number
-    io.out.bits.mean := stat_mem_entry.mean
-    io.out.bits.inv_stddev := stat_mem_entry.inv_stddev
-  }.otherwise {
-    io.out.bits.mean := stats(out_stats_id).mean
-    io.out.bits.inv_stddev := stats(out_stats_id).inv_stddev.asTypeOf(scale_t)
-  }
+  io.out.bits.mean := stats(out_stats_id).mean
   io.out.bits.max := stats(out_stats_id).max
+  io.out.bits.inv_stddev := stats(out_stats_id).inv_stddev.asTypeOf(scale_t)
   io.out.bits.inv_sum_exp := stats(out_stats_id).inv_sum_exp.asTypeOf(scale_t)
-
-  when (io.out.valid && stats(out_stats_id).req.acc_read_resp.store_stats) {
-    val stat_mem_entry = stat_mem(io.in.bits.acc_read_resp.stat_addr(6, 0))
-    stat_mem_entry.mean := io.out.bits.mean
-    stat_mem_entry.inv_stddev := io.out.bits.inv_stddev
-  }
 
   // Lanes and functional units
   val lanes = Module(new AccumulationLanes(num_stats, acc_t, n_lanes, latency))
@@ -785,8 +765,6 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 //      stat.max := acc_t.minimum
 //    }
   }
-
-  dontTouch(stats)
 
   // Assertions
   assert(PopCount(stats.map(s => s.state === waiting_for_mean || s.state === waiting_for_variance)) <= 1.U, "we don't support pipelining the divider/sqrt-unit/inv-unit right now")

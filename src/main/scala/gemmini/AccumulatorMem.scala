@@ -12,9 +12,6 @@ class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, sca
   val igelu_qc = acc_t.cloneType
   val iexp_qln2 = acc_t.cloneType
   val iexp_qln2_inv = acc_t.cloneType
-  val stat_addr = UInt(8.W)
-  val store_stats = Bool()
-  val load_stats = Bool()
   val act = UInt(Activation.bitwidth.W) // TODO magic number
   val full = Bool() // Whether or not we return the full bitwidth output
 
@@ -30,10 +27,7 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val igelu_qc = fullDataType.head.head.cloneType
   val iexp_qln2 = fullDataType.head.head.cloneType
   val iexp_qln2_inv = fullDataType.head.head.cloneType
-  val stat_addr = UInt(8.W)
-  val store_stats = Bool()
-  val load_stats = Bool()
-  val act = UInt(Activation.bitwidth.W)
+  val act = UInt(Activation.bitwidth.W) // TODO magic number
   val acc_bank_id = UInt(2.W) // TODO magic number
 }
 
@@ -310,9 +304,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   q.io.enq.bits.igelu_qc := RegNext(io.read.req.bits.igelu_qc)
   q.io.enq.bits.iexp_qln2 := RegNext(io.read.req.bits.iexp_qln2)
   q.io.enq.bits.iexp_qln2_inv := RegNext(io.read.req.bits.iexp_qln2_inv)
-  q.io.enq.bits.stat_addr := RegNext(io.read.req.bits.stat_addr)
-  q.io.enq.bits.load_stats := RegNext(io.read.req.bits.load_stats)
-  q.io.enq.bits.store_stats := RegNext(io.read.req.bits.store_stats)
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
   q.io.enq.bits.fromDMA := RegNext(io.read.req.bits.fromDMA)
   q.io.enq.bits.acc_bank_id := DontCare
@@ -326,9 +317,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.read.resp.bits.igelu_qc := p.bits.igelu_qc
   io.read.resp.bits.iexp_qln2 := p.bits.iexp_qln2
   io.read.resp.bits.iexp_qln2_inv := p.bits.iexp_qln2_inv
-  io.read.resp.bits.stat_addr := p.bits.stat_addr
-  io.read.resp.bits.load_stats := p.bits.load_stats
-  io.read.resp.bits.store_stats := p.bits.store_stats
   io.read.resp.bits.act := p.bits.act
   io.read.resp.bits.scale := p.bits.scale
   io.read.resp.bits.acc_bank_id := DontCare // This is set in Scratchpad
