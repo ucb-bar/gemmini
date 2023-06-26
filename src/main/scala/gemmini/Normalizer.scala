@@ -482,7 +482,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     assert(acc_t.isInstanceOf[SInt])
 
     when (stat.state === waiting_for_stddev) {
-      stat.inv_stddev := Mux(sqrt_out.bits.asUInt() === acc_t.zero.asUInt(),
+      stat.inv_stddev := Mux(sqrt_out.bits.asUInt === acc_t.zero.asUInt,
         1.S(acc_t.getWidth.W).asTypeOf(acc_t),
         sqrt_out.bits.asTypeOf(acc_t)
       )
@@ -570,14 +570,14 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       def in_to_float(x: SInt) = {
         val in_to_rec_fn = Module(new INToRecFN(intWidth = sum_exp_to_inv.getWidth, expWidth, sigWidth))
         in_to_rec_fn.io.signedIn := true.B
-        in_to_rec_fn.io.in := x.asUInt()
+        in_to_rec_fn.io.in := x.asUInt
         in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
         in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
 
         in_to_rec_fn.io.out
       }
 
-      val self_rec = in_to_float(sum_exp_to_inv.asUInt().asSInt())
+      val self_rec = in_to_float(sum_exp_to_inv.asUInt.asSInt)
       val one_rec = in_to_float(127.S) // softmax maximum is 127 for signed int8
 
       // Instantiate the hardloat divider
@@ -601,7 +601,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     val stat = stats(sum_exp_to_inv_id)
 
     exp_divider_in.valid := (stat.state === get_inv_sum_exp) && !lanes.io.busy
-    exp_divider_in.bits := sum_exp_to_inv.asUInt()
+    exp_divider_in.bits := sum_exp_to_inv.asUInt
   }
 
   {
@@ -796,7 +796,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
   assert(acc_t.getWidth == scale_t.getWidth, "we use the same variable to hold both the variance and the inv-stddev, so we need them to see the width")
 
   // Resets
-  when (reset.asBool()) {
+  when (reset.asBool) {
     stats.foreach(_.state := idle)
     stats.foreach(_.sum := acc_t.zero)
     stats.foreach(_.max := acc_t.minimum)

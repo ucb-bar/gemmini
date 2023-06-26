@@ -5,7 +5,7 @@ import chisel3.util._
 import chisel3.experimental._
 
 import freechips.rocketchip.tile.RoCCCommand
-import freechips.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 
 import GemminiISA._
 import Util._
@@ -42,8 +42,8 @@ class LoopUnroller(block_size: Int)(implicit p: Parameters) extends Module {
 
   val a_start = cmd.bits.rs1(31, 0)
   val b_start = cmd.bits.rs1(63, 32)
-  val c_start = (3.U << 30).asUInt()
-  val d_start = (1.U << 31).asUInt()
+  val c_start = (3.U << 30).asUInt
+  val d_start = (1.U << 31).asUInt
 
   // TODO get rid of the x * max_y multiplications here
   val a_addr = a_start + (i * max_k + k) * block_size.U

@@ -3,7 +3,7 @@ package gemmini
 import chisel3._
 import chisel3.util._
 import chisel3.experimental.ChiselEnum
-import chipsalliance.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 import Util._
 import midas.targetutils.PerfCounter
 

@@ -6,7 +6,7 @@ import chisel3.util._
 import chisel3.experimental._
 import GemminiISA._
 import Util._
-import freechips.rocketchip.config.Parameters
+import org.chipsalliance.cde.config.Parameters
 import midas.targetutils.PerfCounter
 
 // TODO this is almost a complete copy of LoadController. We should combine them into one class
@@ -235,7 +235,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
           stride := config_stride
 
           activation := config_activation
-          when (!config_acc_scale.asUInt().andR()) {
+          when (!config_acc_scale.asUInt.andR) {
             acc_scale := config_acc_scale.asTypeOf(acc_scale_t)
           }
 
@@ -257,7 +257,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
           cmd.ready := true.B
         }
         .elsewhen(config.has_normalizations.B && DoConfigNorm) {
-          when (!config_set_stats_id_only.asBool()) {
+          when (!config_set_stats_id_only.asBool) {
             igelu_qb := config_igelu_qb.asTypeOf(igelu_qb)
             igelu_qc := config_igelu_qc.asTypeOf(igelu_qc)
             when(config_iexp_q_const_type === 0.U) {

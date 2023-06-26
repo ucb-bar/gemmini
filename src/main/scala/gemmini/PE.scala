@@ -11,6 +11,18 @@ class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
 
 }
 
+class MacUnit[T <: Data](inputType: T, cType: T, dType: T) (implicit ev: Arithmetic[T]) extends Module {
+  import ev._
+  val io = IO(new Bundle {
+    val in_a  = Input(inputType)
+    val in_b  = Input(inputType)
+    val in_c  = Input(cType)
+    val out_d = Output(dType)
+  })
+
+  io.out_d := io.in_c.mac(io.in_a, io.in_b)
+}
+
 // TODO update documentation
 /**
   * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
@@ -45,6 +57,13 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
 
   val cType = if (df == Dataflow.WS) inputType else accType
 
+  // When creating PEs that support multiple dataflows, the
+  // elaboration/synthesis tools often fail to consolidate and de-duplicate
+  // MAC units. To force mac circuitry to be re-used, we create a "mac_unit"
+  // module here which just performs a single MAC operation
+  val mac_unit = Module(new MacUnit(inputType,
+    if (df == Dataflow.WS) outputType else accType, outputType))
+
   val a  = io.in_a
   val b  = io.in_b
   val d  = io.in_d
@@ -65,6 +84,8 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   io.out_last := last
   io.out_valid := valid
 
+  mac_unit.io.in_a := a
+
   val last_s = RegEnable(prop, valid)
   val flip = last_s =/= prop
   val shift_offset = Mux(flip, shift, 0.U)
@@ -82,22 +103,30 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
     when(prop === PROPAGATE) {
       io.out_c := (c1 >> shift_offset).clippedToWidthOf(outputType)
       io.out_b := b
-      c2 := c2.mac(a, b.asTypeOf(inputType))
+      mac_unit.io.in_b := b.asTypeOf(inputType)
+      mac_unit.io.in_c := c2
+      c2 := mac_unit.io.out_d
       c1 := d.withWidthOf(cType)
     }.otherwise {
       io.out_c := (c2 >> shift_offset).clippedToWidthOf(outputType)
       io.out_b := b
-      c1 := c1.mac(a, b.asTypeOf(inputType))
+      mac_unit.io.in_b := b.asTypeOf(inputType)
+      mac_unit.io.in_c := c1
+      c1 := mac_unit.io.out_d
       c2 := d.withWidthOf(cType)
     }
   }.elsewhen ((df == Dataflow.WS).B || ((df == Dataflow.BOTH).B && dataflow === WEIGHT_STATIONARY)) {
     when(prop === PROPAGATE) {
       io.out_c := c1
-      io.out_b := b.mac(a, c2.asTypeOf(inputType))
+      mac_unit.io.in_b := c2.asTypeOf(inputType)
+      mac_unit.io.in_c := b
+      io.out_b := mac_unit.io.out_d
       c1 := d
     }.otherwise {
       io.out_c := c2
-      io.out_b := b.mac(a, c1.asTypeOf(inputType))
+      mac_unit.io.in_b := c1.asTypeOf(inputType)
+      mac_unit.io.in_c := b
+      io.out_b := mac_unit.io.out_d
       c2 := d
     }
   }.otherwise {
@@ -105,10 +134,14 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
     //assert(false.B, "unknown dataflow")
     io.out_c := DontCare
     io.out_b := DontCare
+    mac_unit.io.in_b := b.asTypeOf(inputType)
+    mac_unit.io.in_c := c2
   }
 
   when (!valid) {
     c1 := c1
     c2 := c2
+    mac_unit.io.in_b := DontCare
+    mac_unit.io.in_c := DontCare
   }
 }

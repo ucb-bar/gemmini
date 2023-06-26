@@ -558,7 +558,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     PerfCounter(!io.alloc.ready, "reservation_station_full", "cycles where reservation station is full")
   }
 
-  when (reset.asBool()) {
+  when (reset.asBool) {
     entries.foreach(_.valid := false.B)
   }
 

@@ -47,9 +47,9 @@ object Util {
   def sFloorAdd(s: SInt, n: UInt, max_plus_one: SInt, min: SInt, en: Bool = true.B): SInt = {
     val max = max_plus_one - 1.S
 
-    MuxCase(s + n.zext(), Seq(
+    MuxCase(s + n.zext, Seq(
       (!en) -> s,
-      ((s +& n.zext()) > max) -> min
+      ((s +& n.zext) > max) -> min
     ))
   }
 
@@ -66,22 +66,22 @@ object Util {
 
   def closestLowerPowerOf2(u: UInt): UInt = {
     // TODO figure out a more efficient way of doing this. Is this many muxes really necessary?
-    val exp = u.asBools().zipWithIndex.map { case (b, i) =>
+    val exp = u.asBools.zipWithIndex.map { case (b, i) =>
         Mux(b, i.U, 0.U)
     }.reduce((acc, u) => Mux(acc > u, acc, u))
 
-    (1.U << exp).asUInt()
+    (1.U << exp).asUInt
   }
 
   def closestAlignedLowerPowerOf2(u: UInt, addr: UInt, stride: UInt, rowBytes: Int): UInt = {
     val lgRowBytes = log2Ceil(rowBytes)
 
     // TODO figure out a more efficient way of doing this. Is this many muxes really necessary?
-    val exp = u.asBools().zipWithIndex.map { case (b, i) =>
+    val exp = u.asBools.zipWithIndex.map { case (b, i) =>
       Mux(b && addr(i + lgRowBytes - 1, 0) === 0.U && stride(i + lgRowBytes - 1, 0) === 0.U, i.U, 0.U)
     }.reduce((acc, u) => Mux(acc > u, acc, u))
 
-    (1.U << exp).asUInt()
+    (1.U << exp).asUInt
   }
 
   // This function will return "next" with a 0-cycle delay when the "enable" signal is high. It's like a queue with

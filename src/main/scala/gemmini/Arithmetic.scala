@@ -62,12 +62,12 @@ object Arithmetic {
 
         // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
         val point_five = Mux(u === 0.U, 0.U, self(u - 1.U))
-        val zeros = Mux(u <= 1.U, 0.U, self.asUInt() & ((1.U << (u - 1.U)).asUInt() - 1.U)) =/= 0.U
+        val zeros = Mux(u <= 1.U, 0.U, self.asUInt & ((1.U << (u - 1.U)).asUInt - 1.U)) =/= 0.U
         val ones_digit = self(u)
 
         val r = point_five & (zeros | ones_digit)
 
-        (self >> u).asUInt() + r
+        (self >> u).asUInt + r
       }
 
       override def >(t: UInt): Bool = self > t
@@ -99,19 +99,19 @@ object Arithmetic {
 
         // TODO Do we need to explicitly handle the cases where "u" is a small number (like 0)? What is the default behavior here?
         val point_five = Mux(u === 0.U, 0.U, self(u - 1.U))
-        val zeros = Mux(u <= 1.U, 0.U, self.asUInt() & ((1.U << (u - 1.U)).asUInt() - 1.U)) =/= 0.U
+        val zeros = Mux(u <= 1.U, 0.U, self.asUInt & ((1.U << (u - 1.U)).asUInt - 1.U)) =/= 0.U
         val ones_digit = self(u)
 
-        val r = (point_five & (zeros | ones_digit)).asBool()
+        val r = (point_five & (zeros | ones_digit)).asBool
 
-        (self >> u).asSInt() + Mux(r, 1.S, 0.S)
+        (self >> u).asSInt + Mux(r, 1.S, 0.S)
       }
 
       override def >(t: SInt): Bool = self > t
 
       override def withWidthOf(t: SInt) = {
         if (self.getWidth >= t.getWidth)
-          self(t.getWidth-1, 0).asSInt()
+          self(t.getWidth-1, 0).asSInt
         else {
           val sign_bits = t.getWidth - self.getWidth
           val sign = self(self.getWidth-1)
@@ -122,7 +122,7 @@ object Arithmetic {
       override def clippedToWidthOf(t: SInt): SInt = {
         val maxsat = ((1 << (t.getWidth-1))-1).S
         val minsat = (-(1 << (t.getWidth-1))).S
-        MuxCase(self, Seq((self > maxsat) -> maxsat, (self < minsat) -> minsat))(t.getWidth-1, 0).asSInt()
+        MuxCase(self, Seq((self > maxsat) -> maxsat, (self < minsat) -> minsat))(t.getWidth-1, 0).asSInt
       }
 
       override def relu: SInt = Mux(self >= 0.S, self, 0.S)
@@ -144,7 +144,7 @@ object Arithmetic {
         def sin_to_float(x: SInt) = {
           val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
           in_to_rec_fn.io.signedIn := true.B
-          in_to_rec_fn.io.in := x.asUInt()
+          in_to_rec_fn.io.in := x.asUInt
           in_to_rec_fn.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
           in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
 
@@ -167,7 +167,7 @@ object Arithmetic {
           rec_fn_to_in.io.in := x
           rec_fn_to_in.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
 
-          rec_fn_to_in.io.out.asSInt()
+          rec_fn_to_in.io.out.asSInt
         }
 
         val self_rec = sin_to_float(self)
@@ -207,7 +207,7 @@ object Arithmetic {
         def in_to_float(x: SInt) = {
           val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
           in_to_rec_fn.io.signedIn := true.B
-          in_to_rec_fn.io.in := x.asUInt()
+          in_to_rec_fn.io.in := x.asUInt
           in_to_rec_fn.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
           in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
 
@@ -220,7 +220,7 @@ object Arithmetic {
           rec_fn_to_in.io.in := x
           rec_fn_to_in.io.roundingMode := consts.round_minMag // consts.round_near_maxMag
 
-          rec_fn_to_in.io.out.asSInt()
+          rec_fn_to_in.io.out.asSInt
         }
 
         val self_rec = in_to_float(self)
@@ -255,7 +255,7 @@ object Arithmetic {
           def in_to_float(x: SInt) = {
             val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
             in_to_rec_fn.io.signedIn := true.B
-            in_to_rec_fn.io.in := x.asUInt()
+            in_to_rec_fn.io.in := x.asUInt
             in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
             in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
 
@@ -291,7 +291,7 @@ object Arithmetic {
           def in_to_float(x: SInt) = {
             val in_to_rec_fn = Module(new INToRecFN(intWidth = self.getWidth, expWidth, sigWidth))
             in_to_rec_fn.io.signedIn := true.B
-            in_to_rec_fn.io.in := x.asUInt()
+            in_to_rec_fn.io.in := x.asUInt
             in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
             in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
 
@@ -304,7 +304,7 @@ object Arithmetic {
             rec_fn_to_in.io.in := x
             rec_fn_to_in.io.roundingMode := consts.round_minMag
 
-            rec_fn_to_in.io.out.asSInt()
+            rec_fn_to_in.io.out.asSInt
           }
 
           val self_rec = in_to_float(self)

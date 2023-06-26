@@ -173,7 +173,7 @@ class AccumulatorScale[T <: Data, U <: Data](
           regs(i).valid := false.B
         }
       }
-      head_oh := (head_oh << 1).asUInt() | head_oh(nEntries-1)
+      head_oh := (head_oh << 1).asUInt | head_oh(nEntries-1)
     }
 
     io.in.ready := !Mux1H(tail_oh.asBools, regs.map(_.valid)) || (tail_oh === head_oh && out.fire)
@@ -188,7 +188,7 @@ class AccumulatorScale[T <: Data, U <: Data](
           completed_masks(i).foreach(_ := false.B)
         }
       }
-      tail_oh := (tail_oh << 1).asUInt() | tail_oh(nEntries-1)
+      tail_oh := (tail_oh << 1).asUInt | tail_oh(nEntries-1)
     }
 
     val num_units_with_norm = 4 // TODO: move to configs
