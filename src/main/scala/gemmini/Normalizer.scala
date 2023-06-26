@@ -331,7 +331,8 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
     val len = Mux(stat.elems_left % n_lanes.U === 0.U, n_lanes.U, stat.elems_left % n_lanes.U)
 
-    lanes.io.ins.valid := stat.state === get_sum && stat.vec_groups_left > 0.U
+    lanes.io.ins.valid := stat.state === get_sum && stat.vec_groups_left > 0.U &&
+      !max_lanes.io.busy // TODO We should be able to start the accumulation lanes if the max-lanes are busy with a different stat-id
     lanes.io.ins.bits.data := stat.vec_grouped(stat.vec_groups_left-1.U)
     lanes.io.ins.bits.mean := stat.mean
     lanes.io.ins.bits.max := stat.max

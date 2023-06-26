@@ -15,7 +15,6 @@ object GemminiCustomConfigs {
   // Create your own configs here
   val baselineInferenceConfig = defaultConfig.copy(
     has_training_convs = false,
-    dma_buswidth = 256,
   )
 
   val highPerfInferenceConfig = defaultConfig.copy(
