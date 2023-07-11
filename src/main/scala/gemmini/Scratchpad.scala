@@ -559,20 +559,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
     val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
 
-//    val acc_norm_unit = Module(new Normalizer(
-//      max_len = block_cols,
-//      num_reduce_lanes = -1,
-//      num_stats = 4,
-//      latency = 4,
-//      fullDataType = acc_row_t,
-//      scale_t = acc_scale_t,
-//    ))
-
     val (acc_norm_unit_in, acc_norm_unit_out) = Normalizer(
       is_passthru = !config.has_normalizations,
       max_len = block_cols,
       num_reduce_lanes = -1,
-      num_stats = 4,
+      num_stats = 2,
       latency = 4,
       fullDataType = acc_row_t,
       scale_t = acc_scale_t,
