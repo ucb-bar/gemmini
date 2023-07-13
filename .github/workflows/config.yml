@@ -20,7 +20,9 @@ jobs:
             rm -rf ${{ github.workspace }}/.* || true
       - uses: actions/checkout@v3
       - name: Setup repository
-        run: .github/scripts/install-gemmini.sh
+        run: |
+          eval "$(conda shell.bash hook)"
+          .github/scripts/install-gemmini.sh
 
   spike-run-tests:
     runs-on: jktqos
