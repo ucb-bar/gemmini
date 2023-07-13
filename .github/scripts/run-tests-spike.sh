@@ -23,4 +23,4 @@ cd $LOCAL_CHIPYARD_DIR/generators/gemmini/software/gemmini-rocc-tests
 ./build.sh
 
 cd build
-make test-baremetal
+make -j$LOCAL_MAKE_NPROC test-baremetal
