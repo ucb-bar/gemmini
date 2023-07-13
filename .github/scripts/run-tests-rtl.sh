@@ -15,4 +15,5 @@ cd $LOCAL_CHIPYARD_DIR/generators/gemmini/software/gemmini-rocc-tests
 CFLAGS=-DFAST ./build.sh
 
 cd build
-make -j$LOCAL_MAKE_NPROC test-baremetal-bareMetalC RUNNER="'make -C $LOCAL_SIM_DIR CONFIG=$CICONFIG run-binary-hex BINARY='"
+make test-baremetal-bareMetalC RUNNER="'make -C $LOCAL_SIM_DIR CONFIG=$CICONFIG run-binary-hex BINARY='"
+#make -j$LOCAL_MAKE_NPROC test-baremetal-bareMetalC RUNNER="'make -C $LOCAL_SIM_DIR CONFIG=$CICONFIG run-binary-hex BINARY='"
