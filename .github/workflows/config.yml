@@ -34,7 +34,6 @@ jobs:
       - uses: actions/checkout@v3
       - name: Run Gemmini Spike tests
         run: |
-          cd ${{ env.REMOTE_WORK_DIR }}
           .github/scripts/run-tests-spike.sh
 
   build-gemmini-config:
@@ -48,7 +47,6 @@ jobs:
       - uses: actions/checkout@v3
       - name: Building Gemmini Config using Verilator
         run: |
-          cd ${{ env.REMOTE_WORK_DIR }}
           .github/scripts/do-rtl-build.sh
 
   rtl-run-tests:
@@ -62,7 +60,6 @@ jobs:
       - uses: actions/checkout@v3
       - name: Run Gemmini Config tests using Verilator
         run: |
-          cd ${{ env.REMOTE_WORK_DIR }}
           .github/scripts/run-tests-rtl.sh
 
   cleanup:
