@@ -7,6 +7,8 @@ set -ex
 SCRIPT_DIR="$( cd "$( dirname "$0" )" && pwd )"
 source $SCRIPT_DIR/defaults.sh
 
+mkdir -p $JAVA_TMP_DIR
+
 git clone --progress --verbose https://github.com/ucb-bar/chipyard.git $LOCAL_CHIPYARD_DIR
 cd $LOCAL_CHIPYARD_DIR
 
