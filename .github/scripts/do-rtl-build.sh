@@ -7,6 +7,8 @@ set -ex
 SCRIPT_DIR="$( cd "$( dirname "$0" )" && pwd )"
 source $SCRIPT_DIR/defaults.sh
 
+eval "$(conda shell.bash hook)"
+
 cd $LOCAL_CHIPYARD_DIR
 source env.sh
 

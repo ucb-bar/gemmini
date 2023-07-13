@@ -21,7 +21,6 @@ jobs:
       - uses: actions/checkout@v3
       - name: Setup repository
         run: |
-          eval "$(conda shell.bash hook)"
           .github/scripts/install-gemmini.sh
 
   spike-run-tests:
@@ -36,7 +35,6 @@ jobs:
       - name: Run Gemmini Spike tests
         run: |
           cd ${{ env.REMOTE_WORK_DIR }}
-          eval "$(conda shell.bash hook)"
           .github/scripts/run-tests-spike.sh
 
   build-gemmini-config:
@@ -51,7 +49,6 @@ jobs:
       - name: Building Gemmini Config using Verilator
         run: |
           cd ${{ env.REMOTE_WORK_DIR }}
-          eval "$(conda shell.bash hook)"
           .github/scripts/do-rtl-build.sh
 
   rtl-run-tests:
@@ -66,16 +63,15 @@ jobs:
       - name: Run Gemmini Config tests using Verilator
         run: |
           cd ${{ env.REMOTE_WORK_DIR }}
-          eval "$(conda shell.bash hook)"
           .github/scripts/run-tests-rtl.sh
 
-  #cleanup:
-  #  name: cleanup
-  #  needs: [spike-run-tests, rtl-run-tests]
-  #  runs-on: jktqos
-  #  if: ${{ always() }}
-  #  steps:
-  #    - name: Delete repo copy
-  #      run: |
-  #         rm -rf ${{ env.REMOTE_WORK_DIR }}
-  #         rm -rf ${{ env.JAVA_TMP_DIR }}
+  cleanup:
+    name: cleanup
+    needs: [spike-run-tests, rtl-run-tests]
+    runs-on: jktqos
+    if: ${{ always() }}
+    steps:
+      - name: Delete repo copy
+        run: |
+           rm -rf ${{ env.REMOTE_WORK_DIR }}
+           rm -rf ${{ env.JAVA_TMP_DIR }}
