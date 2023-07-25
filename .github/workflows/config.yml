@@ -1,118 +1,74 @@
 name: Gemmini CI
+
 on: [push]
+
+defaults:
+  run:
+    shell: bash -leo pipefail {0}
+
+env:
+  REMOTE_WORK_DIR: /scratch/buildbot/gemmini-ci-shared/gemmini-${{ github.sha }}
+  JAVA_TMP_DIR: /tmp/gemmini-${{ github.sha }}-full
+
 jobs:
   install-gemmini:
-    name: gemmini-install
-    runs-on: ubuntu-latest
-    container:
-      image: ucbbar/chipyard-ci-image:3f9150
-      options: --entrypoint /bin/bash
+    runs-on: jktqos
     steps:
-      - name: checkout
-        uses: actions/checkout@v2
-      - name: get paths
-        run: .github/scripts/defaults.sh
-        id: get-paths
-
-      - name: install gemmini
-        run: .github/scripts/install-gemmini.sh
-
-      - name: cache gemmini install
-        uses: actions/cache@v2
-        with:
-          path: |
-            ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
-            ${{ steps.get-paths.outputs.LOCAL_CONDA }}
-          key: gemmini-install-${{ github.ref }}-${{ github.sha }}
-
-  build-gemmini-config:
-    name: build-gemmini-config
-    runs-on: self-hosted
-    needs: install-gemmini
-    container:
-      image: ucbbar/chipyard-ci-image:3f9150
-      options: --entrypoint /bin/bash
-    steps:
-      - name: checkout
-        uses: actions/checkout@v2
-      - name: get paths
-        run: .github/scripts/defaults.sh
-        id: get-paths
-
-      - name: remove chipyard
-        run: .github/scripts/remove-chipyard.sh
-
-      - name: restore cache gemmini install
-        uses: actions/cache@v2
-        with:
-          path: |
-            ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
-            ${{ steps.get-paths.outputs.LOCAL_CONDA }}
-          key: gemmini-install-${{ github.ref }}-${{ github.sha }}
-
-      - name: Building Gemmini Config using Verilator
-        run: .github/scripts/do-rtl-build.sh
-
-      - name: cache build-gemmini-config install
-        uses: actions/cache@v2
-        with:
-          path: |
-            ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
-            ${{ steps.get-paths.outputs.LOCAL_CONDA }}
-          key: build-gemmini-config-${{ github.ref }}-${{ github.sha }}
+      - name: Delete old checkout
+        run: |
+            rm -rf ${{ github.workspace }}/* || true
+            rm -rf ${{ github.workspace }}/.* || true
+      - uses: actions/checkout@v3
+      - name: Setup repository
+        run: |
+          .github/scripts/install-gemmini.sh
 
   spike-run-tests:
-    name: spike-run-tests
-    runs-on: ubuntu-latest
+    runs-on: jktqos
     needs: install-gemmini
-    container:
-      image: ucbbar/chipyard-ci-image:3f9150
-      options: --entrypoint /bin/bash
     steps:
-      - name: checkout
-        uses: actions/checkout@v2
-      - name: get paths
-        run: .github/scripts/defaults.sh
-        id: get-paths
+      - name: Delete old checkout
+        run: |
+            rm -rf ${{ github.workspace }}/* || true
+            rm -rf ${{ github.workspace }}/.* || true
+      - uses: actions/checkout@v3
+      - name: Run Gemmini Spike tests
+        run: |
+          .github/scripts/run-tests-spike.sh
 
-      - name: remove chipyard
-        run: .github/scripts/remove-chipyard.sh
-
-      - name: restore cache gemmini install
-        uses: actions/cache@v2
-        with:
-          path: |
-            ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
-            ${{ steps.get-paths.outputs.LOCAL_CONDA }}
-          key: gemmini-install-${{ github.ref }}-${{ github.sha }}
-
-      - name: run-tests
-        run: .github/scripts/run-tests-spike.sh
+  build-gemmini-config:
+    runs-on: jktqos
+    needs: install-gemmini
+    steps:
+      - name: Delete old checkout
+        run: |
+            rm -rf ${{ github.workspace }}/* || true
+            rm -rf ${{ github.workspace }}/.* || true
+      - uses: actions/checkout@v3
+      - name: Building Gemmini Config using Verilator
+        run: |
+          .github/scripts/do-rtl-build.sh
 
   rtl-run-tests:
-    name: rtl-run-tests
-    runs-on: ubuntu-latest
+    runs-on: jktqos
     needs: build-gemmini-config
-    container:
-      image: ucbbar/chipyard-ci-image:3f9150
-      options: --entrypoint /bin/bash
     steps:
-      - name: checkout
-        uses: actions/checkout@v2
-      - name: get paths
-        run: .github/scripts/defaults.sh
-        id: get-paths
+      - name: Delete old checkout
+        run: |
+            rm -rf ${{ github.workspace }}/* || true
+            rm -rf ${{ github.workspace }}/.* || true
+      - uses: actions/checkout@v3
+      - name: Run Gemmini Config tests using Verilator
+        run: |
+          .github/scripts/run-tests-rtl.sh
 
-      - name: remove chipyard
-        run: .github/scripts/remove-chipyard.sh
-
-      - name: restore cache build-gemmini-config install
-        uses: actions/cache@v2
-        with:
-          path: |
-            ${{ steps.get-paths.outputs.LOCAL_CHIPYARD_DIR }}
-            ${{ steps.get-paths.outputs.LOCAL_CONDA }}
-          key: build-gemmini-config-${{ github.ref }}-${{ github.sha }}
-
-      - name: run-tests
-        run: .github/scripts/run-tests-rtl.sh
+  cleanup:
+    name: cleanup
+    needs: [spike-run-tests, rtl-run-tests]
+    runs-on: jktqos
+    if: ${{ always() }}
+    steps:
+      - name: Delete repo copy
+        run: |
+           rm -rf ${{ env.REMOTE_WORK_DIR }}
+           rm -rf ${{ env.JAVA_TMP_DIR }}

@@ -12,14 +12,17 @@ import Util._
 
 class LoopConvOuterBounds(val large_iterator_bitwidth: Int, val small_iterator_bitwidth: Int, val tiny_iterator_bitwidth: Int) extends Bundle {
   val batch_size = UInt(large_iterator_bitwidth.W)
-  val in_dim = UInt(small_iterator_bitwidth.W)
+  val in_row_dim = UInt(small_iterator_bitwidth.W)
+  val in_col_dim = UInt(small_iterator_bitwidth.W)
   val in_channels = UInt(large_iterator_bitwidth.W)
   val out_channels = UInt(large_iterator_bitwidth.W)
-  val out_dim = UInt(large_iterator_bitwidth.W)
+  val out_col_dim = UInt(large_iterator_bitwidth.W)
+  val out_row_dim = UInt(large_iterator_bitwidth.W)
   val out_stride = UInt(large_iterator_bitwidth.W) //stride for output activation
   val in_stride = UInt(large_iterator_bitwidth.W) //stride for input activation
   val weight_stride = UInt(large_iterator_bitwidth.W) //stride for weight
-  val pool_out_dim = UInt(small_iterator_bitwidth.W)
+  val pool_out_row_dim = UInt(small_iterator_bitwidth.W)
+  val pool_out_col_dim = UInt(small_iterator_bitwidth.W)
   val stride = UInt(tiny_iterator_bitwidth.W)
   val padding = UInt(tiny_iterator_bitwidth.W)
   val kernel_dim = UInt(tiny_iterator_bitwidth.W)
@@ -278,8 +281,8 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   val dram_stride = Mux(req.trans_input_3120, batch_size * (input_w/8).U, in_stride * (input_w/8).U)
 
   // Addresses
-  val dram_offset = Mux(req.trans_input_3120, (((ich * in_dim * in_dim +& irow*in_dim +& icol) * batches +& b) * (input_w/8).U).asUInt,
-    (((b * in_dim * in_dim +& irow*in_dim +& icol) * in_stride +& ich) * (input_w/8).U).asUInt)
+  val dram_offset = Mux(req.trans_input_3120, (((ich * in_col_dim * in_row_dim +& irow*in_col_dim +& icol) * batches +& b) * (input_w/8).U).asUInt,
+    (((b * in_row_dim * in_col_dim +& irow*in_col_dim +& icol) * in_stride +& ich) * (input_w/8).U).asUInt)
   val dram_addr = Mux(is_zeros, 0.U, req.dram_addr + LoopConv.castDramOffset(dram_offset))
   val spad_addr = Mux(req.trans_input_3120,
     // To prevent Verilator errors, we replace some "/ block_size.U" calls here with ">> log2Up(block_size)"
@@ -886,12 +889,12 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
 
   // Addresses
   val dram_offset = Mux(req.trans_output_1203,
-    ((orow*out_dim*batch_size +& ocol*batch_size +& b) * out_channels +& och) * (input_w/8).U,
-    ((b*out_dim*out_dim +& orow*out_dim +& ocol) * out_stride +& och) * (input_w/8).U)
+    ((orow*out_col_dim*batch_size +& ocol*batch_size +& b) * out_channels +& och) * (input_w/8).U,
+    ((b*out_row_dim*out_col_dim +& orow*out_col_dim +& ocol) * out_stride +& och) * (input_w/8).U)
   val dram_addr = req.dram_addr + LoopConv.castDramOffset(dram_offset)
   val spad_addr = acc_addr_start +& (och / block_size.U(och.getWidth.W)) * batches * orows * ocols +& b * orows * ocols +& orow * ocols +& ocol
 
-  val pool_dram_addr = req.dram_addr + ((b * pool_out_dim * pool_out_dim) * out_stride + och) * (input_w/8).U
+  val pool_dram_addr = req.dram_addr + ((b * pool_out_col_dim * pool_out_row_dim) * out_stride + och) * (input_w/8).U
   val pool_spad_addr = acc_addr_start +& (och / block_size.U(och.getWidth.W)) * batches * orows * ocols +& b * orows * ocols
 
   // Sizes
@@ -928,7 +931,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   pre_pool_config_cmd_rs1.orows := orows
   pre_pool_config_cmd_rs1.pocols := pocols
   pre_pool_config_cmd_rs1.porows := porows
-  pre_pool_config_cmd_rs1.pool_out_dim := pool_out_dim
+  pre_pool_config_cmd_rs1.pool_out_dim := pool_out_col_dim
   pre_pool_config_cmd_rs1.lpad := plpad
   pre_pool_config_cmd_rs1.upad := pupad
   pre_pool_config_cmd_rs1.pool_size := pool_size
@@ -1279,20 +1282,22 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
       is (LOOP_CONV_WS_CONFIG_1) {
         loop_being_configured.outer_bounds.out_channels := cmd.bits.cmd.rs1(63, 48)
         loop_being_configured.outer_bounds.in_channels := cmd.bits.cmd.rs1(47, 32)
-        loop_being_configured.outer_bounds.in_dim := cmd.bits.cmd.rs1(31, 16)
+        loop_being_configured.outer_bounds.in_row_dim := cmd.bits.cmd.rs1(31, 16)
         loop_being_configured.outer_bounds.batch_size := cmd.bits.cmd.rs1(15, 0)
 
-        loop_being_configured.outer_bounds.padding := cmd.bits.cmd.rs2(63, 48)
-        loop_being_configured.outer_bounds.stride := cmd.bits.cmd.rs2(47, 32)
-        loop_being_configured.outer_bounds.pool_out_dim := cmd.bits.cmd.rs2(31, 16)
-        loop_being_configured.outer_bounds.out_dim := cmd.bits.cmd.rs2(15, 0)
+        loop_being_configured.outer_bounds.padding := cmd.bits.cmd.rs2(63, 56)
+        loop_being_configured.outer_bounds.stride := cmd.bits.cmd.rs2(55, 48)
+        loop_being_configured.outer_bounds.out_col_dim := cmd.bits.cmd.rs2(47, 32)
+        loop_being_configured.outer_bounds.pool_out_row_dim := cmd.bits.cmd.rs2(31, 16)
+        loop_being_configured.outer_bounds.out_row_dim := cmd.bits.cmd.rs2(15, 0)
       }
 
       is (LOOP_CONV_WS_CONFIG_2) {
         loop_being_configured.outer_bounds.kernel_dim := cmd.bits.cmd.rs1(63, 48)
-        loop_being_configured.outer_bounds.pool_size := (if (!has_max_pool) 1.U else cmd.bits.cmd.rs1(47, 32))
-        loop_being_configured.outer_bounds.pool_stride := (if (!has_max_pool) 1.U else cmd.bits.cmd.rs1(31, 16))
-        loop_being_configured.outer_bounds.pool_padding := (if (!has_max_pool) 0.U else cmd.bits.cmd.rs1(15, 0))
+        loop_being_configured.outer_bounds.pool_out_col_dim := cmd.bits.cmd.rs1(47, 32)
+        loop_being_configured.outer_bounds.pool_size := (if (!has_max_pool) 1.U else cmd.bits.cmd.rs1(31, 16))
+        loop_being_configured.outer_bounds.pool_stride := (if (!has_max_pool) 1.U else cmd.bits.cmd.rs1(15, 8))
+        loop_being_configured.outer_bounds.pool_padding := (if (!has_max_pool) 0.U else cmd.bits.cmd.rs1(7, 0))
 
         loop_being_configured.inner_bounds.batches := cmd.bits.cmd.rs2(63, 48)
         loop_being_configured.inner_bounds.porows := cmd.bits.cmd.rs2(47, 32)
@@ -1308,8 +1313,9 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
 
         loop_being_configured.inner_bounds.rpad := cmd.bits.cmd.rs2(63, 48)
         loop_being_configured.inner_bounds.upad := cmd.bits.cmd.rs2(47, 32)
-        loop_being_configured.inner_bounds.dpad := cmd.bits.cmd.rs2(31, 16)
-        loop_being_configured.inner_bounds.plpad := cmd.bits.cmd.rs2(15, 0)
+        loop_being_configured.inner_bounds.dpad := cmd.bits.cmd.rs2(31, 24)
+        loop_being_configured.inner_bounds.plpad := cmd.bits.cmd.rs2(23, 16)
+        loop_being_configured.outer_bounds.in_col_dim := cmd.bits.cmd.rs2(15, 0)
       }
 
       is (LOOP_CONV_WS_CONFIG_4) {
