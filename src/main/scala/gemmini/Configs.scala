@@ -32,11 +32,11 @@ object GemminiConfigs {
     meshColumns = 16,
 
     // Spatial array PE options
-    dataflow = Dataflow.BOTH,
+    dataflow = Dataflow.WS,
 
     // Scratchpad and accumulator
-    sp_capacity = CapacityInKilobytes(256),
-    acc_capacity = CapacityInKilobytes(64),
+    sp_capacity = CapacityInKilobytes(128),
+    acc_capacity = CapacityInKilobytes(128),
 
     sp_banks = 4,
     acc_banks = 2,
@@ -60,7 +60,7 @@ object GemminiConfigs {
     ex_queue_length = 8,
 
     // DMA options
-    max_in_flight_mem_reqs = 16,
+    max_in_flight_mem_reqs = 64,
 
     dma_maxbytes = 64,
     dma_buswidth = 128,
@@ -222,14 +222,29 @@ object GemminiConfigs {
 
   val chipConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
     acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=4)),
-    acc_singleported=true,
-    acc_sub_banks=2,
+    acc_singleported=false,
+    acc_sub_banks=1,
     mesh_output_delay = 2,
     ex_read_from_acc=false,
     ex_write_to_spad=false,
-    hardcode_d_to_garbage_addr = true
+    has_training_convs = false,
+    hardcode_d_to_garbage_addr = true,
+    acc_read_full_width = false,
+    num_counter = 0,
   )
 
+  val chipleanConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
+    acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=4, num_scale_units=4)),
+    acc_singleported=false,
+    acc_sub_banks=1,
+    mesh_output_delay = 2,
+    ex_read_from_acc=false,
+    ex_write_to_spad=false,
+    has_training_convs = false,
+    hardcode_d_to_garbage_addr = true,
+    acc_read_full_width = false,
+    num_counter = 0,
+  )
   val largeChipConfig = chipConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64),
     tileRows=1, tileColumns=1,
     meshRows=32, meshColumns=32
@@ -263,6 +278,30 @@ class DefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
  */
 class LeanGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.leanConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+})
+
+class ChipGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.chipConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+})
+
+class ChipLeanGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.chipleanConfig
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
     (p: Parameters) => {
