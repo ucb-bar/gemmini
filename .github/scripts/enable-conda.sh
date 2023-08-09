@@ -7,7 +7,7 @@ conda activate base
 if ! { conda env list | grep 'chipyard'; } >/dev/null 2>&1; then
     conda create -n chipyard
     conda activate chipyard
-    conda install -c conda-forge conda-lock
+    conda install -c conda-forge conda-lock=1.4
 fi
 conda activate chipyard
 
