@@ -89,7 +89,10 @@ object GemminiFPConfigs {
                                               )
  
   val chipFPConfig = FP32DefaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
-    acc_scale_args=Some(defaultFPConfig.acc_scale_args.get.copy(num_scale_units=0, latency=1)),
+    //acc_scale_args=Some(defaultFPConfig.acc_scale_args.get.copy(num_scale_units=0, latency=1)),
+    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
+      c_str = "((x))"
+    )),
     //mvin_scale_args=Some(defaultFPConfig.mvin_scale_args.get.copy(num_scale_units=0)),
     mvin_scale_acc_args=None,
     acc_singleported=false,

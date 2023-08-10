@@ -36,6 +36,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   val spad = LazyModule(new Scratchpad(config))
 
   override lazy val module = new GemminiModule(this)
+  override lazy val desiredName = if (config.inputType.isInstanceOf[gemmini.Float]) "GemminiFP" else "Gemmini"
   override val tlNode = if (config.use_dedicated_tl_port) spad.id_node else TLIdentityNode()
   override val atlNode = if (config.use_dedicated_tl_port) TLIdentityNode() else spad.id_node
 
