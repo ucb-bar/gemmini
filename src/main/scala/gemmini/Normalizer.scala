@@ -208,8 +208,8 @@ class MulPipe[T <: Data, U <: Data](scale_t: U)(implicit ev: Arithmetic[T])
 
   scale_t match {
     case Float(expWidth, sigWidth) =>
-      val self_rec = recFNFromFN(expWidth, sigWidth, io.ins.bits.x.asUInt)
-      val scale_rec = recFNFromFN(expWidth, sigWidth, io.ins.bits.y.asUInt)
+      val self_rec = recFNFromFN(expWidth, sigWidth, io.ins.bits.x.asUInt())
+      val scale_rec = recFNFromFN(expWidth, sigWidth, io.ins.bits.y.asUInt())
 
       val mul = Module(new MulRecFN(expWidth, sigWidth))
 
@@ -445,7 +445,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     // Sqrt input
     val stat = stats(variance_to_sqrt_id)
 
-    sqrt_in.bits := variance_to_sqrt.asUInt
+    sqrt_in.bits := variance_to_sqrt.asUInt()
     sqrt_in.valid := stat.state === get_stddev
   }
 

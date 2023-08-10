@@ -239,7 +239,7 @@ class AccumulatorScale[T <: Data, U <: Data](
     //    val inputs = Seq.fill(width*nEntries) { Wire(Decoupled(new AccScaleDataWithIndex(t, scale_t)(ev))) }
     val current_policy = Wire(UInt(nEntries.W))
     val norm_mask_int = Wire(UInt(nEntries.W))
-    norm_mask_int := VecInit(norm_mask).asUInt
+    norm_mask_int := VecInit(norm_mask).asUInt()
     dontTouch(norm_mask_int)
     current_policy := static_assignment_policy(norm_mask_int)
 
@@ -395,13 +395,13 @@ object AccumulatorScale {
     // qln2_inv / S / (2 ** 16) = 1 / ln2
     // q * qln2_inv = x / S / ln2 * S * (2 ** 16) = x / ln2 * (2 ** 16)
     val neg_q_iexp = neg(q)
-    val z_iexp = (neg_q_iexp * qln2_inv).asUInt.do_>>(16).asTypeOf(q) // q is non-positive
+    val z_iexp = (neg_q_iexp * qln2_inv).asUInt().do_>>(16).asTypeOf(q) // q is non-positive
     val z_iexp_saturated = Wire(z_iexp.cloneType)
-    z_iexp_saturated := Mux((5 until 16).map(z_iexp.asUInt(_)).reduce(_ | _), 32.S, z_iexp)
+    z_iexp_saturated := Mux((5 until 16).map(z_iexp.asUInt()(_)).reduce(_ | _), 32.S, z_iexp)
     val qp_iexp = q.mac(z_iexp, qln2).withWidthOf(q)
     val q_poly_iexp = qc.mac(qp_iexp + qb, qp_iexp + qb).withWidthOf(q)
     // we dont want a rounding shift
     //  TODO: z overflow
-    (q_poly_iexp.asUInt.do_>>(z_iexp_saturated.asUInt)).asTypeOf(q)
+    (q_poly_iexp.asUInt().do_>>(z_iexp_saturated.asUInt())).asTypeOf(q)
   }}
 
