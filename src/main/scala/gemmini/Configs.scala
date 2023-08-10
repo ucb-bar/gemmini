@@ -243,7 +243,9 @@ object GemminiConfigs {
     has_training_convs = false,
     hardcode_d_to_garbage_addr = true,
     acc_read_full_width = false,
+    max_in_flight_mem_reqs = 32,
     num_counter = 0,
+    //clock_gate = true
   )
   val largeChipConfig = chipConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64),
     tileRows=1, tileColumns=1,

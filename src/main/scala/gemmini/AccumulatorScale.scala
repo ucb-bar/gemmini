@@ -95,7 +95,33 @@ class AccumulatorScale[T <: Data, U <: Data](
   val out = Wire(Decoupled(new AccumulatorScaleResp[T](
     fullDataType, rDataType)(ev)))
 
-  if (num_scale_units == -1) {
+  if (num_scale_units == 0) {
+    /*
+    val scale = 1.U
+    io.in.ready := true.B
+    out.valid := io.in.valid
+    out.bits.data := acc_read_data
+    out.bits.acc_bank_id := io.in.bits.acc_read_resp.acc_bank_id
+    out.bits.fromDMA := io.in.bits.acc_read_resp.fromDMA
+    out.bits.full_data := acc_read_data
+    */
+    val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t)(ev)))
+    in.valid := io.in.valid
+    io.in.ready := in.ready
+    in.bits.resp := io.in.bits.acc_read_resp
+    in.bits.full_data := acc_read_data
+    in.bits.resp.data := acc_read_data 
+
+    val pipe_out = Pipeline(in, latency)
+
+    out.valid := pipe_out.valid
+    pipe_out.ready := out.ready
+    out.bits.full_data := pipe_out.bits.full_data
+    out.bits.data      := pipe_out.bits.resp.data
+    out.bits.fromDMA   := pipe_out.bits.resp.fromDMA
+    out.bits.acc_bank_id := pipe_out.bits.resp.acc_bank_id
+  }
+  else if (num_scale_units == -1) {
     val data = io.in.bits.acc_read_resp.data
     val act = io.in.bits.acc_read_resp.act
     val igelu_qb = io.in.bits.acc_read_resp.igelu_qb

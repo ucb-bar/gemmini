@@ -76,6 +76,7 @@ object GemminiFPConfigs {
     has_training_convs = false,
     has_max_pool = true,
     has_nonlinear_activations = true,
+    has_loop_conv = true,
 
     num_counter = 8,
   )
@@ -87,6 +88,27 @@ object GemminiFPConfigs {
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
  
+  val chipFPConfig = FP32DefaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
+    acc_scale_args=Some(defaultFPConfig.acc_scale_args.get.copy(num_scale_units=0, latency=1)),
+    //mvin_scale_args=Some(defaultFPConfig.mvin_scale_args.get.copy(num_scale_units=0)),
+    mvin_scale_acc_args=None,
+    acc_singleported=false,
+    acc_sub_banks = 1,
+    acc_banks = 2,
+    mesh_output_delay = 2,
+    //acc_latency = 3,
+    ex_read_from_acc=false,
+    ex_write_to_spad=false,
+    has_training_convs = false,
+    hardcode_d_to_garbage_addr = true,
+    acc_read_full_width = false,
+    has_loop_conv = false,
+    max_in_flight_mem_reqs = 32,
+    headerFileName = "gemmini_params_fp32.h",
+    num_counter = 0,
+    //clock_gate = true
+  )
+
   //FP16 Half Precision Configuration
   val FP16DefaultConfig = defaultFPConfig.copy(inputType = Float(5, 11), spatialArrayOutputType = Float(5, 11), accType = Float(8, 24),
                                                tile_latency = 2,
@@ -123,7 +145,15 @@ class GemminiFP32DefaultConfig extends Config((site, here, up) => {
   )
 })
 
-
+class ChipFPGemminiConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiFPConfigs.chipFPConfig))
+    }
+  )
+})
 //===========FP16 Default Config=========
 class GemminiFP16DefaultConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq(
