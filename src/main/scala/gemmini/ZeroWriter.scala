@@ -26,7 +26,7 @@ class ZeroWriter[T <: Data, U <: Data, V <: Data, Tag <: Data](config: GemminiAr
   extends Module {
   import config._
 
-  val block_cols = meshColumns * tileColumns
+  val block_cols = meshRows * tileRows //meshColumns * tileColumns
   val max_cols = (dma_maxbytes / (inputType.getWidth / 8)) max block_cols
 
   val io = IO(new Bundle {

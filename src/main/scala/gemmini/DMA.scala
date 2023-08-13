@@ -67,7 +67,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
       val busy = Output(Bool())
       val flush = Input(Bool())
 
-      val counter = new CounterEventIO()
+      //val counter = new CounterEventIO()
     })
 
     val nCmds = (nXacts / meshRows) + 1
@@ -108,8 +108,8 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire)
     io.resp.bits.last := beatPacker.io.out.bits.last
 
-    io.counter.collect(core.module.io.counter)
-    io.counter.collect(xactTracker.io.counter)
+    //io.counter.collect(core.module.io.counter)
+    //io.counter.collect(xactTracker.io.counter)
   }
 }
 
@@ -150,7 +150,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits, maxBytes))
       val tlb = new FrontendTLBIO
       val flush = Input(Bool())
-      val counter = new CounterEventIO()
+      //val counter = new CounterEventIO()
     })
 
     val s_idle :: s_req_new_block :: Nil = Enum(2)
@@ -303,7 +303,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
       state := s_req_new_block
     }
-
+/*
     // Performance counter
     CounterEventIO.init(io.counter)
     io.counter.connectEventSignal(CounterEvent.RDMA_ACTIVE_CYCLE, state =/= s_idle)
@@ -330,7 +330,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         printf(SynthesizePrintf("RDMA bytes rec: %d\n", total_bytes_read))
       }
     }
+    */
   }
+  
 }
 
 class StreamWriteRequest(val dataWidth: Int, val maxBytes: Int)(implicit p: Parameters) extends CoreBundle {
@@ -606,7 +608,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       assert(io.req.bits.len <= (block_cols * inputType.getWidth / 8).U || io.req.bits.block === 0.U, "DMA can't write multiple blocks to main memory when writing full accumulator output")
       assert(!io.req.bits.pool_en || io.req.bits.block === 0.U, "Can't pool with block-mvout")
     }
-
+/*
     // Performance counter
     CounterEventIO.init(io.counter)
     io.counter.connectEventSignal(CounterEvent.WDMA_ACTIVE_CYCLE, state =/= s_idle)
@@ -641,5 +643,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         printf(SynthesizePrintf("WDMA total latency: %d\n", total_latency))
       }
     }
+    */
   }
+  
 }

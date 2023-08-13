@@ -37,7 +37,7 @@ class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: 
 
     val exp = new TLBExceptionIO
 
-    val counter = new CounterEventIO()
+    //val counter = new CounterEventIO()
   }
 
   val interrupt = RegInit(false.B)
@@ -66,7 +66,7 @@ class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: 
   }
 
   assert(!io.exp.flush_retry || !io.exp.flush_skip, "TLB: flushing with both retry and skip at same time")
-
+/*
   CounterEventIO.init(io.counter)
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_HIT_REQ, io.req.fire && !tlb.io.resp.miss)
   io.counter.connectEventSignal(CounterEvent.DMA_TLB_TOTAL_REQ, io.req.fire)
@@ -77,6 +77,7 @@ class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: 
     PerfCounter(io.req.fire, "tlb_reqs", "total number of tlb reqs")
     PerfCounter(tlb.io.resp.miss, "tlb_miss_cycles", "total number of cycles where the tlb is resolving a miss")
   }
+  */
 }
 
 class FrontendTLBIO(implicit p: Parameters) extends CoreBundle {
@@ -96,7 +97,7 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_fi
     val clients = Flipped(Vec(nClients, new FrontendTLBIO))
     val ptw = Vec(num_tlbs, new TLBPTWIO)
     val exp = Vec(num_tlbs, new TLBExceptionIO)
-    val counter = new CounterEventIO()
+    //val counter = new CounterEventIO()
   })
 
   val tlbs = Seq.fill(num_tlbs)(Module(new DecoupledTLB(entries, maxSize, use_firesim_simulation_counters)))
@@ -156,6 +157,6 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_fi
 
   // TODO Return the sum of the TLB counters, rather than just the counters of the first TLB. This only matters if we're
   // not using the shared TLB
-  tlbs.foreach(_.io.counter.external_reset := false.B)
-  io.counter.collect(tlbs.head.io.counter)
+  //tlbs.foreach(_.io.counter.external_reset := false.B)
+  //io.counter.collect(tlbs.head.io.counter)
 }

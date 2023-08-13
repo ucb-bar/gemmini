@@ -24,7 +24,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
     val busy = Output(Bool())
 
-    val counter = new CounterEventIO()
+    //val counter = new CounterEventIO()
   })
 
   // val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -39,7 +39,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val stride = Reg(UInt(coreMaxAddrBits.W))
   val block_rows = meshRows * tileRows
   val block_stride = block_rows.U
-  val block_cols = meshColumns * tileColumns
+  val block_cols = block_rows // meshColumns * tileColumns
   val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
 
   val activation = Reg(UInt(Activation.bitwidth.W)) // TODO magic number
@@ -310,14 +310,14 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     iexp_qln2_inv := DontCare
     norm_stats_id := 0.U
   }
-
+/*
   // Performance counter
   CounterEventIO.init(io.counter)
   io.counter.connectEventSignal(CounterEvent.STORE_ACTIVE_CYCLE, control_state === sending_rows || control_state === pooling)
   io.counter.connectEventSignal(CounterEvent.STORE_POOLING_CYCLE, pooling_is_enabled)
   io.counter.connectEventSignal(CounterEvent.STORE_DMA_WAIT_CYCLE, control_state === waiting_for_dma_req_ready)
   io.counter.connectEventSignal(CounterEvent.STORE_SCRATCHPAD_WAIT_CYCLE, io.dma.req.valid && !io.dma.req.ready)
-
+*/
   if (use_firesim_simulation_counters) {
     PerfCounter(pooling_is_enabled, "pooling_cycles", "cycles during which store controller is max-pooling")
     PerfCounter(io.dma.req.valid && !io.dma.req.ready, "st_dma_wait_cycle", "cycles during which store controller is stalling for the DMA to be ready")

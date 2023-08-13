@@ -96,13 +96,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
-  val sp_width = meshColumns * tileColumns * inputType.getWidth
+  val sp_width = meshRows * tileRows * inputType.getWidth
   val sp_bank_entries = sp_capacity match {
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (sp_banks * sp_width)
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / sp_banks
   }
   val acc_bank_entries = acc_capacity match {
-    case CapacityInKilobytes(kb) => kb * 1024 * 8 / (acc_banks * meshColumns * tileColumns * accType.getWidth)
+    case CapacityInKilobytes(kb) => kb * 1024 * 8 / (acc_banks * meshRows * tileRows * accType.getWidth)
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / acc_banks
   }
   require (!acc_singleported || (acc_sub_banks <= 4 && isPow2(acc_sub_banks)))
@@ -157,9 +157,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   }
   assert(acc_scale_latency > 0)
 
-  val mvin_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvin_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshRows * tileRows)) + 1)
   val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
-  val mvout_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvout_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshRows * tileRows)) + 1)
   val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
 
   val load_states = 3
@@ -181,7 +181,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   //==========================================================================
   val BLOCK_ROWS = tileRows * meshRows
   val BLOCK_COLS = tileColumns * meshColumns
-  require(BLOCK_ROWS == BLOCK_COLS, "BLOCK_ROWS != BLOCK_COLS!")
+  //require(BLOCK_ROWS == BLOCK_COLS, "BLOCK_ROWS != BLOCK_COLS!")
 
   val DIM             = BLOCK_ROWS
   val LOG2_DIM        = log2Up(DIM)
@@ -265,9 +265,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
   require(isPow2(sp_bank_entries), "each SRAM bank must have a power-of-2 rows, to simplify address calculations") // TODO remove this requirement
   require(sp_bank_entries % (meshRows * tileRows) == 0, "the number of rows in a bank must be a multiple of the dimensions of the systolic array")
-  require(meshColumns * tileColumns == meshRows * tileRows, "the systolic array must be square") // TODO remove this requirement
-  require(meshColumns * tileColumns >= 2, "the systolic array must have a dimension of at least 2") // TODO remove this requirement
-  require(isPow2(meshColumns * tileColumns), "the systolic array's dimensions must be powers of 2") // TODO remove this requirement
+  //require(meshColumns * tileColumns == meshRows * tileRows, "the systolic array must be square") // TODO remove this requirement
+  //require(meshColumns * tileColumns >= 2, "the systolic array must have a dimension of at least 2") // TODO remove this requirement
+  //require(isPow2(meshColumns * tileColumns), "the systolic array's dimensions must be powers of 2") // TODO remove this requirement
   require(acc_bank_entries % (meshRows * tileRows) == 0, "the number of rows in an accumulator bank must be a multiple of the dimensions of the systolic array")
   require(!mvin_scale_shared || (mvin_scale_shared && mvin_scale_args.isDefined && mvin_scale_acc_args.isEmpty && inputType.getWidth == accType.getWidth)) // TODO is there a better way to check whether inputType and accType are the same?
   require((mvin_scale_args.isEmpty || mvin_scale_acc_args.isEmpty) || (mvin_scale_t.getWidth == mvin_scale_acc_t.getWidth), "currently, the mvin scale types for both the srams and the accumulator must have the same width") // TODO remove this requirement
@@ -315,7 +315,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       }
     }
 
-    assert(tileColumns*meshColumns == tileRows*meshRows)
+    //assert(tileColumns*meshColumns == tileRows*meshRows)
     assert(Set(8, 16, 32, 64).contains(inputType.getWidth))
     // assert(Set(8, 16, 32, 64).contains(outputType.getWidth))
     assert(Set(8, 16, 32, 64).contains(accType.getWidth))
@@ -334,7 +334,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     require (opcodeid != -1 && opcodes.opcodes.size == 1)
     header ++= s"#define XCUSTOM_ACC $opcodeid\n"
 
-    header ++= s"#define DIM ${tileColumns*meshColumns}\n"
+    header ++= s"#define DIM ${tileRows*meshRows}\n"
     header ++= s"#define ADDR_LEN 32\n"
     header ++= s"#define BANK_NUM $sp_banks\n"
     header ++= s"#define BANK_ROWS $sp_bank_entries\n"
@@ -343,13 +343,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     val max_bytes = 64
     header ++= s"#define MAX_BYTES $max_bytes\n"
 
-    if (tileColumns*meshColumns*inputType.getWidth/8 <= max_bytes) {
+    if (tileRows*meshRows*inputType.getWidth/8 <= max_bytes) {
       header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${inputType.getWidth/8}))\n"
     } else {
       header ++= s"#define MAX_BLOCK_LEN 1\n"
     }
 
-    if (tileColumns*meshColumns*accType.getWidth/8 <= max_bytes) {
+    if (tileRows*meshRows*accType.getWidth/8 <= max_bytes) {
       header ++= s"#define MAX_BLOCK_LEN_ACC (MAX_BYTES/(DIM*${accType.getWidth / 8}))\n\n"
     } else {
       header ++= s"#define MAX_BLOCK_LEN_ACC 1\n\n"

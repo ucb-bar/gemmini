@@ -29,14 +29,14 @@ object GemminiConfigs {
     tileRows = 1,
     tileColumns = 1,
     meshRows = 16,
-    meshColumns = 16,
+    meshColumns = 1,
 
     // Spatial array PE options
-    dataflow = Dataflow.BOTH,
+    dataflow = Dataflow.WS,
 
     // Scratchpad and accumulator
-    sp_capacity = CapacityInKilobytes(256),
-    acc_capacity = CapacityInKilobytes(64),
+    sp_capacity = CapacityInKilobytes(64),
+    acc_capacity = CapacityInKilobytes(32),
 
     sp_banks = 4,
     acc_banks = 2,
@@ -45,9 +45,10 @@ object GemminiConfigs {
     acc_singleported = false,
 
     // DNN options
-    has_training_convs = true,
-    has_max_pool = true,
+    has_training_convs = false,
+    has_max_pool = false,
     has_nonlinear_activations = true,
+    has_first_layer_optimizations = false,
 
     // Reservation station entries
     reservation_station_entries_ld = 8,
@@ -151,15 +152,15 @@ object GemminiConfigs {
     )),
 
     // SoC counters options
-    num_counter = 8,
+    num_counter = 0,
 
     // Scratchpad and Accumulator input/output options
-    acc_read_full_width = true,
+    acc_read_full_width = false,
     acc_read_small_width = true,
 
     ex_read_from_spad = true,
-    ex_read_from_acc = true,
-    ex_write_to_spad = true,
+    ex_read_from_acc = false,
+    ex_write_to_spad = false,
     ex_write_to_acc = true,
   )
 

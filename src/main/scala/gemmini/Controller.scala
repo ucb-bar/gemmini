@@ -54,7 +54,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ext_mem_io.foreach(_ <> outer.spad.module.io.ext_mem.get)
 
   val tagWidth = 32
-
+/*
   // Counters
   val counters = Module(new CounterController(outer.config.num_counter, outer.xLen))
   io.resp <> counters.io.out  // Counter access command will be committed immediately
@@ -63,7 +63,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   counters.io.in.valid := false.B
   counters.io.in.bits := DontCare
   counters.io.event_io.collect(spad.module.io.counter)
-
+*/
   // TLB
   implicit val edge = outer.spad.id_node.edges.out.head
   val tlb = Module(new FrontendTLB(2, tlb_size, dma_maxbytes, use_tlb_register_filter, use_firesim_simulation_counters, use_shared_tlb))
@@ -74,7 +74,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   io.ptw <> tlb.io.ptw
 
-  counters.io.event_io.collect(tlb.io.counter)
+  //counters.io.event_io.collect(tlb.io.counter)
 
   spad.module.io.flush := tlb.io.exp.map(_.flush()).reduce(_ || _)
 
@@ -122,7 +122,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   */
 
   val reservation_station = withClock (gated_clock) { Module(new ReservationStation(outer.config, new GemminiCmd(reservation_station_entries))) }
-  counters.io.event_io.collect(reservation_station.io.counter)
+  //counters.io.event_io.collect(reservation_station.io.counter)
 
   when (io.cmd.valid && io.cmd.bits.inst.funct === CLKGATE_EN && !io.busy) {
     clock_en_reg := io.cmd.bits.rs1(0)
@@ -161,7 +161,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
-  counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
+  //counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
 
   // Wire up controllers to ROB
   reservation_station.io.alloc.valid := false.B
@@ -189,9 +189,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val store_controller = withClock (gated_clock) { Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t)) }
   val ex_controller = withClock (gated_clock) { Module(new ExecuteController(xLen, tagWidth, outer.config)) }
 
-  counters.io.event_io.collect(load_controller.io.counter)
-  counters.io.event_io.collect(store_controller.io.counter)
-  counters.io.event_io.collect(ex_controller.io.counter)
+  //counters.io.event_io.collect(load_controller.io.counter)
+  //counters.io.event_io.collect(store_controller.io.counter)
+  //counters.io.event_io.collect(ex_controller.io.counter)
 
   /*
   tiler.io.issue.load.ready := false.B
@@ -254,33 +254,20 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
   ex_controller.io.acc.write <> spad.module.io.acc.write
 
-  // Im2Col unit
-  val im2col = withClock (gated_clock) { Module(new Im2Col(outer.config)) }
-
-  // Wire up Im2col
-  counters.io.event_io.collect(im2col.io.counter)
-  // im2col.io.sram_reads <> spad.module.io.srams.read
-  im2col.io.req <> ex_controller.io.im2col.req
-  ex_controller.io.im2col.resp <> im2col.io.resp
-
-  // Wire arbiter for ExecuteController and Im2Col scratchpad reads
-  (ex_controller.io.srams.read, im2col.io.sram_reads, spad.module.io.srams.read).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
-    val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
+  (ex_controller.io.srams.read, spad.module.io.srams.read).zipped.foreach { case (ex_read, spad_read) =>
+    val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 1))
 
     req_arb.io.in(0) <> ex_read.req
-    req_arb.io.in(1) <> im2col_read.req
 
     spad_read.req <> req_arb.io.out
 
     // TODO if necessary, change how the responses are handled when fromIm2Col is added to spad read interface
 
     ex_read.resp.valid := spad_read.resp.valid
-    im2col_read.resp.valid := spad_read.resp.valid
 
     ex_read.resp.bits := spad_read.resp.bits
-    im2col_read.resp.bits := spad_read.resp.bits
 
-    spad_read.resp.ready := ex_read.resp.ready || im2col_read.resp.ready
+    spad_read.resp.ready := ex_read.resp.ready 
   }
 
   // Wire up controllers to ROB
@@ -343,7 +330,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val incr_st_ex_cycles = !load_controller.io.busy && store_controller.io.busy && ex_controller.io.busy
 
   val incr_ld_st_ex_cycles = load_controller.io.busy && store_controller.io.busy && ex_controller.io.busy
-
+/*
   counters.io.event_io.connectEventSignal(CounterEvent.MAIN_LD_CYCLES, incr_ld_cycles)
   counters.io.event_io.connectEventSignal(CounterEvent.MAIN_ST_CYCLES, incr_st_cycles)
   counters.io.event_io.connectEventSignal(CounterEvent.MAIN_EX_CYCLES, incr_ex_cycles)
@@ -351,7 +338,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   counters.io.event_io.connectEventSignal(CounterEvent.MAIN_LD_EX_CYCLES, incr_ld_ex_cycles)
   counters.io.event_io.connectEventSignal(CounterEvent.MAIN_ST_EX_CYCLES, incr_st_ex_cycles)
   counters.io.event_io.connectEventSignal(CounterEvent.MAIN_LD_ST_EX_CYCLES, incr_ld_st_ex_cycles)
-
+*/
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here
   // when (compressed_cmd.valid) {
@@ -382,9 +369,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     .elsewhen (is_counter_op) {
       // If this is a counter access/configuration command, execute immediately
-      counters.io.in.valid := unrolled_cmd.valid
-      unrolled_cmd.ready := counters.io.in.ready
-      counters.io.in.bits := unrolled_cmd.bits.cmd
+      //counters.io.in.valid := unrolled_cmd.valid
+      //unrolled_cmd.ready := counters.io.in.ready
+      //counters.io.in.bits := unrolled_cmd.bits.cmd
     }
 
     .elsewhen (is_clock_gate_en) {

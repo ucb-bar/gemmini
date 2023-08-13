@@ -179,7 +179,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val dataBits = dma_buswidth
 
   val block_rows = meshRows * tileRows
-  val block_cols = meshColumns * tileColumns
+  val block_cols = meshRows * tileRows
   val spad_w = inputType.getWidth *  block_cols
   val acc_w = accType.getWidth * block_cols
 
@@ -222,11 +222,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           acc_bank_entries, accType, acc_scale_t.asInstanceOf[V]
         ))))
         val read_resp = Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
-          Vec(meshColumns, Vec(tileColumns, inputType)),
-          Vec(meshColumns, Vec(tileColumns, accType))
+          Vec(meshRows, Vec(tileRows, inputType)),
+          Vec(meshRows, Vec(tileRows, accType))
         )))
         val write = Flipped(Vec(acc_banks, Decoupled(new AccumulatorWriteReq(
-          acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))
+          acc_bank_entries, Vec(meshRows, Vec(tileRows, accType))
         ))))
       }
 
@@ -242,7 +242,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // Misc. ports
       val busy = Output(Bool())
       val flush = Input(Bool())
-      val counter = new CounterEventIO()
+      //val counter = new CounterEventIO()
     })
 
     val write_dispatch_q = Queue(io.dma.write.req)
@@ -363,13 +363,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(
       config.mvin_scale_args,
-      config.inputType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits),
+      config.inputType, config.meshRows * config.tileRows, chiselTypeOf(reader.module.io.resp.bits),
       is_acc = false
     )
     val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out) else (
       VectorScalarMultiplier(
         config.mvin_scale_acc_args,
-        config.accType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits),
+        config.accType, config.meshRows * config.tileRows, chiselTypeOf(reader.module.io.resp.bits),
         is_acc = true
       )
     )
@@ -384,7 +384,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     mvin_scale_in.bits.last := reader.module.io.resp.bits.last
     mvin_scale_in.bits.tag := reader.module.io.resp.bits
 
-    val mvin_scale_pixel_repeater = Module(new PixelRepeater(inputType, local_addr_t, block_cols, aligned_to, mvin_scale_out.bits.tag.cloneType, passthrough = !has_first_layer_optimizations))
+    val mvin_scale_pixel_repeater = Module(new PixelRepeater(inputType, local_addr_t, block_rows, aligned_to, mvin_scale_out.bits.tag.cloneType, passthrough = !has_first_layer_optimizations))
     mvin_scale_pixel_repeater.io.req.valid := mvin_scale_out.valid
     mvin_scale_pixel_repeater.io.req.bits.in := mvin_scale_out.bits.out
     mvin_scale_pixel_repeater.io.req.bits.mask := mvin_scale_out.bits.tag.mask take mvin_scale_pixel_repeater.io.req.bits.mask.size
@@ -556,8 +556,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       banks
     }
 
-    val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
-    val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
+    val acc_row_t = Vec(meshRows, Vec(tileRows, accType))
+    val spad_row_t = Vec(meshRows, Vec(tileRows, inputType))
 
     val (acc_norm_unit_in, acc_norm_unit_out) = Normalizer(
       is_passthru = !config.has_normalizations,
@@ -825,7 +825,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     }
 
     // Counter connection
-    io.counter.collect(reader.module.io.counter)
-    io.counter.collect(writer.module.io.counter)
+    //io.counter.collect(reader.module.io.counter)
+    //io.counter.collect(writer.module.io.counter)
   }
 }

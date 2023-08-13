@@ -28,7 +28,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   import config._
 
   val block_rows = tileRows * meshRows
-  val block_cols = tileColumns * meshColumns
+  val block_cols = block_rows // tileColumns * meshColumns
 
   val max_instructions_completed_per_type_per_cycle = 2 // Every cycle, at most two instructions of a single "type" (ld/st/ex) can be completed: one through the io.completed port, and the other if it is a "complete-on-issue" instruction
 
@@ -53,7 +53,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val busy = Output(Bool())
 
-    val counter = new CounterEventIO()
+    //val counter = new CounterEventIO()
   })
 
   // TODO make this a ChiselEnum
@@ -561,11 +561,12 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   when (reset.asBool) {
     entries.foreach(_.valid := false.B)
   }
-
+/*
   CounterEventIO.init(io.counter)
   io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_LD_COUNT, utilization_ld_q)
   io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_ST_COUNT, utilization_st_q)
   io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_EX_COUNT, utilization_ex_q)
   io.counter.connectEventSignal(CounterEvent.RESERVATION_STATION_ACTIVE_CYCLES, io.busy)
   io.counter.connectEventSignal(CounterEvent.RESERVATION_STATION_FULL_CYCLES, !io.alloc.ready)
+*/
 }
