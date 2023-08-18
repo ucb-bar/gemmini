@@ -35,10 +35,16 @@ object GemminiConfigs {
     dataflow = Dataflow.WS,
 
     // Scratchpad and accumulator
-    sp_capacity = CapacityInKilobytes(64),
-    acc_capacity = CapacityInKilobytes(32),
+    // 16KB spad cell generate 2 1024x64 sram cell
+    // 8kB, 4KB spad cell generate 2 512x64 sram cell
+    sp_capacity = CapacityInKilobytes(16),
+    acc_capacity = CapacityInKilobytes(4),
+    // 16KB will generate 2 (1 per bank) 512x128 sram cell
+    // 8KB will generate 2 (1 per bank) 256x128 sram cell
+    // 4KB, 2KB will generate 2 (1 per bank) 128x128 sram cell
 
-    sp_banks = 4,
+
+    sp_banks = 2,
     acc_banks = 2,
 
     sp_singleported = true,
@@ -47,13 +53,13 @@ object GemminiConfigs {
     // DNN options
     has_training_convs = false,
     has_max_pool = false,
-    has_nonlinear_activations = true,
+    has_nonlinear_activations = false, // ?
     has_first_layer_optimizations = false,
 
     // Reservation station entries
-    reservation_station_entries_ld = 8,
+    reservation_station_entries_ld = 4,
     reservation_station_entries_st = 4,
-    reservation_station_entries_ex = 16,
+    reservation_station_entries_ex = 8,
 
     // Ld/Ex/St instruction queue lengths
     ld_queue_length = 8,

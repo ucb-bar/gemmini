@@ -351,6 +351,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     !must_wait_for.reduce(_ || _)
   }
+  dontTouch(a_valid)
+  dontTouch(d_valid)
 
   val a_fire = a_valid && a_ready
   val b_fire = b_valid && b_ready
@@ -422,7 +424,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   for (i <- 0 until sp_banks) {
     val read_a = a_valid && !a_read_from_acc && dataAbank === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros
     val read_b = b_valid && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
-    val read_d = d_valid && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros && new_d
+    val read_d = d_valid && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& new_d
 
     Seq((read_a, a_ready), (read_b, b_ready), (read_d, d_ready)).foreach { case (rd, r) =>
       when (rd && !io.srams.read(i).req.ready) {
@@ -796,9 +798,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     cntl.preload_zeros -> false.B,
     cntl.d_read_from_acc -> accReadValid(cntl.d_bank_acc)
   ))
-  when(((d_mesh_fire_counter === (total_rows-1.U)) || d_mesh_fire_counter === 0.U) && (!dataD_valid || d_garbage)){
+  val total_rows_D = RegInit(0.U(log2Up(block_size+1).W))
+
+  when(((d_mesh_fire_counter === (total_rows_D-1.U)) || d_mesh_fire_counter === 0.U) && (!(dataD_valid && cntl.d_fire) || d_garbage)){
     new_d := true.B
   }
+  dontTouch(dataA_valid)
+  dontTouch(dataD_valid)
 
   //added for negative bitshift
   val preload_zero_counter = RegInit(0.U(5.W))
@@ -816,11 +822,16 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val dataD_reg = Reg(Vec(meshRows, inputType))
   val dataD_reg_valid = RegInit(false.B)
-  when(readValid(cntl.d_bank)){
+  val dataD_reg_condition = readValid(cntl.d_bank) && cntl.d_fire && (d_mesh_fire_counter === (total_rows_D-1.U) || d_mesh_fire_counter === 0.U)&& !cntl.d_garbage
+  //val dataD_reg_condition = readValid(cntl.d_bank) && cntl.d_fire && (d_mesh_fire_counter === 0.U)&& !cntl.d_garbage
+
+  when(dataD_reg_condition){
   //when(dataD_valid && !d_garbage && !cntl.d_garbage){
     dataD_reg := dataD
     dataD_reg_valid := true.B
-  }.elsewhen((d_mesh_fire_counter === (total_rows-1.U) || (!mesh.io.d.fire && d_mesh_fire_counter === 0.U)) && dataD_reg_valid === true.B){
+    total_rows_D := total_rows
+  //}.elsewhen((d_mesh_fire_counter === (total_rows_D-1.U) || (!mesh.io.d.fire && d_mesh_fire_counter === 0.U)) && dataD_reg_valid === true.B){
+  }.elsewhen((d_mesh_fire_counter === (total_rows_D-1.U) || (cntl.d_garbage && d_mesh_fire_counter === 0.U)) && dataD_reg_valid === true.B){
     dataD_reg_valid := false.B
   }
 
@@ -857,11 +868,17 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
   }
 
-  when (!firing) {
+
+  when(((!readValid(cntl.d_bank) && !dataD_reg_valid) || cntl.d_garbage) && (d_mesh_fire_counter =/= total_rows_D - 1.U)){
     d_mesh_fire_counter := 0.U
-  }.elsewhen (mesh.io.d.fire){
-    d_mesh_fire_counter := wrappingAdd(d_mesh_fire_counter, 1.U, total_rows)
+  }.elsewhen (dataD_reg_valid && mesh.io.d.fire){ // && !cntl.d_garbage){
+    d_mesh_fire_counter := wrappingAdd(d_mesh_fire_counter, 1.U, total_rows_D)
+  }.elsewhen (dataD_reg_condition){
+    d_mesh_fire_counter := 1.U
+  }.elsewhen (mesh.io.d.fire && (d_mesh_fire_counter === total_rows_D - 1.U) && !dataD_reg_valid && cntl.d_garbage){
+    d_mesh_fire_counter := 0.U
   }
+
   when (cntl_valid) {
     // Default inputs
     mesh.io.a.valid := cntl.a_fire && dataA_valid
