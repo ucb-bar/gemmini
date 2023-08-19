@@ -800,9 +800,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   ))
   val total_rows_D = RegInit(0.U(log2Up(block_size+1).W))
 
-  when(((d_mesh_fire_counter === (total_rows_D-1.U)) || d_mesh_fire_counter === 0.U) && (!(dataD_valid && cntl.d_fire) || d_garbage)){
+  when((d_mesh_fire_counter === (total_rows_D-1.U)) || d_mesh_fire_counter === 0.U) {//&& (!(dataD_valid && cntl.d_fire) || d_garbage)){
     new_d := true.B
   }
+
   dontTouch(dataA_valid)
   dontTouch(dataD_valid)
 
@@ -822,8 +823,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val dataD_reg = Reg(Vec(meshRows, inputType))
   val dataD_reg_valid = RegInit(false.B)
-  val dataD_reg_condition = readValid(cntl.d_bank) && cntl.d_fire && (d_mesh_fire_counter === (total_rows_D-1.U) || d_mesh_fire_counter === 0.U)&& !cntl.d_garbage
-  //val dataD_reg_condition = readValid(cntl.d_bank) && cntl.d_fire && (d_mesh_fire_counter === 0.U)&& !cntl.d_garbage
+  //val dataD_reg_condition = readValid(cntl.d_bank) && cntl.d_fire && (d_mesh_fire_counter === (total_rows_D-1.U) || d_mesh_fire_counter === 0.U)&& !cntl.d_garbage
+  val dataD_reg_condition = readValid(cntl.d_bank) && cntl.d_fire && (d_mesh_fire_counter === 0.U)&& !cntl.d_garbage
 
   when(dataD_reg_condition){
   //when(dataD_valid && !d_garbage && !cntl.d_garbage){
