@@ -825,6 +825,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     }
 
     // Counter connection
+    io.counter := DontCare
     io.counter.collect(reader.module.io.counter)
     io.counter.collect(writer.module.io.counter)
   }

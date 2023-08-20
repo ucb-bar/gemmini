@@ -30,7 +30,7 @@ class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: 
   extends CoreModule {
 
   val lgMaxSize = log2Ceil(maxSize)
-  val io = new Bundle {
+  val io = IO(new Bundle {
     val req = Flipped(Valid(new DecoupledTLBReq(lgMaxSize)))
     val resp = new TLBResp
     val ptw = new TLBPTWIO
@@ -38,7 +38,7 @@ class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: 
     val exp = new TLBExceptionIO
 
     val counter = new CounterEventIO()
-  }
+  })
 
   val interrupt = RegInit(false.B)
   io.exp.interrupt := interrupt
@@ -156,6 +156,7 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_fi
 
   // TODO Return the sum of the TLB counters, rather than just the counters of the first TLB. This only matters if we're
   // not using the shared TLB
+  io.counter := DontCare
   tlbs.foreach(_.io.counter.external_reset := false.B)
   io.counter.collect(tlbs.head.io.counter)
 }

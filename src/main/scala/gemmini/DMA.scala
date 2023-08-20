@@ -108,6 +108,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire)
     io.resp.bits.last := beatPacker.io.out.bits.last
 
+    io.counter := DontCare
     io.counter.collect(core.module.io.counter)
     io.counter.collect(xactTracker.io.counter)
   }
@@ -231,6 +232,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     tlb_q.io.enq <> tlb_arb.io.out
 
     io.tlb.req.valid := tlb_q.io.deq.valid
+    io.tlb.req.bits := DontCare
     io.tlb.req.bits.tlb_req.vaddr := tlb_q.io.deq.bits.vaddr
     io.tlb.req.bits.tlb_req.passthrough := false.B
     io.tlb.req.bits.tlb_req.size := 0.U // send_size
@@ -305,6 +307,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     }
 
     // Performance counter
+    io.counter := DontCare
     CounterEventIO.init(io.counter)
     io.counter.connectEventSignal(CounterEvent.RDMA_ACTIVE_CYCLE, state =/= s_idle)
     io.counter.connectEventSignal(CounterEvent.RDMA_TLB_WAIT_CYCLES, io.tlb.resp.miss)
@@ -522,6 +525,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     tlb_q.io.enq <> tlb_arb.io.out
 
     io.tlb.req.valid := tlb_q.io.deq.fire
+    io.tlb.req.bits := DontCare
     io.tlb.req.bits.tlb_req.vaddr := tlb_q.io.deq.bits.vaddr
     io.tlb.req.bits.tlb_req.passthrough := false.B
     io.tlb.req.bits.tlb_req.size := 0.U // send_size
