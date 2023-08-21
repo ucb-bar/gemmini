@@ -18,7 +18,7 @@ class WeightedArbiter[T <: Data](t: T, maxWeightA: Int, staticWeightAEnabled: Bo
     val inA_k = Input(UInt(16.W)) // TODO magic number
     val inB_k = Input(UInt(16.W)) // TODO magic number
     val inA_i = Input(UInt(16.W)) // TODO magic number
-    val inB_j = Input(UInt(16.W)) // TODO magic number
+    //val inB_j = Input(UInt(16.W)) // TODO magic number
   })
 
   val count = Reg(UInt(log2Up(maxWeightA+1).W))
@@ -54,7 +54,7 @@ class WeightedArbiter[T <: Data](t: T, maxWeightA: Int, staticWeightAEnabled: Bo
       io.out <> io.inB
     }.elsewhen(io.inB_idle) {
       io.out <> io.inA
-    }.elsewhen(io.inA_k > io.inB_k || (io.inB_k === 0.U && io.inB_j === 0.U)) {
+    }.elsewhen(io.inA_k > io.inB_k || io.inB_k === 0.U){ // && io.inB_j === 0.U)) {
       io.out <> io.inB
     }.otherwise {
       io.out <> io.inA
