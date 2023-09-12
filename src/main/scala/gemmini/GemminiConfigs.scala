@@ -12,7 +12,7 @@ case class CapacityInMatrices(matrices: Int) extends GemminiMemCapacity
 
 case class ScaleArguments[T <: Data, U <: Data](scale_func: (T, U) => T, latency: Int, multiplicand_t: U,
                                                 num_scale_units: Int,
-                                                identity: String="0", c_str: String="ROUNDING_RIGHT_SHIFT(x, scale)")
+                                                identity: String="0", c_str: String="ROUNDING_RIGHT_SHIFT(x, scale)")(implicit ev: Arithmetic[T]) {}
 
 case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              opcodes: OpcodeSet = OpcodeSet.custom3,
@@ -89,6 +89,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_normalizations: Boolean = false,
                                                                              has_first_layer_optimizations: Boolean = true,
                                                                              has_loop_conv: Boolean = true,
+                                                                             has_transposer: Boolean = true,
 
                                                                              use_firesim_simulation_counters: Boolean = false,
 

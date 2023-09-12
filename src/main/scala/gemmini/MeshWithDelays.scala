@@ -31,7 +31,7 @@ class MeshWithDelaysResp[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](o
 
 class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   (inputType: T, val outputType: T, accType: T,
-   tagType: U, df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int, output_delay: Int,
+   tagType: U, df: Dataflow.Value, tree_reduction: Boolean, has_transposer: Boolean, tile_latency: Int, output_delay: Int,
    tileRows: Int, tileColumns: Int, meshRows: Int, meshColumns: Int,
    leftBanks: Int, upBanks: Int, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1)
   extends Module {
@@ -148,29 +148,36 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   val pause = !req.valid || !input_next_row_into_spatial_array
 
+  val a_shifter_in = WireInit(a_buf)
+  val b_shifter_in = WireInit(b_buf)
+  val d_shifter_in = WireInit(d_buf)
+  if(has_transposer){
   // Transposer
-  val a_is_from_transposer = Mux(req.bits.pe_control.dataflow === Dataflow.OS.id.U, !req.bits.a_transpose, req.bits.a_transpose)
-  val b_is_from_transposer = req.bits.pe_control.dataflow === Dataflow.OS.id.U && req.bits.bd_transpose
-  val d_is_from_transposer = req.bits.pe_control.dataflow === Dataflow.WS.id.U && req.bits.bd_transpose
-  val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
+    val a_is_from_transposer = Mux(req.bits.pe_control.dataflow === Dataflow.OS.id.U, !req.bits.a_transpose, req.bits.a_transpose)
+    val b_is_from_transposer = req.bits.pe_control.dataflow === Dataflow.OS.id.U && req.bits.bd_transpose
+    val d_is_from_transposer = req.bits.pe_control.dataflow === Dataflow.WS.id.U && req.bits.bd_transpose
+    
+    val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
 
-  transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
-  transposer.io.inRow.bits := MuxCase(VecInit(a_buf.flatten), Seq(
-    b_is_from_transposer -> VecInit(b_buf.flatten),
-    d_is_from_transposer -> VecInit(d_buf.flatten.reverse),
-  ))
+    transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
+    transposer.io.inRow.bits := MuxCase(VecInit(a_buf.flatten), Seq(
+      b_is_from_transposer -> VecInit(b_buf.flatten),
+      d_is_from_transposer -> VecInit(d_buf.flatten.reverse),
+    ))
 
-  transposer.io.outCol.ready := true.B
-  val transposer_out = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
+    transposer.io.outCol.ready := true.B
+    val transposer_out = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
+
+    // TODO wire only to *_buf here, instead of io.*.bits
+    a_shifter_in := (Mux(a_is_from_transposer, transposer_out.asTypeOf(A_TYPE), a_buf))
+    b_shifter_in := (Mux(b_is_from_transposer, transposer_out.asTypeOf(B_TYPE), b_buf))
+    d_shifter_in := (Mux(d_is_from_transposer,
+      VecInit(transposer_out.flatten.reverse.grouped(tileRows).map(VecInit(_)).toSeq).asTypeOf(D_TYPE), d_buf))
+  }
 
   // Wire up mesh's IO to this module's IO
   val mesh = Module(new Mesh(inputType, outputType, accType, df, tree_reduction, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns))
 
-  // TODO wire only to *_buf here, instead of io.*.bits
-  val a_shifter_in = WireInit(Mux(a_is_from_transposer, transposer_out.asTypeOf(A_TYPE), a_buf))
-  val b_shifter_in = WireInit(Mux(b_is_from_transposer, transposer_out.asTypeOf(B_TYPE), b_buf))
-  val d_shifter_in = WireInit(Mux(d_is_from_transposer,
-    VecInit(transposer_out.flatten.reverse.grouped(tileRows).map(VecInit(_)).toSeq).asTypeOf(D_TYPE), d_buf))
 
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_b := shifted(b_shifter_in, upBanks)

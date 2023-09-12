@@ -94,6 +94,7 @@ object GemminiFPConfigs {
       c_str = "((x))"
     )),
     //mvin_scale_args=Some(defaultFPConfig.mvin_scale_args.get.copy(num_scale_units=0)),
+    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => {Mux(u > 0.U.asTypeOf(Float(8, 24)), t, 0.U.asTypeOf(Float(8,24)) - t)}, 2, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
     mvin_scale_acc_args=None,
     acc_singleported=false,
     acc_sub_banks = 1,
@@ -112,6 +113,29 @@ object GemminiFPConfigs {
     //clock_gate = true
   )
 
+  val chipFPVConfig = FP32DefaultConfig.copy(sp_capacity=CapacityInKilobytes(32), acc_capacity=CapacityInKilobytes(2), dataflow=Dataflow.WS,
+    //acc_scale_args=Some(defaultFPConfig.acc_scale_args.get.copy(num_scale_units=0, latency=1)),
+    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
+      c_str = "((x))"
+    )),
+    //mvin_scale_args=Some(defaultFPConfig.mvin_scale_args.get.copy(num_scale_units=0)),
+    mvin_scale_acc_args=None,
+    acc_singleported=false,
+    acc_sub_banks = 1,
+    acc_banks = 2,
+    mesh_output_delay = 2,
+    //acc_latency = 3,
+    ex_read_from_acc=false,
+    ex_write_to_spad=false,
+    has_training_convs = false,
+    hardcode_d_to_garbage_addr = true,
+    acc_read_full_width = false,
+    has_loop_conv = false,
+    max_in_flight_mem_reqs = 32,
+    headerFileName = "gemmini_params_fp32v.h",
+    num_counter = 0,
+    //clock_gate = true
+  )
   //FP16 Half Precision Configuration
   val FP16DefaultConfig = defaultFPConfig.copy(inputType = Float(5, 11), spatialArrayOutputType = Float(5, 11), accType = Float(8, 24),
                                                tile_latency = 2,
@@ -154,6 +178,15 @@ class ChipFPGemminiConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiFPConfigs.chipFPConfig))
+    }
+  )
+})
+class ChipFPVConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiFPConfigs.chipFPVConfig))
     }
   )
 })
