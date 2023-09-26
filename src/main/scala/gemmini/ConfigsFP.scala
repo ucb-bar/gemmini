@@ -44,10 +44,10 @@ object GemminiFPConfigs {
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 1,
     tlb_size = 4,
-    use_tlb_register_filter = true,
+    //use_tlb_register_filter = true,
     max_in_flight_mem_reqs = 16,
-    use_dedicated_tl_port = false,
-    use_shared_ext_mem = false,
+    //use_dedicated_tl_port = false,
+    //use_shared_ext_mem = false,
     inputType = Float(8, 24),
     spatialArrayOutputType = Float(8, 24),
     accType = Float(8, 24),
@@ -94,7 +94,7 @@ object GemminiFPConfigs {
       c_str = "((x))"
     )),
     //mvin_scale_args=Some(defaultFPConfig.mvin_scale_args.get.copy(num_scale_units=0)),
-    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => {Mux(u > 0.U.asTypeOf(Float(8, 24)), t, 0.U.asTypeOf(Float(8,24)) - t)}, 2, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
+    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => {Mux(u > 0.U.asTypeOf(Float(8, 24)), t, 0.U.asTypeOf(Float(8,24)) - t)}, 1, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")), // 2 -> 1 stage
     mvin_scale_acc_args=None,
     acc_singleported=false,
     acc_sub_banks = 1,
@@ -110,7 +110,7 @@ object GemminiFPConfigs {
     max_in_flight_mem_reqs = 32,
     headerFileName = "gemmini_params_fp32.h",
     num_counter = 0,
-    //clock_gate = true
+    clock_gate = true // enable this
   )
 
   val chipFPVConfig = FP32DefaultConfig.copy(sp_capacity=CapacityInKilobytes(32), acc_capacity=CapacityInKilobytes(2), dataflow=Dataflow.WS,
@@ -171,7 +171,7 @@ class GemminiFP32DefaultConfig extends Config((site, here, up) => {
     }
   )
 })
-
+/*
 class ChipFPGemminiConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
@@ -181,12 +181,15 @@ class ChipFPGemminiConfig extends Config((site, here, up) => {
     }
   )
 })
-class ChipFPVConfig extends Config((site, here, up) => {
-  case BuildRoCC => Seq(
-      (p: Parameters) => {
-        implicit val q = p
-        implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(GemminiFPConfigs.chipFPVConfig))
+*/
+class ChipFPGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiFPConfigs.chipFPConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
     }
   )
 })

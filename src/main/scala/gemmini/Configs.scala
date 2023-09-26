@@ -253,7 +253,8 @@ object GemminiConfigs {
   )
   */
   val chipleanConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
-    acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=4, num_scale_units=4)),
+    acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=3, num_scale_units=4)), // 4->3
+    mvin_scale_args=Some(defaultConfig.mvin_scale_args.get.copy(latency=3)), // 4->3
     acc_singleported=false,
     acc_sub_banks=1,
     mesh_output_delay = 2,
@@ -264,7 +265,7 @@ object GemminiConfigs {
     acc_read_full_width = false,
     max_in_flight_mem_reqs = 32,
     num_counter = 0,
-    //clock_gate = true
+    clock_gate = true
   )
   val largeChipConfig = chipConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64),
     tileRows=1, tileColumns=1,
