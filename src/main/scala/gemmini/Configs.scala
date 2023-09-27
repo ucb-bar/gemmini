@@ -267,6 +267,23 @@ object GemminiConfigs {
     num_counter = 0,
     clock_gate = true
   )
+  val chipsmallConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(32), acc_capacity=CapacityInKilobytes(4), dataflow=Dataflow.WS,
+    sp_banks=4,
+    acc_banks=2,
+    acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=3, num_scale_units=4)), // 4->3
+    mvin_scale_args=Some(defaultConfig.mvin_scale_args.get.copy(latency=3)), // 4->3
+    acc_singleported=false,
+    acc_sub_banks=1,
+    mesh_output_delay = 2,
+    ex_read_from_acc=false,
+    ex_write_to_spad=false,
+    has_training_convs = false,
+    hardcode_d_to_garbage_addr = true,
+    acc_read_full_width = false,
+    max_in_flight_mem_reqs = 32,
+    num_counter = 0,
+    clock_gate = true
+  )
   val largeChipConfig = chipConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64),
     tileRows=1, tileColumns=1,
     meshRows=32, meshColumns=32
@@ -324,6 +341,18 @@ class ChipGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
 class ChipLeanGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.chipleanConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+})
+
+class ChipSmallGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.chipsmallConfig
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
     (p: Parameters) => {
