@@ -93,8 +93,8 @@ object GemminiFPConfigs {
     acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
       c_str = "((x))"
     )),
-    //mvin_scale_args=Some(defaultFPConfig.mvin_scale_args.get.copy(num_scale_units=0)),
-    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => {Mux(u > 0.U.asTypeOf(Float(8, 24)), t, 0.U.asTypeOf(Float(8,24)) - t)}, 1, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")), // 2 -> 1 stage
+    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
+    //mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => {Mux(u > 0.U.asTypeOf(Float(8, 24)), t, 0.U.asTypeOf(Float(8,24)) - t)}, 1, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")), // 2 -> 1 stage
     mvin_scale_acc_args=None,
     acc_singleported=false,
     acc_sub_banks = 1,
@@ -107,7 +107,7 @@ object GemminiFPConfigs {
     hardcode_d_to_garbage_addr = true,
     acc_read_full_width = false,
     has_loop_conv = false,
-    max_in_flight_mem_reqs = 32,
+    max_in_flight_mem_reqs = 16,
     headerFileName = "gemmini_params_fp32.h",
     num_counter = 0,
     clock_gate = true // enable this

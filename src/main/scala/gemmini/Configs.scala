@@ -254,7 +254,7 @@ object GemminiConfigs {
   */
   val chipleanConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
     acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=3, num_scale_units=4)), // 4->3
-    mvin_scale_args=Some(defaultConfig.mvin_scale_args.get.copy(latency=3)), // 4->3
+    mvin_scale_args=None, //Some(defaultConfig.mvin_scale_args.get.copy(latency=3)), // 4->3
     acc_singleported=false,
     acc_sub_banks=1,
     mesh_output_delay = 2,
@@ -263,7 +263,7 @@ object GemminiConfigs {
     has_training_convs = false,
     hardcode_d_to_garbage_addr = true,
     acc_read_full_width = false,
-    max_in_flight_mem_reqs = 32,
+    max_in_flight_mem_reqs = 16,
     num_counter = 0,
     clock_gate = true
   )
@@ -271,7 +271,7 @@ object GemminiConfigs {
     sp_banks=4,
     acc_banks=2,
     acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=3, num_scale_units=4)), // 4->3
-    mvin_scale_args=Some(defaultConfig.mvin_scale_args.get.copy(latency=3)), // 4->3
+    mvin_scale_args=None, //Some(defaultConfig.mvin_scale_args.get.copy(latency=3)), // 4->3
     acc_singleported=false,
     acc_sub_banks=1,
     mesh_output_delay = 2,
@@ -280,7 +280,7 @@ object GemminiConfigs {
     has_training_convs = false,
     hardcode_d_to_garbage_addr = true,
     acc_read_full_width = false,
-    max_in_flight_mem_reqs = 32,
+    max_in_flight_mem_reqs = 16,
     num_counter = 0,
     clock_gate = true
   )
