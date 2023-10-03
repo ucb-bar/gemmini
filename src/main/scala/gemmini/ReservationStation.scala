@@ -53,7 +53,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val busy = Output(Bool())
 
-    val counter = new CounterEventIO()
+    val is_vega = Output(Bool())
+
+    //val counter = new CounterEventIO()
   })
 
   // TODO make this a ChiselEnum
@@ -180,6 +182,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   val alloc_fire = io.alloc.fire()
 
+  val is_vega_reg = RegInit(false.B)
+  io.is_vega := is_vega_reg
+
   io.alloc.ready := false.B
   when (io.alloc.valid) {
     val spAddrBits = 32
@@ -293,9 +298,18 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
-    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
+    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX) || (funct === CONFIG_VEGA_CMD && config_cmd_type === CONFIG_EX)
     val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_STORE || config_cmd_type === CONFIG_NORM))
     val is_norm = funct === CONFIG_CMD && config_cmd_type === CONFIG_NORM // normalization commands are a subset of store commands, so they still go in the store queue
+
+    // for vector + gemmini
+    if(has_vega){
+      when(funct === CONFIG_VEGA_CMD && config_cmd_type === CONFIG_EX){
+        is_vega_reg := true.B
+      }.elsewhen(funct === CONFIG_CMD && config_cmd_type === CONFIG_EX){
+        is_vega_reg := false.B
+      }
+    }
 
     new_entry.q := Mux1H(Seq(
       is_load -> ldq,
@@ -530,6 +544,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     dontTouch(e.bits.allocated_at)
   }
 
+  /*
   val cntr = Counter(2000000)
   when (cntr.inc()) {
     printf(p"Utilization: $utilization\n")
@@ -558,14 +573,18 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     PerfCounter(!io.alloc.ready, "reservation_station_full", "cycles where reservation station is full")
   }
 
+   */
   when (reset.asBool) {
     entries.foreach(_.valid := false.B)
   }
 
+  /*
   CounterEventIO.init(io.counter)
   io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_LD_COUNT, utilization_ld_q)
   io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_ST_COUNT, utilization_st_q)
   io.counter.connectExternalCounter(CounterExternal.RESERVATION_STATION_EX_COUNT, utilization_ex_q)
   io.counter.connectEventSignal(CounterEvent.RESERVATION_STATION_ACTIVE_CYCLES, io.busy)
   io.counter.connectEventSignal(CounterEvent.RESERVATION_STATION_FULL_CYCLES, !io.alloc.ready)
+
+   */
 }

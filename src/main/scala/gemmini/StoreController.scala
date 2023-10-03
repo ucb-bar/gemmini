@@ -24,7 +24,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
     val busy = Output(Bool())
 
-    val counter = new CounterEventIO()
+    //val counter = new CounterEventIO()
   })
 
   // val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -312,6 +312,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   }
 
   // Performance counter
+  /*
   CounterEventIO.init(io.counter)
   io.counter.connectEventSignal(CounterEvent.STORE_ACTIVE_CYCLE, control_state === sending_rows || control_state === pooling)
   io.counter.connectEventSignal(CounterEvent.STORE_POOLING_CYCLE, pooling_is_enabled)
@@ -322,4 +323,6 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     PerfCounter(pooling_is_enabled, "pooling_cycles", "cycles during which store controller is max-pooling")
     PerfCounter(io.dma.req.valid && !io.dma.req.ready, "st_dma_wait_cycle", "cycles during which store controller is stalling for the DMA to be ready")
   }
+
+   */
 }

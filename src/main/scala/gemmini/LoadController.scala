@@ -24,7 +24,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
     val busy = Output(Bool())
 
-    val counter = new CounterEventIO()
+    //val counter = new CounterEventIO()
   })
 
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -176,6 +176,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     pixel_repeats.foreach(_ := 1.U)
 
   // Performance counter
+  /*
   CounterEventIO.init(io.counter)
   io.counter.connectEventSignal(CounterEvent.LOAD_ACTIVE_CYCLE, control_state === sending_rows)
   io.counter.connectEventSignal(CounterEvent.LOAD_DMA_WAIT_CYCLE, control_state === waiting_for_dma_req_ready)
@@ -184,7 +185,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   if (use_firesim_simulation_counters) {
     PerfCounter(io.dma.req.valid && !io.dma.req.ready, "load_dma_wait_cycle", "cycles during which load controller is waiting for DMA to be available")
   }
-
+*/
   // Assertions
   assert(!(cmd_tracker.io.alloc.fire() && cmd_tracker.io.alloc.bits.bytes_to_read === 0.U), "A single mvin instruction must load more than 0 bytes")
   assert(has_first_layer_optimizations.B || !(cmd.valid && DoConfig && config_pixel_repeats > 1.U), "If first-layer optimizations are not enabled, then pixel-repeats cannot be greater than 1")

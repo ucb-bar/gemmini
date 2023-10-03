@@ -47,7 +47,7 @@ class XactTrackerPeekIO[U <: Data](val nXacts: Int, val maxShift: Int, val spadW
 
 /*
   maxShift: the maximum number of bytes in the beginning of a TileLink response which may be discarded
-  spadWidth: the width of an spad row in bytes
+  spadWidth: the width of an spad rodth of an spad row in bytes
   spadRows: the total number of rows in the spad
   maxReqBytes:
   Removed:
@@ -61,7 +61,7 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
     val peek = new XactTrackerPeekIO(nXacts, maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds)
     val busy = Output(Bool())
 
-    val counter = new CounterEventIO()
+    //val counter = new CounterEventIO()
   })
 
   val entries = Reg(Vec(nXacts, UDValid(new XactTrackerEntry(maxShift, spadWidth, accWidth, spadRows, accRows, maxReqBytes, mvin_scale_t_bits, nCmds))))
@@ -88,6 +88,7 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
     entries.foreach(_.valid := false.B)
   }
 
+  /*
   // Performance counters
   CounterEventIO.init(io.counter)
 
@@ -106,4 +107,6 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
       printf(SynthesizePrintf("RDMA total latency: %d\n", total_latency))
     }
   }
+  
+   */
 }

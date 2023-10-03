@@ -57,6 +57,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val tagWidth = 32
 
   // Counters
+  /*
   val counters = Module(new CounterController(outer.config.num_counter, outer.xLen))
   io.resp <> counters.io.out  // Counter access command will be committed immediately
   counters.io.event_io.external_values(0) := 0.U
@@ -64,6 +65,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   counters.io.in.valid := false.B
   counters.io.in.bits := DontCare
   counters.io.event_io.collect(spad.module.io.counter)
+
+   */
 
   // TLB
   implicit val edge = outer.spad.id_node.edges.out.head
@@ -75,7 +78,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   io.ptw <> tlb.io.ptw
 
-  counters.io.event_io.collect(tlb.io.counter)
+  //counters.io.event_io.collect(tlb.io.counter)
 
   spad.module.io.flush := tlb.io.exp.map(_.flush()).reduce(_ || _)
 
@@ -123,7 +126,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   */
 
   val reservation_station = withClock (gated_clock) { Module(new ReservationStation(outer.config, new GemminiCmd(reservation_station_entries))) }
-  counters.io.event_io.collect(reservation_station.io.counter)
+  //counters.io.event_io.collect(reservation_station.io.counter)
 
   when (io.cmd.valid && io.cmd.bits.inst.funct === CLKGATE_EN && !io.busy) {
     clock_en_reg := io.cmd.bits.rs1(0)
@@ -154,17 +157,31 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     has_training_convs, has_max_pool, has_first_layer_optimizations, has_dw_convs) }
   else (raw_cmd, false.B)
 
-  val (loop_cmd, loop_matmul_unroller_busy) = withClock (gated_clock) { LoopMatmul(if (has_loop_conv) conv_cmd else raw_cmd, reservation_station.io.matmul_ld_completed, reservation_station.io.matmul_st_completed, reservation_station.io.matmul_ex_completed,
+  val loop_matmul_ld_completed = Mux(reservation_station.io.is_vega, false.B, reservation_station.io.matmul_ld_completed)
+  val loop_matmul_ex_completed = Mux(reservation_station.io.is_vega, false.B, reservation_station.io.matmul_ex_completed)
+  val loop_matmul_st_completed = Mux(reservation_station.io.is_vega, false.B, reservation_station.io.matmul_st_completed)
+
+  val (loop_ws_cmd, loop_matmul_unroller_busy) = withClock (gated_clock) { LoopMatmul(if (has_loop_conv) conv_cmd else raw_cmd, loop_matmul_ld_completed, loop_matmul_st_completed, loop_matmul_ex_completed,
     meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
 
+  val loop_vega_ld_completed = Mux(!reservation_station.io.is_vega, false.B, reservation_station.io.matmul_ld_completed)
+  val loop_vega_ex_completed = Mux(!reservation_station.io.is_vega, false.B, reservation_station.io.matmul_ex_completed)
+  val loop_vega_st_completed = Mux(!reservation_station.io.is_vega, false.B, reservation_station.io.matmul_st_completed)
+
+  val (loop_cmd, loop_vega_unroller_busy) = if (has_vega) withClock (gated_clock) { VegaLoopMatmul(loop_ws_cmd, loop_vega_ld_completed, loop_vega_st_completed, loop_vega_ex_completed,
+    meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
+    inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
+    new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
+    new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
+    new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) } else (loop_ws_cmd, false.B)
 
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
-  counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
+  //counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
 
   // Wire up controllers to ROB
   reservation_station.io.alloc.valid := false.B
@@ -192,9 +209,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val store_controller = withClock (gated_clock) { Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t)) }
   val ex_controller = withClock (gated_clock) { Module(new ExecuteController(xLen, tagWidth, outer.config)) }
 
-  counters.io.event_io.collect(load_controller.io.counter)
-  counters.io.event_io.collect(store_controller.io.counter)
-  counters.io.event_io.collect(ex_controller.io.counter)
+  //val vega_ex_controller = if (has_vega) {withClock(gated_clock) { Module(new VegaExecuteController(xLen, tagWidth, outer.config))}} else None
+  //val vega_ex_controller = withClock(gated_clock) { Module(new VegaExecuteController(xLen, tagWidth, outer.config))}
+
+  //counters.io.event_io.collect(load_controller.io.counter)
+  //counters.io.event_io.collect(store_controller.io.counter)
+  //counters.io.event_io.collect(ex_controller.io.counter)
+  //counters.io.event_io.collect(vega_ex_controller.io.counter)
 
   /*
   tiler.io.issue.load.ready := false.B
@@ -243,20 +264,122 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   store_controller.io.cmd.bits := reservation_station.io.issue.st.cmd
   store_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.st.rob_id)
 
-  ex_controller.io.cmd.valid := reservation_station.io.issue.ex.valid
-  reservation_station.io.issue.ex.ready := ex_controller.io.cmd.ready
+
+  spad.module.io.dma.read <> load_controller.io.dma
+  spad.module.io.dma.write <> store_controller.io.dma
   ex_controller.io.cmd.bits := reservation_station.io.issue.ex.cmd
   ex_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.ex.rob_id)
 
-  // Wire up scratchpad to controllers
-  spad.module.io.dma.read <> load_controller.io.dma
-  spad.module.io.dma.write <> store_controller.io.dma
-  ex_controller.io.srams.read <> spad.module.io.srams.read
-  ex_controller.io.srams.write <> spad.module.io.srams.write
-  spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
-  ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
-  ex_controller.io.acc.write <> spad.module.io.acc.write
+  val ex_controller_bits = WireInit(ex_controller.io.completed.bits)
+  val ex_controller_valid = WireInit(ex_controller.io.completed.valid)
+  val ex_controller_busy = WireInit(ex_controller.io.busy)
 
+  if(has_vega) {
+    val vega_ex_controller = withClock(gated_clock) { Module(new VegaExecuteController(xLen, tagWidth, outer.config))}
+    vega_ex_controller.io.cmd.bits := reservation_station.io.issue.ex.cmd
+    vega_ex_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.ex.rob_id)
+    when(reservation_station.io.is_vega){
+      ex_controller.io.cmd.valid := false.B
+      vega_ex_controller.io.cmd.valid :=  reservation_station.io.issue.ex.valid
+      reservation_station.io.issue.ex.ready := vega_ex_controller.io.cmd.ready
+
+      vega_ex_controller.io.srams.read <> spad.module.io.srams.read
+      vega_ex_controller.io.srams.write <> spad.module.io.srams.write
+      spad.module.io.acc.read_req <> vega_ex_controller.io.acc.read_req
+      vega_ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
+      vega_ex_controller.io.acc.write <> spad.module.io.acc.write
+
+      ex_controller.io.srams.read := DontCare
+      ex_controller.io.srams.write := DontCare
+      ex_controller.io.acc.read_resp := DontCare
+      ex_controller.io.acc.write := DontCare
+      for (i <- 0 until sp_banks) {
+        ex_controller.io.srams.read(i).resp.valid := false.B
+        ex_controller.io.srams.read(i).req.ready := false.B
+      }
+      for(i <- 0 until acc_banks) {
+        ex_controller.io.acc.read_resp(i).valid := false.B
+        ex_controller.io.acc.read_req(i).ready := false.B
+        ex_controller.io.acc.write(i).ready := false.B
+      }
+      ex_controller_bits := vega_ex_controller.io.completed.bits
+      ex_controller_valid := vega_ex_controller.io.completed.valid
+      ex_controller_busy := vega_ex_controller.io.busy
+    }.otherwise{
+      ex_controller.io.cmd.valid :=  reservation_station.io.issue.ex.valid
+      vega_ex_controller.io.cmd.valid := false.B
+      reservation_station.io.issue.ex.ready := ex_controller.io.cmd.ready
+
+      ex_controller.io.srams.read <> spad.module.io.srams.read
+      ex_controller.io.srams.write <> spad.module.io.srams.write
+      spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
+      ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
+      ex_controller.io.acc.write <> spad.module.io.acc.write
+
+      vega_ex_controller.io.srams.read := DontCare
+      vega_ex_controller.io.srams.write := DontCare
+      vega_ex_controller.io.acc.read_resp := DontCare
+      vega_ex_controller.io.acc.write := DontCare
+      for (i <- 0 until sp_banks) {
+        vega_ex_controller.io.srams.read(i).resp.valid := false.B
+        vega_ex_controller.io.srams.read(i).req.ready := false.B
+      }
+      for(i <- 0 until acc_banks) {
+        vega_ex_controller.io.acc.read_resp(i).valid := false.B
+        vega_ex_controller.io.acc.read_req(i).ready := false.B
+        vega_ex_controller.io.acc.write(i).ready := false.B
+      }
+    }
+    // Wire arbiter for ExecuteController and Im2Col scratchpad reads
+    (ex_controller.io.srams.read, vega_ex_controller.io.srams.read, spad.module.io.srams.read).zipped.foreach { case (ex_read, vega_read, spad_read) =>
+      val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
+
+      req_arb.io.in(0) <> ex_read.req
+      req_arb.io.in(1) <> vega_read.req
+
+      spad_read.req <> req_arb.io.out
+
+      // TODO if necessary, change how the responses are handled when fromIm2Col is added to spad read interface
+
+      ex_read.resp.valid := spad_read.resp.valid
+      vega_read.resp.valid := spad_read.resp.valid
+
+      ex_read.resp.bits := spad_read.resp.bits
+      vega_read.resp.bits := spad_read.resp.bits
+
+      spad_read.resp.ready := ex_read.resp.ready || vega_read.resp.ready
+    }
+  }
+  else {
+    ex_controller.io.cmd.valid := reservation_station.io.issue.ex.valid
+    reservation_station.io.issue.ex.ready := ex_controller.io.cmd.ready
+
+    // Wire up scratchpad to controllers
+    ex_controller.io.srams.read <> spad.module.io.srams.read
+    ex_controller.io.srams.write <> spad.module.io.srams.write
+    spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
+    ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
+    ex_controller.io.acc.write <> spad.module.io.acc.write
+
+    // Wire arbiter for ExecuteController and Im2Col scratchpad reads
+    (ex_controller.io.srams.read, spad.module.io.srams.read).zipped.foreach { case (ex_read, spad_read) =>
+      val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 1))
+
+      req_arb.io.in(0) <> ex_read.req
+
+      spad_read.req <> req_arb.io.out
+
+      // TODO if necessary, change how the responses are handled when fromIm2Col is added to spad read interface
+
+      ex_read.resp.valid := spad_read.resp.valid
+
+      ex_read.resp.bits := spad_read.resp.bits
+
+      spad_read.resp.ready := ex_read.resp.ready
+    }
+  }
+
+  /*
   // Im2Col unit
   val im2col = withClock (gated_clock) { Module(new Im2Col(outer.config)) }
 
@@ -266,25 +389,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   im2col.io.req <> ex_controller.io.im2col.req
   ex_controller.io.im2col.resp <> im2col.io.resp
 
-  // Wire arbiter for ExecuteController and Im2Col scratchpad reads
-  (ex_controller.io.srams.read, im2col.io.sram_reads, spad.module.io.srams.read).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
-    val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
+   */
 
-    req_arb.io.in(0) <> ex_read.req
-    req_arb.io.in(1) <> im2col_read.req
-
-    spad_read.req <> req_arb.io.out
-
-    // TODO if necessary, change how the responses are handled when fromIm2Col is added to spad read interface
-
-    ex_read.resp.valid := spad_read.resp.valid
-    im2col_read.resp.valid := spad_read.resp.valid
-
-    ex_read.resp.bits := spad_read.resp.bits
-    im2col_read.resp.bits := spad_read.resp.bits
-
-    spad_read.resp.ready := ex_read.resp.ready || im2col_read.resp.ready
-  }
 
   // Wire up controllers to ROB
   reservation_station.io.alloc.valid := false.B
@@ -314,14 +420,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // risc
   val reservation_station_completed_arb = Module(new Arbiter(UInt(log2Up(reservation_station_entries).W), 3))
 
-  reservation_station_completed_arb.io.in(0).valid := ex_controller.io.completed.valid
-  reservation_station_completed_arb.io.in(0).bits := ex_controller.io.completed.bits
+  reservation_station_completed_arb.io.in(0).valid := ex_controller_valid//ex_controller.io.completed.valid
+  reservation_station_completed_arb.io.in(0).bits := ex_controller_bits//ex_controller.io.completed.bits
 
   reservation_station_completed_arb.io.in(1) <> load_controller.io.completed
   reservation_station_completed_arb.io.in(2) <> store_controller.io.completed
 
   // mux with cisc frontend arbiter
-  reservation_station_completed_arb.io.in(0).valid := ex_controller.io.completed.valid // && !is_cisc_mode
+  reservation_station_completed_arb.io.in(0).valid := ex_controller_valid //ex_controller.io.completed.valid // && !is_cisc_mode
   reservation_station_completed_arb.io.in(1).valid := load_controller.io.completed.valid // && !is_cisc_mode
   reservation_station_completed_arb.io.in(2).valid := store_controller.io.completed.valid // && !is_cisc_mode
 
@@ -330,22 +436,23 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   reservation_station_completed_arb.io.out.ready := true.B
 
   // Wire up global RoCC signals
-  io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || reservation_station.io.busy || spad.module.io.busy || unrolled_cmd.valid || loop_cmd.valid || conv_cmd.valid
+  io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || loop_vega_unroller_busy || reservation_station.io.busy || spad.module.io.busy || unrolled_cmd.valid || loop_cmd.valid || conv_cmd.valid
 
   io.interrupt := tlb.io.exp.map(_.interrupt).reduce(_ || _)
 
   // assert(!io.interrupt, "Interrupt handlers have not been written yet")
 
+  /*
   // Cycle counters
-  val incr_ld_cycles = load_controller.io.busy && !store_controller.io.busy && !ex_controller.io.busy
-  val incr_st_cycles = !load_controller.io.busy && store_controller.io.busy && !ex_controller.io.busy
-  val incr_ex_cycles = !load_controller.io.busy && !store_controller.io.busy && ex_controller.io.busy
+  val incr_ld_cycles = load_controller.io.busy && !store_controller.io.busy && !ex_controller_busy //!ex_controller.io.busy
+  val incr_st_cycles = !load_controller.io.busy && store_controller.io.busy && !ex_controller_busy //!ex_controller.io.busy
+  val incr_ex_cycles = !load_controller.io.busy && !store_controller.io.busy && ex_controller_busy //ex_controller.io.busy
 
-  val incr_ld_st_cycles = load_controller.io.busy && store_controller.io.busy && !ex_controller.io.busy
-  val incr_ld_ex_cycles = load_controller.io.busy && !store_controller.io.busy && ex_controller.io.busy
-  val incr_st_ex_cycles = !load_controller.io.busy && store_controller.io.busy && ex_controller.io.busy
+  val incr_ld_st_cycles = load_controller.io.busy && store_controller.io.busy && !ex_controller_busy //!ex_controller.io.busy
+  val incr_ld_ex_cycles = load_controller.io.busy && !store_controller.io.busy && ex_controller_busy //ex_controller.io.busy
+  val incr_st_ex_cycles = !load_controller.io.busy && store_controller.io.busy && ex_controller_busy//ex_controller.io.busy
 
-  val incr_ld_st_ex_cycles = load_controller.io.busy && store_controller.io.busy && ex_controller.io.busy
+  val incr_ld_st_ex_cycles = load_controller.io.busy && store_controller.io.busy && ex_controller_busy //ex_controller.io.busy
 
   counters.io.event_io.connectEventSignal(CounterEvent.MAIN_LD_CYCLES, incr_ld_cycles)
   counters.io.event_io.connectEventSignal(CounterEvent.MAIN_ST_CYCLES, incr_st_cycles)
@@ -354,6 +461,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   counters.io.event_io.connectEventSignal(CounterEvent.MAIN_LD_EX_CYCLES, incr_ld_ex_cycles)
   counters.io.event_io.connectEventSignal(CounterEvent.MAIN_ST_EX_CYCLES, incr_st_ex_cycles)
   counters.io.event_io.connectEventSignal(CounterEvent.MAIN_LD_ST_EX_CYCLES, incr_ld_st_ex_cycles)
+
+   */
 
   // Issue commands to controllers
   // TODO we combinationally couple cmd.ready and cmd.valid signals here
@@ -385,9 +494,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     .elsewhen (is_counter_op) {
       // If this is a counter access/configuration command, execute immediately
-      counters.io.in.valid := unrolled_cmd.valid
-      unrolled_cmd.ready := counters.io.in.ready
-      counters.io.in.bits := unrolled_cmd.bits.cmd
+      //counters.io.in.valid := unrolled_cmd.valid
+      //unrolled_cmd.ready := counters.io.in.ready
+      //counters.io.in.bits := unrolled_cmd.bits.cmd
     }
 
     .elsewhen (is_clock_gate_en) {

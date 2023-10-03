@@ -15,7 +15,7 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
     val out = Decoupled(new GemminiCmd(reservation_station_entries))
-    val counter = new CounterEventIO()
+    //val counter = new CounterEventIO()
   })
 
   object State extends ChiselEnum {
@@ -52,7 +52,7 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
   second_preload_cmd.cmd.rs1 := Cat(cmds(0).cmd.rs1(63, 32), garbage_addr)
 
   val config_cmd_type = cmds(0).cmd.rs1(1,0) // TODO magic numbers
-  val is_config = functs(0) === CONFIG_CMD && config_cmd_type === CONFIG_EX
+  val is_config = (functs(0) === CONFIG_CMD || functs(0) === CONFIG_VEGA_CMD) && config_cmd_type === CONFIG_EX
 
   io.out.valid := MuxCase(valids(0), Seq(
     first_preload -> (!b_transposed_and_ws || valids(1)),
@@ -80,15 +80,15 @@ class TransposePreloadUnroller[T <: Data, U <: Data, V <: Data](config: GemminiA
     }
   }
 
-  CounterEventIO.init(io.counter)
-  io.counter.connectEventSignal(CounterEvent.TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES, state =/= idle)
+  //CounterEventIO.init(io.counter)
+  //io.counter.connectEventSignal(CounterEvent.TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES, state =/= idle)
 }
 
 object TransposePreloadUnroller {
-  def apply[T <: Data, U <: Data, V <: Data](in: ReadyValidIO[GemminiCmd], config: GemminiArrayConfig[T, U, V], counter: CounterEventIO)(implicit p: Parameters): DecoupledIO[GemminiCmd] = {
+  def apply[T <: Data, U <: Data, V <: Data](in: ReadyValidIO[GemminiCmd], config: GemminiArrayConfig[T, U, V])(implicit p: Parameters): DecoupledIO[GemminiCmd] = {
     val mod = Module(new TransposePreloadUnroller(config))
     mod.io.in <> in
-    counter.collect(mod.io.counter)
+    //counter.collect(mod.io.counter)
     mod.io.out
   }
 }

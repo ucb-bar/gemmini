@@ -67,7 +67,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
       val busy = Output(Bool())
       val flush = Input(Bool())
 
-      val counter = new CounterEventIO()
+      //val counter = new CounterEventIO()
     })
 
     val nCmds = (nXacts / meshRows) + 1
@@ -108,8 +108,8 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire)
     io.resp.bits.last := beatPacker.io.out.bits.last
 
-    io.counter.collect(core.module.io.counter)
-    io.counter.collect(xactTracker.io.counter)
+    //io.counter.collect(core.module.io.counter)
+    //io.counter.collect(xactTracker.io.counter)
   }
 }
 
@@ -150,7 +150,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       val beatData = Decoupled(new StreamReadBeat(nXacts, beatBits, maxBytes))
       val tlb = new FrontendTLBIO
       val flush = Input(Bool())
-      val counter = new CounterEventIO()
+      //val counter = new CounterEventIO()
     })
 
     val s_idle :: s_req_new_block :: Nil = Enum(2)
@@ -304,6 +304,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
       state := s_req_new_block
     }
 
+    /*
     // Performance counter
     CounterEventIO.init(io.counter)
     io.counter.connectEventSignal(CounterEvent.RDMA_ACTIVE_CYCLE, state =/= s_idle)
@@ -320,6 +321,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, total_bytes_read)
 
+
+
     if (use_firesim_simulation_counters) {
       PerfCounter(state =/= s_idle, "rdma_active_cycles", "cycles during which the read dma is active")
       PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "rdma_tlb_wait_cycles", "cycles during which the read dma is stalling as it waits for a TLB response")
@@ -330,6 +333,8 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
         printf(SynthesizePrintf("RDMA bytes rec: %d\n", total_bytes_read))
       }
     }
+    */
+
   }
 }
 
@@ -371,7 +376,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
       val flush = Input(Bool())
-      val counter = new CounterEventIO()
+      //val counter = new CounterEventIO()
     })
 
     val (s_idle :: s_writing_new_block :: s_writing_beats :: Nil) = Enum(3)
@@ -607,6 +612,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       assert(!io.req.bits.pool_en || io.req.bits.block === 0.U, "Can't pool with block-mvout")
     }
 
+    /*
     // Performance counter
     CounterEventIO.init(io.counter)
     io.counter.connectEventSignal(CounterEvent.WDMA_ACTIVE_CYCLE, state =/= s_idle)
@@ -641,5 +647,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
         printf(SynthesizePrintf("WDMA total latency: %d\n", total_latency))
       }
     }
+
+     */
   }
 }

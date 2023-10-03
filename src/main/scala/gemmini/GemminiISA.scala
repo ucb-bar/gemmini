@@ -34,11 +34,21 @@ object GemminiISA {
 
   val CLKGATE_EN = 22.U
 
+
+  //val COMPUTE_AND_FLIP_VEGA_CMD = 24.U
+  //val COMPUTE_AND_STAY_VEGA_CMD = 25.U
+  val CONFIG_VEGA_CMD = 24.U
+  val LOOP_VEGA = 25.U
+  val LOOP_VEGA_CONFIG_BOUNDS = 26.U
+  val LOOP_VEGA_CONFIG_ADDRS_AB = 27.U
+  val LOOP_VEGA_CONFIG_ADDRS_DC = 28.U
+
   // rs1[2:0] values
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U
   val CONFIG_STORE = 2.U
   val CONFIG_NORM = 3.U
+  //val CONFIG_VEGA_EX = 4.U
 
   //==========================================================================
   // cisc-gemmini opcodes
