@@ -257,7 +257,7 @@ object GemminiConfigs {
     mvin_scale_args=None, //Some(defaultConfig.mvin_scale_args.get.copy(latency=3)), // 4->3
     acc_singleported=false,
     acc_sub_banks=1,
-    mesh_output_delay = 2,
+    mesh_output_delay = 1,
     ex_read_from_acc=false,
     ex_write_to_spad=false,
     has_training_convs = false,
