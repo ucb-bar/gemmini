@@ -172,8 +172,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val loop_vega_ex_completed = Mux(!reservation_station.io.is_vega, false.B, reservation_station.io.matmul_ex_completed)
   val loop_vega_st_completed = Mux(!reservation_station.io.is_vega, false.B, reservation_station.io.matmul_st_completed)
 
+  // only allow accessing these banks
   val (loop_cmd, loop_vega_unroller_busy) = if (has_vega) withClock (gated_clock) { VegaLoopMatmul(loop_ws_cmd, loop_vega_ld_completed, loop_vega_st_completed, loop_vega_ex_completed,
-    meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
+    meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, vega_sp_banks * sp_bank_entries, vega_acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
@@ -283,11 +284,20 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       vega_ex_controller.io.cmd.valid :=  reservation_station.io.issue.ex.valid
       reservation_station.io.issue.ex.ready := vega_ex_controller.io.cmd.ready
 
-      vega_ex_controller.io.srams.read <> spad.module.io.srams.read
-      vega_ex_controller.io.srams.write <> spad.module.io.srams.write
-      spad.module.io.acc.read_req <> vega_ex_controller.io.acc.read_req
-      vega_ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
-      vega_ex_controller.io.acc.write <> spad.module.io.acc.write
+      for (i <- 0 until vega_sp_banks) {
+        vega_ex_controller.io.srams.read(i) <> spad.module.io.srams.read(i)
+        vega_ex_controller.io.srams.write(i) <> spad.module.io.srams.write(i)
+      }
+      for (i <- 0 until vega_acc_banks){
+        spad.module.io.acc.read_req(i) <> vega_ex_controller.io.acc.read_req(i)
+        vega_ex_controller.io.acc.read_resp(i) <> spad.module.io.acc.read_resp(i)
+        vega_ex_controller.io.acc.write(i) <> spad.module.io.acc.write(i)
+      }
+      for(i <- vega_acc_banks until acc_banks){
+        spad.module.io.acc.read_req(i) := DontCare
+        spad.module.io.acc.read_req(i).valid := false.B
+      }
+
 
       ex_controller.io.srams.read := DontCare
       ex_controller.io.srams.write := DontCare
@@ -320,34 +330,43 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       vega_ex_controller.io.srams.write := DontCare
       vega_ex_controller.io.acc.read_resp := DontCare
       vega_ex_controller.io.acc.write := DontCare
-      for (i <- 0 until sp_banks) {
+      for (i <- 0 until vega_sp_banks) {
         vega_ex_controller.io.srams.read(i).resp.valid := false.B
         vega_ex_controller.io.srams.read(i).req.ready := false.B
       }
-      for(i <- 0 until acc_banks) {
+      for(i <- 0 until vega_acc_banks) {
         vega_ex_controller.io.acc.read_resp(i).valid := false.B
         vega_ex_controller.io.acc.read_req(i).ready := false.B
         vega_ex_controller.io.acc.write(i).ready := false.B
       }
     }
     // Wire arbiter for ExecuteController and Im2Col scratchpad reads
-    (ex_controller.io.srams.read, vega_ex_controller.io.srams.read, spad.module.io.srams.read).zipped.foreach { case (ex_read, vega_read, spad_read) =>
-      val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
+    for(i <- 0 until vega_sp_banks) {
+      val req_arb = Module(new Arbiter(new ScratchpadReadReq(n = sp_bank_entries), 2))
 
-      req_arb.io.in(0) <> ex_read.req
-      req_arb.io.in(1) <> vega_read.req
+      req_arb.io.in(0) <> ex_controller.io.srams.read(i).req
+      req_arb.io.in(1) <> vega_ex_controller.io.srams.read(i).req
 
-      spad_read.req <> req_arb.io.out
+      spad.module.io.srams.read(i).req <> req_arb.io.out
 
-      // TODO if necessary, change how the responses are handled when fromIm2Col is added to spad read interface
 
-      ex_read.resp.valid := spad_read.resp.valid
-      vega_read.resp.valid := spad_read.resp.valid
+      ex_controller.io.srams.read(i).resp.valid := spad.module.io.srams.read(i).resp.valid
+      vega_ex_controller.io.srams.read(i).resp.valid := spad.module.io.srams.read(i).resp.valid
 
-      ex_read.resp.bits := spad_read.resp.bits
-      vega_read.resp.bits := spad_read.resp.bits
+      ex_controller.io.srams.read(i).resp.bits := spad.module.io.srams.read(i).resp.bits
+      vega_ex_controller.io.srams.read(i).resp.bits := spad.module.io.srams.read(i).resp.bits
 
-      spad_read.resp.ready := ex_read.resp.ready || vega_read.resp.ready
+      spad.module.io.srams.read(i).resp.ready := ex_controller.io.srams.read(i).resp.ready || vega_ex_controller.io.srams.read(i).resp.ready
+    }
+    for(i <- vega_sp_banks until sp_banks) {
+      val req_arb = Module(new Arbiter(new ScratchpadReadReq(n = sp_bank_entries), 1))
+
+      req_arb.io.in(0) <> ex_controller.io.srams.read(i).req
+
+      spad.module.io.srams.read(i).req <> req_arb.io.out
+      ex_controller.io.srams.read(i).resp.valid := spad.module.io.srams.read(i).resp.valid
+      ex_controller.io.srams.read(i).resp.bits := spad.module.io.srams.read(i).resp.bits
+      spad.module.io.srams.read(i).resp.ready := ex_controller.io.srams.read(i).resp.ready
     }
   }
   else {
@@ -368,8 +387,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       req_arb.io.in(0) <> ex_read.req
 
       spad_read.req <> req_arb.io.out
-
-      // TODO if necessary, change how the responses are handled when fromIm2Col is added to spad read interface
 
       ex_read.resp.valid := spad_read.resp.valid
 

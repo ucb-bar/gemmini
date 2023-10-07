@@ -18,22 +18,22 @@ class VegaExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth
     val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
     
     val srams = new Bundle {
-      val read = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
-      val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1))
+      val read = Vec(vega_sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
+      val write = Vec(vega_sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1))
     }
 
     val acc = new Bundle {
-      val read_req = Vec(acc_banks, Decoupled(new AccumulatorReadReq(
+      val read_req = Vec(vega_acc_banks, Decoupled(new AccumulatorReadReq(
           acc_bank_entries, accType, acc_scale_t
       )))
 
-      val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
+      val read_resp = Flipped(Vec(vega_acc_banks, Decoupled(new AccumulatorScaleResp(
         Vec(meshRows, Vec(tileRows, inputType)),
         Vec(meshRows, Vec(tileRows, accType))
       ))))
 
-      // val write = Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(vegameshColumns, Vec(vegatileColumns, accType))))
-      val write = Vec(acc_banks, Decoupled(new AccumulatorWriteReq(acc_bank_entries, Vec(meshRows, Vec(tileRows, accType)))))
+      // val write = Vec(vega_acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(vegameshColumns, Vec(vegatileColumns, accType))))
+      val write = Vec(vega_acc_banks, Decoupled(new AccumulatorWriteReq(acc_bank_entries, Vec(meshRows, Vec(tileRows, accType)))))
     }
 
     val completed = Valid(UInt(log2Up(reservation_station_entries).W))
@@ -426,7 +426,7 @@ class VegaExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth
   val new_d = WireInit(false.B) //((d_mesh_fire_counter === (total_rows-1.U)) || d_mesh_fire_counter === 0.U) && !dataD_valid
 
   // Scratchpad reads
-  for (i <- 0 until sp_banks) {
+  for (i <- 0 until vega_sp_banks) {
     val read_a = a_valid && !a_read_from_acc && dataAbank === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros
     val read_b = b_valid && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
     val read_d = d_valid && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros && new_d
@@ -461,7 +461,7 @@ class VegaExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth
   }
 
   // Accumulator read
-  for (i <- 0 until acc_banks) {
+  for (i <- 0 until vega_acc_banks) {
     val read_a_from_acc = a_valid && a_read_from_acc && dataABankAcc === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros 
     val read_b_from_acc = b_valid && b_read_from_acc && dataBBankAcc === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
     val read_d_from_acc = d_valid && d_read_from_acc && dataDBankAcc === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
@@ -679,13 +679,13 @@ class VegaExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth
     val perform_single_mul = Bool()
     val perform_single_preload = Bool()
 
-    val a_bank = UInt(log2Up(sp_banks).W)
-    val b_bank = UInt(log2Up(sp_banks).W)
-    val d_bank = UInt(log2Up(sp_banks).W)
+    val a_bank = UInt(log2Up(vega_sp_banks).W)
+    val b_bank = UInt(log2Up(vega_sp_banks).W)
+    val d_bank = UInt(log2Up(vega_sp_banks).W)
 
-    val a_bank_acc = UInt(log2Up(acc_banks).W)
-    val b_bank_acc = UInt(log2Up(acc_banks).W)
-    val d_bank_acc = UInt(log2Up(acc_banks).W)
+    val a_bank_acc = UInt(log2Up(vega_acc_banks).W)
+    val b_bank_acc = UInt(log2Up(vega_acc_banks).W)
+    val d_bank_acc = UInt(log2Up(vega_acc_banks).W)
 
     val a_read_from_acc = Bool()
     val b_read_from_acc = Bool()
@@ -943,7 +943,7 @@ class VegaExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth
   val w_mask = (0 until block_size).map(_.U < w_matrix_cols) // This is an element-wise mask, rather than a byte-wise mask
 
   // Write to normal scratchpad
-  for(i <- 0 until sp_banks) {
+  for(i <- 0 until vega_sp_banks) {
     val activated_wdata = VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map { e =>
       val e_clipped = e.clippedToWidthOf(inputType)
       val e_act = MuxCase(e_clipped, Seq(
@@ -966,7 +966,7 @@ class VegaExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth
   }
 
   // Write to accumulator
-  for (i <- 0 until acc_banks) {
+  for (i <- 0 until vega_acc_banks) {
     if (ex_write_to_acc) {
       io.acc.write(i).valid := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
       io.acc.write(i).bits.addr := w_row

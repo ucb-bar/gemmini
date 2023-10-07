@@ -91,6 +91,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_loop_conv: Boolean = true,
                                                                              has_vega: Boolean = false,
                                                                              has_transposer: Boolean = true,
+                                                                             vega_sp_banks: Int = 2,
+                                                                             vega_acc_banks: Int = 1,
 
                                                                              use_firesim_simulation_counters: Boolean = false,
 
