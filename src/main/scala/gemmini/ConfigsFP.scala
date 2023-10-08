@@ -93,7 +93,7 @@ object GemminiFPConfigs {
     acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
       c_str = "((x))"
     )),
-    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
+    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 3, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")), // 4-> 3 (check)
     //mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => {Mux(u > 0.U.asTypeOf(Float(8, 24)), t, 0.U.asTypeOf(Float(8,24)) - t)}, 1, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")), // 2 -> 1 stage
     mvin_scale_acc_args=None,
     acc_singleported=false,
