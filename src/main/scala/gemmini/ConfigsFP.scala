@@ -128,6 +128,7 @@ object GemminiFPConfigs {
     mesh_output_delay = 2,
     tile_latency = 1,
     //acc_latency = 3,
+    vega_clock_gate = true,
     ex_read_from_acc=false,
     ex_write_to_spad=false,
     has_training_convs = false,
