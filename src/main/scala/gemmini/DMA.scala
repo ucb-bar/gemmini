@@ -236,6 +236,9 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.tlb.req.bits.tlb_req.size := 0.U // send_size
     io.tlb.req.bits.tlb_req.cmd := M_XRD
     io.tlb.req.bits.status := tlb_q.io.deq.bits.status
+    //fix for interrupt ussertion
+    io.tlb.req.bits.tlb_req.v := tlb_q.io.deq.bits.status.v
+    io.tlb.req.bits.tlb_req.prv := tlb_q.io.deq.bits.status.prv
 
     val translate_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
     translate_q.io.enq <> tlb_q.io.deq
@@ -532,6 +535,9 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     io.tlb.req.bits.tlb_req.size := 0.U // send_size
     io.tlb.req.bits.tlb_req.cmd := M_XWR
     io.tlb.req.bits.status := tlb_q.io.deq.bits.status
+    //fix for interrupt ussertion
+    io.tlb.req.bits.tlb_req.v := tlb_q.io.deq.bits.status.v
+    io.tlb.req.bits.tlb_req.prv := tlb_q.io.deq.bits.status.prv
 
     val translate_q = Module(new Queue(new TLBundleAWithInfo, 1, pipe=true))
     translate_q.io.enq <> tlb_q.io.deq
