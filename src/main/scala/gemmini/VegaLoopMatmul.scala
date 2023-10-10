@@ -776,7 +776,7 @@ class VegaLoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, 
 }
 
 class VegaLoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
-                 max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
+                 max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int, has_vega_gate: Boolean,
                  mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
                  compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_rs2_t: MvoutRs2)
                 (implicit p: Parameters) extends Module {
@@ -791,6 +791,8 @@ class VegaLoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_
     val st_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val ex_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val busy = Output(Bool())
+
+    val clock_enable = Input(Bool())
   })
 
   // Create states
@@ -873,6 +875,15 @@ class VegaLoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_
 
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)
   arb.io.out.ready := io.out.ready
+
+  if(has_vega_gate) {
+    // when clock is gated
+    when(!io.clock_enable) {
+      io.out <> io.in
+      io.in.ready := io.out.ready
+      //io.in.ready := true.B
+    }
+  }
 
   // Wire up overloaded signals
   ldA.io.rob_overloaded := ld_utilization >= max_lds.U
@@ -1135,19 +1146,20 @@ class VegaLoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_
 }
 
 object VegaLoopMatmul {
-  def apply(in: DecoupledIO[GemminiCmd], ld_completed: UInt, st_completed: UInt, ex_completed: UInt,
+  def apply(in: DecoupledIO[GemminiCmd], ld_completed: UInt, st_completed: UInt, ex_completed: UInt, clock_enable: Bool,
             block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
-            max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
+            max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int, has_vega_gate: Boolean,
             mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
             compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_rs2_t: MvoutRs2)
            (implicit p: Parameters): (DecoupledIO[GemminiCmd], Bool) = {
     val mod = Module(new VegaLoopMatmul(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
-      max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
+      max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes, has_vega_gate,
       mvin_rs2_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t, mvout_rs2_t))
     mod.io.in <> in
     mod.io.ld_completed := ld_completed
     mod.io.st_completed := st_completed
     mod.io.ex_completed := ex_completed
+    mod.io.clock_enable := clock_enable
     (mod.io.out, mod.io.busy)
   }
 

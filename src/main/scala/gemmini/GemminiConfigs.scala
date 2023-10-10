@@ -98,6 +98,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              use_shared_ext_mem: Boolean = false,
                                                                              clock_gate: Boolean = false,
+                                                                             vega_clock_gate: Boolean = false,
 
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {

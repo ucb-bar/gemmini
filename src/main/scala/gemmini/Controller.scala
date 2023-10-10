@@ -82,54 +82,24 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   spad.module.io.flush := tlb.io.exp.map(_.flush()).reduce(_ || _)
 
-  val clock_en_reg = RegInit(true.B)
+  val clock_en_reg = RegInit(true.B) // clock gating entire gemmini
   val gated_clock = if (clock_gate) ClockGate(clock, clock_en_reg, "gemmini_clock_gate") else clock
   outer.spad.module.clock := gated_clock
 
-  /*
-  //=========================================================================
-  // Frontends: Incoming commands and ROB
-  //=========================================================================
+  // gated clock for gemv + gemm
+  val vega_clock_en = RegInit(true.B)
+  val gemmini_clock_en = RegInit(true.B)
+  val vega_gated_clock = if(vega_clock_gate) ClockGate(gated_clock, vega_clock_en, "vega_clock_gate") else gated_clock
+  val gemmini_gated_clock = if(vega_clock_gate) ClockGate(gated_clock, gemmini_clock_en, "vega_gemmini_clock_gate") else gated_clock
 
-  // forward cmd to correct frontend. if the rob is busy, do not forward new
-  // commands to tiler, and vice versa
-  val is_cisc_mode = RegInit(false.B)
-
-  val raw_cmd = Queue(io.cmd)
-  val funct = raw_cmd.bits.inst.funct
-
-  val is_cisc_funct = (funct === CISC_CONFIG) ||
-                      (funct === ADDR_AB) ||
-                      (funct === ADDR_CD) ||
-                      (funct === SIZE_MN) ||
-                      (funct === SIZE_K) ||
-                      (funct === RPT_BIAS) ||
-                      (funct === RESET) ||
-                      (funct === COMPUTE_CISC)
-
-  val raw_cisc_cmd = WireInit(raw_cmd)
-  val raw_risc_cmd = WireInit(raw_cmd)
-  raw_cisc_cmd.valid := false.B
-  raw_risc_cmd.valid := false.B
-  raw_cmd.ready := false.B
-
-  //-------------------------------------------------------------------------
-  // cisc
-  val cmd_fsm = CmdFSM(outer.config)
-  cmd_fsm.io.cmd <> raw_cisc_cmd
-  val tiler = TilerController(outer.config)
-  tiler.io.cmd_in <> cmd_fsm.io.tiler
-
-  //-------------------------------------------------------------------------
-  // risc
-  val unrolled_cmd = LoopUnroller(raw_risc_cmd, outer.config.meshRows * outer.config.tileRows)
-  */
 
   val reservation_station = withClock (gated_clock) { Module(new ReservationStation(outer.config, new GemminiCmd(reservation_station_entries))) }
   //counters.io.event_io.collect(reservation_station.io.counter)
 
   when (io.cmd.valid && io.cmd.bits.inst.funct === CLKGATE_EN && !io.busy) {
     clock_en_reg := io.cmd.bits.rs1(0)
+    gemmini_clock_en := io.cmd.bits.rs1(1)
+    vega_clock_en := io.cmd.bits.rs1(2)
   }
 
   val raw_cmd_q = Module(new Queue(new GemminiCmd(reservation_station_entries), entries = 2))
@@ -161,9 +131,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val loop_matmul_ex_completed = Mux(reservation_station.io.is_vega, false.B, reservation_station.io.matmul_ex_completed)
   val loop_matmul_st_completed = Mux(reservation_station.io.is_vega, false.B, reservation_station.io.matmul_st_completed)
 
-  val (loop_ws_cmd, loop_matmul_unroller_busy) = withClock (gated_clock) { LoopMatmul(if (has_loop_conv) conv_cmd else raw_cmd, loop_matmul_ld_completed, loop_matmul_st_completed, loop_matmul_ex_completed,
-    meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
-    inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
+  val (loop_ws_cmd, loop_matmul_unroller_busy) = withClock (gemmini_gated_clock) { LoopMatmul(if (has_loop_conv) conv_cmd else raw_cmd, loop_matmul_ld_completed, loop_matmul_st_completed, loop_matmul_ex_completed,
+    gemmini_clock_en, meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
+    inputType.getWidth, accType.getWidth, dma_maxbytes, has_vega && vega_clock_gate, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
@@ -173,13 +143,51 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val loop_vega_st_completed = Mux(!reservation_station.io.is_vega, false.B, reservation_station.io.matmul_st_completed)
 
   // only allow accessing these banks
-  val (loop_cmd, loop_vega_unroller_busy) = if (has_vega) withClock (gated_clock) { VegaLoopMatmul(loop_ws_cmd, loop_vega_ld_completed, loop_vega_st_completed, loop_vega_ex_completed,
-    meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, vega_sp_banks * sp_bank_entries, vega_acc_banks * acc_bank_entries,
-    inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
+  //val vega_loop_ws_cmd = Mux(gemmini_clock_en, loop_ws_cmd, (if (has_loop_conv) conv_cmd else raw_cmd))
+
+  /*
+  val vega_loop_ws_cmd = WireInit(loop_ws_cmd)
+  if(has_vega && vega_clock_gate) {
+    val loop_ws_arb = Module(new Arbiter(new GemminiCmd(reservation_station_entries), 2))
+    loop_ws_arb.io.in(0) <> loop_ws_cmd
+    loop_ws_arb.io.in(1) <> (if (has_loop_conv) conv_cmd else raw_cmd)
+    when(gemmini_clock_en && !vega_clock_en) {
+      loop_ws_arb.io.in(0).valid := false.B
+    }.otherwise{
+      loop_ws_arb.io.in(1).valid := false.B
+    }
+    vega_loop_ws_cmd <> loop_ws_arb.io.out
+  }
+
+   */
+
+  val (loop_cmd, loop_vega_unroller_busy) = if (has_vega) withClock (vega_gated_clock) { VegaLoopMatmul(loop_ws_cmd, loop_vega_ld_completed, loop_vega_st_completed, loop_vega_ex_completed,
+    vega_clock_en, meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, vega_sp_banks * sp_bank_entries, vega_acc_banks * acc_bank_entries,
+    inputType.getWidth, accType.getWidth, dma_maxbytes, has_vega && vega_clock_gate, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) } else (loop_ws_cmd, false.B)
 
+  /*
+  val final_loop_cmd = WireInit(loop_cmd)
+  if(has_vega && vega_clock_gate){
+    val loop_cmd_arb = Module(new Arbiter(new GemminiCmd(reservation_station_entries), 2))
+    loop_cmd_arb.io.in(0) <> loop_cmd
+    loop_cmd_arb.io.in(1) <> loop_ws_cmd
+    when(gemmini_clock_en && !vega_clock_en) {
+      loop_cmd_arb.io.in(0).valid := false.B
+    }.otherwise{
+      loop_cmd_arb.io.in(1).valid := false.B
+    }
+    final_loop_cmd <> loop_cmd_arb.io.out
+  }
+  dontTouch(final_loop_cmd)
+
+   */
+  //dontTouch(vega_loop_ws_cmd)
+  dontTouch(loop_ws_cmd)
+  dontTouch(loop_cmd)
+  dontTouch(raw_cmd)
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
   //counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
@@ -208,7 +216,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   //=========================================================================
   val load_controller = withClock (gated_clock) { Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t)) }
   val store_controller = withClock (gated_clock) { Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t)) }
-  val ex_controller = withClock (gated_clock) { Module(new ExecuteController(xLen, tagWidth, outer.config)) }
+  val ex_controller = withClock (gemmini_gated_clock) { Module(new ExecuteController(xLen, tagWidth, outer.config)) }
 
   //val vega_ex_controller = if (has_vega) {withClock(gated_clock) { Module(new VegaExecuteController(xLen, tagWidth, outer.config))}} else None
   //val vega_ex_controller = withClock(gated_clock) { Module(new VegaExecuteController(xLen, tagWidth, outer.config))}
@@ -276,7 +284,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val ex_controller_busy = WireInit(ex_controller.io.busy)
 
   if(has_vega) {
-    val vega_ex_controller = withClock(gated_clock) { Module(new VegaExecuteController(xLen, tagWidth, outer.config))}
+    val vega_ex_controller = withClock(vega_gated_clock) { Module(new VegaExecuteController(xLen, tagWidth, outer.config))}
     vega_ex_controller.io.cmd.bits := reservation_station.io.issue.ex.cmd
     vega_ex_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.ex.rob_id)
     when(reservation_station.io.is_vega){
