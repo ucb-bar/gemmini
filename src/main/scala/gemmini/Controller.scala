@@ -185,9 +185,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
    */
   //dontTouch(vega_loop_ws_cmd)
-  dontTouch(loop_ws_cmd)
-  dontTouch(loop_cmd)
-  dontTouch(raw_cmd)
+  //dontTouch(loop_ws_cmd)
+  //dontTouch(loop_cmd)
+  //dontTouch(raw_cmd)
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
   //counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
