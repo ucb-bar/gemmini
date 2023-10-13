@@ -539,6 +539,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
 
   // Debugging signals
+  /*
   val pipeline_stall_counter = RegInit(0.U(32.W))
   when (io.cmd.fire()) {
     pipeline_stall_counter := 0.U
@@ -546,7 +547,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     pipeline_stall_counter := pipeline_stall_counter + 1.U
   }
   assert(pipeline_stall_counter < 10000000.U, "pipeline stall")
-
+  */
   /*
   //=========================================================================
   // Wire up global RoCC signals

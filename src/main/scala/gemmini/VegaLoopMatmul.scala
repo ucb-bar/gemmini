@@ -210,9 +210,9 @@ class VegaLoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val blocks = Mux(col_iterator + max_blocks <= max_col_iterator, max_blocks, max_col_iterator-col_iterator)
   val cols = (blocks * block_size.U) - Mux(col_iterator + blocks >= max_col_iterator, col_pad, 0.U)
   val rows = 1.U //block_size.U - Mux(max_row_iterator === max_row_iterator-1.U, row_pad, 0.U)
-  dontTouch(dram_addr)
-  dontTouch(sp_addr)
-  dontTouch(cols)
+  //dontTouch(dram_addr)
+  //dontTouch(sp_addr)
+  //dontTouch(cols)
 
   val mvin_cmd = Wire(new RoCCCommand)
   mvin_cmd := DontCare
@@ -459,9 +459,9 @@ class VegaLoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitw
   val b_rows = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
   val c_cols = 1//block_size.U - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)
   val c_rows = block_size.U - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)
-  dontTouch(b_addr)
-  dontTouch(c_addr)
-  dontTouch(b_rows)
+  //dontTouch(b_addr)
+  //dontTouch(c_addr)
+  //dontTouch(b_rows)
   val pre_cmd = Wire(new RoCCCommand)
   pre_cmd := DontCare
   pre_cmd.inst.funct := PRELOAD_CMD
@@ -608,8 +608,8 @@ class VegaLoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val cols = block_size.U //(blocks * block_size.U) - Mux(j + blocks >= req.max_j, req.pad_j, 0.U)
   //val rows = block_size.U - Mux(i === req.max_i-1.U, req.pad_i, 0.U)
   val rows = Mux(i + block_size.U > req.max_i, req.max_i - i, block_size.U)
-  dontTouch(dram_addr)
-  dontTouch(sp_addr)
+  //dontTouch(dram_addr)
+  //dontTouch(sp_addr)
 
   val mvout_cmd = Wire(new RoCCCommand)
   mvout_cmd := DontCare
@@ -920,7 +920,7 @@ class VegaLoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_
    */
 
   val loops_configured = RegInit(0.U(16.W))
-  dontTouch(loops_configured)
+  //dontTouch(loops_configured)
 
   // Create config registers
   when(cmd.valid && is_loop_cmd && !loop_being_configured.configured) {

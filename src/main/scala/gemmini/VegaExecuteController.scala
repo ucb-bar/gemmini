@@ -251,7 +251,7 @@ class VegaExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth
   val b_address = b_address_rs2 + b_fire_counter
   val d_address = d_address_rs1 //+ (block_size.U - 1.U - d_fire_counter)
 
-  dontTouch(d_address)
+  //dontTouch(d_address)
 
   val dataAbank = a_address.sp_bank()
   val dataBbank = b_address.sp_bank()
@@ -356,8 +356,8 @@ class VegaExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth
 
     !must_wait_for.reduce(_ || _)
   }
-  dontTouch(a_valid)
-  dontTouch(d_valid)
+  //dontTouch(a_valid)
+  //dontTouch(d_valid)
 
   val a_fire = a_valid && a_ready
   val b_fire = b_valid && b_ready
@@ -810,8 +810,8 @@ class VegaExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth
     new_d := true.B
   }
 
-  dontTouch(dataA_valid)
-  dontTouch(dataD_valid)
+  //dontTouch(dataA_valid)
+  //dontTouch(dataD_valid)
 
   //added for negative bitshift
   val preload_zero_counter = RegInit(0.U(5.W))
