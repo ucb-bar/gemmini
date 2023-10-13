@@ -35,6 +35,14 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
     val out_valid = Output(Vec(columns, Bool()))
 
     val bad_dataflow = Output(Bool())
+
+    // added for zero-gating
+    val in_a_zero = Input(Vec(rows, Bool()))
+    val in_b_zero = Input(Vec(columns, Bool()))
+    val in_d_zero = Input(Vec(columns, Bool()))
+    val out_a_zero = Output(Vec(rows, Bool()))
+    val out_b_zero = Output(Vec(columns, Bool()))
+    val out_c_zero = Output(Vec(columns, Bool()))
   })
 
   import ev._
@@ -106,6 +114,35 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
     }
   }
 
+  // added for zero-gating
+  // Broadcast 'a_zero' horizontally across the Tile
+  for (r <- 0 until columns) {
+    tile(r).foldLeft(io.in_a_zero(r)) {
+      case (z, pe) =>
+        pe.io.in_a_zero := z
+        pe.io.out_a_zero
+    }
+  }
+
+  // Broadcast 'b_zero' vertically across the Tile
+  for (c <- 0 until columns) {
+    tileT(c).foldLeft(io.in_b_zero(c)) {
+      case (z, pe) =>
+        pe.io.in_b_zero := z
+        pe.io.out_b_zero
+    }
+  }
+
+  // Broadcast 'd_zero' vertically across the Tile
+  for (c <- 0 until columns) {
+    tileT(c).foldLeft(io.in_d_zero(c)) {
+      case (z, pe) =>
+        pe.io.in_d_zero := z
+        pe.io.out_c_zero
+    }
+  }
+
+
   // Drive the Tile's bottom IO
   for (c <- 0 until columns) {
     io.out_c(c) := tile(rows-1)(c).io.out_c
@@ -113,6 +150,10 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
     io.out_id(c) := tile(rows-1)(c).io.out_id
     io.out_last(c) := tile(rows-1)(c).io.out_last
     io.out_valid(c) := tile(rows-1)(c).io.out_valid
+
+    //added for zero-gating
+    io.out_b_zero(c) := tile(rows-1)(c).io.out_b_zero
+    io.out_c_zero(c) := tile(rows-1)(c).io.out_c_zero
 
     io.out_b(c) := {
       if (tree_reduction) {
@@ -128,5 +169,7 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
   // Drive the Tile's right IO
   for (r <- 0 until rows) {
     io.out_a(r) := tile(r)(columns-1).io.out_a
+    //added for zero-gating
+    io.out_a_zero(r) := tile(r)(columns-1).io.out_a_zero
   }
 }
