@@ -216,15 +216,15 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
     // TODO we pipelined this to make physical design easier. Consider removing these if possible
     // TODO shouldn't we clock-gate these signals with "garbage" as well?
     //b := ShiftRegister(tile.io.out_b, output_delay)
-    //c := ShiftRegister(tile.io.out_c, output_delay)
+    c := ShiftRegister(tile.io.out_c, output_delay)
 
     //added for zero-gating
     b := ShiftRegister(VecInit(tile.io.out_b.zip(tile.io.out_b_zero).map { case (outb, outbz) =>
       Mux(outbz, 0.U.asTypeOf(outb), outb)
     }), output_delay)
-    c := ShiftRegister(VecInit(tile.io.out_c.zip(tile.io.out_c_zero).map { case (outc, outcz) =>
-      Mux(outcz, 0.U.asTypeOf(outc), outc)
-    }), output_delay)
+    //c := ShiftRegister(VecInit(tile.io.out_c.zip(tile.io.out_c_zero).map { case (outc, outcz) =>
+    //  Mux(outcz, 0.U.asTypeOf(outc), outc)
+    //}), output_delay)
 
     v := ShiftRegister(tile.io.out_valid, output_delay)
     ctrl := ShiftRegister(tile.io.out_control, output_delay)

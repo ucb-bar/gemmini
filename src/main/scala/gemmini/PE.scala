@@ -33,8 +33,8 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   import ev._
 
   val io = IO(new Bundle {
-    val in_a = Input(inputType)
-    val in_b = Input(outputType)
+    val in_a = Input(inputType) // should be random data
+    val in_b = Input(outputType) // should be random data
     val in_d = Input(outputType)
     val out_a = Output(inputType)
     val out_b = Output(outputType)
@@ -120,6 +120,7 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   val PROPAGATE = 1.U(1.W)
 
   io.bad_dataflow := false.B
+  /*
   when ((df == Dataflow.OS).B || ((df == Dataflow.BOTH).B && dataflow === OUTPUT_STATIONARY)) {
     when(prop === PROPAGATE) {
       io.out_c := (c1 >> shift_offset).clippedToWidthOf(outputType)
@@ -138,35 +139,34 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
     }
     io.out_b_zero := b_zero
   }.elsewhen ((df == Dataflow.WS).B || ((df == Dataflow.BOTH).B && dataflow === WEIGHT_STATIONARY)) {
+
+   */
     when(prop === PROPAGATE) {
       io.out_c := c1
       mac_unit.io.in_b := c2.asTypeOf(inputType)
-      //mac_unit.io.in_c := b
-      //io.out_b := mac_unit.io.out_d
-      //c1 := d
-      //added for zero-gating
-      //io.out_b := Mux(c2_zero, b, Mux(b_zero, 0.U.asTypeOf(b), b).mac(Mux(a_zero, 0.U.asTypeOf(a), a), c2.asTypeOf(inputType)))
       mac_unit.io.in_a := Mux(a_zero, 0.U.asTypeOf(a), a)
       mac_unit.io.in_c := Mux(b_zero, 0.U.asTypeOf(b), b)
-      io.out_b := Mux(c2_zero, b, mac_unit.io.out_d)
+      io.out_b := mac_unit.io.out_d
+      //io.out_b := Mux(c2_zero, b, mac_unit.io.out_d)
+      //when (!d_zero) { c1 := d } 
+      io.out_b_zero := (c2_zero || a_zero) && b_zero
       c1 := Mux(d_zero, 0.U.asTypeOf(d), d)
       c1_zero := d_zero
-      io.out_b_zero := Mux(c2_zero, b_zero, io.out_b.asUInt === 0.U)
+      //io.out_b_zero := Mux(c2_zero, b_zero, io.out_b.asUInt === 0.U)
     }.otherwise {
       io.out_c := c2
       mac_unit.io.in_b := c1.asTypeOf(inputType)
-      //mac_unit.io.in_c := b
-      //io.out_b := mac_unit.io.out_d
-      //c2 := d
-      //added for zero-gating
-      //io.out_b := Mux(c1_zero, b, Mux(b_zero, 0.U.asTypeOf(b), b).mac(Mux(a_zero, 0.U.asTypeOf(a), a), c1.asTypeOf(inputType)))
       mac_unit.io.in_a := Mux(a_zero, 0.U.asTypeOf(a), a)
       mac_unit.io.in_c := Mux(b_zero, 0.U.asTypeOf(b), b)
-      io.out_b := Mux(c1_zero, b, mac_unit.io.out_d)
+      io.out_b := mac_unit.io.out_d
+      //when (!d_zero) { c2 := d }
+      io.out_b_zero := (c1_zero || a_zero) && b_zero
+      //io.out_b := Mux(c1_zero, b, mac_unit.io.out_d)
       c2 := Mux(d_zero, 0.U.asTypeOf(d), d)
       c2_zero := d_zero
-      io.out_b_zero := Mux(c1_zero, b_zero, io.out_b.asUInt === 0.U)
+      //io.out_b_zero := Mux(c1_zero, b_zero, io.out_b.asUInt === 0.U)
     }
+  /*
   }.otherwise {
     io.bad_dataflow := true.B
     //assert(false.B, "unknown dataflow")
@@ -179,6 +179,7 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
     mac_unit.io.in_c := c2
   }
 
+   */
   when (!valid) {
     c1 := c1
     c2 := c2
@@ -188,16 +189,4 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
     c1_zero := c1_zero
     c2_zero := c2_zero
   }
-  /*
-  when (io.in_a_zero || io.in_b_zero) {
-    c1 := c1
-    c2 := c2
-    mac_unit.io.in_b := DontCare
-    mac_unit.io.in_c := DontCare
-    //addd for zero-gating
-    //c1_zero := c1_zero
-    //c2_zero := c2_zero
-  }
-
-   */
 }
