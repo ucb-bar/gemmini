@@ -103,9 +103,10 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
 
   // for zero-gating
   io.out_a_zero := a_zero
-  io.out_c_zero := io.out_c.asUInt === 0.U
+  //io.out_c_zero := io.out_c.asUInt === 0.U
+  //io.out_c_zero := d_zero
 
-  mac_unit.io.in_a := a
+  //mac_unit.io.in_a := a
 
   val last_s = RegEnable(prop, valid)
   val flip = last_s =/= prop
@@ -143,26 +144,30 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
    */
     when(prop === PROPAGATE) {
       io.out_c := c1
-      mac_unit.io.in_b := c2.asTypeOf(inputType)
+      io.out_c_zero := c1_zero
+      //mac_unit.io.in_b := c2.asTypeOf(inputType)
+      mac_unit.io.in_b := Mux(c2_zero, 0.U.asTypeOf(inputType), c2.asTypeOf(inputType))
       mac_unit.io.in_a := Mux(a_zero, 0.U.asTypeOf(a), a)
       mac_unit.io.in_c := Mux(b_zero, 0.U.asTypeOf(b), b)
       io.out_b := mac_unit.io.out_d
       //io.out_b := Mux(c2_zero, b, mac_unit.io.out_d)
-      //when (!d_zero) { c1 := d } 
+      when (!d_zero) { c1 := d } 
       io.out_b_zero := (c2_zero || a_zero) && b_zero
-      c1 := Mux(d_zero, 0.U.asTypeOf(d), d)
+      //c1 := Mux(d_zero, 0.U.asTypeOf(d), d)
       c1_zero := d_zero
       //io.out_b_zero := Mux(c2_zero, b_zero, io.out_b.asUInt === 0.U)
     }.otherwise {
       io.out_c := c2
-      mac_unit.io.in_b := c1.asTypeOf(inputType)
+      io.out_c_zero := c2_zero
+      //mac_unit.io.in_b := c1.asTypeOf(inputType)
+      mac_unit.io.in_b := Mux(c1_zero, 0.U.asTypeOf(inputType), c1.asTypeOf(inputType))
       mac_unit.io.in_a := Mux(a_zero, 0.U.asTypeOf(a), a)
       mac_unit.io.in_c := Mux(b_zero, 0.U.asTypeOf(b), b)
       io.out_b := mac_unit.io.out_d
-      //when (!d_zero) { c2 := d }
+      when (!d_zero) { c2 := d }
       io.out_b_zero := (c1_zero || a_zero) && b_zero
       //io.out_b := Mux(c1_zero, b, mac_unit.io.out_d)
-      c2 := Mux(d_zero, 0.U.asTypeOf(d), d)
+      //c2 := Mux(d_zero, 0.U.asTypeOf(d), d)
       c2_zero := d_zero
       //io.out_b_zero := Mux(c1_zero, b_zero, io.out_b.asUInt === 0.U)
     }

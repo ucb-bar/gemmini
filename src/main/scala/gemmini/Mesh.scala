@@ -6,14 +6,14 @@ import chisel3.util._
 import chisel3.experimental._
 
 /**
-  * A Grid is a 2D array of Tile modules with registers in between each tile and
-  * registers from the bottom row and rightmost column of tiles to the Grid outputs.
-  * @param width
-  * @param tileRows
-  * @param tileColumns
-  * @param meshRows
-  * @param meshColumns
-  */
+ * A Grid is a 2D array of Tile modules with registers in between each tile and
+ * registers from the bottom row and rightmost column of tiles to the Grid outputs.
+ * @param width
+ * @param tileRows
+ * @param tileColumns
+ * @param meshRows
+ * @param meshColumns
+ */
 class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
                                    df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int,
                                    max_simultaneous_matmuls: Int, output_delay: Int,
@@ -64,16 +64,16 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
-/*
-  for (r <- 0 until meshRows) {
-    mesh(r).foldLeft(io.in_a(r)) {
-      case (in_a, tile) =>
-        tile.io.in_a := ShiftRegister(in_a, tile_latency+1)
-        tile.io.out_a
+  /*
+    for (r <- 0 until meshRows) {
+      mesh(r).foldLeft(io.in_a(r)) {
+        case (in_a, tile) =>
+          tile.io.in_a := ShiftRegister(in_a, tile_latency+1)
+          tile.io.out_a
+      }
     }
-  }
-*/
-   // added for zero-gating
+  */
+  // added for zero-gating
   for (r <- 0 until meshRows) {
     mesh(r).foldLeft((io.in_a(r), in_a_zero(r))) {
       case ((in_a, az), tile) =>
@@ -88,7 +88,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
     }
   }
 
-    // Chain tile_out_b -> tile_b_in (pipeline b across each column)
+  // Chain tile_out_b -> tile_b_in (pipeline b across each column)
   /*
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_b(c), io.in_valid(c))) {
