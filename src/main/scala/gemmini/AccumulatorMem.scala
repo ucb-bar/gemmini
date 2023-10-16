@@ -331,8 +331,9 @@ class AccumulatorMem[T <: Data, U <: Data](
       !block_read_req
   )
 
-  io.write.ready := !block_write_req &&
-    !pipelined_writes.map(r => r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc).reduce(_||_)
+  //io.write.ready := !block_write_req &&
+  //  !pipelined_writes.map(r => r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc).reduce(_||_)
+  io.write.ready := true.B
 
   when (reset.asBool) {
     pipelined_writes.foreach(_.valid := false.B)
