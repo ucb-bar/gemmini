@@ -30,7 +30,7 @@ class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: 
   extends CoreModule {
 
   val lgMaxSize = log2Ceil(maxSize)
-  val io = new Bundle {
+  val io = IO(new Bundle {
     val req = Flipped(Valid(new DecoupledTLBReq(lgMaxSize)))
     val resp = new TLBResp
     val ptw = new TLBPTWIO
@@ -38,10 +38,10 @@ class DecoupledTLB(entries: Int, maxSize: Int, use_firesim_simulation_counters: 
     val exp = new TLBExceptionIO
 
     //val counter = new CounterEventIO()
-  }
+  })
 
   val interrupt = RegInit(false.B)
-  io.exp.interrupt := interrupt
+  io.exp.interrupt := interrupt 
 
   val tlb = Module(new TLB(false, lgMaxSize, TLBConfig(nSets=1, nWays=entries)))
   tlb.io.req.valid := io.req.valid
