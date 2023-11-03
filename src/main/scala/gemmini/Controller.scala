@@ -304,8 +304,16 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       for(i <- vega_acc_banks until acc_banks){
         spad.module.io.acc.read_req(i) := DontCare
         spad.module.io.acc.read_req(i).valid := false.B
+        spad.module.io.acc.write(i) := DontCare
+        spad.module.io.acc.write(i).valid := false.B
+	spad.module.io.acc.read_resp(i).ready := false.B
       }
-
+      for(i <- vega_sp_banks until sp_banks){
+        spad.module.io.srams.write(i) := DontCare
+        spad.module.io.srams.read(i) := DontCare
+        spad.module.io.srams.read(i).req.valid := false.B
+        spad.module.io.srams.write(i).en := false.B
+      }
 
       ex_controller.io.srams.read := DontCare
       ex_controller.io.srams.write := DontCare
