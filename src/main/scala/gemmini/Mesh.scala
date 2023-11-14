@@ -81,7 +81,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
 
         (tile.io.in_a, in_a, az).zipped.foreach { case (ina, a, z) =>
           //ina := RegEnable(a, !z)
-          ina := ShiftRegister(a, tile_latency+1, !z)
+          ina := pipe(!z, a, tile_latency+1)
+          //ina := ShiftRegister(a, tile_latency+1, !z)
         }
 
         (tile.io.out_a, tile.io.out_a_zero)
