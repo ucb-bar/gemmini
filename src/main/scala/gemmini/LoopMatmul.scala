@@ -816,10 +816,22 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ldab_arb.io.inA <> ldA.io.cmd
   ldab_arb.io.inB <> ldB.io.cmd
   val ab_loads_on_same_loop = ldA.io.loop_id === ldB.io.loop_id
+ 
+  val ld_utilization = RegInit(0.U(log2Up(max_lds+1).W))
   val forceA = !ab_loads_on_same_loop && ldA.io.loop_id === head_loop_id
-  val forceB = !ab_loads_on_same_loop && ldB.io.loop_id === head_loop_id
-  ldab_arb.io.forceA := Mux(is_resadd, ab_loads_on_same_loop && !ldA.io.idle, forceA)
-  ldab_arb.io.forceB := Mux(is_resadd, forceB || ldA.io.idle, forceB) 
+  val forceB = !ab_loads_on_same_loop && ldB.io.loop_id === head_loop_id 
+  val A_not_done = RegInit(false.B)
+  val resadd_forceA = WireInit((ab_loads_on_same_loop && !ldA.io.idle) || A_not_done)
+  when(ab_loads_on_same_loop && !ldA.io.idle){
+    A_not_done := true.B
+  }.elsewhen(ld_utilization === 0.U){
+    A_not_done := false.B
+  }
+  ldab_arb.io.forceA := Mux(is_resadd, resadd_forceA, forceA)
+  ldab_arb.io.forceB := Mux(is_resadd, !resadd_forceA, forceB) 
+
+  //ldab_arb.io.forceA := Mux(is_resadd, ab_loads_on_same_loop && !ldA.io.idle, forceA)
+  //ldab_arb.io.forceB := Mux(is_resadd, forceB || ldA.io.idle, forceB) 
   ldab_arb.io.weightA := 0.U
   ldab_arb.io.inA_idle := ldA.io.idle
   ldab_arb.io.inB_idle := ldB.io.idle
@@ -837,7 +849,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val unrolled_cmd = arb.io.out
 
   // Create reservation station utilization counters
-  val ld_utilization = RegInit(0.U(log2Up(max_lds+1).W))
+  //val ld_utilization = RegInit(0.U(log2Up(max_lds+1).W))
   val st_utilization = RegInit(0.U(log2Up(max_sts+1).W))
   val ex_utilization = RegInit(0.U(log2Up(max_exs+1).W))
 
