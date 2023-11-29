@@ -265,6 +265,9 @@ object GemminiConfigs {
     hardcode_d_to_garbage_addr = true,
     acc_read_full_width = false,
     max_in_flight_mem_reqs = 16,
+    reservation_station_entries_ld = 4,
+    reservation_station_entries_st = 4,
+    reservation_station_entries_ex = 8,
     num_counter = 0,
     clock_gate = true
   )
