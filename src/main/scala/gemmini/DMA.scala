@@ -338,6 +338,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
 class StreamWriteRequest(val dataWidth: Int, val maxBytes: Int)(implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
+  val physical = Bool()
   val data = UInt(dataWidth.W)
   val len = UInt(log2Up((dataWidth/8 max maxBytes)+1).W) // The number of bytes to write
   val block = UInt(8.W) // TODO magic number
@@ -354,12 +355,15 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
                   (implicit p: Parameters) extends LazyModule {
   val node = TLClientNode(Seq(TLMasterPortParameters.v1(Seq(TLClientParameters(
     name = "stream-writer", sourceId = IdRange(0, nXacts))))))
+//  val spad_node = TLClientNode(Seq(TLMasterPortParameters.v1(Seq(TLClientParameters(
+//    name = "spad-writer", sourceId = IdRange(0, nXacts))))))
 
   require(isPow2(aligned_to))
 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) with HasCoreParameters with MemoryOpConstants {
     val (tl, edge) = node.out(0)
+//    val (tl_spad, edge_spad) = spad_node.out(0)
     val dataBytes = dataWidth / 8
     val beatBytes = beatBits / 8
     val lgBeatBytes = log2Ceil(beatBytes)
@@ -387,7 +391,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val data_single_block = Reg(UInt(dataWidth.W)) // For data that's just one-block-wide
     val data = Mux(req.block === 0.U, data_single_block, data_blocks.asUInt)
 
-    val bytesSent = Reg(UInt(log2Ceil((dataBytes max maxBytes)+1).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
+    val bytesSent = Reg(UInt((log2Ceil((dataBytes max maxBytes)+1) + 1).W))  // TODO this only needs to count up to (dataBytes/aligned_to), right?
     val bytesLeft = req.len - bytesSent
 
     val xactBusy = RegInit(0.U(nXacts.W))
@@ -502,6 +506,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val tl_a = DataMirror.internal.chiselTypeClone[TLBundleA](tl.a.bits)
       val vaddr = Output(UInt(vaddrBits.W))
       val status = Output(new MStatus)
+      val passthrough = Output(Bool())
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -510,6 +515,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     untranslated_a.bits.tl_a := Mux(write_full, putFull, putPartial)
     untranslated_a.bits.vaddr := write_vaddr
     untranslated_a.bits.status := req.status
+    untranslated_a.bits.passthrough := req.physical
 
     // 0 goes to retries, 1 goes to state machine
     val retry_a = Wire(Decoupled(new TLBundleAWithInfo))
@@ -527,7 +533,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     io.tlb.req.valid := tlb_q.io.deq.fire
     io.tlb.req.bits := DontCare
     io.tlb.req.bits.tlb_req.vaddr := tlb_q.io.deq.bits.vaddr
-    io.tlb.req.bits.tlb_req.passthrough := false.B
+    io.tlb.req.bits.tlb_req.passthrough := tlb_q.io.deq.bits.passthrough
     io.tlb.req.bits.tlb_req.size := 0.U // send_size
     io.tlb.req.bits.tlb_req.cmd := M_XWR
     io.tlb.req.bits.status := tlb_q.io.deq.bits.status

@@ -228,7 +228,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(compute_rows)._2
     }
 
-    op2.valid := funct_is_compute || funct === STORE_CMD
+    op2.valid := funct_is_compute || funct === STORE_CMD || funct === STORE_SPAD_CMD
     op2.bits.start := cmd.rs2.asTypeOf(local_addr_t)
     when (funct_is_compute) {
       val compute_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
@@ -258,12 +258,25 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       op2.bits.wraps_around := pooling_is_enabled || op2.bits.start.add_with_overflow(total_mvout_rows)._2
     }
 
-    dst.valid := funct === PRELOAD_CMD || funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
+    dst.valid := funct === PRELOAD_CMD || funct === STORE_SPAD_CMD ||
+      funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD
     dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
       val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48) * c_stride
       dst.bits.end := dst.bits.start + preload_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(preload_rows)._2
+    }.elsewhen(funct === STORE_SPAD_CMD) {
+      // TODO: make it so that spad move has its own load config states
+      val mv_cols = cmd.rs2(32 + mvout_cols_bits - 1, 32)
+      val mv_rows = cmd.rs2(48 + mvout_rows_bits - 1, 48)
+      val mvout_dst_bytes = mv_rows * (cmd.rs1(63, 32) max mv_cols)
+
+      dst.bits.start := cmd.rs1(31, 0).asTypeOf(local_addr_t)
+      dst.bits.end := dst.bits.start + mvout_dst_bytes
+      dst.bits.wraps_around := dst.bits.start.add_with_overflow(mvout_dst_bytes.asUInt)._2
+
+      assert(!pooling_is_enabled, "cannot pool while moving between internal memories")
+      assert(!dst.bits.start.is_acc_addr, "cannot move to accumulator memory")
     }.otherwise {
       val id = MuxCase(0.U, Seq((new_entry.cmd.cmd.inst.funct === LOAD2_CMD) -> 1.U,
         (new_entry.cmd.cmd.inst.funct === LOAD3_CMD) -> 2.U))
@@ -294,7 +307,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
     val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
-    val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_STORE || config_cmd_type === CONFIG_NORM))
+    val is_store = funct === STORE_CMD || funct === STORE_SPAD_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_STORE || config_cmd_type === CONFIG_NORM))
     val is_norm = funct === CONFIG_CMD && config_cmd_type === CONFIG_NORM // normalization commands are a subset of store commands, so they still go in the store queue
 
     new_entry.q := Mux1H(Seq(
@@ -308,34 +321,57 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val not_config = !new_entry.is_config
     when (is_load) {
-      // war (after ex/st) | waw (after ex)
+      // war/waw (after ex) | war/waw (after st)
       new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && !e.bits.issued }) // same q
 
       new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && !new_entry.is_config && (
         (new_entry.opa.bits.overlaps(e.bits.opa.bits) && e.bits.opa.valid) || // waw if preload, war if compute
         (new_entry.opa.bits.overlaps(e.bits.opb.bits) && e.bits.opb.valid))}) // war
 
-      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && e.bits.opa.valid && not_config &&
-        new_entry.opa.bits.overlaps(e.bits.opa.bits)})  // war
+      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && not_config && (
+        (new_entry.opa.bits.overlaps(e.bits.opa.bits) && e.bits.opa.valid) || // waw if st_spad, war otherwise
+        (new_entry.opa.bits.overlaps(e.bits.opb.bits) && e.bits.opb.valid))}) // war if st_spad
     }.elsewhen (is_ex) {
-      // raw (after ld) | war (after st) | waw (after ld)
+      // raw/waw (after ld) | war/waw/raw (after st)
       new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && e.bits.opa.valid && not_config && (
         new_entry.opa.bits.overlaps(e.bits.opa.bits) || // waw if preload, raw if compute
         new_entry.opb.bits.overlaps(e.bits.opa.bits))}) // raw
 
       new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && !e.bits.issued }) // same q
 
-      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && e.bits.opa.valid && not_config && new_entry.opa_is_dst &&
-        new_entry.opa.bits.overlaps(e.bits.opa.bits)})  // war
+      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && e.bits.opa.valid && not_config &&
+        Mux(e.bits.opa_is_dst,
+          // if st writes, raw/waw for ex a/b <- st a
+          new_entry.opa.bits.overlaps(e.bits.opa.bits) || new_entry.opb.bits.overlaps(e.bits.opa.bits) ||
+          // additionally if ex writes, war for ex a <- st b
+            (new_entry.opa_is_dst && new_entry.opa.bits.overlaps(e.bits.opb.bits))
+        ,
+          // if st only reads, only check ex writes, war for ex a <- st a
+          new_entry.opa_is_dst && new_entry.opa.bits.overlaps(e.bits.opa.bits)
+        )
+      })
     }.otherwise {
-      // raw (after ld/ex)
-      new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && e.bits.opa.valid && not_config &&
-        new_entry.opa.bits.overlaps(e.bits.opa.bits)})  // raw
+      assert((!new_entry.opa_is_dst) || new_entry.opb.valid)
+      // raw (after ld/ex), waw/war if destination is spad
+      new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && e.bits.opa.valid && not_config && (
+        new_entry.opa.bits.overlaps(e.bits.opa.bits) || // waw/raw
+        new_entry.opb.valid && new_entry.opb.bits.overlaps(e.bits.opa.bits))}) // raw
 
-      new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && e.bits.opa.valid && not_config &&
-        e.bits.opa_is_dst && new_entry.opa.bits.overlaps(e.bits.opa.bits)}) // raw only if ex is preload
+      new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && not_config &&
+        Mux(new_entry.opa_is_dst,
+          // if st writes, war/waw for st a <- ex a/b
+          (new_entry.opa.bits.overlaps(e.bits.opa.bits) && e.bits.opa.valid) ||
+            (new_entry.opa.bits.overlaps(e.bits.opb.bits) && e.bits.opb.valid) ||
+          // additionally if ex writes, raw for st b <- ex a
+            (e.bits.opa.valid && e.bits.opa_is_dst && new_entry.opb.bits.overlaps(e.bits.opa.bits))
+        ,
+          // if st only reads, only check ex writes, raw for st a <- ex a
+          e.bits.opa.valid && e.bits.opa_is_dst && new_entry.opa.bits.overlaps(e.bits.opa.bits)
+        )
+      })
 
-      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && !e.bits.issued }) // same q
+      // new_entry.deps_st := VecInit(entries_st.map { e => e.valid && !e.bits.issued }) // same q
+      new_entry.deps_st := VecInit(entries_st.map { e => e.valid }) // same q
     }
 
     new_entry.allocated_at := instructions_allocated
@@ -349,7 +385,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       .foreach { case (q, entries_type, new_allocs_type, entries_count) =>
         when (new_entry.q === q) {
           val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
-          when (q =/= exq) { assert(!is_full) }
+          when (q === ldq) { assert(!is_full) }
+          when (q === stq && new_entry.cmd.cmd.inst.funct =/= STORE_SPAD_CMD) { assert(!is_full) }
 
           // looking for the first invalid entry
           val alloc_id = MuxCase((entries_count - 1).U, entries_type.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
@@ -425,7 +462,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         entries_type_.zipWithIndex.foreach { case (e, i) =>
           val deps_type = if (q == ldq) e.bits.deps_ld
                           else if (q == exq) e.bits.deps_ex else e.bits.deps_st
-          when (q === q_) {
+          when ((q === q_) && (q_ =/= stq)) {
             deps_type(issue_id) := false.B
           }.otherwise {
             when (issue_entry.bits.complete_on_issue) {

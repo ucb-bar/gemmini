@@ -84,6 +84,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   // Commands
   val cmd = Queue(io.cmd, st_queue_length)
   val vaddr = cmd.bits.cmd.rs1
+  val mvout_spad_rs1 = cmd.bits.cmd.rs1.asTypeOf(new MvoutSpadRs1(32, local_addr_t))
+  val dst_spad_addr = mvout_spad_rs1.local_addr
+  val dst_spad_stride = mvout_spad_rs1.stride
+  val dst_is_spad = cmd.bits.cmd.inst.funct === STORE_SPAD_CMD
   val mvout_rs2 = cmd.bits.cmd.rs2.asTypeOf(new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t))
   val localaddr = mvout_rs2.local_addr
   val cols = mvout_rs2.num_cols
@@ -122,6 +126,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val current_vaddr = vaddr + row_counter * stride
   val current_localaddr = WireInit(localaddr + (block_counter * block_stride + row_counter))
+  val current_dst_spad_addr = dst_spad_addr.asUInt + row_counter * dst_spad_stride
 
   val pool_row_addr = localaddr + (orow * pool_ocols +& ocol)
   when (orow_is_negative || ocol_is_negative || orow >= pool_orows || ocol >= pool_ocols) {
@@ -157,7 +162,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     (control_state === sending_rows && (block_counter =/= 0.U || row_counter =/= 0.U)) ||
     (control_state === pooling && (wcol_counter =/= 0.U || wrow_counter =/= 0.U || pocol_counter =/= 0.U || porow_counter =/= 0.U))
 
-  io.dma.req.bits.vaddr := Mux(pooling_is_enabled || mvout_1d_enabled, pool_vaddr, current_vaddr)
+  io.dma.req.bits.vaddr := Mux(dst_is_spad,
+    current_dst_spad_addr,
+    Mux(pooling_is_enabled || mvout_1d_enabled, pool_vaddr, current_vaddr))
+  io.dma.req.bits.dest := dst_is_spad
   io.dma.req.bits.laddr := Mux(pooling_is_enabled, pool_row_addr, current_localaddr) //Todo: laddr for 1D?
   io.dma.req.bits.laddr.norm_cmd := Mux(block_counter === blocks - 1.U, current_localaddr.norm_cmd,
         NormCmd.non_reset_version(current_localaddr.norm_cmd))

@@ -1,14 +1,13 @@
 
 package gemmini
 
-import chisel3._
+import chisel3.{Bool, _}
 import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink._
-
 import Util._
 
 class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
@@ -31,6 +30,8 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
                               (implicit p: Parameters) extends CoreBundle {
   val vaddr = UInt(coreMaxAddrBits.W)
   val laddr = local_addr_t.cloneType
+
+  val dest = UInt(1.W)
 
   val acc_act = UInt(Activation.bitwidth.W) // TODO don't use a magic number for the width here
   val acc_scale = UInt(scale_t_bits.W)
@@ -107,63 +108,77 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     val ext_mem = if (use_shared_ext_mem) Some(new ExtMemIO) else None
   })
 
-  val (read, write) = if (is_dummy) {
-    def read(addr: UInt, ren: Bool): Data = 0.U
-    def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]): Unit = { }
-    (read _, write _)
-  } else if (use_shared_ext_mem) {
-    def read(addr: UInt, ren: Bool): Data = {
-      io.ext_mem.get.read_en := ren
-      io.ext_mem.get.read_addr := addr
-      io.ext_mem.get.read_data
-    }
-    io.ext_mem.get.write_en := false.B
-    io.ext_mem.get.write_addr := DontCare
-    io.ext_mem.get.write_data := DontCare
-    io.ext_mem.get.write_mask := DontCare
-    def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = {
-      io.ext_mem.get.write_en := true.B
-      io.ext_mem.get.write_addr := addr
-      io.ext_mem.get.write_data := wdata.asUInt
-      io.ext_mem.get.write_mask := wmask.asUInt
-    }
-    (read _, write _)
-  } else {
-    val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
-    def read(addr: UInt, ren: Bool): Data = mem.read(addr, ren)
-    def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = mem.write(addr, wdata, wmask)
-    (read _, write _)
-  }
-
-  // When the scratchpad is single-ported, the writes take precedence
-  val singleport_busy_with_write = single_ported.B && io.write.en
-
-  when (io.write.en) {
-    if (aligned_to >= w)
-      write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), VecInit((~(0.U(mask_len.W))).asBools))
-    else
-      write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), io.write.mask)
-  }
-
-  val raddr = io.read.req.bits.addr
   val ren = io.read.req.fire
-  val rdata = if (single_ported) {
-    assert(!(ren && io.write.en))
-    read(raddr, ren && !io.write.en).asUInt
-  } else {
-    read(raddr, ren).asUInt
-  }
-
   val fromDMA = io.read.req.bits.fromDMA
 
   // Make a queue which buffers the result of an SRAM read if it can't immediately be consumed
   val q = Module(new Queue(new ScratchpadReadResp(w), 1, true, true))
-  q.io.enq.valid := RegNext(ren)
-  q.io.enq.bits.data := rdata
-  q.io.enq.bits.fromDMA := RegNext(fromDMA)
-
   val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U
-  io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
+  // When the scratchpad is single-ported, the writes take precedence
+  val singleport_busy_with_write = single_ported.B && io.write.en
+
+  if (is_dummy) {
+    q.io.enq.valid := RegNext(ren)
+    q.io.enq.bits.data := 0.U
+    q.io.enq.bits.fromDMA := RegNext(fromDMA)
+    io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
+  } else if (use_shared_ext_mem) { // use ready-valid interface
+    val ext_mem = io.ext_mem.get
+
+    /* READ */
+    ext_mem.read_req.valid := io.read.req.valid
+    ext_mem.read_req.bits := io.read.req.bits.addr
+    io.read.req.ready := ext_mem.read_req.ready
+
+    // TODO (richard): the number of entries here should be configurable
+    val dma_q = Module(new Queue(Bool(), 4, true, true))
+    dma_q.io.enq.valid := ren
+    dma_q.io.enq.bits := fromDMA
+    dma_q.io.deq.ready := q.io.enq.fire
+    assert(dma_q.io.deq.fire || (!q.io.enq.fire), "fromDMA should be dequeued only when read resp comes back")
+    assert(dma_q.io.enq.ready || (!ren), "DMA queue does not have enough entries") // TODO (richard): do backpressure
+
+    q.io.enq.valid := ext_mem.read_resp.valid
+    q.io.enq.bits.data := ext_mem.read_resp.bits
+    q.io.enq.bits.fromDMA := dma_q.io.deq.bits
+    ext_mem.read_resp.ready := q.io.enq.ready
+
+    /* WRITE */
+    val wq = Module(new Queue(ext_mem.write_req.bits.cloneType, 12, pipe=true, flow=true))
+    ext_mem.write_req <> wq.io.deq
+
+    wq.io.enq.valid := io.write.en
+    wq.io.enq.bits.addr := io.write.addr
+    wq.io.enq.bits.data := io.write.data
+    if (aligned_to >= w) {
+      wq.io.enq.bits.mask := VecInit((~(0.U(mask_len.W))).asBools).asUInt
+    } else {
+      wq.io.enq.bits.mask := io.write.mask.asUInt
+    }
+    assert(wq.io.enq.ready || (!io.write.en), "TODO (richard): fix this if triggered")
+  } else { // use valid only interface
+    val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
+
+    val raddr = io.read.req.bits.addr
+    val rdata = if (single_ported) {
+      assert(!(ren && io.write.en))
+      mem.read(raddr, ren && !io.write.en).asUInt
+    } else {
+      mem.read(raddr, ren).asUInt
+    }
+    q.io.enq.valid := RegNext(ren)
+    q.io.enq.bits.data := rdata
+    q.io.enq.bits.fromDMA := RegNext(fromDMA)
+
+    io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
+
+    when(io.write.en) {
+      if (aligned_to >= w)
+        mem.write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), VecInit((~(0.U(mask_len.W))).asBools))
+      else
+        mem.write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), io.write.mask)
+    }
+  }
 
   io.read.resp <> q.io.deq
 }
@@ -190,6 +205,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter,
     use_firesim_simulation_counters))
   val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
+    if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter,
+    use_firesim_simulation_counters))
+  val spad_writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
     if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters))
 
@@ -237,7 +255,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       }
 
       // TLB ports
-      val tlb = Vec(2, new FrontendTLBIO)
+      // TODO(richard): bypass TLB
+      val tlb = Vec(3, new FrontendTLBIO)
 
       // Misc. ports
       val busy = Output(Bool())
@@ -291,9 +310,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.read_full_acc_row
     val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()
 
-    writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid
-    write_issue_q.io.deq.ready := writer.module.io.req.ready && writeData.valid
+    writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && !write_issue_q.io.deq.bits.dest.asBool
+    // write_issue_q.io.deq.ready := writer.module.io.req.ready && writeData.valid
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
+    writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
     writer.module.io.req.bits.len := Mux(writeData_is_full_width,
       write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
       write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
@@ -305,6 +325,22 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
     writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
+
+    spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool
+    write_issue_q.io.deq.ready := writer.module.io.req.ready && spad_writer.module.io.req.ready && writeData.valid
+    spad_writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr << 4.U // TODO(richard): do not hardcode
+    spad_writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
+    spad_writer.module.io.req.bits.len := Mux(writeData_is_full_width,
+      write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
+      write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
+    spad_writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
+      writeData_is_all_zeros -> 0.U,
+      writeData_is_full_width -> fullAccWriteData
+    ))
+    spad_writer.module.io.req.bits.block := write_issue_q.io.deq.bits.block
+    spad_writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
+    spad_writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
+    spad_writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
 
     io.dma.write.resp.valid := false.B
     io.dma.write.resp.bits.cmd_id := write_dispatch_q.bits.cmd_id
@@ -437,11 +473,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     io.tlb(0) <> writer.module.io.tlb
     io.tlb(1) <> reader.module.io.tlb
+    io.tlb(2) <> spad_writer.module.io.tlb
 
+    spad_writer.module.io.flush := io.flush
     writer.module.io.flush := io.flush
     reader.module.io.flush := io.flush
 
-    io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid || write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
+    io.busy := writer.module.io.busy || spad_writer.module.io.busy || reader.module.io.busy ||
+      write_issue_q.io.deq.valid || write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
 
     val spad_mems = {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(
@@ -493,20 +532,24 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         ex_read_resp.valid := bio.read.resp.valid && !bio.read.resp.bits.fromDMA
         ex_read_resp.bits := bio.read.resp.bits
 
-        val dma_read_pipe = Pipeline(dma_read_resp, spad_read_delay)
-        val ex_read_pipe = Pipeline(ex_read_resp, spad_read_delay)
+        val dma_read_pipe = Module(new Queue(dma_read_resp.bits.cloneType, spad_read_delay, flow = false, pipe = true))
+        val ex_read_pipe = Module(new Queue(ex_read_resp.bits.cloneType, spad_read_delay, flow = false, pipe = true))
+
+        dma_read_pipe.io.enq <> dma_read_resp
+        ex_read_pipe.io.enq <> ex_read_resp
+        // TODO (richard): perhaps backpressure can be applied here when writes are blocked
 
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
 
-        dma_read_pipe.ready := writer.module.io.req.ready &&
+        dma_read_pipe.io.deq.ready := writer.module.io.req.ready && spad_writer.module.io.req.ready &&
           !write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
           !write_issue_q.io.deq.bits.laddr.is_garbage()
-        when (dma_read_pipe.fire) {
+        when (dma_read_pipe.io.deq.fire) {
           writeData.valid := true.B
-          writeData.bits := dma_read_pipe.bits.data
+          writeData.bits := dma_read_pipe.io.deq.bits.data
         }
 
-        io.srams.read(i).resp <> ex_read_pipe
+        io.srams.read(i).resp <> ex_read_pipe.io.deq
       }
 
       // Writing to the SRAM banks
@@ -597,14 +640,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     acc_scale_unit.io.in.valid := acc_norm_unit_out.valid && acc_waiting_to_be_scaled
     acc_scale_unit.io.in.bits  := acc_norm_unit_out.bits
 
-    when (acc_scale_unit.io.in.fire()) {
+    when (acc_scale_unit.io.in.fire) {
       write_issue_q.io.enq <> write_scale_q.io.deq
     }
 
     acc_scale_unit.io.out.ready := false.B
 
     val dma_resp_ready =
-      writer.module.io.req.ready &&
+      (writer.module.io.req.ready && spad_writer.module.io.req.ready) &&
         write_issue_q.io.deq.bits.laddr.is_acc_addr &&
         !write_issue_q.io.deq.bits.laddr.is_garbage()
 
@@ -631,7 +674,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(
         acc_bank_entries, acc_row_t, acc_scale_func, acc_scale_t.asInstanceOf[V],
         acc_singleported, acc_sub_banks,
-        use_shared_ext_mem,
+        use_shared_ext_mem, use_tl_ext_mem,
         acc_latency, accType, is_dummy
       )) }
       val bank_ios = VecInit(banks.map(_.io))
@@ -828,5 +871,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     io.counter := DontCare
     io.counter.collect(reader.module.io.counter)
     io.counter.collect(writer.module.io.counter)
+    spad_writer.module.io.counter := DontCare
+//    io.counter.collect(spad_writer.module.io.counter)
   }
 }
