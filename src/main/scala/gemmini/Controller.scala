@@ -145,7 +145,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
 
   val regDevice = new SimpleDevice("gemmini-cmd-reg", Seq(s"gemmini-cmd-reg"))
   val regNode = TLRegisterNode(
-    address = Seq(AddressSet(0x60000000, 0xfff)),
+    address = Seq(AddressSet(0xff002000L, 0xfff)),
     device = regDevice,
     beatBytes = 8,
     concurrency = 1)
@@ -384,6 +384,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     0x10 -> Seq(RegField.w(64, gemminiRs1Reg)),
     0x18 -> Seq(RegField.w(64, gemminiRs2Reg))
   )
+  dontTouch(outer.regNode.in(0)._1.a)
+  dontTouch(outer.regNode.in(0)._1.d)
 
   val raw_cmd = raw_cmd_q.io.deq
 
