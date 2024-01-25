@@ -358,10 +358,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   val regValid = Wire(Bool())
   val regCommand = Wire(io.cmd.bits.cloneType)
-  val gemminiRs1Reg = RegInit(0.U.asTypeOf(io.cmd.bits.rs1.cloneType))
-  val gemminiRs2Reg = RegInit(0.U.asTypeOf(io.cmd.bits.rs2.cloneType))
-  regCommand.rs1 := gemminiRs1Reg
-  regCommand.rs2 := gemminiRs2Reg
+  val gemminiRs1RegLSB = RegInit(0.U(32.W))
+  val gemminiRs1RegMSB = RegInit(0.U(32.W))
+  val gemminiRs2RegLSB = RegInit(0.U(32.W))
+  val gemminiRs2RegMSB = RegInit(0.U(32.W))
+  regCommand.rs1 := Cat(gemminiRs1RegMSB, gemminiRs1RegLSB)
+  regCommand.rs2 := Cat(gemminiRs2RegMSB, gemminiRs2RegLSB)
   regCommand.status := io.cmd.bits.status
 
   val raw_cmd_q = Module(new Queue(new GemminiCmd(reservation_station_entries), entries = 2))
@@ -381,11 +383,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   outer.regNode.regmap(
     0x00 -> Seq(RegField.w(32, gemminiCommandReg(_, _))),
-    0x10 -> Seq(RegField.w(64, gemminiRs1Reg)),
-    0x18 -> Seq(RegField.w(64, gemminiRs2Reg))
+    0x10 -> Seq(
+      RegField.w(32, gemminiRs1RegLSB),
+      RegField.w(32, gemminiRs1RegMSB)),
+    0x18 -> Seq(
+      RegField.w(32, gemminiRs2RegLSB),
+      RegField.w(32, gemminiRs2RegMSB))
   )
-  dontTouch(outer.regNode.in(0)._1.a)
-  dontTouch(outer.regNode.in(0)._1.d)
 
   val raw_cmd = raw_cmd_q.io.deq
 

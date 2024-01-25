@@ -160,13 +160,13 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   io.matmul_ex_completed := matmul_ex_issue_completed +& matmul_ex_completed
 
   // Config values set by programmer
-  val a_stride = Reg(UInt(a_stride_bits.W))
-  val c_stride = Reg(UInt(c_stride_bits.W))
-  val a_transpose = Reg(Bool())
-  val ld_block_strides = Reg(Vec(load_states, UInt(block_stride_bits.W)))
+  val a_stride = RegInit(0.U(a_stride_bits.W))
+  val c_stride = RegInit(0.U(c_stride_bits.W))
+  val a_transpose = RegInit(false.B)
+  val ld_block_strides = RegInit(0.U.asTypeOf(Vec(load_states, UInt(block_stride_bits.W))))
   val st_block_stride = block_rows.U
-  val pooling_is_enabled = Reg(Bool())
-  val ld_pixel_repeats = Reg(Vec(load_states, UInt(pixel_repeats_bits.W))) // This is the ld_pixel_repeat MINUS ONE
+  val pooling_is_enabled = RegInit(false.B)
+  val ld_pixel_repeats = RegInit(0.U.asTypeOf(Vec(load_states, UInt(pixel_repeats_bits.W)))) // This is the ld_pixel_repeat MINUS ONE
 
   val new_entry = Wire(new Entry)
   new_entry := DontCare
