@@ -36,34 +36,34 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val control_state = RegInit(waiting_for_command)
 
-  val stride = Reg(UInt(coreMaxAddrBits.W))
+  val stride = RegInit(0.U(coreMaxAddrBits.W))
   val block_rows = meshRows * tileRows
   val block_stride = block_rows.U
   val block_cols = meshColumns * tileColumns
   val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
 
-  val activation = Reg(UInt(Activation.bitwidth.W)) // TODO magic number
-  val igelu_qb = Reg(accType)
-  val igelu_qc = Reg(accType)
-  val iexp_qln2 = Reg(accType)
-  val iexp_qln2_inv = Reg(accType)
-  val norm_stats_id = Reg(UInt(8.W)) // TODO magic number
-  val acc_scale = Reg(acc_scale_t)
+  val activation = RegInit(0.U(Activation.bitwidth.W)) // TODO magic number
+  val igelu_qb = RegInit(0.U.asTypeOf(accType))
+  val igelu_qc = RegInit(0.U.asTypeOf(accType))
+  val iexp_qln2 = RegInit(0.U.asTypeOf(accType))
+  val iexp_qln2_inv = RegInit(0.U.asTypeOf(accType))
+  val norm_stats_id = RegInit(0.U(8.W)) // TODO magic number
+  val acc_scale = RegInit(0.U.asTypeOf(acc_scale_t))
 
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
   val row_counter = RegInit(0.U(12.W)) // TODO magic number
   val block_counter = RegInit(0.U(8.W)) // TODO magic number
 
   // Pooling variables
-  val pool_stride = Reg(UInt(CONFIG_MVOUT_RS1_MAX_POOLING_STRIDE_WIDTH.W)) // When this is 0, pooling is disabled
-  val pool_size = Reg(UInt(CONFIG_MVOUT_RS1_MAX_POOLING_WINDOW_SIZE_WIDTH.W))
-  val pool_out_dim = Reg(UInt(CONFIG_MVOUT_RS1_POOL_OUT_DIM_WIDTH.W))
-  val pool_porows = Reg(UInt(CONFIG_MVOUT_RS1_POOL_OUT_ROWS_WIDTH.W))
-  val pool_pocols = Reg(UInt(CONFIG_MVOUT_RS1_POOL_OUT_COLS_WIDTH.W))
-  val pool_orows = Reg(UInt(CONFIG_MVOUT_RS1_OUT_ROWS_WIDTH.W))
-  val pool_ocols = Reg(UInt(CONFIG_MVOUT_RS1_OUT_COLS_WIDTH.W))
-  val pool_upad = Reg(UInt(CONFIG_MVOUT_RS1_UPPER_ZERO_PADDING_WIDTH.W))
-  val pool_lpad = Reg(UInt(CONFIG_MVOUT_RS1_LEFT_ZERO_PADDING_WIDTH.W))
+  val pool_stride = RegInit(0.U(CONFIG_MVOUT_RS1_MAX_POOLING_STRIDE_WIDTH.W)) // When this is 0, pooling is disabled
+  val pool_size = RegInit(0.U(CONFIG_MVOUT_RS1_MAX_POOLING_WINDOW_SIZE_WIDTH.W))
+  val pool_out_dim = RegInit(0.U(CONFIG_MVOUT_RS1_POOL_OUT_DIM_WIDTH.W))
+  val pool_porows = RegInit(0.U(CONFIG_MVOUT_RS1_POOL_OUT_ROWS_WIDTH.W))
+  val pool_pocols = RegInit(0.U(CONFIG_MVOUT_RS1_POOL_OUT_COLS_WIDTH.W))
+  val pool_orows = RegInit(0.U(CONFIG_MVOUT_RS1_OUT_ROWS_WIDTH.W))
+  val pool_ocols = RegInit(0.U(CONFIG_MVOUT_RS1_OUT_COLS_WIDTH.W))
+  val pool_upad = RegInit(0.U(CONFIG_MVOUT_RS1_UPPER_ZERO_PADDING_WIDTH.W))
+  val pool_lpad = RegInit(0.U(CONFIG_MVOUT_RS1_LEFT_ZERO_PADDING_WIDTH.W))
 
   val porow_counter = RegInit(0.U(pool_porows.getWidth.W))
   val pocol_counter = RegInit(0.U(pool_pocols.getWidth.W))
