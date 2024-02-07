@@ -7,3 +7,6 @@
 [submodule "software/libgemmini"]
 	path = software/libgemmini
 	url = https://github.com/ucb-bar/libgemmini.git
+[submodule "software/libdma"]
+	path = software/libdma
+	url = https://github.com/ucb-bar/libdma
