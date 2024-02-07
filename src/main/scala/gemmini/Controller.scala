@@ -38,7 +38,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   val create_tl_mem = config.use_shared_ext_mem && config.use_tl_ext_mem
 
   val num_ids = 32 // TODO (richard): move to config
-  val spad_base = 0 // 0x60000000L
+  val spad_base = x"ff000000"
 
   val unified_mem_read_node = TLIdentityNode()
   val spad_read_nodes = if (create_tl_mem) TLClientNode(Seq.tabulate(config.sp_banks) {i =>
@@ -196,7 +196,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
 
   val regDevice = new SimpleDevice("gemmini-cmd-reg", Seq(s"gemmini-cmd-reg"))
   val regNode = TLRegisterNode(
-    address = Seq(AddressSet(0xff002000L, 0xfff)),
+    address = Seq(AddressSet(0xff100000L, 0xfff)),
     device = regDevice,
     beatBytes = 8,
     concurrency = 1)
@@ -352,15 +352,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
         val req_is_read = in_node.a.bits.opcode === TLMessages.Get
 
-        (Seq(in_r.bits.user, in_r.bits.opcode, in_r.bits.size, in_r.bits.data) zip
-          Seq(in_node.a.bits.user, in_node.a.bits.opcode, in_node.a.bits.size, in_node.a.bits.data))
+        (Seq(in_r.bits.user, in_r.bits.address, in_r.bits.opcode, in_r.bits.size,
+          in_r.bits.mask, in_r.bits.param, in_r.bits.data)
+        zip Seq(in_node.a.bits.user, in_node.a.bits.address, in_node.a.bits.opcode, in_node.a.bits.size,
+          in_node.a.bits.mask, in_node.a.bits.param, in_node.a.bits.data))
           .foreach { case (x, y) => x := y }
         in_r.bits.source := in_node.a.bits.source | src_range.start.U | Mux(req_is_read, 0.U, in_src_size.U)
         in_w.bits := in_r.bits
 
         in_r.valid := in_node.a.valid && req_is_read
         in_w.valid := in_node.a.valid && !req_is_read
-        in_node.a.ready := in_r.ready && in_w.ready // TODO(richard): could be a mux
+        in_node.a.ready := Mux(req_is_read, in_r.ready, in_w.ready)
 
         (in_r, in_w)
       }
@@ -369,24 +371,30 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       TLArbiter.lowest(r_out._2, r_out._1.a, a_arbiter_in_r_nodes:_*)
       TLArbiter.lowest(w_out._2, w_out._1.a, a_arbiter_in_w_nodes:_*)
 
+      def trim(id: UInt, size: Int): UInt = if (size <= 1) 0.U else id(log2Ceil(size)-1, 0) // from Xbar
       // for each unified mem node client, arbitrate read/write responses on d channel
       (u_in zip in_src).zipWithIndex.foreach { case (((in_node, in_edge), src_range), i) =>
         // assign d channel back based on source, invalid if source prefix mismatch
         val resp = Seq(r_out._1.d, w_out._1.d)
-        val source_match = resp.map(r => src_range.contains(r.bits.source))
+        val source_match = resp.zipWithIndex.map { case (r, i) =>
+          (r.bits.source(r.bits.source.getWidth - 1) === i.U(1.W)) && // MSB indicates read(0)/write(1)
+          src_range.contains(trim(r.bits.source, in_src_size))
+        }
         val d_arbiter_in = resp.map(r => WireDefault(
           0.U.asTypeOf(Decoupled(new TLBundleD(r.bits.params.copy(
             sourceBits = in_node.d.bits.source.getWidth,
             sizeBits = in_node.d.bits.size.getWidth
           ))))
         ))
-        def trim(id: UInt, size: Int): UInt = if (size <= 1) 0.U else id(log2Ceil(size)-1, 0) // from Xbar
 
         (d_arbiter_in lazyZip resp lazyZip source_match).foreach { case (arb_in, r, sm) =>
-          (Seq(arb_in.bits.user, arb_in.bits.opcode, arb_in.bits.data) zip
-            Seq(r.bits.user, r.bits.opcode, r.bits.data)).foreach { case (x, y) => x := y }
-          arb_in.bits.source := trim(r.bits.source, in_node.d.bits.source.getWidth) // we can trim b/c isPow2(prefix)
-          arb_in.bits.size := trim(r.bits.size, in_node.d.bits.size.getWidth) // FIXME: check truncation
+          (Seq(arb_in.bits.user, arb_in.bits.opcode, arb_in.bits.data, arb_in.bits.param,
+            arb_in.bits.sink, arb_in.bits.denied, arb_in.bits.corrupt)
+          zip Seq(r.bits.user, r.bits.opcode, r.bits.data, r.bits.param,
+            r.bits.sink, r.bits.denied, r.bits.corrupt))
+            .foreach { case (x, y) => x := y }
+          arb_in.bits.source := trim(r.bits.source, 1 << in_node.d.bits.source.getWidth) // we can trim b/c isPow2(prefix)
+          arb_in.bits.size := trim(r.bits.size, 1 << in_node.d.bits.size.getWidth) // FIXME: check truncation
 
           arb_in.valid := r.valid && sm
           r.ready := arb_in.ready
