@@ -142,6 +142,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val max_exs = reservation_station_entries_ex
   val max_sts = reservation_station_entries_st
 
+  /*
   val (conv_cmd, loop_conv_unroller_busy) = withClock (gated_clock) { LoopConv(raw_cmd, reservation_station.io.conv_ld_completed, reservation_station.io.conv_st_completed, reservation_station.io.conv_ex_completed,
     meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes,
@@ -151,8 +152,20 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     has_training_convs, has_max_pool, has_first_layer_optimizations, has_dw_convs) }
+   */
 
-  val (loop_cmd, loop_matmul_unroller_busy) = withClock (gated_clock) { LoopMatmul(conv_cmd, reservation_station.io.matmul_ld_completed, reservation_station.io.matmul_st_completed, reservation_station.io.matmul_ex_completed,
+  val (conv_cmd, loop_conv_unroller_busy) = if (has_loop_conv) withClock (gated_clock) { LoopConv(raw_cmd, reservation_station.io.conv_ld_completed, reservation_station.io.conv_st_completed, reservation_station.io.conv_ex_completed,
+    meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
+    inputType.getWidth, accType.getWidth, dma_maxbytes,
+    new ConfigMvinRs1(mvin_scale_t_bits, block_stride_bits, pixel_repeats_bits), new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
+    new ConfigMvoutRs2(acc_scale_t_bits, 32), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t),
+    new ConfigExRs1(acc_scale_t_bits), new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
+    new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
+    new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
+    has_training_convs, has_max_pool, has_first_layer_optimizations, has_dw_convs) }
+  else (raw_cmd, false.B)
+
+  val (loop_cmd, loop_matmul_unroller_busy) = withClock (gated_clock) { LoopMatmul(if (has_loop_conv) conv_cmd else raw_cmd, reservation_station.io.matmul_ld_completed, reservation_station.io.matmul_st_completed, reservation_station.io.matmul_ex_completed,
     meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
@@ -255,6 +268,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ex_controller.io.acc.write <> spad.module.io.acc.write
 
   // Im2Col unit
+  /*
   val im2col = withClock (gated_clock) { Module(new Im2Col(outer.config)) }
 
   // Wire up Im2col
@@ -262,25 +276,16 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // im2col.io.sram_reads <> spad.module.io.srams.read
   im2col.io.req <> ex_controller.io.im2col.req
   ex_controller.io.im2col.resp <> im2col.io.resp
+   */
 
   // Wire arbiter for ExecuteController and Im2Col scratchpad reads
-  (ex_controller.io.srams.read, im2col.io.sram_reads, spad.module.io.srams.read).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
-    val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
-
+  (ex_controller.io.srams.read, spad.module.io.srams.read).zipped.foreach { case (ex_read, spad_read) =>
+    val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 1))
     req_arb.io.in(0) <> ex_read.req
-    req_arb.io.in(1) <> im2col_read.req
-
     spad_read.req <> req_arb.io.out
-
-    // TODO if necessary, change how the responses are handled when fromIm2Col is added to spad read interface
-
     ex_read.resp.valid := spad_read.resp.valid
-    im2col_read.resp.valid := spad_read.resp.valid
-
     ex_read.resp.bits := spad_read.resp.bits
-    im2col_read.resp.bits := spad_read.resp.bits
-
-    spad_read.resp.ready := ex_read.resp.ready || im2col_read.resp.ready
+    spad_read.resp.ready := ex_read.resp.ready
   }
 
   // Wire up controllers to ROB

@@ -17,10 +17,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
 
+    /*
     val im2col = new Bundle {
       val req = Decoupled(new Im2ColReadReq(config))
       val resp = Flipped(Decoupled(new Im2ColReadResp(config)))
     }
+
+     */
 
     val srams = new Bundle {
       val read = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
@@ -111,7 +114,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   icol := ((ocol - 1.U) * weight_stride + krow)//.asSInt
   irow := ((orow - 1.U) * weight_stride + krow)//.asSInt
 
-  val im2col_turn = WireInit(0.U(9.W))
+  //val im2col_turn = WireInit(0.U(9.W))
 
   val in_shift = Reg(UInt(log2Up(accType.getWidth).W))
   val acc_scale = Reg(acc_scale_t)
@@ -133,7 +136,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     "Too many inputs are being fed into the single transposer we have")
 
   //fix by input
-  val im2col_en = config.hasIm2Col.B && weight_stride =/= 0.U
+  val im2col_en = false.B //config.hasIm2Col.B && weight_stride =/= 0.U
 
   // SRAM addresses of matmul operands
   val a_address_rs1 = rs1s(a_address_place).asTypeOf(local_addr_t)
@@ -311,7 +314,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val b_row_is_not_all_zeros = b_fire_counter < b_rows
   val d_row_is_not_all_zeros = block_size.U - 1.U - d_fire_counter < d_rows //Todo: d_fire_counter_mulpre?
 
-  val im2col_wire = io.im2col.req.ready
+  val im2col_wire = false.B //io.im2col.req.ready
 
   def same_bank(addr1: LocalAddr, addr2: LocalAddr, is_garbage1: Bool, is_garbage2: Bool, start_inputting1: Bool, start_inputting2: Bool, can_be_im2colled: Boolean): Bool = {
     val addr1_read_from_acc = addr1.is_acc_addr
@@ -394,10 +397,15 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mul_pre_counter_lock := true.B
   }
 
+  /*
   when(!io.im2col.resp.bits.im2col_delay && performing_mul_pre){
     mul_pre_counter_sub := Mux(mul_pre_counter_sub > 0.U,  mul_pre_counter_sub - 1.U, 0.U)
   }.elsewhen(io.im2col.resp.bits.im2col_delay){
     mul_pre_counter_sub := 2.U
+  }.otherwise{mul_pre_counter_sub := 0.U}
+   */
+  when(performing_mul_pre){
+    mul_pre_counter_sub := Mux(mul_pre_counter_sub > 0.U,  mul_pre_counter_sub - 1.U, 0.U)
   }.otherwise{mul_pre_counter_sub := 0.U}
 
   // The last line in this (long) Boolean is just to make sure that we don't think we're done as soon as we begin firing
@@ -415,9 +423,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
 
   val d_fire_counter_mulpre = WireInit(b_fire_counter)
+  /*
   when(performing_mul_pre && !io.im2col.resp.bits.im2col_delay&&im2col_en){
     d_fire_counter_mulpre := d_fire_counter - mul_pre_counter_sub
   }.otherwise{d_fire_counter_mulpre := d_fire_counter}
+   */
+  d_fire_counter_mulpre := d_fire_counter
+
 
   // Scratchpad reads
   for (i <- 0 until sp_banks) {
@@ -505,27 +517,28 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   {
     val read_a = a_valid && start_inputting_a && !multiply_garbage && im2col_wire&&im2col_en //or just im2col_wire
 
-    when (read_a && !io.im2col.req.ready) {
+    when (read_a && !im2col_wire) {
       a_ready := false.B
     }
+    /*
+        io.im2col.req.valid := read_a
+        io.im2col.req.bits.addr := a_address_rs1
+        io.im2col.req.bits.icol := icol
+        io.im2col.req.bits.irow := irow
+        io.im2col.req.bits.ocol := ocol
+        io.im2col.req.bits.stride := weight_stride
+        io.im2col.req.bits.krow := krow
+        io.im2col.req.bits.kdim2 := kdim2
+        io.im2col.req.bits.row_turn := row_turn
+        io.im2col.req.bits.row_left := row_left
+        io.im2col.req.bits.channel := channel
+        io.im2col.req.bits.im2col_cmd := im2col_en
+        io.im2col.req.bits.start_inputting := start_inputting_a
+        io.im2col.req.bits.weight_double_bank := weight_double_bank
+        io.im2col.req.bits.weight_triple_bank := weight_triple_bank
 
-    io.im2col.req.valid := read_a
-    io.im2col.req.bits.addr := a_address_rs1
-    io.im2col.req.bits.icol := icol
-    io.im2col.req.bits.irow := irow
-    io.im2col.req.bits.ocol := ocol
-    io.im2col.req.bits.stride := weight_stride
-    io.im2col.req.bits.krow := krow
-    io.im2col.req.bits.kdim2 := kdim2
-    io.im2col.req.bits.row_turn := row_turn
-    io.im2col.req.bits.row_left := row_left
-    io.im2col.req.bits.channel := channel
-    io.im2col.req.bits.im2col_cmd := im2col_en
-    io.im2col.req.bits.start_inputting := start_inputting_a
-    io.im2col.req.bits.weight_double_bank := weight_double_bank
-    io.im2col.req.bits.weight_triple_bank := weight_triple_bank
-
-    io.im2col.resp.ready := mesh.io.a.ready
+        io.im2col.resp.ready := mesh.io.a.ready
+      */
   }
 
   // FSM logic
@@ -802,11 +815,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val readData = VecInit(io.srams.read.map(_.resp.bits.data))
   val accReadData = if (ex_read_from_acc) VecInit(io.acc.read_resp.map(_.bits.data.asUInt)) else readData
-  val im2ColData = io.im2col.resp.bits.a_im2col.asUInt
+  //val im2ColData = io.im2col.resp.bits.a_im2col.asUInt
 
   val readValid = VecInit(io.srams.read.map(bank => ex_read_from_spad.B && bank.resp.valid && !bank.resp.bits.fromDMA))
   val accReadValid = VecInit(io.acc.read_resp.map(bank => ex_read_from_acc.B && bank.valid && !bank.bits.fromDMA))
-  val im2ColValid = io.im2col.resp.valid
+  val im2ColValid = false.B //io.im2col.resp.valid
 
   mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire || !mesh.io.a.ready) &&
     (!cntl.b_fire || mesh.io.b.fire || !mesh.io.b.ready) &&
@@ -829,7 +842,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   //val neg_shift_sub = block_size.U - cntl.c_rows
   preload_zero_counter := wrappingAdd(preload_zero_counter, 1.U, block_size.U, dataA_valid && dataD_valid && cntl.preload_zeros && (cntl.perform_single_preload || cntl.perform_mul_pre))
 
-  val dataA_unpadded = Mux(cntl.im2colling, im2ColData, Mux(cntl.a_read_from_acc, accReadData(cntl.a_bank_acc), readData(cntl.a_bank)))
+  //val dataA_unpadded = Mux(cntl.im2colling, im2ColData, Mux(cntl.a_read_from_acc, accReadData(cntl.a_bank_acc), readData(cntl.a_bank)))
+  val dataA_unpadded = Mux(cntl.a_read_from_acc, accReadData(cntl.a_bank_acc), readData(cntl.a_bank))
   val dataB_unpadded = MuxCase(readData(cntl.b_bank), Seq(cntl.accumulate_zeros -> 0.U, cntl.b_read_from_acc -> accReadData(cntl.b_bank_acc)))
   val dataD_unpadded = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
 

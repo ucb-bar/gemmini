@@ -105,6 +105,7 @@ object GemminiFPConfigs {
     ex_write_to_spad=false,
     has_training_convs = false,
     hardcode_d_to_garbage_addr = true,
+    has_loop_conv = false,
     acc_read_full_width = false,
     //has_loop_conv = false,
     max_in_flight_mem_reqs = 16,
