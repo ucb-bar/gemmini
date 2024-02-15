@@ -228,7 +228,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val LOG2_MNK_BYTES              = log2Up(MNK_BYTES)
   val MNK_BYTES_PER_TILE_ROW      = MNK_BYTES * DIM
   val LOG2_MNK_BYTES_PER_TILE_ROW = log2Up(MNK_BYTES_PER_TILE_ROW)
-  val TILE_IDX                    = MNK_BYTES / (DIM / cisc_dim)
+  val TILE_IDX                    = (BigInt(MNK_BYTES)*cisc_dim) / (DIM)
+  //val TILE_IDX                    = MNK_BYTES / (DIM / cisc_dim)
   val LOG2_TILE_IDX               = log2Up(TILE_IDX)
 
   //--------------------------------------------------------------------------

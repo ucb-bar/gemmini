@@ -35,95 +35,75 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
     val out_last = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
   })
 
-  // mesh(r)(c) => Tile at row r, column c
-  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns)))
-  val meshT = mesh.transpose
+  val bb = Module(new MeshBlackBoxAdapter(inputType=inputType, outputType=outputType, accType=accType,
+    max_simultaneous_matmuls=max_simultaneous_matmuls, rows=meshRows*tileRows, columns=meshColumns*tileColumns))
 
-  def pipe[T <: Data](valid: Bool, t: T, latency: Int): T = {
-    // The default "Pipe" function apparently resets the valid signals to false.B. We would like to avoid using global
-    // signals in the Mesh, so over here, we make it clear that the reset signal will never be asserted
-    chisel3.withReset(false.B) { Pipe(valid, t, latency).bits }
+  bb.io.clock := clock
+  bb.io.reset := reset.asBool
+  bb.io.in_a := io.in_a.asUInt
+  bb.io.in_b := io.in_b.asUInt
+  bb.io.in_d := io.in_d.asUInt
+
+  bb.io.in_control_dataflow := Cat(io.in_control.flatten.map(_.dataflow).reverse)
+  bb.io.in_control_propagate := Cat(io.in_control.flatten.map(_.propagate).reverse)
+  bb.io.in_control_shift := Cat(io.in_control.flatten.map(_.shift).reverse)
+
+  bb.io.in_id := io.in_id.asUInt
+  bb.io.in_last := io.in_last.asUInt
+
+  io.out_b := bb.io.out_b.asTypeOf(io.out_b)
+  io.out_c := bb.io.out_c.asTypeOf(io.out_c)
+
+  bb.io.in_valid := io.in_valid.asUInt
+  io.out_valid := bb.io.out_valid.asTypeOf(io.out_valid)
+
+  for(c <- 0 until meshColumns){
+    io.out_control(c)(tileRows-1).dataflow := bb.io.out_control_dataflow(c)
+    io.out_control(c)(tileRows-1).propagate := bb.io.out_control_propagate(c)
+    io.out_control(c)(tileRows-1).shift := bb.io.out_control_shift(c)
   }
 
-  // Chain tile_a_out -> tile_a_in (pipeline a across each row)
-  // TODO clock-gate A signals with in_garbage
-  for (r <- 0 until meshRows) {
-    mesh(r).foldLeft(io.in_a(r)) {
-      case (in_a, tile) =>
-        tile.io.in_a := ShiftRegister(in_a, tile_latency+1)
-        tile.io.out_a
-    }
-  }
+  io.out_id := bb.io.out_id.asTypeOf(io.out_id)
+  io.out_last := bb.io.out_last.asTypeOf(io.out_last)
+}
 
-  // Chain tile_out_b -> tile_b_in (pipeline b across each column)
-  for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft((io.in_b(c), io.in_valid(c))) {
-      case ((in_b, valid), tile) =>
-        tile.io.in_b := pipe(valid.head, in_b, tile_latency+1)
-        (tile.io.out_b, tile.io.out_valid)
-    }
-  }
+class MeshBlackBoxAdapter[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
+                                           val max_simultaneous_matmuls: Int,
+                                           val rows: Int, val columns: Int) extends BlackBox(Map(
+  "MESHROWS" -> rows,
+  "MESHCOLUMNS" -> columns,
+  "INPUT_BITWIDTH" -> inputType.getWidth,
+  "OUTPUT_BITWIDTH" -> outputType.getWidth,
+  "MAX_SIM_MM_LOG" -> log2Up(max_simultaneous_matmuls),
+  "ACC_BITWIDTH_LOG" -> log2Up(accType.getWidth)
+)) with HasBlackBoxResource {
+  val io = IO(new Bundle {
+    val clock  = Input(Clock())
+    val reset  = Input(Bool())
+    val in_a   = Input(UInt((rows * inputType.getWidth).W))
+    val in_d   = Input(UInt((columns * inputType.getWidth).W))
+    val in_b   = Input(UInt((columns * inputType.getWidth).W))
 
-  // Chain tile_out -> tile_propag (pipeline output across each column)
-  for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft((io.in_d(c), io.in_valid(c))) {
-      case ((in_propag, valid), tile) =>
-        tile.io.in_d := pipe(valid.head, in_propag, tile_latency+1)
-        (tile.io.out_c, tile.io.out_valid)
-    }
-  }
+    val in_control_dataflow = Input(UInt(columns.W))
+    val in_control_propagate = Input(UInt(columns.W))
+    val in_control_shift = Input(UInt((columns * log2Up(accType.getWidth)).W))
 
-  // Chain control signals (pipeline across each column)
-  assert(!(mesh.map(_.map(_.io.bad_dataflow).reduce(_||_)).reduce(_||_)))
-  for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft((io.in_control(c), io.in_valid(c))) {
-      case ((in_ctrl, valid), tile) =>
-        (tile.io.in_control, in_ctrl, valid).zipped.foreach { case (tile_ctrl, ctrl, v) =>
-          tile_ctrl.shift := pipe(v, ctrl.shift, tile_latency+1)
-          tile_ctrl.dataflow := pipe(v, ctrl.dataflow, tile_latency+1)
-          tile_ctrl.propagate := pipe(v, ctrl.propagate, tile_latency+1)
-        }
-        (tile.io.out_control, tile.io.out_valid)
-    }
-  }
+    val in_id = Input(UInt((columns * log2Up(max_simultaneous_matmuls)).W))
+    val in_last = Input(UInt(columns.W))
 
-  // Chain in_valid (pipeline across each column)
-  for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_valid(c)) {
-      case (in_v, tile) =>
-        tile.io.in_valid := ShiftRegister(in_v, tile_latency+1)
-        tile.io.out_valid
-    }
-  }
+    val out_b  = Output(UInt((columns * outputType.getWidth).W))
+    val out_c  = Output(UInt((columns * outputType.getWidth).W))
 
-  // Chain in_id (pipeline across each column)
-  for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_id(c)) {
-      case (in_id, tile) =>
-        tile.io.in_id := ShiftRegister(in_id, tile_latency+1)
-        tile.io.out_id
-    }
-  }
+    val in_valid = Input(UInt(columns.W))
+    val out_valid = Output(UInt(columns.W))
 
-  // Chain in_last (pipeline across each column)
-  for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft(io.in_last(c)) {
-      case (in_last, tile) =>
-        tile.io.in_last := ShiftRegister(in_last, tile_latency+1)
-        tile.io.out_last
-    }
-  }
+    val out_control_dataflow = Output(UInt(columns.W))
+    val out_control_propagate = Output(UInt(columns.W))
+    val out_control_shift = Output(UInt((columns * log2Up(accType.getWidth)).W))
 
-  // Capture out_vec and out_control_vec (connect IO to bottom row of mesh)
-  // (The only reason we have so many zips is because Scala doesn't provide a zipped function for Tuple4)
-  for (((((((b, c), v), ctrl), id), last), tile) <- io.out_b zip io.out_c zip io.out_valid zip io.out_control zip io.out_id zip io.out_last zip mesh.last) {
-    // TODO we pipelined this to make physical design easier. Consider removing these if possible
-    // TODO shouldn't we clock-gate these signals with "garbage" as well?
-    b := ShiftRegister(tile.io.out_b, output_delay)
-    c := ShiftRegister(tile.io.out_c, output_delay)
-    v := ShiftRegister(tile.io.out_valid, output_delay)
-    ctrl := ShiftRegister(tile.io.out_control, output_delay)
-    id := ShiftRegister(tile.io.out_id, output_delay)
-    last := ShiftRegister(tile.io.out_last, output_delay)
-  }
+    val out_id = Output(UInt((columns * log2Up(max_simultaneous_matmuls)).W))
+    val out_last = Output(UInt(columns.W))
+  })
+
+  addResource("/vsrc/MeshBlackBox.v")
 }
