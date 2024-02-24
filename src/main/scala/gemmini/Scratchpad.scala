@@ -328,7 +328,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool
     write_issue_q.io.deq.ready := writer.module.io.req.ready && spad_writer.module.io.req.ready && writeData.valid
-    spad_writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr << 4.U // TODO(richard): do not hardcode
+    spad_writer.module.io.req.bits.vaddr := config.tl_ext_mem_base.U |
+      (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.inputType.getWidth / 8).U).asUInt
     spad_writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
     spad_writer.module.io.req.bits.len := Mux(writeData_is_full_width,
       write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
