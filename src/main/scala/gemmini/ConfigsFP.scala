@@ -21,11 +21,11 @@ object GemminiFPConfigs {
     meshColumns = 4,
 
     ld_queue_length = 8,
-    st_queue_length = 2,
+    st_queue_length = 4,
     ex_queue_length = 8,
 
     reservation_station_entries_ld = 8,
-    reservation_station_entries_st = 4,
+    reservation_station_entries_st = 8,
     reservation_station_entries_ex = 16,
 
     sp_banks = 4,
