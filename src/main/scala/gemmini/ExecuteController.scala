@@ -61,6 +61,21 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
   }
 
+  val quant_lut = Module(new QuantLut(1,8,4,16))
+  //val rd_from_lut = quant_lut.io.rddata
+  dontTouch(quant_lut.io.rddata)
+  quant_lut.io.wraddr := DontCare
+  quant_lut.io.rdaddr := DontCare
+  quant_lut.io.wrdata := DontCare
+  quant_lut.io.wr := false.B
+
+  val compute_with_lut = RegInit(false.B)
+
+  val shift_for_lut = RegInit(0.U(2.W))
+  when(compute_with_lut) {
+    shift_for_lut := 2.U
+  }
+
   val unrolled_cmd = TransposePreloadUnroller(io.cmd, config, io.counter)
 
   val cmd_q_heads = 3
@@ -83,6 +98,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val DoConfig = functs(0) === CONFIG_CMD
   val DoComputes = functs.map(f => f === COMPUTE_AND_FLIP_CMD || f === COMPUTE_AND_STAY_CMD)
   val DoPreloads = functs.map(_ === PRELOAD_CMD)
+  val DoLutPreload1 = functs(0) === PRELOAD_LUT1
+  val DoLutPreload2 = functs(0) === PRELOAD_LUT2
 
   val preload_cmd_place = Mux(DoPreloads(0), 0.U, 1.U)
   // val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
@@ -436,13 +453,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.srams.read(i).req.bits.fromDMA := false.B
       io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
         Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
-          read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter_mulpre)))
+          read_d -> ((d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter_mulpre) >> shift_for_lut)))
 
       // TODO this just overrides the previous line. Should we erase the previous line?
       when(im2col_en === false.B) {
         io.srams.read(i).req.bits.addr := MuxCase(a_address.sp_row(),
           Seq(read_b -> b_address.sp_row(),
-            read_d -> d_address.sp_row()))
+            read_d -> (d_address.sp_row() >> shift_for_lut)))
       }
     } else {
       io.srams.read(i).req.valid := false.B
@@ -458,6 +475,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val read_a_from_acc = a_valid && a_read_from_acc && dataABankAcc === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros && !(im2col_wire&&im2col_en)
     val read_b_from_acc = b_valid && b_read_from_acc && dataBBankAcc === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
     val read_d_from_acc = d_valid && d_read_from_acc && dataDBankAcc === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
+    // we do not support LUT and accumulator read for D matrices for now
+    assert(!(compute_with_lut && read_d_from_acc))
 
     Seq((read_a_from_acc, a_ready), (read_b_from_acc, b_ready), (read_d_from_acc, d_ready)).foreach { case (rd, r) =>
       when(rd && !io.acc.read_req(i).ready) {
@@ -559,6 +578,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               if (dataflow == Dataflow.BOTH) {
                 current_dataflow := config_ex_rs1.dataflow
               }
+              // use dequantization lut path
+              compute_with_lut := config_ex_rs1.use_lut
             }
 
             a_addr_stride := config_ex_rs1.a_stride // TODO this needs to be kept in sync with ROB.scala
@@ -579,6 +600,39 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           io.completed := cmd.bits(0).rob_id
 
           cmd.pop := 1.U
+        }
+
+        .elsewhen(DoLutPreload1) {
+          val preload_lut1 = rs1s(0).asTypeOf(new PreloadLutRs1())
+          val preload_lut2 = rs2s(0).asTypeOf(new PreloadLutRs2())
+
+          quant_lut.io.wr := true.B
+
+          val (lut_wrcount, lut_wrdone) = Counter(quant_lut.io.wr, 8)
+
+          when(!lut_wrdone) {
+            quant_lut.io.wraddr(0) := Cat(0.U, lut_wrcount)
+            quant_lut.io.wrdata(0) := preload_lut1.lut_data(lut_wrcount)
+          }.otherwise {
+            io.completed := cmd.bits(0).rob_id
+            cmd.pop := 1.U
+          }
+        }
+        .elsewhen(DoLutPreload2) {
+          val preload_lut1 = rs1s(0).asTypeOf(new PreloadLutRs1())
+          val preload_lut2 = rs2s(0).asTypeOf(new PreloadLutRs2())
+
+          quant_lut.io.wr := true.B
+
+          val (lut_wrcount, lut_wrdone) = Counter(quant_lut.io.wr, 8)
+
+          when(!lut_wrdone) {
+            quant_lut.io.wraddr(0) := Cat(1.U, lut_wrcount)
+            quant_lut.io.wrdata(0) := preload_lut2.lut_data(lut_wrcount)
+          }.otherwise {
+            io.completed := cmd.bits(0).rob_id
+            cmd.pop := 1.U
+          }
         }
 
         // Preload
@@ -835,7 +889,44 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, inputType.zero)})
   val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)})
-  val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)})
+
+  val dataD_unpadded_dequant = Wire(Vec(8, UInt(16.W)))
+  dontTouch(dataD_unpadded_dequant)
+
+  val lut_d_to_mesh = cntl.d_fire && dataD_valid && cntl_valid
+  val (dcount, ddone) = Counter(lut_d_to_mesh, 4)
+
+  when(compute_with_lut) {
+    when(dcount === 0.U) {
+      for (i<-0 until 8) {
+        quant_lut.io.rdaddr(i) := (dataD_unpadded(31,0).asTypeOf(Vec(8,UInt(4.W))))(i)
+        dataD_unpadded_dequant(i) := quant_lut.io.rddata(i)
+      }
+    }.elsewhen(dcount === 1.U) {
+      for (i<-0 until 8) {
+        quant_lut.io.rdaddr(i) := (dataD_unpadded(63,31).asTypeOf(Vec(8,UInt(4.W))))(i)
+        dataD_unpadded_dequant(i) := quant_lut.io.rddata(i)
+      }
+    }.elsewhen(dcount === 2.U) {
+      for (i<-0 until 8) {
+        quant_lut.io.rdaddr(i) := (dataD_unpadded(95,64).asTypeOf(Vec(8,UInt(4.W))))(i)
+        dataD_unpadded_dequant(i) := quant_lut.io.rddata(i)
+      }
+    }.elsewhen(dcount === 3.U) {
+      for (i<-0 until 8) {
+        quant_lut.io.rdaddr(i) := (dataD_unpadded(127,96).asTypeOf(Vec(8,UInt(4.W))))(i)
+        dataD_unpadded_dequant(i) := quant_lut.io.rddata(i)
+      }
+    }.otherwise {
+      for (i<-0 until 8) {
+        dataD_unpadded_dequant(i) := 0.U
+      }
+    }
+  }.otherwise{
+    dataD_unpadded_dequant := dataD_unpadded.asTypeOf(dataD_unpadded_dequant)
+  }
+
+  val dataD = VecInit(dataD_unpadded_dequant.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)})
 
   // Pop responses off the scratchpad io ports
   when (mesh_cntl_signals_q.io.deq.fire) {

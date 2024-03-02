@@ -109,6 +109,14 @@ object GemminiFPConfigs {
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
 
+  //FP16 Half Precision Configuration for LUT with 8x8 array
+  val LutFP16DefaultConfig = defaultFPConfig.copy(inputType = Float(5, 11), spatialArrayOutputType = Float(5, 11), accType = Float(8, 24),
+                                               meshRows = 8, meshColumns = 8,
+                                               tile_latency = 2,
+                                               mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
+                                               mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
+                                              )
+
 }
 
 
@@ -167,6 +175,17 @@ class GemminiBF16Default8Config extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiFPConfigs.BF16Default8Config))
+    }
+  )
+})
+
+//===========FP16 LUT-based Default Config=========
+class GemminiLutFP16DefaultConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiFPConfigs.LutFP16DefaultConfig))
     }
   )
 })

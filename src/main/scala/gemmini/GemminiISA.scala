@@ -34,6 +34,9 @@ object GemminiISA {
 
   val CLKGATE_EN = 22.U
 
+  val PRELOAD_LUT1 = 23.U
+  val PRELOAD_LUT2 = 24.U
+
   // rs1[2:0] values
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U
@@ -178,7 +181,8 @@ object GemminiISA {
   val CONFIG_EX_RS1_CMD_TYPE_WIDTH = 2
   val CONFIG_EX_RS1_DATAFLOW_WIDTH = 1
   val CONFIG_EX_RS1_ACTIVATION_WIDTH = 2
-  val CONFIG_EX_RS1_SPACER0_WIDTH = (7 - 2 - 1 - 2)
+  val CONFIG_EX_RS1_USE_LUT = 1
+  val CONFIG_EX_RS1_SPACER0_WIDTH = (7 - 2 - 1 - 2 - 1)
   val CONFIG_EX_RS1_SET_ONLY_STRIDES_WIDTH = 1
   val CONFIG_EX_RS1_A_TRANSPOSE_WIDTH = 1
   val CONFIG_EX_RS1_B_TRANSPOSE_WIDTH = 1
@@ -195,6 +199,7 @@ object GemminiISA {
     val a_transpose = UInt(CONFIG_EX_RS1_A_TRANSPOSE_WIDTH.W)
     val set_only_strides = UInt(CONFIG_EX_RS1_SET_ONLY_STRIDES_WIDTH.W)
     val _spacer0 = UInt(CONFIG_EX_RS1_SPACER0_WIDTH.W)
+    val use_lut = UInt(CONFIG_EX_RS1_USE_LUT.W)
     val activation = UInt(CONFIG_EX_RS1_ACTIVATION_WIDTH.W)
     val dataflow = UInt(CONFIG_EX_RS1_DATAFLOW_WIDTH.W)
     val cmd_type = UInt(CONFIG_EX_RS1_CMD_TYPE_WIDTH.W)
@@ -234,6 +239,14 @@ object GemminiISA {
     val num_cols = UInt(compute_cols_bits.W)
     val _spacer0 = UInt((COMPUTED_RS_ADDR_WIDTH - local_addr_t.getWidth).W)
     val local_addr = local_addr_t.cloneType
+  }
+
+  class PreloadLutRs1(lut_t_bits: Int = 16) extends Bundle {
+    val lut_data = Vec(4,UInt(lut_t_bits.W))
+  }
+
+  class PreloadLutRs2(lut_t_bits: Int = 16) extends Bundle {
+    val lut_data = Vec(4,UInt(lut_t_bits.W))
   }
 }
 
