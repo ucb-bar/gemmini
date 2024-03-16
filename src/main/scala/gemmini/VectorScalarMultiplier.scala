@@ -198,6 +198,8 @@ object VectorScalarMultiplier {
   ) = {
     assert(!is_acc || is_mvin)
     val vsm = Module(new VectorScalarMultiplier(scale_args, cols, t, tag_t))
-    (vsm.io.req, vsm.io.resp)
+    val vsm_in_q = Module(new Queue(chiselTypeOf(vsm.io.req.bits), 2))
+    vsm.io.req <> vsm_in_q.io.deq
+    (vsm_in_q.io.enq, vsm.io.resp) 
   }
 }
