@@ -111,7 +111,27 @@ object GemminiFPConfigs {
     max_in_flight_mem_reqs = 16,
     headerFileName = "gemmini_params_fp32.h",
     num_counter = 0,
-    clock_gate = true // enable this
+    clock_gate = false //true // enable this
+  )
+
+
+  val FP32DummyConfig = slamFPConfig.copy(inputType = DummySInt(32), accType = DummySInt(32), spatialArrayOutputType = DummySInt(32),
+    mvin_scale_args = Some(ScaleArguments(
+      (t: DummySInt, f:Float) => t.dontCare,
+      1, Float(8, 24), -1,
+      identity = "1.0",
+      c_str = "((x)*(scale))"
+    )),
+
+    mvin_scale_acc_args = None,
+
+    acc_scale_args = Some(ScaleArguments(
+      (t: DummySInt, f:Float) => t.dontCare,
+      1, Float(8, 24), -1,
+      identity = "1.0",
+      c_str = "((x)*(scale))"
+    )),
+    has_loop_conv = true,
   )
 
   //FP16 Half Precision Configuration
@@ -152,6 +172,18 @@ class GemminiFP32DefaultConfig extends Config((site, here, up) => {
 
 class SLAMFPGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiFPConfigs.slamFPConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+})
+
+class GemminiFP32DummyConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiFPConfigs.FP32DummyConfig
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
     (p: Parameters) => {
