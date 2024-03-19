@@ -22,6 +22,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              accType: T,
 
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
+                                                                             gemv_support: Boolean = false,
 
                                                                              tileRows: Int = 1,
                                                                              tileColumns: Int = 1,
