@@ -35,6 +35,8 @@ object GemminiISA {
   val CLKGATE_EN = 22.U
 
   val STORE_SPAD_CMD = 23.U
+  val LOOP_WS_CONFIG_SPAD_AB = 24.U
+  val LOOP_WS_CONFIG_SPAD_C = 25.U
 
   // rs1[2:0] values
   val CONFIG_EX = 0.U

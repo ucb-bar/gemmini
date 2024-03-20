@@ -201,7 +201,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     address = Seq(AddressSet(0xff007000L, 0xfff)),
     device = regDevice,
     beatBytes = 8,
-    concurrency = 0)
+    concurrency = 1)
 
   regNode := TLFragmenter(8, 64) := stlNode
 
@@ -519,8 +519,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   regCommand.status := io.cmd.bits.status
 
   val raw_cmd_q = Module(new Queue(new GemminiCmd(reservation_station_entries), entries = 2))
-  raw_cmd_q.io.enq.valid := regValid || io.cmd.valid
-  io.cmd.ready := raw_cmd_q.io.enq.ready && !regValid
+  raw_cmd_q.io.enq.valid := regValid // || io.cmd.valid
+  io.cmd.ready := false.B // raw_cmd_q.io.enq.ready && !regValid
+  assert(!regValid || raw_cmd_q.io.enq.ready)
   raw_cmd_q.io.enq.bits.cmd := Mux(regValid, regCommand, io.cmd.bits)
   raw_cmd_q.io.enq.bits.rob_id := DontCare
   raw_cmd_q.io.enq.bits.from_conv_fsm := false.B
@@ -540,7 +541,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       RegField.w(32, gemminiRs1RegMSB)),
     0x18 -> Seq(
       RegField.w(32, gemminiRs2RegLSB),
-      RegField.w(32, gemminiRs2RegMSB))
+      RegField.w(32, gemminiRs2RegMSB)),
+    0x20 -> Seq(RegField.r(32, io.busy))
   )
 
   val raw_cmd = raw_cmd_q.io.deq
@@ -564,7 +566,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
-    new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
+    new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
 
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B

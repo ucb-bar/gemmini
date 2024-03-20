@@ -56,9 +56,14 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val counter = new CounterEventIO()
   })
 
-  // TODO make this a ChiselEnum
-  val ldq :: exq :: stq :: Nil = Enum(3)
-  val q_t = ldq.cloneType
+  // val ldq :: exq :: stq :: Nil = Enum(3)
+  val ldq = 0
+  val exq = 1
+  val stq = 2
+  val q_t = UInt(2.W)
+  val ldqu = 0.U(2.W)
+  val exqu = 1.U(2.W)
+  val stqu = 2.U(2.W)
 
   class OpT extends Bundle {
     val start = local_addr_t.cloneType
@@ -269,11 +274,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       // TODO: make it so that spad move has its own load config states
       val mv_cols = cmd.rs2(32 + mvout_cols_bits - 1, 32)
       val mv_rows = cmd.rs2(48 + mvout_rows_bits - 1, 48)
-      val mvout_dst_bytes = mv_rows * (cmd.rs1(63, 32) max mv_cols)
+      val mvout_dst_rows = mv_rows // * mv_cols
 
       dst.bits.start := cmd.rs1(31, 0).asTypeOf(local_addr_t)
-      dst.bits.end := dst.bits.start + mvout_dst_bytes
-      dst.bits.wraps_around := dst.bits.start.add_with_overflow(mvout_dst_bytes.asUInt)._2
+      dst.bits.end := dst.bits.start + mvout_dst_rows
+      dst.bits.wraps_around := dst.bits.start.add_with_overflow(mvout_dst_rows.asUInt)._2
 
       assert(!pooling_is_enabled, "cannot pool while moving between internal memories")
       assert(!dst.bits.start.is_acc_addr, "cannot move to accumulator memory")
@@ -311,13 +316,12 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val is_norm = funct === CONFIG_CMD && config_cmd_type === CONFIG_NORM // normalization commands are a subset of store commands, so they still go in the store queue
 
     new_entry.q := Mux1H(Seq(
-      is_load -> ldq,
-      is_store -> stq,
-      is_ex -> exq
+      is_load -> ldqu,
+      is_store -> stqu,
+      is_ex -> exqu
     ))
 
     assert(is_load || is_store || is_ex)
-    assert(ldq < exq && exq < stq)
 
     val not_config = !new_entry.is_config
     when (is_load) {
@@ -376,17 +380,19 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     new_entry.allocated_at := instructions_allocated
 
-    new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exq
+    new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exqu
 
     Seq(
-      (ldq, entries_ld, new_allocs_oh_ld, reservation_station_entries_ld),
-      (exq, entries_ex, new_allocs_oh_ex, reservation_station_entries_ex),
-      (stq, entries_st, new_allocs_oh_st, reservation_station_entries_st))
+      (ldqu, entries_ld, new_allocs_oh_ld, reservation_station_entries_ld),
+      (exqu, entries_ex, new_allocs_oh_ex, reservation_station_entries_ex),
+      (stqu, entries_st, new_allocs_oh_st, reservation_station_entries_st))
       .foreach { case (q, entries_type, new_allocs_type, entries_count) =>
         when (new_entry.q === q) {
           val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
-          when (q === ldq) { assert(!is_full) }
-          when (q === stq && new_entry.cmd.cmd.inst.funct =/= STORE_SPAD_CMD) { assert(!is_full) }
+          val is_full2 = PopCount(Seq(dst.valid, op1.valid, op2.valid)) === 2.U
+          when (q === ldqu) { assert(!is_full) }
+          when (q === stqu && new_entry.cmd.cmd.inst.funct =/= STORE_SPAD_CMD) { assert(!is_full) }
+          when (q === stqu && new_entry.cmd.cmd.inst.funct === STORE_SPAD_CMD) { assert(is_full2) }
 
           // looking for the first invalid entry
           val alloc_id = MuxCase((entries_count - 1).U, entries_type.zipWithIndex.map { case (e, i) => !e.valid -> i.U })
@@ -401,20 +407,20 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       }
 
     when (io.alloc.fire) {
-      when (new_entry.is_config && new_entry.q === exq) {
+      when (new_entry.is_config && new_entry.q === exqu) {
         a_stride := new_entry.cmd.cmd.rs1(31, 16) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
         c_stride := new_entry.cmd.cmd.rs2(63, 48) // TODO magic numbers // TODO this needs to be kept in sync with ExecuteController.scala
         val set_only_strides = new_entry.cmd.cmd.rs1(7) // TODO magic numbers
         when (!set_only_strides) {
           a_transpose := new_entry.cmd.cmd.rs1(8) // TODO magic numbers
         }
-      }.elsewhen(new_entry.is_config && new_entry.q === ldq) {
+      }.elsewhen(new_entry.is_config && new_entry.q === ldqu) {
         val id = new_entry.cmd.cmd.rs1(4,3) // TODO magic numbers
         val block_stride = new_entry.cmd.cmd.rs1(31, 16) // TODO magic numbers
         val repeat_pixels = maxOf(new_entry.cmd.cmd.rs1(8 + pixel_repeats_bits - 1, 8), 1.U) // TODO we use a default value of pixel repeats here, for backwards compatibility. However, we should deprecate and remove this default value eventually
         ld_block_strides(id) := block_stride
         ld_pixel_repeats(id) := repeat_pixels - 1.U
-      }.elsewhen(new_entry.is_config && new_entry.q === stq && !is_norm) {
+      }.elsewhen(new_entry.is_config && new_entry.q === stqu && !is_norm) {
         val pool_stride = new_entry.cmd.cmd.rs1(5, 4) // TODO magic numbers
         pooling_is_enabled := pool_stride =/= 0.U
       }.elsewhen(funct === PRELOAD_CMD) {
@@ -432,8 +438,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued)
     val issue_sel = PriorityEncoderOH(issue_valids)
     val issue_id = OHToUInt(issue_sel)
-    val global_issue_id = Cat(q.asUInt, issue_id.pad(log2Up(res_max_per_type)))
-    assert(q.getWidth == 2)
+    val global_issue_id = Cat(q.U(2.W), issue_id.pad(log2Up(res_max_per_type)))
     assert(global_issue_id.getWidth == 2 + log2Up(res_max_per_type))
 
     val issue_entry = Mux1H(issue_sel, entries_type)
@@ -460,11 +465,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         .foreach { case (q_, entries_type_) =>
 
         entries_type_.zipWithIndex.foreach { case (e, i) =>
-          val deps_type = if (q == ldq) e.bits.deps_ld
-                          else if (q == exq) e.bits.deps_ex else e.bits.deps_st
-          when ((q === q_) && (q_ =/= stq)) {
-            deps_type(issue_id) := false.B
-          }.otherwise {
+          val deps_type = if (q == ldq) e.bits.deps_ld else if (q == exq) e.bits.deps_ex else e.bits.deps_st
+          if ((q == q_) && (q_ != stq)) {
+            deps_type(issue_id) := false.B // TODO(richard): normal mvouts should not be blocked until complete
+          } else {
             when (issue_entry.bits.complete_on_issue) {
               deps_type(issue_id) := false.B
             }
@@ -474,13 +478,13 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
       // If the instruction completed on issue, then notify the conv/matmul FSMs that another one of their commands
       // completed
-      when (q === ldq) { conv_ld_issue_completed := complete_on_issue && from_conv_fsm }
-      when (q === stq) { conv_st_issue_completed := complete_on_issue && from_conv_fsm }
-      when (q === exq) { conv_ex_issue_completed := complete_on_issue && from_conv_fsm }
+      if (q == ldq) { conv_ld_issue_completed := complete_on_issue && from_conv_fsm }
+      if (q == stq) { conv_st_issue_completed := complete_on_issue && from_conv_fsm }
+      if (q == exq) { conv_ex_issue_completed := complete_on_issue && from_conv_fsm }
 
-      when (q === ldq) { matmul_ld_issue_completed := complete_on_issue && from_matmul_fsm }
-      when (q === stq) { matmul_st_issue_completed := complete_on_issue && from_matmul_fsm }
-      when (q === exq) { matmul_ex_issue_completed := complete_on_issue && from_matmul_fsm }
+      if (q == ldq) { matmul_ld_issue_completed := complete_on_issue && from_matmul_fsm }
+      if (q == stq) { matmul_st_issue_completed := complete_on_issue && from_matmul_fsm }
+      if (q == exq) { matmul_ex_issue_completed := complete_on_issue && from_matmul_fsm }
     }
   }
 
@@ -490,7 +494,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val queue_type = io.completed.bits(type_width + 1, type_width)
     val issue_id = io.completed.bits(type_width - 1, 0)
 
-    when (queue_type === ldq) {
+    when (queue_type === ldqu) {
       entries.foreach(_.bits.deps_ld(issue_id) := false.B)
       entries_ld(issue_id).valid := false.B
 
@@ -498,7 +502,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       matmul_ld_completed := entries_ld(issue_id).bits.cmd.from_matmul_fsm
 
       assert(entries_ld(issue_id).valid)
-    }.elsewhen (queue_type === exq) {
+    }.elsewhen (queue_type === exqu) {
       entries.foreach(_.bits.deps_ex(issue_id) := false.B)
       entries_ex(issue_id).valid := false.B
 
@@ -506,7 +510,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       matmul_ex_completed := entries_ex(issue_id).bits.cmd.from_matmul_fsm
       
       assert(entries_ex(issue_id).valid)
-    }.elsewhen (queue_type === stq) {
+    }.elsewhen (queue_type === stqu) {
       entries.foreach(_.bits.deps_st(issue_id) := false.B)
       entries_st(issue_id).valid := false.B
 
@@ -529,9 +533,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   // val utilization = PopCount(entries.map(e => e.valid))
-  val utilization_ld_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === ldq))
-  val utilization_st_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === stq))
-  val utilization_ex_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === exq))
+  val utilization_ld_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === ldqu))
+  val utilization_st_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === stqu))
+  val utilization_ex_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === exqu))
   val utilization_ld_q = PopCount(entries_ld.map(e => e.valid))
   val utilization_st_q = PopCount(entries_st.map(e => e.valid))
   val utilization_ex_q = PopCount(entries_ex.map(e => e.valid))
