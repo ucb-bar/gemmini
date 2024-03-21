@@ -239,6 +239,10 @@ object GemminiConfigs {
 
   val leanPrintfConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_mem_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true, use_firesim_simulation_counters=true)
 
+  val NVDLAConfig =  defaultConfig.copy(meshRows = 1,  meshColumns = 4, tileRows = 4, tileColumns = 1)
+
+  val ReducedNVDLAConfig =  defaultConfig.copy(meshRows = 1,  meshColumns = 1, tileRows = 4, tileColumns = 4)
+
 }
 
 /**
@@ -284,6 +288,7 @@ class LeanGemminiPrintfConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     }
   )
 })
+
 
 class DummyDefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.dummyConfig
@@ -367,4 +372,28 @@ class DualGemminiConfig extends Config((site, here, up) => {
     }
     up(BuildRoCC) ++ Seq(int_fn, fp_fn)
   }
+})
+
+class NVDLAGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.NVDLAConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+})
+
+class ReducedNVDLAGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.ReducedNVDLAConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
 })
