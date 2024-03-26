@@ -14,7 +14,7 @@ import chisel3.experimental._
   * @param meshRows
   * @param meshColumns
   */
-class MeshForVectors[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
+class MeshWithVectors[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
                                    df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int,
                                    max_simultaneous_matmuls: Int, output_delay: Int,
                                    val tileRows: Int, val tileColumns: Int,
@@ -26,6 +26,7 @@ class MeshForVectors[T <: Data : Arithmetic](inputType: T, outputType: T, accTyp
     val in_control = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
     val in_id = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Up(max_simultaneous_matmuls).W)))) // The unique id of this particular matmul
     val in_last = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
+    val gemv_mode = Input(Bool())
     val out_b = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
     val out_c = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
     val in_valid = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
@@ -49,30 +50,16 @@ class MeshForVectors[T <: Data : Arithmetic](inputType: T, outputType: T, accTyp
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
   for (r <- 0 until meshRows) {
-    mesh(r).foldLeft(io.in_a(0)(r)) {
-      case (in_a, tile) =>
-        tile.io.in_a := ShiftRegister(in_a, tile_latency+1)
+    mesh(r).zipWithIndex.foldLeft(io.in_a(0)(r)) {
+      case (in_a, (tile, c)) =>
+        tile.io.in_a := WireInit(Mux(io.gemv_mode, io.in_a(c)(r), ShiftRegister(in_a, tile_latency+1)))
         tile.io.out_a
     }
   }
-  // val pipelined_a = ?
-  // for (r <- 0 until meshRows) {
-  //   mesh(r).foldLeft(io.in_a(0)(r)) {
-  //     case (in_a, tile) =>
-  //       pipelined_a(?) := ShiftRegister(in_a, tile_latency+1)
-  //   }
-  }
-
-  // for (c <- 0 until meshColumns) {
-  //   for (r <- 0 until meshRows) {
-  //     tile.io.in_a(r)(c) := WireInit(Mux(true.B, ShiftRegister(tile.io.out_a(r-1)(c), tile_latency+1), io.in_a(r)(c)))
-  //     tile.io.out_a(r)(c) := tile.io.in_a(r)(c)
-  //   }
-  // }
 
   // Chain tile_out_b -> tile_b_in (pipeline b across each column)
   for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft((io.in_b(c), io.in_valid(c))) {
+    meshT(c).foldLeft((io.in_b(0), io.in_valid(c))) {
       case ((in_b, valid), tile) =>
         tile.io.in_b := pipe(valid.head, in_b, tile_latency+1)
         (tile.io.out_b, tile.io.out_valid)
