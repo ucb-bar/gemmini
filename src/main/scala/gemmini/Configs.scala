@@ -243,11 +243,15 @@ object GemminiConfigs {
 
   val ReducedNVDLAConfig =  defaultConfig.copy(meshRows = 1,  meshColumns = 1, tileRows = 4, tileColumns = 4)
 
+<<<<<<< HEAD
   val gemvConfig =  defaultConfig.copy(
     tileRows=1, tileColumns=4,
     meshRows=4, meshColumns=1
   )
 
+=======
+  val smallConfig = defaultConfig.copy(meshRows = 4, meshColumns = 1, tileRows = 1, tileColumns = 4, sp_banks = 8, acc_banks = 4)
+>>>>>>> 3afbb55 (execute controller working with only passing first column in)
 }
 
 /**
@@ -297,6 +301,18 @@ class LeanGemminiPrintfConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
 class DummyDefaultGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.dummyConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+})
+
+class SmallGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.smallConfig
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
     (p: Parameters) => {
