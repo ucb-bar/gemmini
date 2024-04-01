@@ -64,7 +64,9 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(
       name = s"spad_read_node_$i",
       sourceId = IdRange(0, num_ids),
-      visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1))
+      visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
+      supportsProbe = TransferSizes(mem_width, mem_width),
+      supportsGet = TransferSizes(mem_width, mem_width)
     )))
   }) else TLIdentityNode()
 
@@ -72,7 +74,10 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(
       name = s"spad_write_node_$i",
       sourceId = IdRange(0, num_ids),
-      visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1))
+      visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
+      supportsProbe = TransferSizes(mem_width, mem_width),
+      supportsPutFull = TransferSizes(mem_width, mem_width),
+      supportsPutPartial = TransferSizes(mem_width, mem_width)
     )))
   }) else TLIdentityNode()
 
