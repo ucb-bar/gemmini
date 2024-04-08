@@ -36,7 +36,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
    leftBanks: Int, upBanks: Int, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1, gemv_support: Boolean = false)
   extends Module {
 
-  val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
+  val A_TYPE = Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType)))
   val B_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
   val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType))
   val D_TYPE = Vec(meshColumns, Vec(tileColumns, inputType))
@@ -155,7 +155,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
 
   transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
-  transposer.io.inRow.bits := MuxCase(VecInit(a_buf.flatten), Seq(
+  transposer.io.inRow.bits := MuxCase(VecInit(b_buf.flatten), Seq(
     b_is_from_transposer -> VecInit(b_buf.flatten),
     d_is_from_transposer -> VecInit(d_buf.flatten.reverse),
   ))
@@ -164,7 +164,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val transposer_out = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
 
   // Wire up mesh's IO to this module's IO
-  val mesh = Module(new MeshWithVectors(inputType, outputType, accType, df, tree_reduction, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns))
+  val mesh = Module(new Mesh(inputType, outputType, accType, df, tree_reduction, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns))
 
   // TODO wire only to *_buf here, instead of io.*.bits
   val a_shifter_in = WireInit(Mux(a_is_from_transposer, transposer_out.asTypeOf(A_TYPE), a_buf))
@@ -173,10 +173,9 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     VecInit(transposer_out.flatten.reverse.grouped(tileRows).map(VecInit(_)).toSeq).asTypeOf(D_TYPE), d_buf))
 
   // val in_a_row = WireInit()
-  mesh.io.in_a := VecInit.fill(meshColumns)(VecInit(shifted(a_shifter_in, leftBanks)))
+  mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_b := b_shifter_in
   mesh.io.in_d := shifted(d_shifter_in, upBanks)
-  mesh.io.gemv_mode := false.B
 
   mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_.dataflow := ShiftRegister(req.bits.pe_control.dataflow, i * (tile_latency + 1)))

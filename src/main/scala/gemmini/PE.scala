@@ -36,7 +36,6 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
     val in_a = Input(inputType)
     val in_b = Input(outputType)
     val in_d = Input(outputType)
-    val out_a = Output(inputType)
     val out_b = Output(outputType)
     val out_c = Output(outputType)
 
@@ -76,7 +75,6 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   val last = io.in_last
   val valid = io.in_valid
 
-  io.out_a := a
   io.out_control.dataflow := dataflow
   io.out_control.propagate := prop
   io.out_control.shift := shift

@@ -30,8 +30,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
                                    val tileRows: Int, val tileColumns: Int,
                                    val meshRows: Int, val meshColumns: Int) extends Module {
   val io = IO(new Bundle {
-    // val in_a = Input(Vec(meshColumns, Vec(meshRows, Vec(tileRows, inputType)))) //meshRows vector
-    val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))//meshRows vector
+    val in_a = Input(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
     val in_b = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
     val in_d = Input(Vec(meshColumns, Vec(tileColumns, inputType)))
     val in_control = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
@@ -47,7 +46,6 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   })
 
   // mesh(r)(c) => Tile at row r, column c
-  // val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(Vec(,inputType), outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns)))
   val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns)))
 //pass in vec of vec 
   val meshT = mesh.transpose
@@ -58,58 +56,15 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
     chisel3.withReset(false.B) { Pipe(valid, t, latency).bits }
   }
 
+
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
-  // for (r <- 0 until meshRows) {
-  //   mesh(r).foldLeft(io.in_a(r)) {
-  //     for (n <- 0 until in_a(0).length-1){
-  //       case (in_a, tile) =>
-  //       tile.io.in_a(n) := ShiftRegister(in_a, tile_latency+1)
-  //     }
-  //       // tile.io.in_a := ShiftRegister(Vec(in_a, inputType), tile_latency+1)
-  //       tile.io.out_a
-  //   }
-  // }    
-  for (r <- 0 until meshRows) {
-    mesh(r).foldLeft(io.in_a(r)) { case (in_a, tile) =>
-      // val in_a_length = tileColumns
-      for (n <- 0 until tileColumns) {
-        //1st one shift register
-        tile.io.in_a(n) := ShiftRegister(in_a, tile_latency + 1) 
-      }
-      tile.io.out_a
-      //sign the previous tile.io.out_a to be in_a
-    }
-  }
+  for (c <- 0 until meshColumns) {
     for (r <- 0 until meshRows) {
-    mesh(r).foldLeft(io.in_a(r)) { case (in_a, tile) =>
-      // val in_a_length = tileColumns
-        //1st one shift register
-        tile.io.in_a(0) := ShiftRegister(in_a, tile_latency + 1) 
-      for (n <- 0 until tileColumns) {
-        in_a
-      }
-      tile.io.out_a
-      //sign the previous tile.io.out_a to be in_a
+      mesh(r)(c).io.in_a := io.in_a(r)
     }
   }
-  // for (r <- 0 until meshRows) {
-  //   mesh(r).foldLeft(io.in_a(r)) {
-  //     case (in_a, tile) =>
-  //       tile.io.in_a := ShiftRegister(in_a, tile_latency+1)
-  //       tile.io.out_a
-  //   }
-  // }
 
-  // val pipelined_a = ?
-  //   for (r <- 0 until meshRows) {
-
-  // for (c <- 0 until meshColumns) {
-  //   for (r <- 0 until meshRows) {
-  //       tile.io.in_a(r)(c) := wireInit(Mux(true.B))
-
-  //   }
-  // }
   // Chain tile_out_b -> tile_b_in (pipeline b across each column)
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_b(c), io.in_valid(c))) {

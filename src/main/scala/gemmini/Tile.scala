@@ -15,8 +15,7 @@ import Util._
   */
 class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, tree_reduction: Boolean, max_simultaneous_matmuls: Int, val rows: Int, val columns: Int)(implicit ev: Arithmetic[T]) extends Module {
   val io = IO(new Bundle {
-    val in_a        = Input(Vec(columns, Vec(rows, inputType)))//2D
-    // val in_a        = Input(Vec(rows, inputType))
+    val in_a        = Input(Vec(columns, Vec(rows, inputType)))
     val in_b        = Input(Vec(columns, outputType)) // This is the output of the tile next to it
     val in_d        = Input(Vec(columns, outputType))
 
@@ -43,26 +42,15 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
   val tile = Seq.fill(rows, columns)(Module(new PE(inputType, outputType, accType, df, max_simultaneous_matmuls)))
   val tileT = tile.transpose
 
-
   // TODO: abstract hori/vert broadcast, all these connections look the same
   // Broadcast 'a' horizontally across the Tile
-  //val result = Mux(isGEMV, whenTrue, whenFalse)
-    // tile(0)(0).io.in_a := WireInit(Mux(true.B, io.in_a(c)(r), tile(r)(c-1).io.out_a)) // Corrected: Changed wireInit to WireInit and fixed in_a access
   for (r <- 0 until rows) {
-    tile(0)(r).io.in_a := io.in_a(0)(r)
-
-    for (c <- 0 until columns-1) {
-          tile(c+1)(r).io.in_a := WireInit(Mux(false.B, io.in_a(c)(r), tile(c)(r).io.out_a)) 
-          // tile(r)(c).pe.io.in_a := wireInit(Mux(true.B, in_a(r)(c), tile(r)(c-1).pe.io.out_a))
-      }
+    for (c <- 0 until columns) {
+      tile(r)(c).io.in_a := io.in_a(c)(r)
+    }
   }
 
-    // for (c <- 0 until meshColumns) {
-  //   for (r <- 0 until meshRows) {
-  //       tile.io.in_a(r)(c) := wireInit(Mux(true.B))
-
-  // Broadcast 'b' vertically across the Tile n^2 PE, n^2 inputs
-  // Broadcast 'b' vertically across the Tile n^2 PE, n inputs
+  // Broadcast 'b' vertically across the Tile
   for (c <- 0 until columns) {
     tileT(c).foldLeft(io.in_b(c)) {
       case (in_b, pe) =>
@@ -134,9 +122,4 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
     }
   }
   io.bad_dataflow := tile.map(_.map(_.io.bad_dataflow).reduce(_||_)).reduce(_||_)
-
-  // Drive the Tile's right IO
-  for (r <- 0 until rows) {
-    io.out_a(r) := tile(r)(columns-1).io.out_a
-  }
 }
