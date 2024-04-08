@@ -22,8 +22,8 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
     val in_control  = Input(Vec(columns, new PEControl(accType)))
     val in_id       = Input(Vec(columns, UInt(log2Up(max_simultaneous_matmuls).W)))
     val in_last  = Input(Vec(columns, Bool()))
-
-    val out_a       = Output(Vec(rows, inputType))
+    // Removed out_a as we only have one tile and there is no register between tiles in the Mesh
+    // val out_a       = Output(Vec(rows, inputType))
     val out_c       = Output(Vec(columns, outputType))
     val out_b       = Output(Vec(columns, outputType))
 
