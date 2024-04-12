@@ -243,6 +243,11 @@ object GemminiConfigs {
 
   val ReducedNVDLAConfig =  defaultConfig.copy(meshRows = 1,  meshColumns = 1, tileRows = 4, tileColumns = 4)
 
+  val gemvConfig =  defaultConfig.copy(
+    tileRows=1, tileColumns=16,
+    meshRows=16, meshColumns=1
+  )
+
 }
 
 /**
@@ -388,6 +393,18 @@ class NVDLAGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
 class ReducedNVDLAGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.ReducedNVDLAConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+})
+
+class GemvGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.gemvConfig
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
     (p: Parameters) => {
