@@ -244,8 +244,8 @@ object GemminiConfigs {
   val ReducedNVDLAConfig =  defaultConfig.copy(meshRows = 1,  meshColumns = 1, tileRows = 4, tileColumns = 4)
 
   val gemvConfig =  defaultConfig.copy(
-    tileRows=1, tileColumns=16,
-    meshRows=16, meshColumns=1
+    tileRows=1, tileColumns=4,
+    meshRows=4, meshColumns=1
   )
 
 }

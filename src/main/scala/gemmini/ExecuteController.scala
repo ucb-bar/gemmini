@@ -166,6 +166,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val d_rows = Mux(current_dataflow === Dataflow.WS.id.U && bd_transpose, d_cols_default, d_rows_default)
   val c_cols = rs2s(preload_cmd_place)(32 + log2Up(block_size + 1) - 1, 32) // TODO magic numbers
   val c_rows = rs2s(preload_cmd_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers
+// preload 16 cycle 
 
   // Dependency stuff
   io.completed.valid := false.B
@@ -333,6 +334,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   case class Operand(addr: LocalAddr, is_garbage: Bool, start_inputting: Bool, counter: UInt, started: Bool, can_be_im2colled: Boolean, priority: Int) {
     val done = counter === 0.U && started
   }
+
+  //change to for loops instead of load in 16 at a time
+  // if banks conflict a fire counter ++, b, d 
+  // one 
   val a_operand = Operand(a_address, a_address_rs1.is_garbage(), start_inputting_a, a_fire_counter, a_fire_started, true, 0)
   val b_operand = Operand(b_address, b_address_rs2.is_garbage(), start_inputting_b, b_fire_counter, b_fire_started, false, 1)
   val d_operand = Operand(d_address, d_address_rs1.is_garbage(), start_inputting_d, d_fire_counter, d_fire_started, false, 2)
@@ -828,6 +833,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val preload_zero_counter = RegInit(0.U(5.W))
   //val neg_shift_sub = block_size.U - cntl.c_rows
   preload_zero_counter := wrappingAdd(preload_zero_counter, 1.U, block_size.U, dataA_valid && dataD_valid && cntl.preload_zeros && (cntl.perform_single_preload || cntl.perform_mul_pre))
+  // val dataA_unpadded = VecInit.tabulate(2, 2){ (i, j) => if (i == j) 1.U(32.W) else 0.U(32.W) }
+  // Cat(dataA_seq.flatten)
 
   val dataA_unpadded = Mux(cntl.im2colling, im2ColData, Mux(cntl.a_read_from_acc, accReadData(cntl.a_bank_acc), readData(cntl.a_bank)))
   val dataB_unpadded = MuxCase(readData(cntl.b_bank), Seq(cntl.accumulate_zeros -> 0.U, cntl.b_read_from_acc -> accReadData(cntl.b_bank_acc)))
@@ -876,7 +883,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.b.valid := cntl.b_fire && dataB_valid
     mesh.io.d.valid := cntl.d_fire && dataD_valid
 
-    mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
+    for (tc <- 0 until tileColumns) {
+      for (mr <- 0 until meshRows) {
+        for (tr <- 0 until tileRows) {
+          mesh.io.a.bits(mr)(tc)(tr) := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))(mr)(tr)
+        }
+      }
+    }
+    // mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
@@ -888,12 +902,26 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
 
   when (cntl_valid && cntl.perform_single_preload) {
-    mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, dataA.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
+    // mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, dataA.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
+    for (tc <- 0 until tileColumns) {
+      for (mr <- 0 until meshRows) {
+        for (tr <- 0 until tileRows) {
+          mesh.io.a.bits(mr)(tc)(tr) := Mux(a_should_be_fed_into_transposer, dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))(mr)(tr).asUInt, 0.U).asTypeOf(inputType)
+        }
+      }
+    }
     mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
   }
 
   when (cntl_valid && cntl.perform_single_mul) {
-    mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
+    // mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
+    for (tc <- 0 until tileColumns) {
+      for (mr <- 0 until meshRows) {
+        for (tr <- 0 until tileRows) {
+          mesh.io.a.bits(mr)(tc)(tr) := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))(mr)(tr).asUInt).asTypeOf(inputType) 
+        }
+      }
+    }
     mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.req.bits.tag.addr.make_this_garbage()
   }
