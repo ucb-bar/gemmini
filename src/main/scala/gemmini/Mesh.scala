@@ -61,7 +61,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   // TODO clock-gate A signals with in_garbage
   for (c <- 0 until meshColumns) {
     for (r <- 0 until meshRows) {
-      mesh(r)(c).io.in_a := io.in_a(r)
+      mesh(r)(c).io.in_a := ShiftRegister(io.in_a(r), tile_latency+1)
     }
   }
 
