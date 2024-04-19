@@ -249,9 +249,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // "C" stride variables
   val c_addr_stride = Reg(UInt(16.W)) // TODO magic numbers
 
-  // val a_address = (0 until tileColumns).map(i => a_address_rs1(i) + a_addr_offset(i))
-  // TODO this makes the ex controller repeatedly fetch the a_matrix but it should only fetch once and hold valid
-  val a_address = (0 until tileColumns).map(i => a_address_rs1(i))
+  val a_address = (0 until tileColumns).map(i => a_address_rs1(i) + a_addr_offset(i))
   val b_address = b_address_rs2 + b_fire_counter
   val d_address = d_address_rs1 + (block_size.U - 1.U - d_fire_counter)
 
