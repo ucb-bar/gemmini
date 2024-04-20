@@ -974,7 +974,7 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   io.loop_id := req.loop_id
 
   command_p.io.in.valid := state =/= idle && !skip && io.ex_completed
-  command_p.io.in.bits.cmd := MuxLookup(state.asUInt, mvout_cmd, Seq(
+  command_p.io.in.bits.cmd := MuxLookup(state.asUInt, mvout_cmd)(Seq(
     pre_pool_config.asUInt -> pre_pool_config_cmd,
     pool.asUInt -> pool_cmd,
     post_pool_config.asUInt -> post_pool_config_cmd)

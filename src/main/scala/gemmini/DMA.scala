@@ -3,7 +3,6 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.DataMirror
 
 import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp}
@@ -211,7 +210,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     )._2
 
     class TLBundleAWithInfo extends Bundle {
-      val tl_a = DataMirror.internal.chiselTypeClone[TLBundleA](tl.a.bits)
+      val tl_a = tl.a.bits.cloneType
       val vaddr = Output(UInt(vaddrBits.W))
       val status = Output(new MStatus)
     }
@@ -499,7 +498,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     )._2
 
     class TLBundleAWithInfo extends Bundle {
-      val tl_a = DataMirror.internal.chiselTypeClone[TLBundleA](tl.a.bits)
+      val tl_a = tl.a.bits.cloneType
       val vaddr = Output(UInt(vaddrBits.W))
       val status = Output(new MStatus)
     }
