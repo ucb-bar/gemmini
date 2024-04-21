@@ -19,7 +19,7 @@ class ReservationStationIssue[T <: Data](cmd_t: T, id_width: Int) extends Bundle
   val cmd = Output(cmd_t.cloneType)
   val rob_id = Output(UInt(id_width.W))
 
-  def fire(dummy: Int=0) = valid && ready
+  def fire = valid && ready
 }
 
 // TODO we don't need to store the full command in here. We should be able to release the command directly into the relevant controller and only store the associated metadata in the ROB. This would reduce the size considerably
@@ -178,7 +178,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val new_entry_oh = new_allocs_oh_ld ++ new_allocs_oh_ex ++ new_allocs_oh_st
   new_entry_oh.foreach(_ := false.B)
 
-  val alloc_fire = io.alloc.fire()
+  val alloc_fire = io.alloc.fire
 
   io.alloc.ready := false.B
   when (io.alloc.valid) {
@@ -410,7 +410,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val from_conv_fsm = entries_type(issue_id).bits.cmd.from_conv_fsm
     val from_matmul_fsm = entries_type(issue_id).bits.cmd.from_matmul_fsm
 
-    when (io.fire()) {
+    when (io.fire) {
       entries_type.zipWithIndex.foreach { case (e, i) =>
         when (issue_sel(i)) {
           e.bits.issued := true.B
@@ -519,7 +519,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   val cycles_since_issue = RegInit(0.U(16.W))
 
-  when (io.issue.ld.fire() || io.issue.st.fire() || io.issue.ex.fire() || !io.busy || io.completed.fire) {
+  when (io.issue.ld.fire || io.issue.st.fire || io.issue.ex.fire || !io.busy || io.completed.fire) {
     cycles_since_issue := 0.U
   }.elsewhen(io.busy) {
     cycles_since_issue := cycles_since_issue + 1.U
