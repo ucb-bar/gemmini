@@ -447,6 +447,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val dataABank_vec = VecInit(dataAbank)
   dontTouch(dataABank_vec)
 
+  dontTouch(dataBbank)
+
   // Scratchpad reads
   for (i <- 0 until sp_banks) {
     // val matching_a = dataAbank.indexOf(i.U)
@@ -455,6 +457,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     dontTouch(matching_a_wire)
     val read_a = if (matching_a == -1) false.B else a_valid(matching_a) && !a_read_from_acc && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros(matching_a) && !(im2col_wire&&im2col_en)
     val read_b = b_valid && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
+    dontTouch(b_valid)
     val read_d = d_valid && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
 
     Seq((read_a, a_ready), (read_b, b_ready), (read_d, d_ready)).foreach { case (rd, r) =>
@@ -919,21 +922,37 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
   }
 
+  // TODO integrate this fully
+  val gemv_mode = RegInit(true.B)
+  dontTouch(dataB)
+  dontTouch(cntl_valid)
+  dontTouch(mesh.io.a.valid)
+
+  when (gemv_mode) {
+      mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
+      for (tc <- 0 until tileColumns) {
+        for (mc <- 0 until meshColumns) {
+            mesh.io.b.bits(mc)(tc) := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))(b_fire_counter)(tc)
+        }
+      }
+    }.otherwise {
+      for (tc <- 0 until tileColumns) {
+        for (mr <- 0 until meshRows) {
+          for (tr <- 0 until tileRows) {
+            mesh.io.a.bits(mr)(tc)(tr) := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))(mr)(tr)
+          }
+        }
+      }
+    }
+
   when (cntl_valid) {
     // Default inputs
     mesh.io.a.valid := cntl.a_fire && dataA_valid
     mesh.io.b.valid := cntl.b_fire && dataB_valid
     mesh.io.d.valid := cntl.d_fire && dataD_valid
-
-    for (tc <- 0 until tileColumns) {
-      for (mr <- 0 until meshRows) {
-        for (tr <- 0 until tileRows) {
-          mesh.io.a.bits(mr)(tc)(tr) := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))(mr)(tr)
-        }
-      }
-    }
+    
     // mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
-    mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
+    // mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
 
     mesh.io.req.valid := mesh_cntl_signals_q.io.deq.fire && (cntl.a_fire || cntl.b_fire || cntl.d_fire)
@@ -945,26 +964,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   when (cntl_valid && cntl.perform_single_preload) {
     // mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, dataA.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
-    for (tc <- 0 until tileColumns) {
-      for (mr <- 0 until meshRows) {
-        for (tr <- 0 until tileRows) {
-          mesh.io.a.bits(mr)(tc)(tr) := Mux(a_should_be_fed_into_transposer, dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))(mr)(tr).asUInt, 0.U).asTypeOf(inputType)
-        }
-      }
-    }
-    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
+    // mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
   }
 
   when (cntl_valid && cntl.perform_single_mul) {
     // mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
-    for (tc <- 0 until tileColumns) {
-      for (mr <- 0 until meshRows) {
-        for (tr <- 0 until tileRows) {
-          mesh.io.a.bits(mr)(tc)(tr) := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))(mr)(tr).asUInt).asTypeOf(inputType) 
-        }
-      }
-    }
-    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
+    // mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.req.bits.tag.addr.make_this_garbage()
   }
 
