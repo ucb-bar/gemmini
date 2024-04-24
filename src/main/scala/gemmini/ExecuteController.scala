@@ -250,7 +250,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val c_addr_stride = Reg(UInt(16.W)) // TODO magic numbers
 
   val a_address = (0 until tileColumns).map(i => a_address_rs1(i) + a_addr_offset(i))
-  val b_address = b_address_rs2 + b_fire_counter
+  // val b_address = b_address_rs2 + b_fire_counter
+  val b_address = b_address_rs2 // TODO remove b_fire_counter references
   val d_address = d_address_rs1 + (block_size.U - 1.U - d_fire_counter)
 
   val dataAbank = a_address.map(address => address.sp_bank())
@@ -928,11 +929,20 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   dontTouch(cntl_valid)
   dontTouch(mesh.io.a.valid)
 
+  val b_mesh_fire_counter = Reg(UInt(log2Up(block_size).W))
+  dontTouch(b_mesh_fire_counter)
+
+  when (!cntl_valid) {
+    b_mesh_fire_counter := 0.U
+  }.elsewhen(cntl.b_fire && dataB_valid) {
+    b_mesh_fire_counter := wrappingAdd(b_mesh_fire_counter, 1.U, total_rows)
+  }
+
   when (gemv_mode) {
       mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
       for (tc <- 0 until tileColumns) {
         for (mc <- 0 until meshColumns) {
-            mesh.io.b.bits(mc)(tc) := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))(b_fire_counter)(tc)
+            mesh.io.b.bits(mc)(tc) := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))(mc)(b_mesh_fire_counter)
         }
       }
     }.otherwise {
