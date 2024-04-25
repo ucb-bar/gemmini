@@ -933,17 +933,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   dontTouch(dataD)
 
   when (gemv_mode) {
-      // mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
-
-      for (tc <- 0 until tileColumns) {
-        for (mr <- 0 until meshRows) {
-          for (tr <- 0 until tileRows) {
-            mesh.io.a.bits(mr)(tc)(tr) := dataA.asTypeOf(Vec(tileColumns, Vec(meshRows, Vec(tileRows, inputType))))(tc)(mr)(tr)
+      when ((current_dataflow === Dataflow.WS.id.U).asBool) {
+        for (tc <- 0 until tileColumns) {
+          for (mr <- 0 until meshRows) {
+            for (tr <- 0 until tileRows) {
+              mesh.io.a.bits(mr)(tc)(tr) := dataA.asTypeOf(Vec(tileColumns, Vec(meshRows, Vec(tileRows, inputType))))(tc)(mr)(tr)
+            }
           }
         }
-      }
-
-      when ((current_dataflow === Dataflow.WS.id.U).asBool) {
         for (tc <- 0 until tileColumns) {
           for (mc <- 0 until meshColumns) {
               mesh.io.d.bits(mc)(tc) := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))(0)(0)
@@ -951,6 +948,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
         }
         mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
       }.otherwise {
+        // TODO this only works when casted this way
+        mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
         for (tc <- 0 until tileColumns) {
           for (mc <- 0 until meshColumns) {
               mesh.io.b.bits(mc)(tc) := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))(0)(0)
