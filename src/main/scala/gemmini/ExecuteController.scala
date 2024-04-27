@@ -45,6 +45,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val busy = Output(Bool())
 
     val counter = new CounterEventIO()
+
+    val pipeline_tag = Output(new EventAnnotation)
   })
 
   val block_size = meshRows*tileRows

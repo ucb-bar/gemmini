@@ -19,6 +19,7 @@ class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
   val from_matmul_fsm = Bool()
   val from_conv_fsm = Bool()
+  val pipeline_tag = new EventAnnotation
 }
 
 class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiArrayConfig[T, U, V])
@@ -55,6 +56,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   val tagWidth = 32
 
+  //Pipeline Viewer
+  val input_cmd_tag = Wire(new EventAnnotation)
+  val not_clk = ~clock.asBool
+  
   // Counters
   val counters = Module(new CounterController(outer.config.num_counter, outer.xLen))
   io.resp <> counters.io.out  // Counter access command will be committed immediately
@@ -135,6 +140,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   raw_cmd_q.io.enq.bits.rob_id := DontCare
   raw_cmd_q.io.enq.bits.from_conv_fsm := false.B
   raw_cmd_q.io.enq.bits.from_matmul_fsm := false.B
+  raw_cmd_q.io.enq.bits.pipeline_tag := input_cmd_tag
 
   val raw_cmd = raw_cmd_q.io.deq
 
@@ -151,6 +157,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     has_training_convs, has_max_pool, has_first_layer_optimizations, has_dw_convs) }
+  
 
   val (loop_cmd, loop_matmul_unroller_busy) = withClock (gated_clock) { LoopMatmul(conv_cmd, reservation_station.io.matmul_ld_completed, reservation_station.io.matmul_st_completed, reservation_station.io.matmul_ex_completed,
     meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
@@ -164,9 +171,26 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
 
   // Wire up controllers to ROB
-  reservation_station.io.alloc.valid := false.B
-  reservation_station.io.alloc.bits := unrolled_cmd.bits
 
+  reservation_station.io.alloc.valid := false.B
+  // reservation_station.io.alloc.bits := unrolled_cmd.bits
+  // withClock(not_clk.asClock) {
+    // when (raw_cmd.fire) {
+    //   raw_cmd.pipeline_tag := GenEvent("LoopConv", inst_ctr, raw_cmd.bits.cmd.inst.asUInt, Some(raw_cmd.bits.pipeline_tag))
+    // }
+    // when (raw_cmd.fire) {
+    //   raw_cmd.pipeline_tag := GenEvent("LoopConv", inst_ctr, raw_cmd.bits.cmd.inst.asUInt, Some(raw_cmd.bits.pipeline_tag))
+    // }
+    when (reservation_station.io.alloc.fire) {
+      reservation_station.io.alloc.bits.pipeline_tag := GenEvent("ROB_ISSUE", unrolled_cmd.bits.cmd.inst.asUInt, Some(unrolled_cmd.bits.pipeline_tag))
+    }.otherwise {
+      reservation_station.io.alloc.bits.pipeline_tag := DontCare
+    }
+  // }
+  reservation_station.io.alloc.bits.cmd := unrolled_cmd.bits.cmd
+  reservation_station.io.alloc.bits.rob_id := unrolled_cmd.bits.rob_id
+  reservation_station.io.alloc.bits.from_conv_fsm := unrolled_cmd.bits.from_conv_fsm
+  reservation_station.io.alloc.bits.from_matmul_fsm := unrolled_cmd.bits.from_matmul_fsm
   /*
   //-------------------------------------------------------------------------
   // finish muxing control signals to rob (risc) or tiler (cisc)
@@ -227,23 +251,37 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     ex_controller.io.cmd.bits.cmd := rob.io.issue.ex.cmd
     ex_controller.io.cmd.bits.cmd.inst.funct := rob.io.issue.ex.cmd.inst.funct
     ex_controller.io.cmd.bits.rob_id.push(rob.io.issue.ex.rob_id)
-  }
+  }x
   */
 
   load_controller.io.cmd.valid := reservation_station.io.issue.ld.valid
   reservation_station.io.issue.ld.ready := load_controller.io.cmd.ready
   load_controller.io.cmd.bits := reservation_station.io.issue.ld.cmd
   load_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.ld.rob_id)
-
+  // withClock(not_clk.asClock) {
+    when (load_controller.io.cmd.fire) {
+      load_controller.io.cmd.bits.pipeline_tag := GenEvent("LD_ISSUE", reservation_station.io.issue.ld.cmd.cmd.inst.asUInt, Some(reservation_station.io.issue.ld.cmd.pipeline_tag))
+    }
+  // }
   store_controller.io.cmd.valid := reservation_station.io.issue.st.valid
   reservation_station.io.issue.st.ready := store_controller.io.cmd.ready
   store_controller.io.cmd.bits := reservation_station.io.issue.st.cmd
   store_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.st.rob_id)
+  // withClock(not_clk.asClock) {
+    when (store_controller.io.cmd.fire) {
+      store_controller.io.cmd.bits.pipeline_tag := GenEvent("ST_ISSUE", reservation_station.io.issue.st.cmd.cmd.inst.asUInt, Some(reservation_station.io.issue.st.cmd.pipeline_tag))
+    }
+  // }
 
   ex_controller.io.cmd.valid := reservation_station.io.issue.ex.valid
   reservation_station.io.issue.ex.ready := ex_controller.io.cmd.ready
   ex_controller.io.cmd.bits := reservation_station.io.issue.ex.cmd
   ex_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.ex.rob_id)
+  // withClock(not_clk.asClock) {
+    when (ex_controller.io.cmd.fire) {
+      ex_controller.io.cmd.bits.pipeline_tag := GenEvent("EX_ISSUE", reservation_station.io.issue.ex.cmd.cmd.inst.asUInt, Some(reservation_station.io.issue.ex.cmd.pipeline_tag))
+    }
+  // }
 
   // Wire up scratchpad to controllers
   spad.module.io.dma.read <> load_controller.io.dma
@@ -283,10 +321,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     spad_read.resp.ready := ex_read.resp.ready || im2col_read.resp.ready
   }
 
-  // Wire up controllers to ROB
-  reservation_station.io.alloc.valid := false.B
-  // rob.io.alloc.bits := compressed_cmd.bits
-  reservation_station.io.alloc.bits := unrolled_cmd.bits
+  // // Wire up controllers to ROB
+  // reservation_station.io.alloc.valid := false.B
+  // // rob.io.alloc.bits := compressed_cmd.bits
+  // reservation_station.io.alloc.bits := unrolled_cmd.bits
 
   /*
   //=========================================================================
@@ -316,6 +354,18 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   reservation_station_completed_arb.io.in(1) <> load_controller.io.completed
   reservation_station_completed_arb.io.in(2) <> store_controller.io.completed
+
+  // withClock(not_clk.asClock) {
+  when (ex_controller.io.completed.fire) {
+    GenEvent("EX_RET", inst_ctr, 0.U, Some(ex_controller.io.pipeline_tag))
+  }
+  when (load_controller.io.completed.fire) {
+    GenEvent("LD_RET", 0.U, Some(load_controller.io.pipeline_tag))
+  }
+  when (store_controller.io.completed.fire) {
+    GenEvent("ST_RET", 0.U, Some(store_controller.io.pipeline_tag))
+  }
+  // }
 
   // mux with cisc frontend arbiter
   reservation_station_completed_arb.io.in(0).valid := ex_controller.io.completed.valid // && !is_cisc_mode
@@ -401,7 +451,16 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     }
   }
 
-  // Debugging signals
+  // Debugging signals + Pipeline Viewer
+  
+  // withClock(not_clk.asClock) {
+    when (io.cmd.valid) {
+      input_cmd_tag := GenEvent("CMD", io.cmd.bits.inst.asUInt, None)
+    }.otherwise {
+      input_cmd_tag := DontCare
+    }
+  // }
+
   val pipeline_stall_counter = RegInit(0.U(32.W))
   when (io.cmd.fire()) {
     pipeline_stall_counter := 0.U

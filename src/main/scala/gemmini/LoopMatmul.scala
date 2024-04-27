@@ -805,7 +805,13 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val stC = Module(new LoopMatmulStC(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, max_block_len, concurrent_loops, mvout_rs2_t))
 
   // Create command queue
-  val cmd = Queue(io.in)
+  val in_for_pipeline_viewer = Wire(io.in.cloneType)
+  in_for_pipeline_viewer <> io.in
+  // Create command queue
+  when (io.in.fire) {
+    in_for_pipeline_viewer.bits.pipeline_tag := GenEvent("LOOP_MM", io.in.bits.cmd.inst.asUInt, Some(io.in.bits.pipeline_tag))
+  }
+  val cmd = Queue(in_for_pipeline_viewer)
 
   io.busy := cmd.valid || loop_configured
 
@@ -858,6 +864,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   io.out.bits.from_matmul_fsm := Mux(loop_configured, true.B, cmd.bits.from_matmul_fsm)
   io.out.bits.from_conv_fsm := Mux(loop_configured, false.B, cmd.bits.from_conv_fsm)
   io.out.valid := Mux(loop_configured, unrolled_cmd.valid, cmd.valid && !is_loop_config_cmd && !is_loop_run_cmd)
+  io.out.bits.pipeline_tag := cmd.bits.pipeline_tag //For pipeline viewer
 
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)
   arb.io.out.ready := io.out.ready

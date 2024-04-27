@@ -25,6 +25,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     val busy = Output(Bool())
 
     val counter = new CounterEventIO()
+
+    val pipeline_tag = Output(new EventAnnotation)
   })
 
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -85,6 +87,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
   val deps_t = new Bundle {
     val rob_id = UInt(log2Up(reservation_station_entries).W)
+    val pipeline_tag = new EventAnnotation //For pipeline viewer
   }
 
   val maxBytesInRowRequest = config.dma_maxbytes max (block_cols * config.inputType.getWidth / 8) max
@@ -110,6 +113,8 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.status := mstatus
   io.dma.req.bits.pixel_repeats := pixel_repeat
 
+  
+
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
   cmd_tracker.io.alloc.bits.bytes_to_read :=
@@ -121,11 +126,15 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   cmd_tracker.io.request_returned.bits.bytes_read := io.dma.resp.bits.bytesRead
   cmd_tracker.io.cmd_completed.ready := io.completed.ready
 
+  //Pipeline Viewer FIXME annotate this
+  cmd_tracker.io.alloc.bits.tag.pipeline_tag := cmd.bits.pipeline_tag
+
   val cmd_id = RegEnableThru(cmd_tracker.io.alloc.bits.cmd_id, cmd_tracker.io.alloc.fire()) // TODO is this really better than a simple RegEnable?
   io.dma.req.bits.cmd_id := cmd_id
 
   io.completed.valid := cmd_tracker.io.cmd_completed.valid
   io.completed.bits := cmd_tracker.io.cmd_completed.bits.tag.rob_id
+  io.pipeline_tag := cmd_tracker.io.cmd_completed.bits.tag.pipeline_tag
 
   io.busy := cmd.valid || cmd_tracker.io.busy
 

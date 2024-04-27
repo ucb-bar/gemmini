@@ -1211,8 +1211,13 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   val ex = Module(new LoopConvExecute(block_size, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops, latency, config_ex_rs1_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t))
   val st = Module(new LoopConvSt(block_size, coreMaxAddrBits, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth, max_acc_addr, input_w, concurrent_loops, latency, config_mvout_rs2_t, mvout_rs2_t))
 
+  val in_for_pipeline_viewer = Wire(io.in.cloneType)
+  in_for_pipeline_viewer <> io.in
   // Create command queue
-  val cmd = Queue(io.in)
+  when (io.in.fire) {
+    in_for_pipeline_viewer.bits.pipeline_tag := GenEvent("LOOP_CONV", io.in.bits.cmd.inst.asUInt, Some(io.in.bits.pipeline_tag))
+  }
+  val cmd = Queue(in_for_pipeline_viewer)
 
   io.busy := cmd.valid || loop_configured
 
@@ -1249,6 +1254,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   io.out.bits.from_matmul_fsm := Mux(loop_configured, false.B, cmd.bits.from_matmul_fsm)
   io.out.bits.from_conv_fsm := Mux(loop_configured, true.B, cmd.bits.from_conv_fsm)
   io.out.valid := Mux(loop_configured, unrolled_cmd.valid, cmd.valid && !is_loop_config_cmd && !is_loop_run_cmd)
+  io.out.bits.pipeline_tag := cmd.bits.pipeline_tag //For pipeline viewer
 
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)
   arb.io.out.ready := io.out.ready

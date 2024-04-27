@@ -25,6 +25,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     val busy = Output(Bool())
 
     val counter = new CounterEventIO()
+
+    val pipeline_tag = Output(new EventAnnotation)
   })
 
   // val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -142,6 +144,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val deps_t = new Bundle {
     val rob_id = UInt(log2Up(reservation_station_entries).W)
+    val pipeline_tag = new EventAnnotation //For pipeline viewer
   }
 
   val cmd_tracker_max_rows = ((block_rows * max_blocks) max
@@ -187,11 +190,15 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   cmd_tracker.io.request_returned.bits.bytes_read := 1.U
   cmd_tracker.io.cmd_completed.ready := io.completed.ready
 
+  //Pipeline Viewer FIXME annotate this
+  cmd_tracker.io.alloc.bits.tag.pipeline_tag := cmd.bits.pipeline_tag
+
   val cmd_id = RegEnableThru(cmd_tracker.io.alloc.bits.cmd_id, cmd_tracker.io.alloc.fire()) // TODO is this really better than a simple RegEnable?
   io.dma.req.bits.cmd_id := cmd_id
 
   io.completed.valid := cmd_tracker.io.cmd_completed.valid
   io.completed.bits := cmd_tracker.io.cmd_completed.bits.tag.rob_id
+  io.pipeline_tag := cmd_tracker.io.cmd_completed.bits.tag.pipeline_tag
 
   io.busy := cmd.valid || cmd_tracker.io.busy
 
