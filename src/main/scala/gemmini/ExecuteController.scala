@@ -871,10 +871,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
 
   when (cntl_valid) {
+    val n_a_r_not_v = !mesh.io.a.ready || dataA_valid
+    val n_b_r_not_v = !mesh.io.b.ready || dataB_valid
+    val n_d_r_not_v = !mesh.io.d.ready || dataD_valid
     // Default inputs
-    mesh.io.a.valid := cntl.a_fire && dataA_valid
-    mesh.io.b.valid := cntl.b_fire && dataB_valid
-    mesh.io.d.valid := cntl.d_fire && dataD_valid
+    mesh.io.a.valid := cntl.a_fire && dataA_valid && n_b_r_not_v && n_d_r_not_v
+    mesh.io.b.valid := cntl.b_fire && dataB_valid && n_a_r_not_v && n_d_r_not_v
+    mesh.io.d.valid := cntl.d_fire && dataD_valid && n_a_r_not_v && n_b_r_not_v
 
     mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))

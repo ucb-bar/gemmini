@@ -832,6 +832,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val a_spad_addr = UInt(max_acc_addr.W)
   val b_spad_addr = UInt(max_acc_addr.W)
   val c_spad_addr = UInt(max_acc_addr.W)
+  val inc_acc_addr = Bool()
   val spad_only = Bool()
 
   val a_transpose = Bool()
@@ -1078,13 +1079,12 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
       is (LOOP_WS_CONFIG_SPAD_C) {
         loop_being_configured.spad_only := true.B
-        loop_being_configured.lda_started := true.B
+        /* loop_being_configured.lda_started := true.B
         loop_being_configured.ldb_started := true.B
         loop_being_configured.ldd_started := true.B
         loop_being_configured.lda_completed := true.B
         loop_being_configured.ldb_completed := true.B
-        loop_being_configured.ldd_completed := true.B
-        loop_being_configured.c_spad_addr := cmd.bits.cmd.rs1
+        loop_being_configured.ldd_completed := true.B */
       }
 
       is (LOOP_WS) {
@@ -1092,6 +1092,21 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.full_c := cmd.bits.cmd.rs1(1)
         loop_being_configured.low_d := cmd.bits.cmd.rs1(2)
         loop_being_configured.act := cmd.bits.cmd.rs1(8+Activation.bitwidth-1, 8) // TODO magic numbers
+
+        loop_being_configured.lda_started := cmd.bits.cmd.rs2(3)
+        loop_being_configured.ldb_started := cmd.bits.cmd.rs2(4)
+        loop_being_configured.ldd_started := cmd.bits.cmd.rs2(5)
+        loop_being_configured.ex_started := cmd.bits.cmd.rs2(6)
+        loop_being_configured.st_started := cmd.bits.cmd.rs2(7)
+        loop_being_configured.lda_completed := cmd.bits.cmd.rs2(3)
+        loop_being_configured.ldb_completed := cmd.bits.cmd.rs2(4)
+        loop_being_configured.ldd_completed := cmd.bits.cmd.rs2(5)
+        loop_being_configured.ex_completed := cmd.bits.cmd.rs2(6)
+        loop_being_configured.st_completed := cmd.bits.cmd.rs2(7)
+        loop_being_configured.inc_acc_addr := cmd.bits.cmd.rs2(8)
+        loop_being_configured.spad_only := cmd.bits.cmd.rs2(9)
+
+        loop_being_configured.c_spad_addr := cmd.bits.cmd.rs2(63, 32)
 
         loop_being_configured.a_ex_spad_id := cmd.bits.cmd.rs1(19, 18)
         loop_being_configured.b_ex_spad_id := cmd.bits.cmd.rs1(17, 16) 
@@ -1177,7 +1192,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     loop_requesting_ex.running := true.B
     loop_requesting_ex.ex_started := true.B
 
-    when (loop_requesting_ex.c_dram_addr =/= 0.U || loop_requesting_ex.spad_only) {
+    when (Mux(loop_requesting_ex.spad_only, loop_requesting_ex.inc_acc_addr, loop_requesting_ex.c_dram_addr =/= 0.U)) {
       ex_c_addr_start := floorAdd(ex_c_addr_start, (max_acc_addr / concurrent_loops).U, max_acc_addr.U)
     }
   }
@@ -1241,7 +1256,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     loop_requesting_st.running := true.B
     loop_requesting_st.st_started := true.B
 
-    when (loop_requesting_st.c_dram_addr =/= 0.U || loop_requesting_st.spad_only) {
+    when (Mux(loop_requesting_st.spad_only, loop_requesting_st.inc_acc_addr, loop_requesting_st.c_dram_addr =/= 0.U)) {
       st_c_addr_start := floorAdd(st_c_addr_start, (max_acc_addr / concurrent_loops).U, max_acc_addr.U)
     }
   }

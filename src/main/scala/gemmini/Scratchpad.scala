@@ -126,17 +126,17 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     val ext_mem = io.ext_mem.get
 
     /* READ */
-    ext_mem.read_req.valid := io.read.req.valid
+    ext_mem.read_req.valid := q_will_be_empty && io.read.req.valid
     ext_mem.read_req.bits := io.read.req.bits.addr
-    io.read.req.ready := ext_mem.read_req.ready
+    io.read.req.ready := q_will_be_empty && ext_mem.read_req.ready
 
     // TODO (richard): the number of entries here should be configurable
-    val dma_q = Module(new Queue(Bool(), 4, true, true))
+    val dma_q = Module(new Queue(Bool(), 4, false, true))
     dma_q.io.enq.valid := ren
     dma_q.io.enq.bits := fromDMA
     dma_q.io.deq.ready := q.io.enq.fire
-    assert(dma_q.io.deq.fire || (!q.io.enq.fire), "fromDMA should be dequeued only when read resp comes back")
-    assert(dma_q.io.enq.ready || (!ren), "DMA queue does not have enough entries") // TODO (richard): do backpressure
+    assert(dma_q.io.enq.fire === ren, "DMA queue does not have enough entries") // TODO (richard): do backpressure
+    assert(dma_q.io.deq.fire === q.io.enq.fire, "fromDMA should be dequeued only when read resp comes back")
 
     q.io.enq.valid := ext_mem.read_resp.valid
     q.io.enq.bits.data := ext_mem.read_resp.bits
@@ -144,7 +144,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     ext_mem.read_resp.ready := q.io.enq.ready
 
     /* WRITE */
-    val wq = Module(new Queue(ext_mem.write_req.bits.cloneType, 12, pipe=true, flow=true))
+    val wq = Module(new Queue(ext_mem.write_req.bits.cloneType, 4, pipe=true, flow=true))
     ext_mem.write_req <> wq.io.deq
 
     wq.io.enq.valid := io.write.en
@@ -538,7 +538,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
         dma_read_pipe.io.enq <> dma_read_resp
         ex_read_pipe.io.enq <> ex_read_resp
-        // TODO (richard): perhaps backpressure can be applied here when writes are blocked
 
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
 
