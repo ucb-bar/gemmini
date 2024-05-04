@@ -386,22 +386,35 @@ object AccumulatorScale {
   }
 
   def iexp[T <: Data](q: T, qln2: T, qln2_inv: T, qb: T, qc: T)(implicit ev: Arithmetic[T]): T = {
+    // import ev._
+
+    // val zero = q.zero
+    // def neg(x: T) = zero-x
+
+    // // qln2_inv needs scale to be 1 / (2 ** 16) / S
+    // // qln2_inv / S / (2 ** 16) = 1 / ln2
+    // // q * qln2_inv = x / S / ln2 * S * (2 ** 16) = x / ln2 * (2 ** 16)
+    // val neg_q_iexp = neg(q)
+    // val z_iexp = (neg_q_iexp * qln2_inv).asUInt.do_>>(16).asTypeOf(q) // q is non-positive
+    // val z_iexp_saturated = Wire(z_iexp.cloneType)
+    // z_iexp_saturated := Mux((5 until 16).map(z_iexp.asUInt(_)).reduce(_ | _), 32.S, z_iexp)
+    // val qp_iexp = q.mac(z_iexp, qln2).withWidthOf(q)
+    // val q_poly_iexp = qc.mac(qp_iexp + qb, qp_iexp + qb).withWidthOf(q)
+    // // we dont want a rounding shift
+    // //  TODO: z overflow
+    // (q_poly_iexp.asUInt.do_>>(z_iexp_saturated.asUInt)).asTypeOf(q)
+
     import ev._
 
     val zero = q.zero
+    val one = q.identity
     def neg(x: T) = zero-x
 
-    // qln2_inv needs scale to be 1 / (2 ** 16) / S
-    // qln2_inv / S / (2 ** 16) = 1 / ln2
-    // q * qln2_inv = x / S / ln2 * S * (2 ** 16) = x / ln2 * (2 ** 16)
-    val neg_q_iexp = neg(q)
-    val z_iexp = (neg_q_iexp * qln2_inv).asUInt.do_>>(16).asTypeOf(q) // q is non-positive
-    val z_iexp_saturated = Wire(z_iexp.cloneType)
-    z_iexp_saturated := Mux((5 until 16).map(z_iexp.asUInt(_)).reduce(_ | _), 32.S, z_iexp)
-    val qp_iexp = q.mac(z_iexp, qln2).withWidthOf(q)
-    val q_poly_iexp = qc.mac(qp_iexp + qb, qp_iexp + qb).withWidthOf(q)
-    // we dont want a rounding shift
-    //  TODO: z overflow
-    (q_poly_iexp.asUInt.do_>>(z_iexp_saturated.asUInt)).asTypeOf(q)
+    val q_sign = Mux(q.zero > q, neg(one), one)
+    val q_abs = Mux(q.zero > q, neg(q), q)
+    val q_clipped = Mux(q_abs > neg(qb), neg(qb), q_abs)
+    val q_poly = qc.mac(q_clipped + qb, q_clipped + qb).withWidthOf(q)
+    val q_erf = (q_sign * q_poly).withWidthOf(q)
+    (q * (q_erf + qc)).withWidthOf(q)
   }}
 
