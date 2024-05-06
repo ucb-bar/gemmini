@@ -8,6 +8,7 @@ import gemmini.Util._
 
 class MeshWithDelaysReq[T <: Data: Arithmetic, TagT <: TagQueueTag with Data](accType: T, tagType: TagT, block_size: Int) extends Bundle {
   val pe_control = new PEControl(accType)
+  val gemv_mode = Bool()
   val a_transpose = Bool()
   val bd_transpose = Bool()
   val total_rows = UInt(log2Up(block_size+1).W)
