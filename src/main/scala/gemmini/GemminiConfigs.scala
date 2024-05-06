@@ -340,6 +340,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     header ++= s"#define BANK_NUM $sp_banks\n"
     header ++= s"#define BANK_ROWS $sp_bank_entries\n"
     header ++= s"#define ACC_ROWS ${acc_banks * acc_bank_entries}\n" // TODO add ACC_BANKS as well
+    header ++= s"#define NORM_STAT_IDS ${tileColumns*meshColumns}\n" // TODO check this is always true
 
     val max_bytes = 64
     header ++= s"#define MAX_BYTES $max_bytes\n"
