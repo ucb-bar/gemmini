@@ -251,9 +251,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     // From acc are ordered
     val write_norm_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, accType.getWidth, acc_scale_t_bits), spad_read_delay+2))
     val write_scale_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, accType.getWidth, acc_scale_t_bits), spad_read_delay+2))
-    val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, accType.getWidth, acc_scale_t_bits), spad_read_delay+1, pipe=true))
-    val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), spad_read_delay+1, pipe=true)) // TODO can't this just be a normal queue?
-
+    val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, accType.getWidth, acc_scale_t_bits), spad_read_delay+1, pipe=true, flow=true))
+    val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), spad_read_delay+1, pipe=true))
+    
     write_dispatch_q.ready := false.B
 
     write_norm_q.io.enq.valid := false.B
@@ -444,10 +444,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid || write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
 
     val spad_mems = {
-      val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(
+      val banks = Seq.tabulate(sp_banks) { bankId => Module(new ScratchpadBank(
         sp_bank_entries, spad_w,
         aligned_to, config.sp_singleported,
-        use_shared_ext_mem, is_dummy
+        use_shared_ext_mem, is_dummy=bankId > 5
       )) }
       val bank_ios = VecInit(banks.map(_.io))
       // Reading from the SRAM banks
