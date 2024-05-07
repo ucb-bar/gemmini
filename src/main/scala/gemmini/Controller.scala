@@ -44,7 +44,6 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
 
   val mem_depth = config.sp_bank_entries * spad_data_len / max_data_len
   val mem_width = max_data_len
-  require(mem_depth * mem_width * config.sp_banks == 1 << 14, f"memory size is ${mem_depth}, ${mem_width}")
   println(f"unified shared memory size: ${mem_depth}x${mem_width}x${config.sp_banks}")
 
   // make scratchpad read and write clients, per bank
@@ -259,8 +258,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   regCommand.status := io.cmd.bits.status
 
   val raw_cmd_q = Module(new Queue(new GemminiCmd(reservation_station_entries), entries = 2))
-  raw_cmd_q.io.enq.valid := regValid // || io.cmd.valid
-  io.cmd.ready := false.B // raw_cmd_q.io.enq.ready && !regValid
+  raw_cmd_q.io.enq.valid := regValid || io.cmd.valid
+  io.cmd.ready := raw_cmd_q.io.enq.ready && !regValid
   assert(!regValid || raw_cmd_q.io.enq.ready)
   raw_cmd_q.io.enq.bits.cmd := Mux(regValid, regCommand, io.cmd.bits)
   raw_cmd_q.io.enq.bits.rob_id := DontCare
