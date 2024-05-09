@@ -46,7 +46,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val counter = new CounterEventIO()
 
-    val pipeline_tag = Output(new EventAnnotation)
   })
 
   val block_size = meshRows*tileRows
@@ -184,6 +183,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val cntl_valid = mesh_cntl_signals_q.io.deq.valid
   val cntl = mesh_cntl_signals_q.io.deq.bits
 
+  //For pipeline viewer
+  mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := DontCare
+  mesh_cntl_signals_q.io.enq.bits.pipeline_tag_b := DontCare
+  mesh_cntl_signals_q.io.enq.bits.pipeline_tag_d := DontCare
+
   // Instantiate the actual mesh
   val mesh = Module(new MeshWithDelays(inputType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
@@ -207,6 +211,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh.io.req.bits.bd_transpose := cntl.bd_transpose
   mesh.io.req.bits.tag.rob_id := cntl.rob_id
   mesh.io.req.bits.flush := Mux(control_state === flush && !cntl_valid, 1.U, 0.U) // We want to make sure that the mesh has absorbed all inputs before flushing
+
+  when(mesh.io.req.fire) {
+    when (mesh.io.req.bits.flush === 1.U) {
+      GenEvent("FLUSH", mesh.io.req.bits.asUInt, Some(EventTag(mesh.io.req.bits.tag.rob_id.bits)), Some(mesh.io.req.bits.tag.rob_id.bits))
+    }.otherwise {
+      GenEvent("MESH_FIRE", mesh.io.req.bits.asUInt, Some(EventTag(mesh.io.req.bits.tag.rob_id.bits)), Some(mesh.io.req.bits.tag.rob_id.bits))
+    }
+  }
 
   // Hazards
   val raw_hazards_are_impossible = !ex_read_from_acc && !ex_write_to_spad // Special case where RAW hazards are impossible
@@ -446,13 +458,28 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           Seq(read_b -> b_address.sp_row(),
             read_d -> d_address.sp_row()))
       }
+      when(io.srams.read(i).req.fire) {
+        when (read_a && a_ready) {
+          mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := GenEvent(s"SP_RD_A$i", io.srams.read(i).req.bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+          //  mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := GenEvent(s"SP_RD_A$i", io.srams.read(i).req.bits.addr, None)
+        }
+        when (read_b && b_ready) {
+          mesh_cntl_signals_q.io.enq.bits.pipeline_tag_b := GenEvent(s"SP_RD_B$i", io.srams.read(i).req.bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+          // mesh_cntl_signals_q.io.enq.bits.pipeline_tag_b := GenEvent(s"SP_RD_B$i", io.srams.read(i).req.bits.addr, None)
+        }
+        when (read_d && d_ready) {
+          mesh_cntl_signals_q.io.enq.bits.pipeline_tag_d := GenEvent(s"SP_RD_D$i", io.srams.read(i).req.bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+          // mesh_cntl_signals_q.io.enq.bits.pipeline_tag_d := GenEvent(s"SP_RD_D$i", io.srams.read(i).req.bits.addr, None)
+        }
+      }
     } else {
       io.srams.read(i).req.valid := false.B
       io.srams.read(i).req.bits.fromDMA := false.B
       io.srams.read(i).req.bits.addr := DontCare
     }
 
-    io.srams.read(i).resp.ready := false.B
+    io.srams.read(i).resp.ready := false.B 
+
   }
 
   // Accumulator read
@@ -487,6 +514,24 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           Seq(read_b_from_acc -> b_address.acc_row(),
             read_d_from_acc -> d_address.acc_row()))
       }
+
+    when(io.acc.read_req(i).fire) {
+      when (read_a_from_acc && a_ready) {
+        mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := GenEvent(s"ACC_RD_A$i", io.acc.read_req(i).bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+        // mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := GenEvent(s"ACC_RD_A$i", io.acc.read_req(i).bits.addr, None)
+
+      }
+      when (read_b_from_acc && b_ready) {
+        mesh_cntl_signals_q.io.enq.bits.pipeline_tag_b := GenEvent(s"ACC_RD_B$i", io.acc.read_req(i).bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+        // mesh_cntl_signals_q.io.enq.bits.pipeline_tag_b := GenEvent(s"ACC_RD_B$i", io.acc.read_req(i).bits.addr, None)
+      }
+      when (read_d_from_acc && d_ready) {
+        mesh_cntl_signals_q.io.enq.bits.pipeline_tag_d := GenEvent(s"ACC_RD_D$i", io.acc.read_req(i).bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+        // mesh_cntl_signals_q.io.enq.bits.pipeline_tag_d := GenEvent(s"ACC_RD_D$i", io.acc.read_req(i).bits.addr, None)
+
+      }
+    }
+
     } else {
       io.acc.read_req(i).valid := false.B
       io.acc.read_req(i).bits.scale := DontCare
@@ -528,6 +573,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.im2col.req.bits.weight_triple_bank := weight_triple_bank
 
     io.im2col.resp.ready := mesh.io.a.ready
+    when(io.im2col.req.fire) {
+       mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := GenEvent(s"Im2Col_REQ",  io.im2col.req.bits.addr.asUInt, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+    }
   }
 
   // FSM logic
@@ -747,6 +795,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val im2colling = Bool()
 
     val first = Bool()
+
+    //For pipeline viewer
+    val pipeline_tag_a = new EventTag
+    val pipeline_tag_b = new EventTag
+    val pipeline_tag_d = new EventTag
   }
 
   mesh_cntl_signals_q.io.enq.valid := computing
@@ -888,7 +941,44 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     mesh.io.req.bits.total_rows := cntl.total_rows
   }
-
+  //For pipeline viewer
+  when(mesh.io.a.fire) {
+    when(cntl.a_garbage) {
+      // GenEvent("A_GARBAGE", 0.U, Some(EventTag(mesh.io.req.bits.tag.rob_id.bits)), Some(mesh.io.req.bits.tag.rob_id.bits))
+    }.elsewhen(cntl.a_unpadded_cols === 0.U) {
+      GenEvent("A_0_PAD", 0.U, Some(EventTag(cntl.rob_id.bits)))
+    }.elsewhen(cntl.im2colling) {
+      GenEvent("A_IM2COL", 0.U, Some(cntl.pipeline_tag_a))
+    }.elsewhen(cntl.a_read_from_acc) {
+      GenEvent("A_ACC->MESH", cntl.a_bank_acc, Some(cntl.pipeline_tag_a))
+    }.otherwise {
+      GenEvent("A_SP->MESH", cntl.a_bank, Some(cntl.pipeline_tag_a))
+    }
+  } 
+  when(mesh.io.b.fire) {
+    when(cntl.b_garbage) {
+      // GenEvent("B_GARBAGE", 0.U, Some(EventTag(mesh.io.req.bits.tag.rob_id.bits)), Some(mesh.io.req.bits.tag.rob_id.bits))
+    }.elsewhen(cntl.b_unpadded_cols === 0.U) {
+      GenEvent("B_0_PAD", 0.U, Some(EventTag(cntl.rob_id.bits)))
+    }.elsewhen(cntl.b_read_from_acc) {
+      GenEvent("B_ACC->MESH", cntl.b_bank_acc, Some(cntl.pipeline_tag_b))
+    }.otherwise {
+      GenEvent("B_SP->MESH", cntl.b_bank, Some(cntl.pipeline_tag_b))
+    }
+  } 
+  when(mesh.io.d.fire) {
+    when(cntl.d_garbage) {
+      // GenEvent("D_GARBAGE", 0.U, Some(EventTag(mesh.io.req.bits.tag.rob_id.bits)), Some(mesh.io.req.bits.tag.rob_id.bits))
+    }.elsewhen(cntl.d_unpadded_cols === 0.U) {
+      GenEvent("D_0_PAD", 0.U, Some(EventTag(cntl.rob_id.bits)))
+      // GenEvent("D_0_PAD", 0.U, None)
+    }.elsewhen(cntl.d_read_from_acc) {
+      GenEvent("D_ACC->MESH", cntl.d_bank_acc, Some(cntl.pipeline_tag_d))
+    }.otherwise {
+      GenEvent("D_SP->MESH", cntl.d_bank, Some(cntl.pipeline_tag_d))
+    }
+  } 
+ 
   when (cntl_valid && cntl.perform_single_preload) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, dataA.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
     mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
@@ -937,6 +1027,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.srams.write(i).addr := w_row
       io.srams.write(i).data := activated_wdata.asUInt
       io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(inputType.getWidth / (aligned_to * 8))(b))
+
+      when(io.srams.write(i).en) {
+        GenEvent(s"SP_WR_$i", io.srams.write(i).addr, Some(EventTag(mesh.io.resp.bits.tag.rob_id.bits)), Some(mesh.io.resp.bits.tag.rob_id.bits))
+      }
     } else {
       io.srams.write(i).en := false.B
       io.srams.write(i).addr := DontCare
@@ -953,6 +1047,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.write(i).bits.data := VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))
       io.acc.write(i).bits.acc := w_address.accumulate
       io.acc.write(i).bits.mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
+
+      when(io.acc.write(i).fire) {
+        GenEvent(s"ACC_WR_$i", io.acc.write(i).bits.addr, Some(EventTag(mesh.io.resp.bits.tag.rob_id.bits)), Some(mesh.io.resp.bits.tag.rob_id.bits))
+      }
     } else {
       io.acc.write(i).valid := false.B
       io.acc.write(i).bits.addr := DontCare

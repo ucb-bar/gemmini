@@ -1254,7 +1254,15 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   io.out.bits.from_matmul_fsm := Mux(loop_configured, false.B, cmd.bits.from_matmul_fsm)
   io.out.bits.from_conv_fsm := Mux(loop_configured, true.B, cmd.bits.from_conv_fsm)
   io.out.valid := Mux(loop_configured, unrolled_cmd.valid, cmd.valid && !is_loop_config_cmd && !is_loop_run_cmd)
-  io.out.bits.pipeline_tag := cmd.bits.pipeline_tag //For pipeline viewer
+  when (loop_configured) {
+    when (io.out.fire) {
+      io.out.bits.pipeline_tag := GenEvent("LOOP_CONV_CMD", io.out.bits.cmd.inst.asUInt, None)
+    }.otherwise {
+      io.out.bits.pipeline_tag := DontCare
+    }
+  }.otherwise {
+    io.out.bits.pipeline_tag := cmd.bits.pipeline_tag //For pipeline viewer
+  }
 
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)
   arb.io.out.ready := io.out.ready

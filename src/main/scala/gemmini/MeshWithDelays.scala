@@ -115,6 +115,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     req.push(io.req.bits)
     in_prop := io.req.bits.pe_control.propagate ^ in_prop
     matmul_id := wrappingAdd(matmul_id, 1.U, max_simultaneous_matmuls)
+
+    // GenEvent("MESH_FIRE_2", fire_counter.asUInt, Some(EventTag(1.U)), Some(1.U))
   }.elsewhen (last_fire) {
     req.valid := req.bits.flush > 1.U
     req.bits.flush := req.bits.flush - 1.U

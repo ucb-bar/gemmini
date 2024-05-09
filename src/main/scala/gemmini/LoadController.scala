@@ -26,7 +26,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
     val counter = new CounterEventIO()
 
-    val pipeline_tag = Output(new EventAnnotation)
+    val pipeline_tag = Output(new EventTag)
   })
 
   val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -87,7 +87,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
 
   val deps_t = new Bundle {
     val rob_id = UInt(log2Up(reservation_station_entries).W)
-    val pipeline_tag = new EventAnnotation //For pipeline viewer
+    val pipeline_tag = new EventTag //For pipeline viewer
   }
 
   val maxBytesInRowRequest = config.dma_maxbytes max (block_cols * config.inputType.getWidth / 8) max

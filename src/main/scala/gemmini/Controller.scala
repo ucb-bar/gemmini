@@ -19,7 +19,7 @@ class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
   val from_matmul_fsm = Bool()
   val from_conv_fsm = Bool()
-  val pipeline_tag = new EventAnnotation
+  val pipeline_tag = new EventTag
 }
 
 class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiArrayConfig[T, U, V])
@@ -57,7 +57,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val tagWidth = 32
 
   //Pipeline Viewer
-  val input_cmd_tag = Wire(new EventAnnotation)
+  val input_cmd_tag = Wire(new EventTag)
   val not_clk = ~clock.asBool
   
   // Counters
@@ -182,7 +182,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     //   raw_cmd.pipeline_tag := GenEvent("LoopConv", inst_ctr, raw_cmd.bits.cmd.inst.asUInt, Some(raw_cmd.bits.pipeline_tag))
     // }
     when (reservation_station.io.alloc.fire) {
-      reservation_station.io.alloc.bits.pipeline_tag := GenEvent("ROB_ISSUE", unrolled_cmd.bits.cmd.inst.asUInt, Some(unrolled_cmd.bits.pipeline_tag))
+      reservation_station.io.alloc.bits.pipeline_tag := GenEvent("ROB_ISSUE", Cat(unrolled_cmd.bits.cmd.rs1.asUInt, unrolled_cmd.bits.cmd.rs2.asUInt, unrolled_cmd.bits.cmd.inst.asUInt), Some(unrolled_cmd.bits.pipeline_tag))
     }.otherwise {
       reservation_station.io.alloc.bits.pipeline_tag := DontCare
     }
@@ -258,30 +258,24 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   reservation_station.io.issue.ld.ready := load_controller.io.cmd.ready
   load_controller.io.cmd.bits := reservation_station.io.issue.ld.cmd
   load_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.ld.rob_id)
-  // withClock(not_clk.asClock) {
-    when (load_controller.io.cmd.fire) {
-      load_controller.io.cmd.bits.pipeline_tag := GenEvent("LD_ISSUE", reservation_station.io.issue.ld.cmd.cmd.inst.asUInt, Some(reservation_station.io.issue.ld.cmd.pipeline_tag))
-    }
-  // }
+  when (load_controller.io.cmd.fire) {
+    load_controller.io.cmd.bits.pipeline_tag := GenEvent("LD_ISSUE", reservation_station.io.issue.ld.cmd.cmd.inst.asUInt, Some(reservation_station.io.issue.ld.cmd.pipeline_tag))
+  }
   store_controller.io.cmd.valid := reservation_station.io.issue.st.valid
   reservation_station.io.issue.st.ready := store_controller.io.cmd.ready
   store_controller.io.cmd.bits := reservation_station.io.issue.st.cmd
   store_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.st.rob_id)
-  // withClock(not_clk.asClock) {
-    when (store_controller.io.cmd.fire) {
-      store_controller.io.cmd.bits.pipeline_tag := GenEvent("ST_ISSUE", reservation_station.io.issue.st.cmd.cmd.inst.asUInt, Some(reservation_station.io.issue.st.cmd.pipeline_tag))
-    }
-  // }
+  when (store_controller.io.cmd.fire) {
+    store_controller.io.cmd.bits.pipeline_tag := GenEvent("ST_ISSUE", reservation_station.io.issue.st.cmd.cmd.inst.asUInt, Some(reservation_station.io.issue.st.cmd.pipeline_tag))
+  }
 
   ex_controller.io.cmd.valid := reservation_station.io.issue.ex.valid
   reservation_station.io.issue.ex.ready := ex_controller.io.cmd.ready
   ex_controller.io.cmd.bits := reservation_station.io.issue.ex.cmd
   ex_controller.io.cmd.bits.rob_id.push(reservation_station.io.issue.ex.rob_id)
-  // withClock(not_clk.asClock) {
-    when (ex_controller.io.cmd.fire) {
-      ex_controller.io.cmd.bits.pipeline_tag := GenEvent("EX_ISSUE", reservation_station.io.issue.ex.cmd.cmd.inst.asUInt, Some(reservation_station.io.issue.ex.cmd.pipeline_tag))
-    }
-  // }
+  when (ex_controller.io.cmd.fire) {
+    ex_controller.io.cmd.bits.pipeline_tag := GenEvent("EX_ISSUE", reservation_station.io.issue.ex.cmd.cmd.inst.asUInt, Some(reservation_station.io.issue.ex.cmd.pipeline_tag), Some(reservation_station.io.issue.ex.rob_id))
+  }
 
   // Wire up scratchpad to controllers
   spad.module.io.dma.read <> load_controller.io.dma
@@ -357,7 +351,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // withClock(not_clk.asClock) {
   when (ex_controller.io.completed.fire) {
-    GenEvent("EX_RET", inst_ctr, 0.U, Some(ex_controller.io.pipeline_tag))
+    GenEvent("EX_RET", 0.U, Some(EventTag(ex_controller.io.completed.bits)), Some(ex_controller.io.completed.bits))
   }
   when (load_controller.io.completed.fire) {
     GenEvent("LD_RET", 0.U, Some(load_controller.io.pipeline_tag))
@@ -455,7 +449,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   
   // withClock(not_clk.asClock) {
     when (io.cmd.valid) {
-      input_cmd_tag := GenEvent("CMD", io.cmd.bits.inst.asUInt, None)
+      input_cmd_tag := GenEvent("CMD",  Cat(io.cmd.bits.rs1, io.cmd.bits.rs2, io.cmd.bits.inst.asUInt), None)
     }.otherwise {
       input_cmd_tag := DontCare
     }
