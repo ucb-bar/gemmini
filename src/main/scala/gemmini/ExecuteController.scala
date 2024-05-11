@@ -460,15 +460,15 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       }
       when(io.srams.read(i).req.fire) {
         when (read_a && a_ready) {
-          mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := GenEvent(s"SP_RD_A$i", io.srams.read(i).req.bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+          mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := GenEvent(s"SP_RD_A$i", io.srams.read(i).req.bits.addr, Some(EventTag(cmd.bits(0).rob_id.bits)))
           //  mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := GenEvent(s"SP_RD_A$i", io.srams.read(i).req.bits.addr, None)
         }
         when (read_b && b_ready) {
-          mesh_cntl_signals_q.io.enq.bits.pipeline_tag_b := GenEvent(s"SP_RD_B$i", io.srams.read(i).req.bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+          mesh_cntl_signals_q.io.enq.bits.pipeline_tag_b := GenEvent(s"SP_RD_B$i", io.srams.read(i).req.bits.addr, Some(EventTag(cmd.bits(0).rob_id.bits)))
           // mesh_cntl_signals_q.io.enq.bits.pipeline_tag_b := GenEvent(s"SP_RD_B$i", io.srams.read(i).req.bits.addr, None)
         }
         when (read_d && d_ready) {
-          mesh_cntl_signals_q.io.enq.bits.pipeline_tag_d := GenEvent(s"SP_RD_D$i", io.srams.read(i).req.bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+          mesh_cntl_signals_q.io.enq.bits.pipeline_tag_d := GenEvent(s"SP_RD_D$i", io.srams.read(i).req.bits.addr, Some(EventTag(cmd.bits(0).rob_id.bits)))
           // mesh_cntl_signals_q.io.enq.bits.pipeline_tag_d := GenEvent(s"SP_RD_D$i", io.srams.read(i).req.bits.addr, None)
         }
       }
@@ -517,16 +517,16 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     when(io.acc.read_req(i).fire) {
       when (read_a_from_acc && a_ready) {
-        mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := GenEvent(s"ACC_RD_A$i", io.acc.read_req(i).bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+        mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := GenEvent(s"ACC_RD_A$i", io.acc.read_req(i).bits.addr, Some(EventTag(cmd.bits(0).rob_id.bits)))
         // mesh_cntl_signals_q.io.enq.bits.pipeline_tag_a := GenEvent(s"ACC_RD_A$i", io.acc.read_req(i).bits.addr, None)
 
       }
       when (read_b_from_acc && b_ready) {
-        mesh_cntl_signals_q.io.enq.bits.pipeline_tag_b := GenEvent(s"ACC_RD_B$i", io.acc.read_req(i).bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+        mesh_cntl_signals_q.io.enq.bits.pipeline_tag_b := GenEvent(s"ACC_RD_B$i", io.acc.read_req(i).bits.addr, Some(EventTag(cmd.bits(0).rob_id.bits)))
         // mesh_cntl_signals_q.io.enq.bits.pipeline_tag_b := GenEvent(s"ACC_RD_B$i", io.acc.read_req(i).bits.addr, None)
       }
       when (read_d_from_acc && d_ready) {
-        mesh_cntl_signals_q.io.enq.bits.pipeline_tag_d := GenEvent(s"ACC_RD_D$i", io.acc.read_req(i).bits.addr, Some(EventTag(cmd.bits(preload_cmd_place).rob_id.bits)))
+        mesh_cntl_signals_q.io.enq.bits.pipeline_tag_d := GenEvent(s"ACC_RD_D$i", io.acc.read_req(i).bits.addr, Some(EventTag(cmd.bits(0).rob_id.bits)))
         // mesh_cntl_signals_q.io.enq.bits.pipeline_tag_d := GenEvent(s"ACC_RD_D$i", io.acc.read_req(i).bits.addr, None)
 
       }

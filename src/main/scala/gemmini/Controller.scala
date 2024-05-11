@@ -173,15 +173,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Wire up controllers to ROB
 
   reservation_station.io.alloc.valid := false.B
-  // reservation_station.io.alloc.bits := unrolled_cmd.bits
-  // withClock(not_clk.asClock) {
-    // when (raw_cmd.fire) {
-    //   raw_cmd.pipeline_tag := GenEvent("LoopConv", inst_ctr, raw_cmd.bits.cmd.inst.asUInt, Some(raw_cmd.bits.pipeline_tag))
-    // }
-    // when (raw_cmd.fire) {
-    //   raw_cmd.pipeline_tag := GenEvent("LoopConv", inst_ctr, raw_cmd.bits.cmd.inst.asUInt, Some(raw_cmd.bits.pipeline_tag))
-    // }
-    when (reservation_station.io.alloc.fire) {
+  when (reservation_station.io.alloc.fire) {
       reservation_station.io.alloc.bits.pipeline_tag := GenEvent("ROB_ISSUE", Cat(unrolled_cmd.bits.cmd.rs1.asUInt, unrolled_cmd.bits.cmd.rs2.asUInt, unrolled_cmd.bits.cmd.inst.asUInt), Some(unrolled_cmd.bits.pipeline_tag))
     }.otherwise {
       reservation_station.io.alloc.bits.pipeline_tag := DontCare
