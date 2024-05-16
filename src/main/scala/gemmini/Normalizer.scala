@@ -2,7 +2,6 @@
 package gemmini
 
 import chisel3._
-import chisel3.experimental.ChiselEnum
 import chisel3.util._
 import gemmini.AccumulatorScale.iexp
 import hardfloat.{DivSqrtRecFN_small, INToRecFN, MulRecFN, consts, fNFromRecFN, recFNFromFN}
@@ -348,7 +347,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     lanes.io.ins.bits.stats_id := in_lanes_stats_id
     lanes.io.ins.bits.iexp_const := iexp_const
 
-    when (lanes.io.ins.fire()) {
+    when (lanes.io.ins.fire) {
       stat.elems_left := stat.elems_left - len
     }
   }
@@ -359,7 +358,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
     val stat = stats(out_lanes_stats_id)
 
-    when (lanes.io.out.fire()) {
+    when (lanes.io.out.fire) {
       stat.sum := stat.sum + lanes.io.out.bits.result
     }
   }
@@ -379,7 +378,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
     max_lanes.io.ins.bits.len := len
     max_lanes.io.ins.bits.stats_id := max_in_lanes_stats_id
 
-    when (max_lanes.io.ins.fire()) {
+    when (max_lanes.io.ins.fire) {
       stat.elems_left := stat.elems_left - len
     }
   }
@@ -390,7 +389,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
     val stat = stats(max_out_lanes_stats_id)
 
-    when (max_lanes.io.out.fire()) {
+    when (max_lanes.io.out.fire) {
       val new_max = Mux(max_lanes.io.out.bits.result > stat.running_max, max_lanes.io.out.bits.result, stat.running_max)
       stat.running_max := new_max
       stat.max := new_max
@@ -645,13 +644,13 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       next_state := idle
       done := DontCare
     }.elsewhen(state === output) {
-      next_state := Mux(io.out.fire() && out_stats_id === id.U, idle, state)
-      done := io.out.fire() && out_stats_id === id.U
+      next_state := Mux(io.out.fire && out_stats_id === id.U, idle, state)
+      done := io.out.fire && out_stats_id === id.U
     }.elsewhen(state === get_max) {
       val is_last_lane_input = stat.vec_groups_left === 0.U ||
         (stat.vec_groups_left === 1.U &&
           max_lanes.io.ins.bits.stats_id === id.U &&
-          max_lanes.io.ins.fire())
+          max_lanes.io.ins.fire)
 
       next_state := Mux(
         is_last_lane_input,
@@ -667,7 +666,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
       val is_last_lane_input = stat.vec_groups_left === 0.U ||
         (stat.vec_groups_left === 1.U &&
           lanes.io.ins.bits.stats_id === id.U &&
-          lanes.io.ins.fire())
+          lanes.io.ins.fire)
 
       next_state := Mux(
         is_last_lane_input,
@@ -688,51 +687,51 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
       done := is_last_lane_input && cmd =/= NormCmd.MEAN && cmd =/= NormCmd.INV_STDDEV && cmd =/= NormCmd.INV_SUM_EXP
     }.elsewhen(state === get_mean || state === get_variance) {
-      next_state := Mux(divider_in.fire() && sum_to_divide_id === id.U, state.next, state)
+      next_state := Mux(divider_in.fire && sum_to_divide_id === id.U, state.next, state)
       done := false.B
     }.elsewhen(state === waiting_for_mean) {
-      next_state := Mux(divider_out.fire(), idle, state)
-      done := divider_out.fire()
+      next_state := Mux(divider_out.fire, idle, state)
+      done := divider_out.fire
     }.elsewhen(state === waiting_for_variance) {
-      next_state := Mux(divider_out.fire(), get_stddev, state)
+      next_state := Mux(divider_out.fire, get_stddev, state)
       done := false.B
     }.elsewhen(state === get_stddev) {
-      next_state := Mux(sqrt_in.fire() && variance_to_sqrt_id === id.U, state.next, state)
+      next_state := Mux(sqrt_in.fire && variance_to_sqrt_id === id.U, state.next, state)
       done := false.B
     }.elsewhen(state === waiting_for_stddev) {
-      next_state := Mux(sqrt_out.fire(), state.next, state)
+      next_state := Mux(sqrt_out.fire, state.next, state)
       done := false.B
     }.elsewhen(state === get_inv_stddev) {
-      next_state := Mux(reciprocal_in.fire() && stddev_to_inv_id === id.U, state.next, state)
+      next_state := Mux(reciprocal_in.fire && stddev_to_inv_id === id.U, state.next, state)
       done := false.B
     }.elsewhen(state === waiting_for_inv_stddev) {
-      next_state := Mux(reciprocal_out.fire(), state.next, state)
+      next_state := Mux(reciprocal_out.fire, state.next, state)
       done := false.B
     }.elsewhen(state === get_scaled_inv_stddev) {
-      next_state := Mux(inv_stddev_scale_mul_pipe.io.ins.fire() && inv_stddev_to_scale_id === id.U, state.next, state)
+      next_state := Mux(inv_stddev_scale_mul_pipe.io.ins.fire && inv_stddev_to_scale_id === id.U, state.next, state)
       done := false.B
     }.elsewhen(state === waiting_for_scaled_inv_stddev) {
-      next_state := Mux(inv_stddev_scale_mul_pipe.io.out.fire(), idle, state)
-      done := inv_stddev_scale_mul_pipe.io.out.fire()
+      next_state := Mux(inv_stddev_scale_mul_pipe.io.out.fire, idle, state)
+      done := inv_stddev_scale_mul_pipe.io.out.fire
     }.elsewhen(state === get_inv_sum_exp) {
-      next_state := Mux(exp_divider_in.fire() && sum_exp_to_inv_id === id.U, state.next, state)
+      next_state := Mux(exp_divider_in.fire && sum_exp_to_inv_id === id.U, state.next, state)
       done := false.B
     }.elsewhen(state === waiting_for_inv_sum_exp) {
-      next_state := Mux(exp_divider_out.fire(), state.next, state)
+      next_state := Mux(exp_divider_out.fire, state.next, state)
       done := false.B
     }.elsewhen(state === get_scaled_inv_sum_exp) {
-      next_state := Mux(inv_sum_exp_scale_mul_pipe.io.ins.fire() && inv_sum_exp_to_scale_id === id.U, state.next, state)
+      next_state := Mux(inv_sum_exp_scale_mul_pipe.io.ins.fire && inv_sum_exp_to_scale_id === id.U, state.next, state)
       done := false.B
     }.elsewhen(state === waiting_for_scaled_inv_sum_exp) {
-      next_state := Mux(inv_sum_exp_scale_mul_pipe.io.out.fire(), idle, state)
-      done := inv_sum_exp_scale_mul_pipe.io.out.fire()
+      next_state := Mux(inv_sum_exp_scale_mul_pipe.io.out.fire, idle, state)
+      done := inv_sum_exp_scale_mul_pipe.io.out.fire
     }.otherwise {
       assert(false.B, "invalid state in Normalizer")
       next_state := DontCare
       done := DontCare
     }
 
-    when (io.in.fire() && in_stats_id === id.U) {
+    when (io.in.fire && in_stats_id === id.U) {
       next_state := Mux(io.in.bits.cmd === NormCmd.RESET, output,
         Mux(io.in.bits.cmd === NormCmd.MAX, get_max, get_sum))
     }
@@ -747,7 +746,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
         (state === get_mean && next_state =/= get_mean) ||
         (state === get_variance && next_state =/= get_variance)
 
-    val is_input = io.in.fire() && in_stats_id === id.U
+    val is_input = io.in.fire && in_stats_id === id.U
 
     when (is_input) {
       stat.req := io.in.bits

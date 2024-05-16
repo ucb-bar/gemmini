@@ -643,7 +643,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   when (req.dram_addr === 0.U) {
     state := idle
-  }.elsewhen (io.cmd.fire() && state === st) {
+  }.elsewhen (io.cmd.fire && state === st) {
     // The order here is k, j, i
     val next_i = floorAdd(i, 1.U, req.max_i)
     val next_j = floorAdd(j, max_blocks, req.max_j, next_i === 0.U)
@@ -654,9 +654,9 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     when (next_i === 0.U && next_j === 0.U) {
       state := idle
     }
-  }.elsewhen (io.cmd.fire() && state === ln_config) {
+  }.elsewhen (io.cmd.fire && state === ln_config) {
     state := ln_st
-  }.elsewhen (io.cmd.fire() && state === ln_st) {
+  }.elsewhen (io.cmd.fire && state === ln_st) {
     val next_j = floorAdd(j, max_blocks, req.max_j)
     val next_stat_id = floorAdd(ln_stat_id, 1.U, ln_stat_ids, next_j === 0.U)
     val next_cmd = floorAdd(ln_cmd, 1.U, ln_norm_cmds.size.U, next_j === 0.U && next_stat_id === 0.U)
