@@ -93,9 +93,10 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
 
   val node = if (config.use_dedicated_tl_port) tlNode else atlNode
 
+  // TODO: move to gemmini tile
   val regDevice = new SimpleDevice("gemmini-cmd-reg", Seq(s"gemmini-cmd-reg"))
   val regNode = TLRegisterNode(
-    address = Seq(AddressSet(0xff007000L, 0xfff)),
+    address = Seq(AddressSet(0xff013000L, 0xfff)),
     device = regDevice,
     beatBytes = 8,
     concurrency = 1)
