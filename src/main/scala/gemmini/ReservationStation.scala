@@ -51,6 +51,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val matmul_ex_completed = Output(UInt(log2Up(max_instructions_completed_per_type_per_cycle+1).W))
     val matmul_st_completed = Output(UInt(log2Up(max_instructions_completed_per_type_per_cycle+1).W))
 
+    val matadd_ld_completed = Output(UInt(log2Up(max_instructions_completed_per_type_per_cycle+1).W))
+    val matadd_st_completed = Output(UInt(log2Up(max_instructions_completed_per_type_per_cycle+1).W))
+
+
     val busy = Output(Bool())
 
     val counter = new CounterEventIO()
@@ -150,6 +154,12 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val matmul_ld_completed = WireInit(false.B)
   val matmul_st_completed = WireInit(false.B)
   val matmul_ex_completed = WireInit(false.B)
+
+  val matadd_ld_issue_completed = WireInit(false.B)
+  val matadd_st_issue_completed = WireInit(false.B)
+
+  val matadd_ld_completed = WireInit(false.B)
+  val matadd_st_completed = WireInit(false.B)
   
   io.conv_ld_completed := conv_ld_issue_completed +& conv_ld_completed
   io.conv_st_completed := conv_st_issue_completed +& conv_st_completed
@@ -158,6 +168,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   io.matmul_ld_completed := matmul_ld_issue_completed +& matmul_ld_completed
   io.matmul_st_completed := matmul_st_issue_completed +& matmul_st_completed
   io.matmul_ex_completed := matmul_ex_issue_completed +& matmul_ex_completed
+
+  io.matadd_ld_completed := matadd_ld_issue_completed +& matadd_ld_completed
+  io.matadd_st_completed := matadd_st_issue_completed +& matadd_st_completed
 
   // Config values set by programmer
   val a_stride = Reg(UInt(a_stride_bits.W))
@@ -409,6 +422,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val complete_on_issue = entries_type(issue_id).bits.complete_on_issue
     val from_conv_fsm = entries_type(issue_id).bits.cmd.from_conv_fsm
     val from_matmul_fsm = entries_type(issue_id).bits.cmd.from_matmul_fsm
+    val from_matadd_fsm = entries_type(issue_id).bits.cmd.from_matadd_fsm
 
     when (io.fire()) {
       entries_type.zipWithIndex.foreach { case (e, i) =>
@@ -444,6 +458,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       when (q === ldq) { matmul_ld_issue_completed := complete_on_issue && from_matmul_fsm }
       when (q === stq) { matmul_st_issue_completed := complete_on_issue && from_matmul_fsm }
       when (q === exq) { matmul_ex_issue_completed := complete_on_issue && from_matmul_fsm }
+
+      when (q === ldq) { matadd_ld_issue_completed := complete_on_issue && from_matadd_fsm }
+      when (q === stq) { matadd_st_issue_completed := complete_on_issue && from_matadd_fsm }
     }
   }
 
@@ -459,6 +476,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
       conv_ld_completed := entries_ld(issue_id).bits.cmd.from_conv_fsm
       matmul_ld_completed := entries_ld(issue_id).bits.cmd.from_matmul_fsm
+      matadd_ld_completed := entries_ld(issue_id).bits.cmd.from_matadd_fsm
 
       assert(entries_ld(issue_id).valid)
     }.elsewhen (queue_type === exq) {
@@ -475,6 +493,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
       conv_st_completed := entries_st(issue_id).bits.cmd.from_conv_fsm
       matmul_st_completed := entries_st(issue_id).bits.cmd.from_matmul_fsm
+      matadd_st_completed := entries_st(issue_id).bits.cmd.from_matadd_fsm
       
       assert(entries_st(issue_id).valid)
     }.otherwise {
