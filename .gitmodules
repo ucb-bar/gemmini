@@ -1,6 +1,6 @@
 [submodule "software/gemmini-rocc-tests"]
 	path = software/gemmini-rocc-tests
-	url = https://github.com/ucb-bar/gemmini-rocc-tests.git
+	url = https://github.com/SeahK/gemmini-slam-tests 
 [submodule "software/onnxruntime-riscv"]
 	path = software/onnxruntime-riscv
 	url = https://github.com/pranav-prakash/onnxruntime-riscv.git
