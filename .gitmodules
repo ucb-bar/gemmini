@@ -1,9 +1,16 @@
 [submodule "software/gemmini-rocc-tests"]
 	path = software/gemmini-rocc-tests
+<<<<<<< HEAD
 	url = https://github.com/SeahK/gemmini-slam-tests 
+=======
+	url = https://github.com/SeahK/gemmini-slam-tests
+>>>>>>> origin/spica
 [submodule "software/onnxruntime-riscv"]
 	path = software/onnxruntime-riscv
 	url = https://github.com/pranav-prakash/onnxruntime-riscv.git
 [submodule "software/libgemmini"]
 	path = software/libgemmini
 	url = https://github.com/ucb-bar/libgemmini.git
+[submodule "software/libdma"]
+	path = software/libdma
+	url = https://github.com/ucb-bar/libdma

@@ -21,11 +21,11 @@ object GemminiFPConfigs {
     meshColumns = 4,
 
     ld_queue_length = 8,
-    st_queue_length = 2,
+    st_queue_length = 4,
     ex_queue_length = 8,
 
     reservation_station_entries_ld = 8,
-    reservation_station_entries_st = 4,
+    reservation_station_entries_st = 8,
     reservation_station_entries_ex = 16,
 
     sp_banks = 4,
@@ -86,7 +86,54 @@ object GemminiFPConfigs {
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
- 
+
+  val slamFPConfig = FP32DefaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(32), dataflow=Dataflow.WS,
+    //acc_scale_args=Some(defaultFPConfig.acc_scale_args.get.copy(num_scale_units=0, latency=1)),
+    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
+      c_str = "((x))"
+    )),
+    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 3, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")), // 4-> 3 (check)
+    //mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => {Mux(u > 0.U.asTypeOf(Float(8, 24)), t, 0.U.asTypeOf(Float(8,24)) - t)}, 1, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")), // 2 -> 1 stage
+    mvin_scale_acc_args=None,
+    acc_singleported=false,
+    acc_sub_banks = 1,
+    acc_banks = 2,
+    mesh_output_delay = 2,
+    tile_latency = 1,
+    acc_latency = 3,
+    ex_read_from_acc=false,
+    ex_write_to_spad=false,
+    has_training_convs = false,
+    hardcode_d_to_garbage_addr = true,
+    has_loop_conv = false,
+    acc_read_full_width = false,
+    //has_loop_conv = false,
+    max_in_flight_mem_reqs = 16,
+    headerFileName = "gemmini_params_fp32.h",
+    num_counter = 0,
+    clock_gate = false //true // enable this
+  )
+
+
+  val FP32DummyConfig = slamFPConfig.copy(inputType = DummySInt(32), accType = DummySInt(32), spatialArrayOutputType = DummySInt(32),
+    mvin_scale_args = Some(ScaleArguments(
+      (t: DummySInt, f:Float) => t.dontCare,
+      1, Float(8, 24), -1,
+      identity = "1.0",
+      c_str = "((x)*(scale))"
+    )),
+
+    mvin_scale_acc_args = None,
+
+    acc_scale_args = Some(ScaleArguments(
+      (t: DummySInt, f:Float) => t.dontCare,
+      1, Float(8, 24), -1,
+      identity = "1.0",
+      c_str = "((x)*(scale))"
+    )),
+    has_loop_conv = true,
+  )
+
   //FP16 Half Precision Configuration
   val FP16DefaultConfig = defaultFPConfig.copy(inputType = Float(5, 11), spatialArrayOutputType = Float(5, 11), accType = Float(8, 24),
                                                tile_latency = 2,
@@ -123,6 +170,29 @@ class GemminiFP32DefaultConfig extends Config((site, here, up) => {
   )
 })
 
+class SLAMFPGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiFPConfigs.slamFPConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+})
+
+class GemminiFP32DummyConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiFPConfigs.FP32DummyConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+})
 
 //===========FP16 Default Config=========
 class GemminiFP16DefaultConfig extends Config((site, here, up) => {

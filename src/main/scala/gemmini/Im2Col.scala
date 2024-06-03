@@ -51,7 +51,6 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
 
     val sram_reads = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)) // from Scratchpad
 
-    val counter = new CounterEventIO()
   })
   val req = Reg(new Im2ColReadReq(config))
 
@@ -449,9 +448,4 @@ class Im2Col[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, U, V
     io.sram_reads.foreach(_.resp.ready := false.B)
   }
 
-  // Performance counter
-  CounterEventIO.init(io.counter)
-  io.counter.connectEventSignal(CounterEvent.IM2COL_ACTIVE_CYCLES, im2col_state === preparing_im2col)
-  io.counter.connectEventSignal(CounterEvent.IM2COL_MEM_CYCLES, im2col_state === doing_im2col)
-  io.counter.connectEventSignal(CounterEvent.IM2COL_TRANSPOSER_WAIT_CYCLE, im2col_state === waiting_for_im2col && sram_read_req)
 }

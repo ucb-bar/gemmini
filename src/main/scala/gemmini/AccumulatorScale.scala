@@ -397,7 +397,7 @@ object AccumulatorScale {
     val neg_q_iexp = neg(q)
     val z_iexp = (neg_q_iexp * qln2_inv).asUInt.do_>>(16).asTypeOf(q) // q is non-positive
     val z_iexp_saturated = Wire(z_iexp.cloneType)
-    z_iexp_saturated := Mux((5 until 16).map(z_iexp.asUInt(_)).reduce(_ | _), 32.S, z_iexp)
+    z_iexp_saturated := Mux((5 until 16).map(z_iexp.asUInt(_)).reduce(_ | _), 32.S.asTypeOf(z_iexp), z_iexp)
     val qp_iexp = q.mac(z_iexp, qln2).withWidthOf(q)
     val q_poly_iexp = qc.mac(qp_iexp + qb, qp_iexp + qb).withWidthOf(q)
     // we dont want a rounding shift

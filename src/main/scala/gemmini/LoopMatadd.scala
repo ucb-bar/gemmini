@@ -1,5 +1,5 @@
 
-package matadd
+package gemmini 
 
 import chisel3._
 import chisel3.util._
@@ -672,7 +672,7 @@ class LoopMatadd(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val st_utilization = RegInit(0.U(log2Up(max_sts + 1).W))
   //val ex_utilization = RegInit(0.U(log2Up(max_exs+1).W))
   // Create ld arbiters
-  val ldab_arb = Module(new WeightedArbiter(new RoCCCommand(), maxWeightA = 255, staticWeightAEnabled = true)) // TODO magic numbers
+  val ldab_arb = Module(new WeightedMataddArbiter(new RoCCCommand(), maxWeightA = 255, staticWeightAEnabled = true)) // TODO magic numbers
   ldab_arb.io.inA <> ldA.io.cmd
   ldab_arb.io.inB <> ldB.io.cmd
   val ab_loads_on_same_loop = ldA.io.loop_id === ldB.io.loop_id
@@ -709,7 +709,7 @@ class LoopMatadd(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
   // Wire up unrolled command output
   //val is_loop_run_cmd = cmd.bits.cmd.inst.funct === LOOP_WS
-  val is_loop_config_cmd = (cmd.bits.cmd.inst.funct >= LOOP_WS_CONFIG_BOUNDS && cmd.bits.cmd.inst.funct <= LOOP_WS_CONFIG_PACK)
+  val is_loop_config_cmd = (cmd.bits.cmd.inst.funct >= LOOP_MATADD_CONFIG_BOUNDS && cmd.bits.cmd.inst.funct <= LOOP_MATADD_CONFIG_PACK)
   val is_loop_cmd = is_loop_config_cmd //is_loop_run_cmd || is_loop_config_cmd
 
   io.out.bits.cmd := Mux(loop_configured, unrolled_cmd.bits, cmd.bits.cmd)
@@ -749,7 +749,7 @@ class LoopMatadd(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   when(cmd.valid && is_loop_cmd && !loop_being_configured.configured) {
 
     switch(cmd.bits.cmd.inst.funct) {
-      is(LOOP_WS_CONFIG_PACK){
+      is(LOOP_MATADD_CONFIG_PACK){
         loop_being_configured.pad_j
         packed := true.B
         val dim_j0 = cmd.bits.cmd.rs2(39, 32)
@@ -775,7 +775,7 @@ class LoopMatadd(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.pad_j(2) := Mux(dim_j2(1,0) === 0.U, 0.U, (4.U - dim_j2(1,0)).asUInt)
         loop_being_configured.pad_j(3) := Mux(dim_j3(1,0) === 0.U, 0.U, (4.U - dim_j3(1,0)).asUInt)
       }
-      is(LOOP_WS_CONFIG_BOUNDS) {
+      is(LOOP_MATADD_CONFIG_BOUNDS) {
         //loop_being_configured.max_k := cmd.bits.cmd.rs2(config_bitwidth * 3 - 1, config_bitwidth * 2)
         loop_being_configured.max_i := cmd.bits.cmd.rs2(config_bitwidth * 2 - 1, config_bitwidth)
 
@@ -795,18 +795,18 @@ class LoopMatadd(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         }
       }
 
-      is(LOOP_WS_CONFIG_ADDRS_AB) {
+      is(LOOP_MATADD_CONFIG_ADDRS_AB) {
         loop_being_configured.a_dram_addr := cmd.bits.cmd.rs1
         loop_being_configured.b_dram_addr := cmd.bits.cmd.rs2
       }
 
-      is(LOOP_WS_CONFIG_ADDRS_DC) {
+      is(LOOP_MATADD_CONFIG_ADDRS_DC) {
         //loop_being_configured.d_dram_addr := cmd.bits.cmd.rs1
         loop_being_configured.c_dram_stride := cmd.bits.cmd.rs1
         loop_being_configured.c_dram_addr := cmd.bits.cmd.rs2
       }
 
-      is(LOOP_WS_CONFIG_STRIDES_AB) {
+      is(LOOP_MATADD_CONFIG_STRIDES_AB) {
         loop_being_configured.a_dram_stride := cmd.bits.cmd.rs1
         loop_being_configured.b_dram_stride := cmd.bits.cmd.rs2
 
@@ -816,13 +816,13 @@ class LoopMatadd(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         packed := false.B
       }
 
-      //is(LOOP_WS_CONFIG_STRIDES_DC) {
+      //is(LOOP_MATADD_CONFIG_STRIDES_DC) {
         //loop_being_configured.d_dram_stride := cmd.bits.cmd.rs1
         //loop_being_configured.c_dram_stride := cmd.bits.cmd.rs2
       //}
 
       /*
-      is(LOOP_WS) {
+      is(LOOP_MATADD) {
         loop_being_configured.ex_accumulate := cmd.bits.cmd.rs1(0)
         loop_being_configured.full_c := cmd.bits.cmd.rs1(1)
         loop_being_configured.low_d := cmd.bits.cmd.rs1(2)
