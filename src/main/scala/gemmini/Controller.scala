@@ -12,7 +12,6 @@ import freechips.rocketchip.util.{BundleField, ClockGate}
 import freechips.rocketchip.tilelink._
 import GemminiISA._
 import Util._
-import freechips.rocketchip.regmapper.RegField
 
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
@@ -92,16 +91,6 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   override val atlNode = if (config.use_dedicated_tl_port) TLIdentityNode() else spad.id_node
 
   val node = if (config.use_dedicated_tl_port) tlNode else atlNode
-
-  // TODO: move to gemmini tile
-  val regDevice = new SimpleDevice("gemmini-cmd-reg", Seq(s"gemmini-cmd-reg"))
-  val regNode = TLRegisterNode(
-    address = Seq(AddressSet(0xff013000L, 0xfff)),
-    device = regDevice,
-    beatBytes = 8,
-    concurrency = 1)
-
-  regNode := TLFragmenter(8, 64) := stlNode
 }
 
 class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
@@ -248,42 +237,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     clock_en_reg := io.cmd.bits.rs1(0)
   }
 
-  val regValid = Wire(Bool())
-  val regCommand = Wire(io.cmd.bits.cloneType)
-  val gemminiRs1RegLSB = RegInit(0.U(32.W))
-  val gemminiRs1RegMSB = RegInit(0.U(32.W))
-  val gemminiRs2RegLSB = RegInit(0.U(32.W))
-  val gemminiRs2RegMSB = RegInit(0.U(32.W))
-  regCommand.rs1 := Cat(gemminiRs1RegMSB, gemminiRs1RegLSB)
-  regCommand.rs2 := Cat(gemminiRs2RegMSB, gemminiRs2RegLSB)
-  regCommand.status := io.cmd.bits.status
-
   val raw_cmd_q = Module(new Queue(new GemminiCmd(reservation_station_entries), entries = 2))
-  raw_cmd_q.io.enq.valid := regValid || io.cmd.valid
-  io.cmd.ready := raw_cmd_q.io.enq.ready && !regValid
-  assert(!regValid || raw_cmd_q.io.enq.ready)
-  raw_cmd_q.io.enq.bits.cmd := Mux(regValid, regCommand, io.cmd.bits)
+  raw_cmd_q.io.enq.valid := io.cmd.valid
+  io.cmd.ready := raw_cmd_q.io.enq.ready
+  raw_cmd_q.io.enq.bits.cmd := io.cmd.bits
   raw_cmd_q.io.enq.bits.rob_id := DontCare
   raw_cmd_q.io.enq.bits.from_conv_fsm := false.B
   raw_cmd_q.io.enq.bits.from_matmul_fsm := false.B
-
-  def gemminiCommandReg(valid: Bool, bits: UInt): Bool = {
-    regValid := valid
-    regCommand.inst := bits.asTypeOf(regCommand.inst)
-    // when(valid && raw_cmd_q.io.enq.ready)
-    raw_cmd_q.io.enq.ready
-  }
-
-  outer.regNode.regmap(
-    0x00 -> Seq(RegField.w(32, gemminiCommandReg(_, _))),
-    0x10 -> Seq(
-      RegField.w(32, gemminiRs1RegLSB),
-      RegField.w(32, gemminiRs1RegMSB)),
-    0x18 -> Seq(
-      RegField.w(32, gemminiRs2RegLSB),
-      RegField.w(32, gemminiRs2RegMSB)),
-    0x20 -> Seq(RegField.r(32, io.busy))
-  )
 
   val raw_cmd = raw_cmd_q.io.deq
 
