@@ -132,6 +132,32 @@ object GemminiFPConfigs {
     num_counter = 0,
     clock_gate = true 
   )
+
+  val chipFP16Config = FP16DefaultConfig.copy(sp_capacity=CapacityInKilobytes(32), acc_capacity=CapacityInKilobytes(8), dataflow=Dataflow.WS,
+    meshRows = 8,
+    meshColumns = 8,
+    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
+      c_str = "((x))"
+    )),
+    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 3, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
+    mvin_scale_acc_args=None,
+    acc_singleported=false,
+    acc_sub_banks = 1,
+    acc_banks = 2,
+    mesh_output_delay = 2,
+    tile_latency = 1,
+    acc_latency = 3,
+    ex_read_from_acc=false,
+    ex_write_to_spad=false,
+    has_training_convs = false,                                                                                      
+    hardcode_d_to_garbage_addr = true,
+    acc_read_full_width = false,
+    max_in_flight_mem_reqs = 16,
+    headerFileName = "gemmini_params_fp32.h",
+    num_counter = 0,
+    clock_gate = true 
+  )
+
 }
 
 //===========FP32 Default Config=========
@@ -165,6 +191,18 @@ class GemminiFP16DefaultConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiFPConfigs.FP16DefaultConfig))
+    }
+  )
+})
+
+class ChipFP16GemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](                                           
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiFPConfigs.chipFP16Config
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
     }
   )
 })
