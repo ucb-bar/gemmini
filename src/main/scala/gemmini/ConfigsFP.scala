@@ -133,10 +133,10 @@ object GemminiFPConfigs {
     clock_gate = true 
   )
 
-  val chipFP16Config = FP16DefaultConfig.copy(sp_capacity=CapacityInKilobytes(32), acc_capacity=CapacityInKilobytes(8), dataflow=Dataflow.WS,
+  val chipFP16Config = FP16DefaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(64), dataflow=Dataflow.WS,
     meshRows = 8,
     meshColumns = 8,
-    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
+    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(5, 11), -1, identity = "1.0",
       c_str = "((x))"
     )),
     mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 3, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
