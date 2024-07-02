@@ -133,10 +133,10 @@ object GemminiFPConfigs {
     clock_gate = true 
   )
 
-  val chipFP16Config = FP16DefaultConfig.copy(sp_capacity=CapacityInKilobytes(64), acc_capacity=CapacityInKilobytes(64), dataflow=Dataflow.WS,
+  val chipFP16Config = FP16DefaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(128), dataflow=Dataflow.WS,
     meshRows = 8,
     meshColumns = 8,
-    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(5, 11), -1, identity = "1.0",
+    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
       c_str = "((x))"
     )),
     mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 3, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
@@ -153,7 +153,7 @@ object GemminiFPConfigs {
     hardcode_d_to_garbage_addr = true,
     acc_read_full_width = false,
     max_in_flight_mem_reqs = 16,
-    headerFileName = "gemmini_params_fp32.h",
+    //headerFileName = "gemmini_params_fp16.h",
     num_counter = 0,
     clock_gate = true 
   )
