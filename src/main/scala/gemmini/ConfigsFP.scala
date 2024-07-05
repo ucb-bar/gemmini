@@ -133,23 +133,28 @@ object GemminiFPConfigs {
     clock_gate = true 
   )
 
-  val chipFP16Config = FP16DefaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(128), dataflow=Dataflow.WS,
-    meshRows = 8,
-    meshColumns = 8,
-    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
-      c_str = "((x))"
-    )),
-    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 3, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
+  val chipFP16Config = FP16DefaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64), dataflow=Dataflow.WS,
+    meshRows = 16,
+    meshColumns = 16,
+    accType = Float(5, 11),
+    //acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
+    //  c_str = "((x))"
+    //)),
+    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(5, 11), -1, identity = "1.0",
+      c_str = "((x) * (scale))"
+    )),  
+    //mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 3, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
+    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(5, 11), -1, identity = "1.0", c_str="((x))")),
     mvin_scale_acc_args=None,
-    acc_singleported=false,
-    acc_sub_banks = 1,
+    acc_singleported=true,
+    acc_sub_banks = 2,
     acc_banks = 2,
     mesh_output_delay = 2,
     tile_latency = 1,
     acc_latency = 3,
     ex_read_from_acc=false,
     ex_write_to_spad=false,
-    has_training_convs = false,                                                                                      
+    has_training_convs = false,
     hardcode_d_to_garbage_addr = true,
     acc_read_full_width = false,
     max_in_flight_mem_reqs = 16,
