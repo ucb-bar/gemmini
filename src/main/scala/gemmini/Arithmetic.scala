@@ -358,6 +358,7 @@ object Arithmetic {
         val m2_rec = recFNFromFN(m2.expWidth, m2.sigWidth, m2.bits)
         val self_rec = recFNFromFN(self.expWidth, self.sigWidth, self.bits)
 
+        /*
         // Resize m1 to self's width
         val m1_resizer = Module(new RecFNToRecFN(m1.expWidth, m1.sigWidth, self.expWidth, self.sigWidth))
         m1_resizer.io.in := m1_rec
@@ -370,7 +371,7 @@ object Arithmetic {
         m2_resizer.io.in := m2_rec
         m2_resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
         m2_resizer.io.detectTininess := consts.tininess_afterRounding
-        val m2_rec_resized = m2_resizer.io.out
+        val m2_rec_resized = m2_resizer.io.out */
 
         // Perform multiply-add
         val muladder = Module(new MulAddRecFN(self.expWidth, self.sigWidth))
@@ -379,13 +380,16 @@ object Arithmetic {
         muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
         muladder.io.detectTininess := consts.tininess_afterRounding
 
-        muladder.io.a := m1_rec_resized
-        muladder.io.b := m2_rec_resized
+        //muladder.io.a := m1_rec_resized
+        //muladder.io.b := m2_rec_resized
+        muladder.io.a := m1_rec
+        muladder.io.b := m2_rec
         muladder.io.c := self_rec
 
         // Convert result to standard format // TODO remove these intermediate recodings
         val out = Wire(Float(self.expWidth, self.sigWidth))
-        out.bits := fNFromRecFN(self.expWidth, self.sigWidth, muladder.io.out)
+        //out.bits := fNFromRecFN(self.expWidth, self.sigWidth, muladder.io.out)
+        out.bits := muladder.io.out
         out
       }
 
