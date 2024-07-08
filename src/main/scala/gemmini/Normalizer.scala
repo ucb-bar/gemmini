@@ -206,7 +206,7 @@ class MulPipe[T <: Data, U <: Data](scale_t: U)(implicit ev: Arithmetic[T])
   })
 
   scale_t match {
-    case Float(expWidth, sigWidth) =>
+    case Float(expWidth, sigWidth, false) =>
       val self_rec = recFNFromFN(expWidth, sigWidth, io.ins.bits.x.asUInt)
       val scale_rec = recFNFromFN(expWidth, sigWidth, io.ins.bits.y.asUInt)
 
@@ -542,7 +542,7 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
   val exp_divider_out = Wire(Decoupled(scale_t.cloneType))
 
   scale_t match {
-    case Float(expWidth, sigWidth) =>
+    case Float(expWidth, sigWidth, false) =>
 
       exp_divider_in.bits := DontCare
 
