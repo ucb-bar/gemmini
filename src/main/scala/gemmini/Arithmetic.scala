@@ -331,7 +331,7 @@ object Arithmetic {
     override implicit def cast(self: Float): ArithmeticOps[Float] = new ArithmeticOps(self) {
       override def *(t: Float): Float = {
         val t_rec = if (t.isRecoded) t.bits else recFNFromFN(t.expWidth, t.sigWidth, t.bits)
-        val self_rec = if (t.isRecoded) t.bits else recFNFromFN(self.expWidth, self.sigWidth, self.bits)
+        val self_rec = if (self.isRecoded) self.bits else recFNFromFN(self.expWidth, self.sigWidth, self.bits)
 
         val t_resizer =  Module(new RecFNToRecFN(t.expWidth, t.sigWidth, self.expWidth, self.sigWidth))
         t_resizer.io.in := t_rec
@@ -488,7 +488,7 @@ object Arithmetic {
         resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
         resizer.io.detectTininess := consts.tininess_afterRounding
 
-        val result = Wire(Float(t.expWidth, t.sigWidth, self.isRecoded))
+        val result = Wire(Float(t.expWidth, t.sigWidth, t.isRecoded))
         result.bits := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
         result
       }
@@ -502,7 +502,7 @@ object Arithmetic {
         resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
         resizer.io.detectTininess := consts.tininess_afterRounding
 
-        val result = Wire(Float(t.expWidth, t.sigWidth, self.isRecoded))
+        val result = Wire(Float(t.expWidth, t.sigWidth, t.isRecoded))
         result.bits := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
         result
       }
