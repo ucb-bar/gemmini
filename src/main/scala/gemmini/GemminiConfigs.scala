@@ -18,8 +18,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              opcodes: OpcodeSet = OpcodeSet.custom3,
 
                                                                              inputType: T,
-                                                                             spatialArrayOutputType: T,
+                                                                             weightType: T,   
                                                                              accType: T,
+                                                                             spatialArrayInputType: T,
+                                                                             spatialArrayWeightType: T,
+                                                                             spatialArrayOutputType: T,
 
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
 
@@ -96,6 +99,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
+  require(inputType.getWidth == weightType.getWidth)
   val sp_width = meshColumns * tileColumns * inputType.getWidth
   val sp_bank_entries = sp_capacity match {
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (sp_banks * sp_width)
