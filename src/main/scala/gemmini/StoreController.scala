@@ -36,34 +36,34 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val control_state = RegInit(waiting_for_command)
 
-  val stride = Reg(UInt(coreMaxAddrBits.W))
+  val stride = RegInit(0.U(coreMaxAddrBits.W))
   val block_rows = meshRows * tileRows
   val block_stride = block_rows.U
   val block_cols = meshColumns * tileColumns
   val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
 
-  val activation = Reg(UInt(Activation.bitwidth.W)) // TODO magic number
-  val igelu_qb = Reg(accType)
-  val igelu_qc = Reg(accType)
-  val iexp_qln2 = Reg(accType)
-  val iexp_qln2_inv = Reg(accType)
-  val norm_stats_id = Reg(UInt(8.W)) // TODO magic number
-  val acc_scale = Reg(acc_scale_t)
+  val activation = RegInit(0.U(Activation.bitwidth.W)) // TODO magic number
+  val igelu_qb = RegInit(0.U.asTypeOf(accType))
+  val igelu_qc = RegInit(0.U.asTypeOf(accType))
+  val iexp_qln2 = RegInit(0.U.asTypeOf(accType))
+  val iexp_qln2_inv = RegInit(0.U.asTypeOf(accType))
+  val norm_stats_id = RegInit(0.U(8.W)) // TODO magic number
+  val acc_scale = RegInit(0.U.asTypeOf(acc_scale_t))
 
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
   val row_counter = RegInit(0.U(12.W)) // TODO magic number
   val block_counter = RegInit(0.U(8.W)) // TODO magic number
 
   // Pooling variables
-  val pool_stride = Reg(UInt(CONFIG_MVOUT_RS1_MAX_POOLING_STRIDE_WIDTH.W)) // When this is 0, pooling is disabled
-  val pool_size = Reg(UInt(CONFIG_MVOUT_RS1_MAX_POOLING_WINDOW_SIZE_WIDTH.W))
-  val pool_out_dim = Reg(UInt(CONFIG_MVOUT_RS1_POOL_OUT_DIM_WIDTH.W))
-  val pool_porows = Reg(UInt(CONFIG_MVOUT_RS1_POOL_OUT_ROWS_WIDTH.W))
-  val pool_pocols = Reg(UInt(CONFIG_MVOUT_RS1_POOL_OUT_COLS_WIDTH.W))
-  val pool_orows = Reg(UInt(CONFIG_MVOUT_RS1_OUT_ROWS_WIDTH.W))
-  val pool_ocols = Reg(UInt(CONFIG_MVOUT_RS1_OUT_COLS_WIDTH.W))
-  val pool_upad = Reg(UInt(CONFIG_MVOUT_RS1_UPPER_ZERO_PADDING_WIDTH.W))
-  val pool_lpad = Reg(UInt(CONFIG_MVOUT_RS1_LEFT_ZERO_PADDING_WIDTH.W))
+  val pool_stride = RegInit(0.U(CONFIG_MVOUT_RS1_MAX_POOLING_STRIDE_WIDTH.W)) // When this is 0, pooling is disabled
+  val pool_size = RegInit(0.U(CONFIG_MVOUT_RS1_MAX_POOLING_WINDOW_SIZE_WIDTH.W))
+  val pool_out_dim = RegInit(0.U(CONFIG_MVOUT_RS1_POOL_OUT_DIM_WIDTH.W))
+  val pool_porows = RegInit(0.U(CONFIG_MVOUT_RS1_POOL_OUT_ROWS_WIDTH.W))
+  val pool_pocols = RegInit(0.U(CONFIG_MVOUT_RS1_POOL_OUT_COLS_WIDTH.W))
+  val pool_orows = RegInit(0.U(CONFIG_MVOUT_RS1_OUT_ROWS_WIDTH.W))
+  val pool_ocols = RegInit(0.U(CONFIG_MVOUT_RS1_OUT_COLS_WIDTH.W))
+  val pool_upad = RegInit(0.U(CONFIG_MVOUT_RS1_UPPER_ZERO_PADDING_WIDTH.W))
+  val pool_lpad = RegInit(0.U(CONFIG_MVOUT_RS1_LEFT_ZERO_PADDING_WIDTH.W))
 
   val porow_counter = RegInit(0.U(pool_porows.getWidth.W))
   val pocol_counter = RegInit(0.U(pool_pocols.getWidth.W))
@@ -84,6 +84,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   // Commands
   val cmd = Queue(io.cmd, st_queue_length)
   val vaddr = cmd.bits.cmd.rs1
+  val mvout_spad_rs1 = cmd.bits.cmd.rs1.asTypeOf(new MvoutSpadRs1(32, local_addr_t))
+  val dst_spad_addr = mvout_spad_rs1.local_addr
+  val dst_spad_stride = mvout_spad_rs1.stride
+  val dst_is_spad = cmd.bits.cmd.inst.funct === STORE_SPAD_CMD
   val mvout_rs2 = cmd.bits.cmd.rs2.asTypeOf(new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t))
   val localaddr = mvout_rs2.local_addr
   val cols = mvout_rs2.num_cols
@@ -122,6 +126,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val current_vaddr = vaddr + row_counter * stride
   val current_localaddr = WireInit(localaddr + (block_counter * block_stride + row_counter))
+  val current_dst_spad_addr = dst_spad_addr.asUInt + row_counter * dst_spad_stride
 
   val pool_row_addr = localaddr + (orow * pool_ocols +& ocol)
   when (orow_is_negative || ocol_is_negative || orow >= pool_orows || ocol >= pool_ocols) {
@@ -157,7 +162,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     (control_state === sending_rows && (block_counter =/= 0.U || row_counter =/= 0.U)) ||
     (control_state === pooling && (wcol_counter =/= 0.U || wrow_counter =/= 0.U || pocol_counter =/= 0.U || porow_counter =/= 0.U))
 
-  io.dma.req.bits.vaddr := Mux(pooling_is_enabled || mvout_1d_enabled, pool_vaddr, current_vaddr)
+  io.dma.req.bits.vaddr := Mux(dst_is_spad,
+    current_dst_spad_addr,
+    Mux(pooling_is_enabled || mvout_1d_enabled, pool_vaddr, current_vaddr))
+  io.dma.req.bits.dest := dst_is_spad
   io.dma.req.bits.laddr := Mux(pooling_is_enabled, pool_row_addr, current_localaddr) //Todo: laddr for 1D?
   io.dma.req.bits.laddr.norm_cmd := Mux(block_counter === blocks - 1.U, current_localaddr.norm_cmd,
         NormCmd.non_reset_version(current_localaddr.norm_cmd))

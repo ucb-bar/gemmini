@@ -34,6 +34,10 @@ object GemminiISA {
 
   val CLKGATE_EN = 22.U
 
+  val STORE_SPAD_CMD = 23.U
+  val LOOP_WS_CONFIG_SPAD_AB = 24.U
+  val LOOP_WS_CONFIG_SPAD_C = 25.U
+
   // rs1[2:0] values
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U
@@ -70,6 +74,16 @@ object GemminiISA {
     val _spacer1 = UInt((MVIN_RS2_COLS_WIDTH - mvin_cols_bits).W)
     val num_cols = UInt(mvin_cols_bits.W)
     val _spacer0 = UInt((MVIN_RS2_ADDR_WIDTH - local_addr_t.getWidth).W)
+    val local_addr = local_addr_t.cloneType
+  }
+
+  val MVOUT_SPAD_RS1_ADDR_WIDTH = 32
+  val MVOUT_SPAD_RS1_STRIDE_WIDTH = 32
+
+  class MvoutSpadRs1(stride_bits: Int, local_addr_t: LocalAddr) extends Bundle {
+    val _spacer1 = UInt((MVOUT_SPAD_RS1_STRIDE_WIDTH - stride_bits).W)
+    val stride = UInt(stride_bits.W)
+    val _spacer0 = UInt((MVOUT_SPAD_RS1_ADDR_WIDTH - local_addr_t.getWidth).W)
     val local_addr = local_addr_t.cloneType
   }
 

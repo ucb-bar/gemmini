@@ -105,7 +105,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val b_written = RegInit(false.B)
   val d_written = RegInit(false.B)
 
-  val in_prop = Reg(UInt(1.W)) // TODO inelegant
+  val in_prop = RegInit(0.U(1.W)) // TODO inelegant
 
   val input_next_row_into_spatial_array = req.valid && ((a_written && b_written && d_written) || req.bits.flush > 0.U)
 
