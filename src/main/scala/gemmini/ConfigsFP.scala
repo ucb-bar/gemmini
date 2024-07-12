@@ -167,7 +167,11 @@ object GemminiFPConfigs {
     max_in_flight_mem_reqs = 16,
     //headerFileName = "gemmini_params_fp16.h",
     num_counter = 0,
-    clock_gate = true 
+    clock_gate = true,
+    use_tl_ext_mem = true,
+    use_shared_ext_mem = true,
+    tl_ext_mem_base = 0x00,
+    sp_banks = 2,
   )
 
 }

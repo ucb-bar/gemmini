@@ -86,6 +86,9 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   //   TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(name = s"acc_write_node_$i", sourceId = IdRange(0, numIDs))))
   // }) else TLIdentityNode()
 
+  spad.xbar_node :=* TLBuffer() :=* spad_read_nodes
+  spad.xbar_node :=* TLBuffer() :=* spad_write_nodes
+
   override lazy val module = new GemminiModule(this)
   override val tlNode = if (config.use_dedicated_tl_port) spad.id_node else TLIdentityNode()
   override val atlNode = if (config.use_dedicated_tl_port) TLIdentityNode() else spad.id_node

@@ -217,6 +217,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
   xbar_node := TLBuffer() := reader.node // TODO
   xbar_node := TLBuffer() := writer.node
+  xbar_node := TLBuffer() := spad_writer.node
   id_node := TLWidthWidget(config.dma_buswidth/8) := TLBuffer() := xbar_node
 
   lazy val module = new Impl
