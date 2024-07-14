@@ -28,7 +28,7 @@ object GemminiFPConfigs {
     reservation_station_entries_st = 4,
     reservation_station_entries_ex = 16,
 
-    sp_banks = 4,
+    sp_banks = 8,
     sp_singleported = true,
     acc_banks = 1,
     acc_latency = 2,
@@ -108,6 +108,7 @@ object GemminiFPConfigs {
                                                mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
+  val gemvFPConfig = FP32DefaultConfig.copy(meshRows = 4, meshColumns = 1, tileRows = 1, tileColumns = 4, sp_banks = 8, acc_banks = 4, acc_read_full_width = false, ex_read_from_acc = false)
 
 }
 
@@ -171,3 +172,12 @@ class GemminiBF16Default8Config extends Config((site, here, up) => {
   )
 })
 
+class GemvGemminiFP32Config extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiFPConfigs.gemvFPConfig))
+    }
+  )
+})
