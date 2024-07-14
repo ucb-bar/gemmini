@@ -121,8 +121,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val bd_transpose = Reg(Bool())
   val config_initialized = RegInit(false.B)
 
-  val is_gemv = WireInit(true.B)
-
   val a_should_be_fed_into_transposer = Mux(current_dataflow === Dataflow.OS.id.U, !a_transpose, a_transpose)
   val a_address_place = Mux(preload_cmd_place === 0.U, 1.U, Mux(a_should_be_fed_into_transposer, 2.U, 0.U))
 
@@ -161,8 +159,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val d_cols_default = rs1s(preload_cmd_place)(32 + log2Up(block_size + 1) - 1, 32) // TODO magic numbers
   val d_rows_default = rs1s(preload_cmd_place)(48 + log2Up(block_size + 1) - 1, 48) // TODO magic numbers
 
-  val a_cols = Mux(a_transpose, a_rows_default, a_cols_default)
-  val a_rows = Mux(a_transpose, a_cols_default, a_rows_default)
+  val a_cols = Mux(a_transpose && !is_gemv, a_rows_default, a_cols_default)
+  val a_rows = Mux(a_transpose && !is_gemv, a_cols_default, a_rows_default)
   val b_cols = Mux(current_dataflow === Dataflow.OS.id.U && bd_transpose, b_rows_default, b_cols_default)
   val b_rows = Mux(current_dataflow === Dataflow.OS.id.U && bd_transpose, b_cols_default, b_rows_default)
   val d_cols = Mux(current_dataflow === Dataflow.WS.id.U && bd_transpose, d_rows_default, d_cols_default)
@@ -209,7 +207,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh.io.req.bits.a_transpose := cntl.a_transpose
   mesh.io.req.bits.bd_transpose := cntl.bd_transpose
   mesh.io.req.bits.tag.rob_id := cntl.rob_id
-  mesh.io.req.bits.flush := Mux(control_state === flush && !cntl_valid, 1.U, 0.U) // We want to make sure that the mesh has absorbed all inputs before flushing
+  mesh.io.req.bits.flush := control_state === flush
 
   // Hazards
   val raw_hazards_are_impossible = !ex_read_from_acc && !ex_write_to_spad // Special case where RAW hazards are impossible
@@ -313,7 +311,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val mul_pre_counter_lock = RegInit(false.B)
 
   // These variables determine whether or not the row that is currently being read should be completely padded with 0
-  val a_row_is_not_all_zeros = a_fire_counter.map(counter => counter < a_rows)
+  val a_row_is_not_all_zeros = a_fire_counter.map(counter => counter < a_cols)
   val b_row_is_not_all_zeros = b_fire_counter < b_rows
   val d_row_is_not_all_zeros = block_size.U - 1.U - d_fire_counter < d_rows //Todo: d_fire_counter_mulpre?
 
@@ -605,7 +603,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               }
             }
 
-            // is_gemv := config_ex_rs1.is_gemv.asBool
 
             a_addr_stride := config_ex_rs1.a_stride // TODO this needs to be kept in sync with ROB.scala
             c_addr_stride := config_ex_rs2.c_stride // TODO this needs to be kept in sync with ROB.scala
@@ -667,10 +664,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
         }
 
         // Flush
-        .elsewhen(matmul_in_progress && (current_dataflow === Dataflow.OS.id.U || DoConfig)) {
+        // We want to make sure that the mesh has absorbed all inputs before flushing
+        .elsewhen(matmul_in_progress && (current_dataflow === Dataflow.OS.id.U || DoConfig) && !cntl_valid) {
           control_state := flush
         }
-      }.elsewhen(matmul_in_progress && current_dataflow === Dataflow.OS.id.U) {
+      }.elsewhen(matmul_in_progress && current_dataflow === Dataflow.OS.id.U && !cntl_valid) {
         // TODO code duplication
         control_state := flush
       }
@@ -819,7 +817,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh_cntl_signals_q.io.enq.bits.accumulate_zeros := accumulate_zeros
   mesh_cntl_signals_q.io.enq.bits.preload_zeros := preload_zeros //&& (in_shift(19) =/= 1.U)) //fixed for negative shift?
 
-  mesh_cntl_signals_q.io.enq.bits.a_unpadded_cols := Mux(a_row_is_not_all_zeros(0), a_cols, 0.U)
+  mesh_cntl_signals_q.io.enq.bits.a_unpadded_cols := Mux(a_row_is_not_all_zeros(0), a_rows, 0.U)
 
   mesh_cntl_signals_q.io.enq.bits.b_unpadded_cols := Mux(b_row_is_not_all_zeros, b_cols, 0.U)
   mesh_cntl_signals_q.io.enq.bits.d_unpadded_cols := Mux(d_row_is_not_all_zeros, d_cols, 0.U)
@@ -888,9 +886,21 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // TODO figure out uint casting within vecs
   // val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(tileColumns, Vec(block_size, inputType))).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, VecInit(Seq.fill(tileColumns)(inputType.zero)))})
-  val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(tileColumns, Vec(block_size, inputType))).zipWithIndex.map { case (d, i) => d})
+  val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(tileColumns, Vec(block_size, inputType))).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, inputType.zero.asTypeOf(d))})
   val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)})
+  val dataB_cntr = RegInit(0.U(log2Up(block_size).W))
+  val dataB_reg = RegEnable(dataB, io.srams.read(cntl.b_bank).resp.ready && dataB_cntr === 0.U)
   val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)})
+
+  // when sram data is ready
+    // take from dataB
+  // when b can fire
+    // taken from previous register
+  when(cntl.b_fire && mesh.io.b.fire && !cntl.b_garbage && !cntl.accumulate_zeros){
+    dataB_cntr := dataB_cntr + 1.U
+  }.otherwise {
+    dataB_cntr := 0.U
+  }
 
   dontTouch(dataA)
   // Pop responses off the scratchpad io ports
@@ -934,10 +944,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   dontTouch(cntl_valid)
   dontTouch(mesh.io.a.valid)
   dontTouch(dataD)
-  dontTouch(is_gemv)
 
   when (is_gemv) {
-      when ((current_dataflow === Dataflow.WS.id.U).asBool) {
+      when (!cntl_valid || cntl.perform_single_preload) {
+        mesh.io.a.bits := (0.U).asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
+        mesh.io.b.bits := (0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
+      }.elsewhen ((current_dataflow === Dataflow.WS.id.U).asBool) {
         // transpose A
         for (tc <- 0 until tileColumns) {
           for (mr <- 0 until meshRows) {
@@ -955,17 +967,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
         // duplicate one element of the bias vector to the mesh
         for (tc <- 0 until tileColumns) {
           for (mc <- 0 until meshColumns) {
-              mesh.io.b.bits(mc)(tc) := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))(0)(b_fire_counter-1.U)
+              mesh.io.b.bits(mc)(tc) := Mux(dataB_cntr === 0.U, dataB(0), dataB_reg(dataB_cntr))
           }
         }
       }.otherwise {
-        // TODO this only works when casted this way
         mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileColumns, Vec(tileRows, inputType))))
-        for (tc <- 0 until tileColumns) {
-          for (mc <- 0 until meshColumns) {
-              mesh.io.b.bits(mc)(tc) := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))(0)(b_fire_counter-1.U)
-          }
-        }
+        mesh.io.b.bits := VecInit.fill(meshColumns, tileColumns)(Mux(dataB_cntr === 0.U, dataB(0), dataB_reg(dataB_cntr)))
         for (tc <- 0 until tileColumns) {
           for (mc <- 0 until meshColumns) {
               mesh.io.d.bits(mc)(tc) := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))(0)(d_fire_counter-1.U)
@@ -1084,7 +1091,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   when(mesh.io.resp.fire && mesh.io.resp.bits.tag.rob_id.valid) {
     output_counter := wrappingAdd(output_counter, 1.U, w_total_output_rows)
     val last = mesh.io.resp.bits.last
-
+ 
     when(last) {
       mesh_completed_rob_id_fire := true.B
       io.completed.valid := true.B

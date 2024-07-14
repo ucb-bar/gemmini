@@ -177,7 +177,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   // val in_a_row = WireInit()
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_b := b_shifter_in
-  mesh.io.in_d := shifted(d_shifter_in, upBanks)
+  mesh.io.in_d := d_shifter_in
 
   mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_.dataflow := ShiftRegister(req.bits.pe_control.dataflow, i * (tile_latency + 1)))
