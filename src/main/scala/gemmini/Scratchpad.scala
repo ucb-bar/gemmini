@@ -447,7 +447,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val banks = Seq.tabulate(sp_banks) { bankId => Module(new ScratchpadBank(
         sp_bank_entries, spad_w,
         aligned_to, config.sp_singleported,
-        use_shared_ext_mem, is_dummy=bankId > 5
+        use_shared_ext_mem, is_dummy=bankId > block_rows + 1
       )) }
       val bank_ios = VecInit(banks.map(_.io))
       // Reading from the SRAM banks
