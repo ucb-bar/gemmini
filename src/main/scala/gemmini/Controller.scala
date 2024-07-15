@@ -34,6 +34,10 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   val xLen = p(XLen)
   val spad = LazyModule(new Scratchpad(config))
 
+  val id_node = TLIdentityNode()
+  val xbar_node = TLXbar()
+  val xbar_client_node = TLXbar()
+
   val use_ext_tl_mem = config.use_shared_ext_mem && config.use_tl_ext_mem
   val num_ids = 32 // TODO (richard): move to config
   val spad_base = config.tl_ext_mem_base
@@ -79,6 +83,38 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     )))
   }) else TLIdentityNode()
 
+  val spad_read_mgrs = if (false) TLManagerNode(Seq.tabulate(config.sp_banks) {i =>
+    TLSlavePortParameters.v1(Seq(TLSlaveParameters.v2(
+      name = Some(s"spad_read_mgr_$i"),
+      address = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
+      supports = TLMasterToSlaveTransferSizes(
+        get = TransferSizes(1, 64)),
+      fifoId = Some(0)
+    )),
+    beatBytes = mem_width)
+  }) else TLIdentityNode()
+
+  val spad_rw_mgrs = if (false) TLManagerNode(Seq.tabulate(config.sp_banks) { i =>
+    TLSlavePortParameters.v1(Seq(TLSlaveParameters.v2(
+      name = Some(s"spad_rw_mgr_$i"),
+      address = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
+      supports = TLMasterToSlaveTransferSizes(
+        get = TransferSizes(1, 64),
+        putFull = TransferSizes(1, 64),
+        putPartial = TransferSizes(1, 64)),
+      fifoId = Some(0)
+    )),
+    beatBytes = mem_width)
+  }) else TLIdentityNode()
+
+  (0 until config.sp_banks).map { i =>
+    val ram = LazyModule(new TLRAM(
+      address = AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1),
+      beatBytes = mem_width,
+    ))
+    ram.node := TLFragmenter(32, 64) := TLBuffer() := xbar_node
+  }
+
   // val acc_read_nodes = if (create_tl_mem) TLClientNode(Seq.tabulate(config.acc_banks) { i =>
   //   TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(name = s"acc_read_node_$i", sourceId = IdRange(0, numIDs))))
   // }) else TLIdentityNode()
@@ -89,9 +125,14 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   spad.xbar_node :=* TLBuffer() :=* spad_read_nodes
   spad.xbar_node :=* TLBuffer() :=* spad_write_nodes
 
+  spad_read_mgrs :*= TLBuffer() :*= xbar_node
+  spad_rw_mgrs :*= TLBuffer() :*= xbar_node
+  xbar_node := TLBuffer() := TLWidthWidget(config.dma_buswidth/8) := id_node
+
   override lazy val module = new GemminiModule(this)
   override val tlNode = if (config.use_dedicated_tl_port) spad.id_node else TLIdentityNode()
   override val atlNode = if (config.use_dedicated_tl_port) TLIdentityNode() else spad.id_node
+  id_node := stlNode
 
   val node = if (config.use_dedicated_tl_port) tlNode else atlNode
 }
@@ -146,7 +187,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         connect(ext_mem_spad(i), i * outer.mem_depth * outer.mem_width, log2Up(outer.spad_data_len),
           r_node, r_edge, source_counters(0), w_node, w_edge, source_counters(1))
     }
-
 
     ext_mem_acc.foreach(_.foreach(x => {
       x.read_resp.bits := 0.U(1.W)

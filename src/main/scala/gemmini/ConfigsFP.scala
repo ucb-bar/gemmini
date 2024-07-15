@@ -170,8 +170,9 @@ object GemminiFPConfigs {
     clock_gate = true,
     use_tl_ext_mem = true,
     use_shared_ext_mem = true,
-    tl_ext_mem_base = 0x00,
-    sp_banks = 2,
+    tl_ext_mem_base = 0x1000000,
+    dma_maxbytes = 64,
+    dma_buswidth = 256
   )
 
 }
