@@ -18,7 +18,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              opcodes: OpcodeSet = OpcodeSet.custom3,
 
                                                                              inputType: T,
-                                                                             weightType: T,   
+                                                                             weightType: T,
                                                                              accType: T,
                                                                              spatialArrayInputType: T,
                                                                              spatialArrayWeightType: T,
@@ -30,6 +30,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              tileColumns: Int = 1,
                                                                              meshRows: Int = 16,
                                                                              meshColumns: Int = 16,
+                                                                             quantWidth: Int = 4,
 
                                                                              ld_queue_length: Int = 8,
                                                                              st_queue_length: Int = 2,

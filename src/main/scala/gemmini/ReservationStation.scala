@@ -191,7 +191,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     new_entry.issued := false.B
     new_entry.cmd := io.alloc.bits
 
-    new_entry.is_config := funct === CONFIG_CMD
+    new_entry.is_config := funct === CONFIG_CMD || funct === PRELOAD_LUT1 || funct === PRELOAD_LUT2
 
     val op1 = Wire(UDValid(new OpT))
     op1.valid := false.B
@@ -293,7 +293,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
-    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX)
+    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX) || funct === PRELOAD_LUT1 || funct === PRELOAD_LUT2
     val is_store = funct === STORE_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_STORE || config_cmd_type === CONFIG_NORM))
     val is_norm = funct === CONFIG_CMD && config_cmd_type === CONFIG_NORM // normalization commands are a subset of store commands, so they still go in the store queue
 

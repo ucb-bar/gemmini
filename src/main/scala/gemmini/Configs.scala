@@ -33,6 +33,7 @@ object GemminiConfigs {
     tileColumns = 1,
     meshRows = 16,
     meshColumns = 16,
+    quantWidth = 4,
 
     // Spatial array PE options
     dataflow = Dataflow.BOTH,
@@ -177,6 +178,7 @@ object GemminiConfigs {
     tileColumns  = defaultConfig.tileColumns,
     meshRows     = defaultConfig.meshRows,
     meshColumns  = defaultConfig.meshColumns,
+    quantWidth   = defaultConfig.quantWidth,
     dataflow     = defaultConfig.dataflow,
     sp_capacity  = CapacityInKilobytes(128),
     acc_capacity = CapacityInKilobytes(128),
@@ -244,6 +246,8 @@ object GemminiConfigs {
   val leanConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_mem_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true)
 
   val leanPrintfConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_mem_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true, use_firesim_simulation_counters=true)
+
+  val lutLeanConfig = defaultConfig.copy(dataflow=Dataflow.WS, inputType=SInt(16.W), meshRows=8, meshColumns=8, max_in_flight_mem_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true)
 
 }
 
@@ -373,4 +377,19 @@ class DualGemminiConfig extends Config((site, here, up) => {
     }
     up(BuildRoCC) ++ Seq(int_fn, fp_fn)
   }
+})
+
+/**
+ * Mixin which sets the default lut lean parameters for a systolic array accelerator.
+ */
+class LutLeanGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.lutLeanConfig
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
 })
