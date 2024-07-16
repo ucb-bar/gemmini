@@ -110,9 +110,14 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   (0 until config.sp_banks).map { i =>
     val ram = LazyModule(new TLRAM(
       address = AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1),
+      atomics = true,
       beatBytes = mem_width,
     ))
-    ram.node := TLFragmenter(32, 64) := TLBuffer() := xbar_node
+    val local_xbar = TLXbar(TLArbiter.lowestIndexFirst)
+    local_xbar := spad_write_nodes
+    local_xbar := spad_read_nodes
+    local_xbar := TLFragmenter(32, 64) := stlNode
+    ram.node := TLBuffer() := local_xbar
   }
 
   // val acc_read_nodes = if (create_tl_mem) TLClientNode(Seq.tabulate(config.acc_banks) { i =>
@@ -122,17 +127,17 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   //   TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(name = s"acc_write_node_$i", sourceId = IdRange(0, numIDs))))
   // }) else TLIdentityNode()
 
-  spad.xbar_node :=* TLBuffer() :=* spad_read_nodes
-  spad.xbar_node :=* TLBuffer() :=* spad_write_nodes
+  //spad.xbar_node :=* TLBuffer() :=* spad_read_nodes
+  //spad.xbar_node :=* TLBuffer() :=* spad_write_nodes
 
-  spad_read_mgrs :*= TLBuffer() :*= xbar_node
-  spad_rw_mgrs :*= TLBuffer() :*= xbar_node
-  xbar_node := TLBuffer() := TLWidthWidget(config.dma_buswidth/8) := id_node
+  //spad_read_mgrs :*= TLBuffer() :*= xbar_node
+  //spad_rw_mgrs :*= TLBuffer() :*= xbar_node
+  //xbar_node := TLBuffer() := TLWidthWidget(config.dma_buswidth/8) := id_node
 
   override lazy val module = new GemminiModule(this)
   override val tlNode = if (config.use_dedicated_tl_port) spad.id_node else TLIdentityNode()
   override val atlNode = if (config.use_dedicated_tl_port) TLIdentityNode() else spad.id_node
-  id_node := stlNode
+  //id_node := stlNode
 
   val node = if (config.use_dedicated_tl_port) tlNode else atlNode
 }
