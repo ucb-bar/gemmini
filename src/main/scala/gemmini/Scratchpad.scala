@@ -499,7 +499,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
 
         dma_read_pipe.ready := writer.module.io.req.ready &&
-          !write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
+          ((!write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U) && write_issue_q.io.deq.valid) &&
           !write_issue_q.io.deq.bits.laddr.is_garbage()
         when (dma_read_pipe.fire) {
           writeData.valid := true.B
