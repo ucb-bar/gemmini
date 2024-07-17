@@ -4,7 +4,7 @@ package gemmini
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
-import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
+import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink._
@@ -75,11 +75,13 @@ class ScratchpadWriteMemIO(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bit
 class ScratchpadReadReq(val n: Int) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
   val fromDMA = Bool()
+  val fromExt = Bool()
 }
 
 class ScratchpadReadResp(val w: Int) extends Bundle {
   val data = UInt(w.W)
   val fromDMA = Bool()
+  val fromExt = Bool()
 }
 
 class ScratchpadReadIO(val n: Int, val w: Int) extends Bundle {
@@ -155,12 +157,14 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   }
 
   val fromDMA = io.read.req.bits.fromDMA
+  val fromExt = io.read.req.bits.fromExt
 
   // Make a queue which buffers the result of an SRAM read if it can't immediately be consumed
   val q = Module(new Queue(new ScratchpadReadResp(w), 1, true, true))
   q.io.enq.valid := RegNext(ren)
   q.io.enq.bits.data := rdata
   q.io.enq.bits.fromDMA := RegNext(fromDMA)
+  q.io.enq.bits.fromExt := RegNext(fromExt)
 
   val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U
   io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
@@ -192,6 +196,26 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
     if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters))
+
+  //val spad_base = config.tl_ext_mem_base
+  val spad_data_len = config.sp_width / 8
+  val max_data_len = spad_data_len // max acc_data_len
+
+  val mem_depth = config.sp_bank_entries * spad_data_len / max_data_len
+  val mem_width = max_data_len
+
+  val spad_rw_mgrs = TLManagerNode(Seq.tabulate(config.sp_banks) { i =>
+    TLSlavePortParameters.v1(Seq(TLSlaveParameters.v2(
+      name = Some(s"spad_rw_mgr_$i"),
+      address = Seq(AddressSet(0x1000000 + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
+      supports = TLMasterToSlaveTransferSizes(
+        get = TransferSizes(1, 64),
+        putFull = TransferSizes(1, 64),
+        putPartial = TransferSizes(1, 64)),
+      fifoId = Some(0)
+    )),
+    beatBytes = mem_width)
+  })
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node
@@ -443,6 +467,23 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid || write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
 
+    val (tl, edge) = spad_rw_mgrs.in(0)
+    val aHasData = edge.hasData(tl.a.bits)
+    val sourceID = tl.a.bits.source
+
+    def getDResponseFromID(sourceId: UInt, data: UInt) = {
+      val d = Wire(new TLBundleD(edge.bundle))
+      d.opcode := TLMessages.AccessAckData
+      d.param := 0.U
+      d.size := log2Ceil((256)/8).U
+      d.source := sourceId
+      d.sink := 0.U
+      d.denied := false.B
+      d.data := data
+      d.corrupt := false.B
+      d
+    }
+
     val spad_mems = {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(
         sp_bank_entries, spad_w,
@@ -465,16 +506,21 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           !(bio.write.en && config.sp_singleported.B) &&
           !write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.sp_bank() === i.U
 
-        bio.read.req.valid := exread || dmawrite
+        val extread = tl.a.fire && ~aHasData
+
+        bio.read.req.valid := exread || dmawrite || extread
         ex_read_req.ready := bio.read.req.ready
+        tl.a.ready := bio.read.req.ready
 
         // The ExecuteController gets priority when reading from SRAMs
         when (exread) {
           bio.read.req.bits.addr := ex_read_req.bits.addr
           bio.read.req.bits.fromDMA := false.B
+          bio.read.req.bits.fromExt := false.B
         }.elsewhen (dmawrite) {
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.sp_row()
           bio.read.req.bits.fromDMA := true.B
+          bio.read.req.bits.fromExt := false.B
 
           when (bio.read.req.fire) {
             write_dispatch_q.ready := true.B
@@ -482,6 +528,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
             io.dma.write.resp.valid := true.B
           }
+        }.elsewhen(extread) {
+          bio.read.req.bits.addr := tl.a.bits.address
+          bio.read.req.bits.fromDMA := false.B
+          bio.read.req.bits.fromExt := true.B
         }.otherwise {
           bio.read.req.bits := DontCare
         }
@@ -496,10 +546,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val dma_read_pipe = Pipeline(dma_read_resp, spad_read_delay)
         val ex_read_pipe = Pipeline(ex_read_resp, spad_read_delay)
 
-        bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
+        bio.read.resp.ready := Mux(bio.read.resp.bits.fromExt, tl.d.ready, (Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)))
+
+        tl.d.bits := getDResponseFromID(sourceID, bio.read.resp.bits.asUInt)
+        tl.d.valid := bio.read.resp.valid && bio.read.resp.bits.fromExt && !bio.read.resp.bits.fromDMA
 
         dma_read_pipe.ready := writer.module.io.req.ready &&
-          !write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
+          ((!write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U) && write_issue_q.io.deq.valid) &&
           !write_issue_q.io.deq.bits.laddr.is_garbage()
         when (dma_read_pipe.fire) {
           writeData.valid := true.B
@@ -529,7 +582,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           // !((mvin_scale_out.valid && mvin_scale_out.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
           !((mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
 
-        bio.write.en := exwrite || dmaread || zerowrite
+        val extwrite = tl.a.fire && aHasData
+        tl.a.ready := io.srams.write(i).en
+
+        bio.write.en := exwrite || dmaread || zerowrite || extwrite
 
         when (exwrite) {
           bio.write.addr := io.srams.write(i).addr
@@ -547,6 +603,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.mask := zero_writer_pixel_repeater.io.resp.bits.mask
 
           zero_writer_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
+        }.elsewhen (extwrite) {
+          bio.write.addr := tl.a.bits.address
+          bio.write.data := tl.a.bits.data
+          bio.write.mask := tl.a.bits.mask.asTypeOf(bio.write.mask)
+
+          tl.d.valid := true.B
+          tl.d.bits := edge.AccessAck(tl.a.bits)
         }.otherwise {
           bio.write.addr := DontCare
           bio.write.data := DontCare
@@ -682,6 +745,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.iexp_qln2_inv := write_dispatch_q.bits.acc_iexp_qln2_inv.asTypeOf(bio.read.req.bits.iexp_qln2_inv)
           bio.read.req.bits.scale := write_dispatch_q.bits.acc_scale.asTypeOf(bio.read.req.bits.scale)
           bio.read.req.bits.fromDMA := true.B
+
 
           when (bio.read.req.fire) {
             write_dispatch_q.ready := true.B

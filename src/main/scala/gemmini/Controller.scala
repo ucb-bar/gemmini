@@ -36,28 +36,8 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   val spad = LazyModule(new Scratchpad(config))
   val xbar_mgr_node = TLXbar()
 
-  //val spad_base = config.tl_ext_mem_base
-  val spad_data_len = config.sp_width / 8
-  val max_data_len = spad_data_len // max acc_data_len
-
-  val mem_depth = config.sp_bank_entries * spad_data_len / max_data_len
-  val mem_width = max_data_len
-
-  // val spad_rw_mgrs = if (true) TLManagerNode(Seq.tabulate(config.sp_banks) { i =>
-  //   TLSlavePortParameters.v1(Seq(TLSlaveParameters.v2(
-  //     name = Some(s"spad_rw_mgr_$i"),
-  //     address = Seq(AddressSet(0x1000000 + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
-  //     supports = TLMasterToSlaveTransferSizes(
-  //       get = TransferSizes(1, 64),
-  //       putFull = TransferSizes(1, 64),
-  //       putPartial = TransferSizes(1, 64)),
-  //     fifoId = Some(0)
-  //   )),
-  //   beatBytes = mem_width)
-  // }) else TLIdentityNode()
-
-  // spad_rw_mgrs :*= TLBuffer() :*= xbar_mgr_node
-  // xbar_mgr_node := TLBuffer() := stlNode
+  spad.spad_rw_mgrs :*= TLBuffer() :*= xbar_mgr_node
+  xbar_mgr_node := TLBuffer() := stlNode
 
   override lazy val module = new GemminiModule(this)
   override val tlNode = if (config.use_dedicated_tl_port) spad.id_node else TLIdentityNode()

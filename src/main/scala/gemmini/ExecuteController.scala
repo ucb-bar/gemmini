@@ -449,6 +449,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     if (ex_read_from_spad) {
       io.srams.read(i).req.valid := (read_a || read_b || read_d) && cntl_ready
       io.srams.read(i).req.bits.fromDMA := false.B
+      io.srams.read(i).req.bits.fromExt := false.B
       io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
         Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
           read_d -> ((d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter_mulpre) >> shift_for_lut)))
@@ -462,6 +463,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     } else {
       io.srams.read(i).req.valid := false.B
       io.srams.read(i).req.bits.fromDMA := false.B
+      io.srams.read(i).req.bits.fromExt := false.B
       io.srams.read(i).req.bits.addr := DontCare
     }
 
