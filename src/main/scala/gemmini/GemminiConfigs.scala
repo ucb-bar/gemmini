@@ -96,6 +96,10 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              use_firesim_simulation_counters: Boolean = false,
 
                                                                              use_shared_ext_mem: Boolean = false,
+
+                                                                             use_tl_spad_mem: Boolean = false,
+                                                                             tl_spad_mem_base: BigInt = 0,
+
                                                                              clock_gate: Boolean = false,
 
                                                                              headerFileName: String = "gemmini_params.h"

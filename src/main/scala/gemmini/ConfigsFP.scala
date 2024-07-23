@@ -176,7 +176,10 @@ object GemminiFPConfigs {
     max_in_flight_mem_reqs = 16,
     //headerFileName = "gemmini_params_fp16.h",
     num_counter = 0,
-    clock_gate = true 
+    // TODO: gemmini does not compile when false
+    use_tl_spad_mem = true, // Use the globally addressable local spad feature
+    tl_spad_mem_base = 0x1000000, // Global address for the local spad of gemmini
+    clock_gate = true
   )
 
 }
@@ -217,12 +220,15 @@ class GemminiFP16DefaultConfig extends Config((site, here, up) => {
 })
 
 class ChipFP16GemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](                                           
-  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiFPConfigs.chipFP16Config
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiFPConfigs.chipFP16Config,
+  tl_spad_mem_base: BigInt = 0
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
     (p: Parameters) => {
       implicit val q = p
-      val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      val gemmini = LazyModule(new Gemmini(gemminiConfig.copy(
+        tl_spad_mem_base = tl_spad_mem_base
+      )))
       gemmini
     }
   )

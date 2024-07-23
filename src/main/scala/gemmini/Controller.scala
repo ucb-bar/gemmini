@@ -36,8 +36,10 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   val spad = LazyModule(new Scratchpad(config))
   val xbar_mgr_node = TLXbar()
 
-  spad.spad_rw_mgrs :*= TLBuffer() :*= xbar_mgr_node
-  xbar_mgr_node := TLBuffer() := stlNode
+  if (config.use_tl_spad_mem) { 
+    spad.spad_rw_mgrs :*= TLBuffer() :*= xbar_mgr_node 
+    xbar_mgr_node := TLBuffer() := stlNode
+  }
 
   override lazy val module = new GemminiModule(this)
   override val tlNode = if (config.use_dedicated_tl_port) spad.id_node else TLIdentityNode()
