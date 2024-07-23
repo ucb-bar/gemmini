@@ -467,15 +467,24 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid || write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
 
-    val (tl, edge) = spad_rw_mgrs.in(0)
-    val aHasData = edge.hasData(tl.a.bits)
-    val sourceID = tl.a.bits.source
+    //val (tl, edge) = spad_rw_mgrs.in(0)
+    spad_rw_mgrs.in.zipWithIndex.foreach { case (mgr, i) =>
+      val tl = mgr._1
+      val edge = mgr._2
+    }
+    //val tl = VecInit(spad_rw_mgrs.map(_.in(0)._1))
+    //val edge = VecInit(spad_rw_mgrs.map(_.in(0)._2))
+
+    val aHasData = edge(0).hasData(tl(0).a.bits)
+    val a_read_ready = Wire(Bool())
+    val a_write_ready = Wire(Bool())
+    tl.a.ready := Mux(aHasData, a_write_ready, a_read_ready)
 
     def getDResponseFromID(sourceId: UInt, data: UInt) = {
       val d = Wire(new TLBundleD(edge.bundle))
       d.opcode := TLMessages.AccessAckData
       d.param := 0.U
-      d.size := log2Ceil((256)/8).U
+      d.size := log2Ceil((2*config.dma_buswidth)/8).U
       d.source := sourceId
       d.sink := 0.U
       d.denied := false.B
@@ -506,11 +515,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           !(bio.write.en && config.sp_singleported.B) &&
           !write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.sp_bank() === i.U
 
-        val extread = tl.a.fire && ~aHasData
+        val extread = tl.a.fire && !aHasData
 
         bio.read.req.valid := exread || dmawrite || extread
         ex_read_req.ready := bio.read.req.ready
-        tl.a.ready := bio.read.req.ready
 
         // The ExecuteController gets priority when reading from SRAMs
         when (exread) {
@@ -529,7 +537,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
             io.dma.write.resp.valid := true.B
           }
         }.elsewhen(extread) {
-          bio.read.req.bits.addr := tl.a.bits.address
+          bio.read.req.bits.addr := tl.a.bits.address >> 5.U
           bio.read.req.bits.fromDMA := false.B
           bio.read.req.bits.fromExt := true.B
         }.otherwise {
@@ -542,14 +550,31 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val ex_read_resp = Wire(Decoupled(new ScratchpadReadResp(spad_w)))
         ex_read_resp.valid := bio.read.resp.valid && !bio.read.resp.bits.fromDMA
         ex_read_resp.bits := bio.read.resp.bits
+        val ext_read_resp = Wire(Decoupled(new ScratchpadReadResp(spad_w)))
+        ext_read_resp.valid := bio.read.resp.valid && bio.read.resp.bits.fromExt && !bio.read.resp.bits.fromDMA
+        ext_read_resp.bits := bio.read.resp.bits
+        val src_id = Wire(Decoupled(UInt(8.W)))
+        src_id.valid := tl.a.valid
+        src_id.bits := tl.a.bits.source
 
         val dma_read_pipe = Pipeline(dma_read_resp, spad_read_delay)
         val ex_read_pipe = Pipeline(ex_read_resp, spad_read_delay)
+        val ext_read_pipe = Pipeline(ext_read_resp, spad_read_delay)
+        val src_id_pipe = Pipeline(src_id, spad_read_delay+1)
 
-        bio.read.resp.ready := Mux(bio.read.resp.bits.fromExt, tl.d.ready, (Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)))
+        bio.read.resp.ready := Mux(bio.read.resp.bits.fromExt, ext_read_resp.ready, (Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)))
 
-        tl.d.bits := getDResponseFromID(sourceID, bio.read.resp.bits.asUInt)
-        tl.d.valid := bio.read.resp.valid && bio.read.resp.bits.fromExt && !bio.read.resp.bits.fromDMA
+        a_read_ready := ext_read_resp.ready && tl.d.ready
+
+        ext_read_pipe.ready := tl.d.ready
+        src_id_pipe.ready := tl.d.ready
+
+        when (ext_read_pipe.fire) {
+          tl.d.valid := true.B
+          tl.d.bits := getDResponseFromID(src_id_pipe.bits, ext_read_pipe.bits.data.asUInt)
+        }.otherwise {
+          tl.d.valid := false.B
+        }
 
         dma_read_pipe.ready := writer.module.io.req.ready &&
           ((!write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U) && write_issue_q.io.deq.valid) &&
@@ -583,7 +608,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           !((mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
 
         val extwrite = tl.a.fire && aHasData
-        tl.a.ready := io.srams.write(i).en
+        a_write_ready := !exwrite && !dmaread && !zerowrite && tl.d.ready
 
         bio.write.en := exwrite || dmaread || zerowrite || extwrite
 
@@ -604,7 +629,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
           zero_writer_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
         }.elsewhen (extwrite) {
-          bio.write.addr := tl.a.bits.address
+          bio.write.addr := tl.a.bits.address >> 5.U
           bio.write.data := tl.a.bits.data
           bio.write.mask := tl.a.bits.mask.asTypeOf(bio.write.mask)
 
