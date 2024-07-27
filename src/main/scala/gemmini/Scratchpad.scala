@@ -482,7 +482,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val d = Wire(new TLBundleD(edges(0).bundle))
       d.opcode := TLMessages.AccessAckData
       d.param := 0.U
-      d.size := log2Ceil((2*config.dma_buswidth)/8).U
+      d.size := log2Ceil(mem_width).U
       d.source := sourceId
       d.sink := 0.U
       d.denied := false.B
