@@ -38,7 +38,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
 
   if (config.use_tl_spad_mem) { 
     spad.spad_rw_mgrs :*= TLBuffer() :*= xbar_mgr_node 
-    xbar_mgr_node := TLBuffer() := TLWidthWidget(config.dma_buswidth/8) := stlNode
+    xbar_mgr_node := TLBuffer() := stlNode
   }
 
   override lazy val module = new GemminiModule(this)
