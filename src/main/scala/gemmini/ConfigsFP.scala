@@ -182,6 +182,43 @@ object GemminiFPConfigs {
     clock_gate = true
   )
 
+  val chipTestFP32Config = FP32DefaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64), dataflow=Dataflow.WS,
+    meshRows = 16,
+    meshColumns = 16,
+    accType = Float(8, 24),
+    quantWidth = 4,
+    spatialArrayInputType = Float(8, 24, isRecoded = true),
+    spatialArrayWeightType = Float(8, 24, isRecoded = true),
+    spatialArrayOutputType = Float(8, 24, isRecoded = true),
+    //acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(5, 11), -1, identity = "1.0",
+    //  c_str = "((x))"
+    //)),
+    acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0",
+      c_str = "((x) * (scale))"
+    )),  
+    //mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 3, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
+    mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0", c_str="((x))")),
+    mvin_scale_acc_args=None,
+    acc_singleported=true,
+    acc_sub_banks = 2,
+    acc_banks = 2,
+    mesh_output_delay = 2,
+    tile_latency = 1,
+    acc_latency = 3,
+    ex_read_from_acc=false,
+    ex_write_to_spad=false,
+    has_training_convs = false,
+    hardcode_d_to_garbage_addr = true,
+    acc_read_full_width = false,
+    max_in_flight_mem_reqs = 16,
+    //headerFileName = "gemmini_params_fp16.h",
+    num_counter = 0,
+    // TODO: gemmini does not compile when false
+    use_tl_spad_mem = true, // Use the globally addressable local spad feature
+    tl_spad_mem_base = 0x1000000, // Global address for the local spad of gemmini
+    clock_gate = true
+  )
+
 }
 
 //===========FP32 Default Config=========
@@ -221,6 +258,21 @@ class GemminiFP16DefaultConfig extends Config((site, here, up) => {
 
 class ChipFP16GemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](                                           
   gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiFPConfigs.chipFP16Config,
+  tl_spad_mem_base: BigInt = 0
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig.copy(
+        tl_spad_mem_base = tl_spad_mem_base
+      )))
+      gemmini
+    }
+  )
+})
+
+class ChipTestFP32GemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](                                           
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiFPConfigs.chipTestFP32Config,
   tl_spad_mem_base: BigInt = 0
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
