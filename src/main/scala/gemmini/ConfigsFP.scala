@@ -83,6 +83,8 @@ object GemminiFPConfigs {
     has_nonlinear_activations = true,
 
     num_counter = 8,
+    use_tl_spad_mem = true, // Use the globally addressable local spad feature
+    tl_spad_mem_base = 0x1000000, // Global address for the local spad of gemmini
   )
   
   //FP32 Single Precision Configuration
@@ -122,7 +124,7 @@ object GemminiFPConfigs {
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
 
-  val chipFP32Config = FP32DefaultConfig.copy(sp_capacity=CapacityInKilobytes(32), acc_capacity=CapacityInKilobytes(8), dataflow=Dataflow.WS,
+  val chipFP32Config = FP32DefaultConfig.copy(sp_capacity=CapacityInKilobytes(32), acc_capacity=CapacityInKilobytes(16), dataflow=Dataflow.WS,
     acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
       c_str = "((x))"
     )),
@@ -140,7 +142,7 @@ object GemminiFPConfigs {
     hardcode_d_to_garbage_addr = true,
     acc_read_full_width = false,
     max_in_flight_mem_reqs = 16,
-    headerFileName = "gemmini_params_fp32.h",
+    //headerFileName = "gemmini_params_fp32.h",
     num_counter = 0,
     clock_gate = true 
   )
@@ -196,7 +198,7 @@ object GemminiFPConfigs {
     acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0",
       c_str = "((x) * (scale))"
     )),  
-    //mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 3, Float(5, 11), -1, identity = "1.0", c_str="((x) * (scale))")),
+    //mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
     mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0", c_str="((x))")),
     mvin_scale_acc_args=None,
     acc_singleported=true,
@@ -205,10 +207,10 @@ object GemminiFPConfigs {
     mesh_output_delay = 2,
     tile_latency = 1,
     acc_latency = 3,
-    ex_read_from_acc=false,
-    ex_write_to_spad=false,
+    ex_read_from_acc=true,
+    ex_write_to_spad=true,
     has_training_convs = false,
-    hardcode_d_to_garbage_addr = true,
+    //hardcode_d_to_garbage_addr = true,
     acc_read_full_width = false,
     max_in_flight_mem_reqs = 16,
     //headerFileName = "gemmini_params_fp16.h",
