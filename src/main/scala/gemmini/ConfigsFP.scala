@@ -173,7 +173,7 @@ object GemminiFPConfigs {
     ex_read_from_acc=false,
     ex_write_to_spad=false,
     has_training_convs = false,
-    hardcode_d_to_garbage_addr = false,
+    hardcode_d_to_garbage_addr = true,
     acc_read_full_width = false,
     max_in_flight_mem_reqs = 16,
     //headerFileName = "gemmini_params_fp16.h",
