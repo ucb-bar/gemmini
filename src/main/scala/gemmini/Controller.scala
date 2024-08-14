@@ -32,7 +32,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     System.exit(1)
   }
 
-  val xLen = p(TileKey).core.xLen
+  val xLen = p(XLen)
   val spad = LazyModule(new Scratchpad(config))
 
   override lazy val module = new GemminiModule(this)
