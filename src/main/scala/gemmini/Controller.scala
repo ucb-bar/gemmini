@@ -10,7 +10,7 @@ import org.chipsalliance.cde.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.util.ClockGate
-import freechips.rocketchip.tilelink.TLIdentityNode
+import freechips.rocketchip.tilelink._
 import GemminiISA._
 import Util._
 
@@ -34,6 +34,12 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
 
   val xLen = p(TileKey).core.xLen
   val spad = LazyModule(new Scratchpad(config))
+  val xbar_mgr_node = TLXbar()
+
+  if (config.use_tl_spad_mem) { 
+    spad.spad_rw_mgrs :*= TLBuffer() :*= xbar_mgr_node 
+    xbar_mgr_node := TLBuffer() := stlNode
+  }
 
   override lazy val module = new GemminiModule(this)
   override val tlNode = if (config.use_dedicated_tl_port) spad.id_node else TLIdentityNode()
