@@ -241,6 +241,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       // Misc. ports
       val busy = Output(Bool())
+      val writer_busy = Output(Bool()) // whether writer is empty
       val flush = Input(Bool())
       val counter = new CounterEventIO()
     })
@@ -442,6 +443,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     reader.module.io.flush := io.flush
 
     io.busy := writer.module.io.busy || reader.module.io.busy || write_issue_q.io.deq.valid || write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
+    io.writer_busy := writer.module.io.busy
 
     val spad_mems = {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(

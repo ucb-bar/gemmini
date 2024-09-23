@@ -21,8 +21,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     val dma = new ScratchpadWriteMemIO(local_addr_t, accType.getWidth, acc_scale_t_bits)
 
     val completed = Decoupled(UInt(log2Up(reservation_station_entries).W))
-
+    
     val busy = Output(Bool())
+
+    val dma_writer_busy = Input(Bool()) // whether dma is busy
 
     val counter = new CounterEventIO()
   })
@@ -30,13 +32,14 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   // val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
 
   object State extends ChiselEnum {
-    val waiting_for_command, waiting_for_dma_req_ready, sending_rows, pooling = Value
+    val waiting_for_command, waiting_for_dma_req_ready, sending_rows, pooling, synchronizing = Value
   }
   import State._
 
   val control_state = RegInit(waiting_for_command)
 
   val stride = Reg(UInt(coreMaxAddrBits.W))
+  val pip_block = Reg(UInt(12.W))
   val block_rows = meshRows * tileRows
   val block_stride = block_rows.U
   val block_cols = meshColumns * tileColumns
@@ -53,6 +56,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   //val row_counter = RegInit(0.U(log2Ceil(block_rows).W))
   val row_counter = RegInit(0.U(12.W)) // TODO magic number
   val block_counter = RegInit(0.U(8.W)) // TODO magic number
+  // to track how many blocks are done for HW level sync
+  val pip_block_counter = RegInit(UInt(CONFIG_MVOUT_RS1_PIPE_BLK.W), 0.U)
 
   // Pooling variables
   val pool_stride = Reg(UInt(CONFIG_MVOUT_RS1_MAX_POOLING_STRIDE_WIDTH.W)) // When this is 0, pooling is disabled
@@ -105,6 +110,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val config_ocols = config_mvout_rs1.ocols
   val config_upad = config_mvout_rs1.upad
   val config_lpad = config_mvout_rs1.lpad
+
+  val config_pip_block = config_mvout_rs1.pipeline_block
+  dontTouch(config_pip_block)
 
   val config_norm_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigNormRs1(accType.getWidth))
   val config_norm_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigNormRs2(accType.getWidth))
@@ -224,6 +232,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
       when (cmd.valid) {
         when(DoConfig) {
           stride := config_stride
+          pip_block := config_pip_block
 
           activation := config_activation
           when (!config_acc_scale.asUInt.andR) {
@@ -282,8 +291,15 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
       val only_one_dma_req = block_counter === 0.U && row_counter === 0.U // This is a special case when only one DMA request is made
 
       when ((last_block && last_row) || only_one_dma_req) {
-        control_state := waiting_for_command
-        cmd.ready := true.B
+        when(pip_block_counter === pip_block - 1.U && pip_block > 0.U){
+          control_state := synchronizing
+          cmd.ready := false.B
+          pip_block_counter := 0.U
+        }.otherwise{
+          control_state := waiting_for_command
+          cmd.ready := true.B
+          pip_block_counter := pip_block_counter + 1.U
+        }
       }
     }
 
@@ -294,8 +310,24 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
           wrow_counter === pool_size - 1.U && wcol_counter === pool_size - 1.U && io.dma.req.fire)
 
       when (last_row) {
+        when(pip_block_counter === pip_block - 1.U && pip_block > 0.U){
+          control_state := synchronizing
+          cmd.ready := false.B
+          pip_block_counter := 0.U
+        }.otherwise{
+          control_state := waiting_for_command
+          cmd.ready := true.B
+          pip_block_counter := pip_block_counter + 1.U
+        }
+      }
+    }
+
+    is (synchronizing){
+      // TODO: need more for synchronization?
+      // resolve when DMA is done with current pipeline block
+      when(io.dma_writer_busy === false.B){
         control_state := waiting_for_command
-        cmd.ready := true.B
+        cmd.ready := true.B // else, not take any new command
       }
     }
   }

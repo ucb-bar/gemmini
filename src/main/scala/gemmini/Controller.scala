@@ -193,6 +193,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   counters.io.event_io.collect(store_controller.io.counter)
   counters.io.event_io.collect(ex_controller.io.counter)
 
+  store_controller.io.dma_writer_busy := spad.module.io.writer_busy
+
   /*
   tiler.io.issue.load.ready := false.B
   tiler.io.issue.store.ready := false.B

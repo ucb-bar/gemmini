@@ -32,10 +32,10 @@ object GemminiConfigs {
     meshColumns = 16,
 
     // Spatial array PE options
-    dataflow = Dataflow.BOTH,
+    dataflow = Dataflow.WS,
 
     // Scratchpad and accumulator
-    sp_capacity = CapacityInKilobytes(256),
+    sp_capacity = CapacityInKilobytes(128),
     acc_capacity = CapacityInKilobytes(64),
 
     sp_banks = 4,
