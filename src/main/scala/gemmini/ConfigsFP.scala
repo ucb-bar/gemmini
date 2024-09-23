@@ -78,6 +78,8 @@ object GemminiFPConfigs {
     has_nonlinear_activations = true,
 
     num_counter = 8,
+    use_tl_spad_mem = true, // Use the globally addressable local spad feature
+    tl_spad_mem_base = 0x1000000, // Global address for the local spad of gemmini
   )
   
   //FP32 Single Precision Configuration

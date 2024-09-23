@@ -161,6 +161,9 @@ object GemminiConfigs {
     ex_read_from_acc = true,
     ex_write_to_spad = true,
     ex_write_to_acc = true,
+
+    use_tl_spad_mem = true,
+    tl_spad_mem_base = 0x1000000,
   )
 
   val dummyConfig = GemminiArrayConfig[DummySInt, Float, Float](
@@ -280,6 +283,21 @@ class LeanGemminiPrintfConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     (p: Parameters) => {
       implicit val q = p
       val gemmini = LazyModule(new Gemmini(gemminiConfig))
+      gemmini
+    }
+  )
+})
+
+class LeanGemminiPGASConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
+  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.leanConfig,
+  tl_spad_mem_base: BigInt = 0
+) extends Config((site, here, up) => {
+  case BuildRoCC => up(BuildRoCC) ++ Seq(
+    (p: Parameters) => {
+      implicit val q = p
+      val gemmini = LazyModule(new Gemmini(gemminiConfig.copy(
+        tl_spad_mem_base = tl_spad_mem_base
+      )))
       gemmini
     }
   )
