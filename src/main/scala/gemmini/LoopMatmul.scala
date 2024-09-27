@@ -505,6 +505,7 @@ class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val dram_addr = UInt(coreMaxAddrBits.W)
   val dram_stride = UInt(coreMaxAddrBits.W)
   val full_c = Bool()
+  val no_block_mvout = Bool()
   val act = UInt(Activation.bitwidth.W)
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
@@ -539,7 +540,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val req = Reg(new LoopMatmulStCReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, concurrent_loops))
 
-  val max_blocks = Mux(req.full_c, 1.U, Mux(req.max_j <= max_block_len.U, req.max_j, max_block_len.U))
+  val max_blocks = Mux(req.full_c || req.no_block_mvout, 1.U, Mux(req.max_j <= max_block_len.U, req.max_j, max_block_len.U))
 
   // Non-normalization-related iterators and calculations
   val j = Reg(UInt(iterator_bitwidth.W))
@@ -716,6 +717,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
 
   val low_d = Bool()
   val full_c = Bool()
+  val no_block_mvout = Bool()
   val ex_accumulate = Bool()
 
   val a_ex_spad_id = UInt(2.W)
@@ -935,6 +937,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.ex_accumulate := cmd.bits.cmd.rs1(0)
         loop_being_configured.full_c := cmd.bits.cmd.rs1(1)
         loop_being_configured.low_d := cmd.bits.cmd.rs1(2)
+        loop_being_configured.no_block_mvout := cmd.bits.cmd.rs1(3)
         loop_being_configured.act := cmd.bits.cmd.rs1(8+Activation.bitwidth-1, 8) // TODO magic numbers
 
         loop_being_configured.a_ex_spad_id := cmd.bits.cmd.rs1(19, 18)
@@ -1057,6 +1060,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.dram_addr := loop_requesting_st.c_dram_addr
   stC.io.req.bits.dram_stride := loop_requesting_st.c_dram_stride
   stC.io.req.bits.full_c := loop_requesting_st.full_c
+  stC.io.req.bits.no_block_mvout := loop_requesting_st.no_block_mvout
   stC.io.req.bits.act := loop_requesting_st.act
   stC.io.req.bits.addr_start := st_c_addr_start
   stC.io.req.bits.loop_id := loop_requesting_st_id
