@@ -549,7 +549,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val acc_addr_start = /*(BigInt(1) << 31).U | (req.full_c << 29.U).asUInt |*/ req.addr_start
 
   val dram_offset = Mux(req.full_c, (i * req.dram_stride + j) * block_size.U * (acc_w/8).U,
-    (i * req.dram_stride + j) * block_size.U * (input_w/8).U)
+    Mux(req.no_block_mvout, (i * req.max_j + j) * block_size.U * block_size.U * (input_w/8).U, (i * req.dram_stride + j) * block_size.U * (input_w/8).U))
   val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
   val sp_addr = acc_addr_start + (i * req.max_j + j) * block_size.U
   val blocks = Mux(j + max_blocks <= req.max_j, max_blocks, req.max_j-j)
