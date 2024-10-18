@@ -1,4 +1,3 @@
-
 package gemmini
 
 import chisel3._
@@ -322,10 +321,12 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
 
     io.counter.connectExternalCounter(CounterExternal.RDMA_BYTES_REC, total_bytes_read)
 
+    // tutorial counters
+    PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "rdma_tlb_wait_cycles", "cycles during which the read dma is stalling as it waits for a TLB response")
+    PerfCounter(tl.a.valid && !tl.a.ready, "rdma_tl_wait_cycles", "cycles during which the read dma is stalling as it waits for the TileLink port to be available")
+
     if (use_firesim_simulation_counters) {
       PerfCounter(state =/= s_idle, "rdma_active_cycles", "cycles during which the read dma is active")
-      PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "rdma_tlb_wait_cycles", "cycles during which the read dma is stalling as it waits for a TLB response")
-      PerfCounter(tl.a.valid && !tl.a.ready, "rdma_tl_wait_cycles", "cycles during which the read dma is stalling as it waits for the TileLink port to be available")
 
       val cntr = Counter(500000)
       when (cntr.inc()) {
@@ -633,10 +634,12 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     io.counter.connectExternalCounter(CounterExternal.WDMA_BYTES_SENT, total_bytes_sent)
     io.counter.connectExternalCounter(CounterExternal.WDMA_TOTAL_LATENCY, total_latency)
 
+    // tutorial counters
+    PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "wdma_tlb_wait_cycles", "cycles during which the write dma is stalling as it waits for a TLB response")
+    PerfCounter(tl.a.valid && !tl.a.ready, "wdma_tl_wait_cycles", "cycles during which the write dma is stalling as it waits for the TileLink port to be available")
+
     if (use_firesim_simulation_counters) {
       PerfCounter(state =/= s_idle, "wdma_active_cycles", "cycles during which write read dma is active")
-      PerfCounter(tl.a.ready && translate_q.io.deq.valid && io.tlb.resp.miss, "wdma_tlb_wait_cycles", "cycles during which the write dma is stalling as it waits for a TLB response")
-      PerfCounter(tl.a.valid && !tl.a.ready, "wdma_tl_wait_cycles", "cycles during which the write dma is stalling as it waits for the TileLink port to be available")
 
       val cntr = Counter(500000)
       when(cntr.inc()) {
