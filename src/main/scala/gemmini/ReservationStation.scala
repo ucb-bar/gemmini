@@ -1,3 +1,4 @@
+
 package gemmini
 
 import chisel3._
@@ -132,7 +133,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val utilization = PopCount(entries.map(e => e.valid)) // TODO it may be cheaper to count the utilization in a register, rather than performing a PopCount
   val solitary_preload = RegInit(false.B) // This checks whether or not the reservation station received a "preload" instruction, but hasn't yet received the following "compute" instruction
   io.busy := !empty && !(utilization === 1.U && solitary_preload)
-
+  
   // Tell the conv and matmul FSMs if any of their issued instructions completed
   val conv_ld_issue_completed = WireInit(false.B)
   val conv_st_issue_completed = WireInit(false.B)
@@ -149,7 +150,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val matmul_ld_completed = WireInit(false.B)
   val matmul_st_completed = WireInit(false.B)
   val matmul_ex_completed = WireInit(false.B)
-
+  
   io.conv_ld_completed := conv_ld_issue_completed +& conv_ld_completed
   io.conv_st_completed := conv_st_issue_completed +& conv_st_completed
   io.conv_ex_completed := conv_ex_issue_completed +& conv_ex_completed
@@ -466,7 +467,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
       conv_ex_completed := entries_ex(issue_id).bits.cmd.from_conv_fsm
       matmul_ex_completed := entries_ex(issue_id).bits.cmd.from_matmul_fsm
-
+      
       assert(entries_ex(issue_id).valid)
     }.elsewhen (queue_type === stq) {
       entries.foreach(_.bits.deps_st(issue_id) := false.B)
@@ -474,7 +475,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
       conv_st_completed := entries_st(issue_id).bits.cmd.from_conv_fsm
       matmul_st_completed := entries_st(issue_id).bits.cmd.from_matmul_fsm
-
+      
       assert(entries_st(issue_id).valid)
     }.otherwise {
       assert(queue_type =/= 3.U)
@@ -552,10 +553,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     printf(p"Packed deps: $packed_deps\n")
   }
 
-  // tutorial counters
-  PerfCounter(io.busy, "reservation_station_busy", "cycles where reservation station has entries")
-
   if (use_firesim_simulation_counters) {
+    PerfCounter(io.busy, "reservation_station_busy", "cycles where reservation station has entries")
     PerfCounter(!io.alloc.ready, "reservation_station_full", "cycles where reservation station is full")
   }
 
