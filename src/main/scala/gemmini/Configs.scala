@@ -238,17 +238,6 @@ object GemminiConfigs {
   val leanConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_mem_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true)
 
   val leanPrintfConfig = defaultConfig.copy(dataflow=Dataflow.WS, max_in_flight_mem_reqs = 64, acc_read_full_width = false, ex_read_from_acc = false, ex_write_to_spad = false, hardcode_d_to_garbage_addr = true, use_firesim_simulation_counters=true)
-
-  val tutorialConfig = defaultConfig.copy(sp_capacity=CapacityInKilobytes(128), acc_capacity=CapacityInKilobytes(64), dataflow=Dataflow.WS,
-    acc_scale_args=Some(defaultConfig.acc_scale_args.get.copy(latency=4)),
-    max_in_flight_mem_reqs = 32,
-    mesh_output_delay = 2,
-    ex_read_from_acc=false,
-    ex_write_to_spad=false,
-    acc_read_full_width = false,
-    hardcode_d_to_garbage_addr = true,
-    mvin_scale_args = None
-  )
 }
 
 /**
@@ -285,19 +274,6 @@ class LeanGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
 class LeanGemminiPrintfConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.leanPrintfConfig
-) extends Config((site, here, up) => {
-  case BuildRoCC => up(BuildRoCC) ++ Seq(
-    (p: Parameters) => {
-      implicit val q = p
-      val gemmini = LazyModule(new Gemmini(gemminiConfig))
-      gemmini
-    }
-  )
-})
-
-// for MICRO tutorial gemmini config
-class TutorialGemminiConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
-  gemminiConfig: GemminiArrayConfig[T,U,V] = GemminiConfigs.tutorialConfig
 ) extends Config((site, here, up) => {
   case BuildRoCC => up(BuildRoCC) ++ Seq(
     (p: Parameters) => {
