@@ -7,6 +7,7 @@ import GemminiISA._
 import Util._
 import org.chipsalliance.cde.config.Parameters
 import midas.targetutils.PerfCounter
+import freechips.rocketchip.util.ClockGate
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
@@ -182,9 +183,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val cntl_valid = mesh_cntl_signals_q.io.deq.valid
   val cntl = mesh_cntl_signals_q.io.deq.bits
 
-  // Instantiate the actual mesh
-  val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
-    tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
+  val sram_write_ready = Wire(Bool())
+  val gated_clock = ClockGate(clock, sram_write_ready, "mesh_stall_gate")
+
+  val mesh = withClock(gated_clock) {
+    // Instantiate the actual mesh
+    Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
+      tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks))
+  }
 
   mesh.io.a.valid := false.B
   mesh.io.b.valid := false.B
@@ -747,6 +753,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val first = Bool()
   }
 
+  sram_write_ready := VecInit(io.srams.write.map(_.ready)).reduceTree(_ && _)
+  mesh.io.resp.ready := sram_write_ready
+
   mesh_cntl_signals_q.io.enq.valid := computing
 
   mesh_cntl_signals_q.io.enq.bits.perform_mul_pre := performing_mul_pre
@@ -811,7 +820,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire || !mesh.io.a.ready) &&
     (!cntl.b_fire || mesh.io.b.fire || !mesh.io.b.ready) &&
     (!cntl.d_fire || mesh.io.d.fire || !mesh.io.d.ready) &&
-    (!cntl.first || mesh.io.req.ready)
+    (!cntl.first || mesh.io.req.ready) // && sram_write_ready
 
   val dataA_valid = cntl.a_garbage || cntl.a_unpadded_cols === 0.U || Mux(cntl.im2colling, im2ColValid, Mux(cntl.a_read_from_acc, accReadValid(cntl.a_bank_acc), readValid(cntl.a_bank)))
 
@@ -835,7 +844,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayInputType)))
   val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayWeightType)))
-  val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayWeightType)))
+  val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)})
 
   // Pop responses off the scratchpad io ports
   when (mesh_cntl_signals_q.io.deq.fire) {
@@ -883,7 +892,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, spatialArrayWeightType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, spatialArrayWeightType)))
 
-    mesh.io.req.valid := mesh_cntl_signals_q.io.deq.fire && (cntl.a_fire || cntl.b_fire || cntl.d_fire)
+    // gate this req valid
+    // gate mesh control signal fires
+    // gate control a b d fires
+    mesh.io.req.valid := mesh_cntl_signals_q.io.deq.fire && (cntl.a_fire || cntl.b_fire || cntl.d_fire) // && sram_write_ready
 
     mesh.io.req.bits.tag.addr := cntl.c_addr
 
@@ -934,12 +946,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     })))
 
     if (ex_write_to_spad) {
-      io.srams.write(i).en := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
+      io.srams.write(i).valid := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
+      // assert(io.srams.write(i).ready || !io.srams.write(i).valid)
       io.srams.write(i).addr := w_row
       io.srams.write(i).data := activated_wdata.asUInt
       io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(inputType.getWidth / (aligned_to * 8))(b))
     } else {
-      io.srams.write(i).en := false.B
+      io.srams.write(i).valid := false.B
       io.srams.write(i).addr := DontCare
       io.srams.write(i).data := DontCare
       io.srams.write(i).mask := DontCare

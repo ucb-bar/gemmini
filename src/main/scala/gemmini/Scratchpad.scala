@@ -89,10 +89,12 @@ class ScratchpadReadIO(val n: Int, val w: Int) extends Bundle {
 }
 
 class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundle {
-  val en = Output(Bool())
+  val valid = Output(Bool())
+  val ready = Input(Bool())
   val addr = Output(UInt(log2Ceil(n).W))
   val mask = Output(Vec(mask_len, Bool()))
   val data = Output(UInt(w.W))
+  def fire = valid && ready
 }
 
 class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean, is_dummy: Boolean) extends Module {
@@ -115,7 +117,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   val q = Module(new Queue(new ScratchpadReadResp(w), 1, true, true))
   val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U
   // When the scratchpad is single-ported, the writes take precedence
-  val singleport_busy_with_write = single_ported.B && io.write.en
+  val singleport_busy_with_write = single_ported.B && io.write.fire
 
   if (is_dummy) {
     q.io.enq.valid := RegNext(ren)
@@ -147,7 +149,8 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     val wq = Module(new Queue(ext_mem.write_req.bits.cloneType, 4, pipe=true, flow=true))
     ext_mem.write_req <> wq.io.deq
 
-    wq.io.enq.valid := io.write.en
+    wq.io.enq.valid := io.write.valid
+    io.write.ready := wq.io.enq.ready
     wq.io.enq.bits.addr := io.write.addr
     wq.io.enq.bits.data := io.write.data
     if (aligned_to >= w) {
@@ -155,14 +158,14 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     } else {
       wq.io.enq.bits.mask := io.write.mask.asUInt
     }
-    assert(wq.io.enq.ready || (!io.write.en), "TODO (richard): fix this if triggered")
+    // assert(wq.io.enq.ready || (!io.write.en), "TODO (richard): fix this if triggered")
   } else { // use valid only interface
     val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
 
     val raddr = io.read.req.bits.addr
     val rdata = if (single_ported) {
-      assert(!(ren && io.write.en))
-      mem.read(raddr, ren && !io.write.en).asUInt
+      assert(!(ren && io.write.fire))
+      mem.read(raddr, ren && !io.write.fire).asUInt
     } else {
       mem.read(raddr, ren).asUInt
     }
@@ -172,7 +175,8 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
 
     io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
 
-    when(io.write.en) {
+    io.write.ready := true.B
+    when(io.write.fire) {
       if (aligned_to >= w)
         mem.write(io.write.addr, io.write.data.asTypeOf(Vec(mask_len, mask_elem)), VecInit((~(0.U(mask_len.W))).asBools))
       else
@@ -502,7 +506,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         // TODO we tie the write dispatch queue's, and write issue queue's, ready and valid signals together here
         val dmawrite = write_dispatch_q.valid && write_norm_q.io.enq.ready &&
           !write_dispatch_q.bits.laddr.is_garbage() &&
-          !(bio.write.en && config.sp_singleported.B) &&
+          !(bio.write.fire && config.sp_singleported.B) &&
           !write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.sp_bank() === i.U
 
         bio.read.req.valid := exread || dmawrite
@@ -554,7 +558,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       // Writing to the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
-        val exwrite = io.srams.write(i).en
+        val exwrite = io.srams.write(i).valid
+        io.srams.write(i).ready := bio.write.ready
 
         // val laddr = mvin_scale_out.bits.tag.addr.asTypeOf(local_addr_t) + mvin_scale_out.bits.row
         val laddr = mvin_scale_pixel_repeater.io.resp.bits.laddr
@@ -572,7 +577,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           // !((mvin_scale_out.valid && mvin_scale_out.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
           !((mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
 
-        bio.write.en := exwrite || dmaread || zerowrite
+        bio.write.valid := exwrite || dmaread || zerowrite
 
         when (exwrite) {
           bio.write.addr := io.srams.write(i).addr
@@ -583,13 +588,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.data := mvin_scale_pixel_repeater.io.resp.bits.out.asUInt
           bio.write.mask := mvin_scale_pixel_repeater.io.resp.bits.mask take ((spad_w / (aligned_to * 8)) max 1)
 
-          mvin_scale_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
+          mvin_scale_pixel_repeater.io.resp.ready := bio.write.ready
         }.elsewhen (zerowrite) {
           bio.write.addr := zero_writer_pixel_repeater.io.resp.bits.laddr.sp_row()
           bio.write.data := 0.U
           bio.write.mask := zero_writer_pixel_repeater.io.resp.bits.mask
 
-          zero_writer_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
+          zero_writer_pixel_repeater.io.resp.ready := bio.write.ready
         }.otherwise {
           bio.write.addr := DontCare
           bio.write.data := DontCare

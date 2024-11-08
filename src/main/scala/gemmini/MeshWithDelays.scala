@@ -62,7 +62,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
     val req = Flipped(Decoupled(new MeshWithDelaysReq(accType, tagType.cloneType, block_size)))
 
-    val resp = Valid(new MeshWithDelaysResp(outputType, meshColumns, tileColumns, block_size, tagType.cloneType))
+    val resp = Decoupled(new MeshWithDelaysResp(outputType, meshColumns, tileColumns, block_size, tagType.cloneType))
 
     val tags_in_progress = Output(Vec(tagqlen, tagType))
   })
@@ -245,7 +245,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   total_rows_q.io.deq.ready := io.resp.valid && io.resp.bits.last && out_matmul_id === total_rows_q.io.deq.bits.id
 
-  io.req.ready := (!req.valid || last_fire) && tagq.io.enq.ready && total_rows_q.io.enq.ready
+  io.req.ready := (!req.valid || last_fire) && tagq.io.enq.ready && total_rows_q.io.enq.ready && io.resp.ready
   io.tags_in_progress := tagq.io.all.map(_.tag)
 
   when (reset.asBool) {
