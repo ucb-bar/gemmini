@@ -33,7 +33,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     System.exit(1)
   }
 
-  val xLen = p(XLen)
+  val xLen = p(TileKey).core.xLen
   val spad = LazyModule(new Scratchpad(config))
 
   override lazy val module = new GemminiModule(this)
@@ -415,7 +415,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // Debugging signals
   val pipeline_stall_counter = RegInit(0.U(32.W))
-  when (io.cmd.fire()) {
+  when (io.cmd.fire) {
     pipeline_stall_counter := 0.U
   }.elsewhen(io.busy) {
     pipeline_stall_counter := pipeline_stall_counter + 1.U

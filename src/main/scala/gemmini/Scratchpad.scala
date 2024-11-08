@@ -597,7 +597,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     acc_scale_unit.io.in.valid := acc_norm_unit_out.valid && acc_waiting_to_be_scaled
     acc_scale_unit.io.in.bits  := acc_norm_unit_out.bits
 
-    when (acc_scale_unit.io.in.fire()) {
+    when (acc_scale_unit.io.in.fire) {
       write_issue_q.io.enq <> write_scale_q.io.deq
     }
 
