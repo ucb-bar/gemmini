@@ -934,12 +934,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     })))
 
     if (ex_write_to_spad) {
-      io.srams.write(i).en := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
+      io.srams.write(i).valid := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
       io.srams.write(i).addr := w_row
       io.srams.write(i).data := activated_wdata.asUInt
       io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(inputType.getWidth / (aligned_to * 8))(b))
     } else {
-      io.srams.write(i).en := false.B
+      io.srams.write(i).valid := false.B
       io.srams.write(i).addr := DontCare
       io.srams.write(i).data := DontCare
       io.srams.write(i).mask := DontCare
