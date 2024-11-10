@@ -144,7 +144,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     ext_mem.read_resp.ready := q.io.enq.ready
 
     /* WRITE */
-    val wq = Module(new Queue(ext_mem.write_req.bits.cloneType, 4, pipe=true, flow=true))
+    val wq = Module(new Queue(ext_mem.write_req.bits.cloneType, 32, pipe=true, flow=true))
     ext_mem.write_req <> wq.io.deq
 
     wq.io.enq.valid := io.write.en
