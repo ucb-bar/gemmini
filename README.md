@@ -32,24 +32,12 @@ Run these steps to install Chipyard and Spike (make sure to checkout the correct
 ```shell
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
-git checkout 1.9.1
-./build-setup.sh riscv-tools
+./build-setup.sh
 
 source env.sh
 
 cd generators/gemmini
-git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
-git fetch && git checkout v0.7.1
-git submodule update --init --recursive
-
 make -C software/libgemmini install
-
-# The final step is only necessary if you want to run MIDAS simulations with
-# realistic DRAM models
-cd -
-cd sims/firesim
-source sourceme-f1-manager.sh --skip-ssh-setup # Ignore error messages from this command
-./build-setup.sh --library --skip-validate
 ```
 
 Setting Up Gemmini
