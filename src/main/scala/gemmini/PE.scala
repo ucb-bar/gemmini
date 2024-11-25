@@ -11,12 +11,12 @@ class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
 
 }
 
-class MacUnit[T <: Data](inputType: T, cType: T, dType: T) (implicit ev: Arithmetic[T]) extends Module {
+class MacUnit[T <: Data](inputType: T, dType: T) (implicit ev: Arithmetic[T]) extends Module {
   import ev._
   val io = IO(new Bundle {
     val in_a  = Input(inputType)
     val in_b  = Input(inputType)
-    val in_c  = Input(cType)
+    val in_c  = Input(dType)
     val out_d = Output(dType)
   })
 
@@ -61,7 +61,7 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   // elaboration/synthesis tools often fail to consolidate and de-duplicate
   // MAC units. To force mac circuitry to be re-used, we create a "mac_unit"
   // module here which just performs a single MAC operation
-  val mac_unit = Module(new MacUnit(inputType, cType, outputType))
+  val mac_unit = Module(new MacUnit(inputType, outputType))
 
   val a  = io.in_a
   val b  = io.in_b
