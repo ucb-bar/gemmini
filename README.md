@@ -235,7 +235,7 @@ In the output-stationary mode, the `D` values are "preloaded" into the systolic 
 
 `A`, `B`, and `D` are all of type `inputType`, while `C` is of type `outputType`.
 If the programmer wishes to write `C` into the scratchpad, then `C` is cast down to `inputType`.
-However, if the programmer instead wishes to write `C` into the scratchpad, then `C` is cast up to `accType`.
+However, if the programmer instead wishes to write `C` into the accumulator, then `C` is cast up to `accType`.
 
 Note that in the weight-stationary mode, an `inputType` D usually has insufficient bitwidth to accurately represent partial sums.
 Therefore, in the weight-stationary mode, `D` is usually just the 0-matrix, while the `accType` accumulator SRAMs are used to accumulate partial sum outputs of the systolic array instead.
