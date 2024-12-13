@@ -499,7 +499,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
 
         dma_read_pipe.ready := writer.module.io.req.ready &&
-          !write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
+          ((!write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U) && write_issue_q.io.deq.valid) &&
           !write_issue_q.io.deq.bits.laddr.is_garbage()
         when (dma_read_pipe.fire) {
           writeData.valid := true.B
@@ -559,20 +559,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
     val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
 
-//    val acc_norm_unit = Module(new Normalizer(
-//      max_len = block_cols,
-//      num_reduce_lanes = -1,
-//      num_stats = 4,
-//      latency = 4,
-//      fullDataType = acc_row_t,
-//      scale_t = acc_scale_t,
-//    ))
-
     val (acc_norm_unit_in, acc_norm_unit_out) = Normalizer(
       is_passthru = !config.has_normalizations,
       max_len = block_cols,
       num_reduce_lanes = -1,
-      num_stats = 4,
+      num_stats = 2,
       latency = 4,
       fullDataType = acc_row_t,
       scale_t = acc_scale_t,
@@ -606,7 +597,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     acc_scale_unit.io.in.valid := acc_norm_unit_out.valid && acc_waiting_to_be_scaled
     acc_scale_unit.io.in.bits  := acc_norm_unit_out.bits
 
-    when (acc_scale_unit.io.in.fire()) {
+    when (acc_scale_unit.io.in.fire) {
       write_issue_q.io.enq <> write_scale_q.io.deq
     }
 
@@ -834,6 +825,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     }
 
     // Counter connection
+    io.counter := DontCare
     io.counter.collect(reader.module.io.counter)
     io.counter.collect(writer.module.io.counter)
   }

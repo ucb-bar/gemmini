@@ -61,7 +61,8 @@ class PE[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value,
   // elaboration/synthesis tools often fail to consolidate and de-duplicate
   // MAC units. To force mac circuitry to be re-used, we create a "mac_unit"
   // module here which just performs a single MAC operation
-  val mac_unit = Module(new MacUnit(inputType, cType, outputType))
+  val mac_unit = Module(new MacUnit(inputType,
+    if (df == Dataflow.WS) outputType else accType, outputType))
 
   val a  = io.in_a
   val b  = io.in_b

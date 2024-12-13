@@ -88,6 +88,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_dw_convs: Boolean = true,
                                                                              has_normalizations: Boolean = false,
                                                                              has_first_layer_optimizations: Boolean = true,
+                                                                             has_loop_conv: Boolean = true,
 
                                                                              use_firesim_simulation_counters: Boolean = false,
 
@@ -494,7 +495,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
     if (has_normalizations) {
       header ++= "#define HAS_NORMALIZATIONS\n"
-      header ++= "#define NORM_STAT_IDS 4\n\n"
+      header ++= "#define NORM_STAT_IDS 2\n\n"
     }
 
     header ++= s"#endif // $guard\n"
