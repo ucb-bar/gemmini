@@ -905,6 +905,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     val st_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val ex_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val busy = Output(Bool())
+    val completed = Output(Vec(2, Bool()))
   })
 
   // Create states
@@ -935,6 +936,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val cmd = Queue(io.in)
 
   io.busy := cmd.valid || loop_configured
+
+  io.completed := 0.U.asTypeOf(io.completed.cloneType)
 
   // Create ld arbiters
   val ldab_arb = Module(new WeightedArbiter(new RoCCCommand(), maxWeightA=255, staticWeightAEnabled=true)) // TODO magic numbers
@@ -1282,6 +1285,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
   when (head_loop.running && head_loop.all_completed()) {
     head_loop.reset()
+    io.completed(head_loop_id) := true.B
     head_loop_id := ~head_loop_id
   }
 
@@ -1302,7 +1306,7 @@ object LoopMatmul {
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
             mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
             compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2)
-           (implicit p: Parameters): (DecoupledIO[GemminiCmd], Bool) = {
+           (implicit p: Parameters): (DecoupledIO[GemminiCmd], Bool, Vec[Bool]) = {
     val mod = Module(new LoopMatmul(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
       mvin_rs2_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t, mvout_spad_rs1_t, mvout_rs2_t))
@@ -1310,7 +1314,7 @@ object LoopMatmul {
     mod.io.ld_completed := ld_completed
     mod.io.st_completed := st_completed
     mod.io.ex_completed := ex_completed
-    (mod.io.out, mod.io.busy)
+    (mod.io.out, mod.io.busy, mod.io.completed)
   }
 
   def castDramOffset(dram_offset: UInt): UInt = {
