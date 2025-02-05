@@ -32,35 +32,14 @@ Run these steps to install Chipyard and Spike (make sure to checkout the correct
 ```shell
 git clone https://github.com/ucb-bar/chipyard.git
 cd chipyard
-git checkout 1.9.1
-./build-setup.sh riscv-tools
+./build-setup.sh
 
 source env.sh
 
 cd generators/gemmini
-git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
-git fetch && git checkout v0.7.1
-git submodule update --init --recursive
-
 make -C software/libgemmini install
-
-# The final step is only necessary if you want to run MIDAS simulations with
-# realistic DRAM models
-cd -
-cd sims/firesim
-source sourceme-f1-manager.sh --skip-ssh-setup # Ignore error messages from this command
-./build-setup.sh --library --skip-validate
 ```
 
-Setting Up Gemmini
-------------------
-
-Run the steps below to set up Gemmini configuration files, symlinks, and subdirectories:
-
-```shell
-cd chipyard/generators/gemmini
-./scripts/setup-paths.sh
-```
 
 Building Gemmini Software
 -------------------------
@@ -93,24 +72,17 @@ Building Gemmini Hardware and Cycle-Accurate Simulators
 Run the instructions below to build a cycle-accurate Gemmini simulator using Verilator.
 
 ```shell
-cd chipyard/generators/gemmini
-./scripts/build-verilator.sh
+cd chipyard/sims/verilator
+make CONFIG=GemminiRocketConfig
 
 # Or, if you want a simulator that can generate waveforms, run this:
-# ./scripts/build-verilator.sh --debug
+make debug CONFIG=GemminiRocketConfig
 ```
 
 After running this, in addition to the cycle-accurate simulator, you will be able to find the Verilog description of your SoC in `generated-src/`.
 
-Building Gemmini Functional Simulators
+Using Gemmini Functional Simulators
 ---------------------------
-
-Run the instructions below to build a functional ISA simulator for Gemmini (called "Spike").
-
-```shell
-cd chipyard/generators/gemmini
-./scripts/build-spike.sh
-```
 
 Spike typically runs _much_ faster than cycle-accurate simulators like Verilator or VCS.
 However, Spike can only verify functional correctness; it cannot give accurate performance metrics or profiling information.
@@ -121,19 +93,16 @@ Run Simulators
 Run the instructions below to run the Gemmini RISCV binaries that we built previously, using the simulators that we built above:
 
 ```shell
-cd chipyard/generators/gemmini
+cd chipyard/sims/verilator
 
 # Run a large DNN workload in the functional simulator
-./scripts/run-spike.sh resnet50
+spike --extension=gemmini pk ../../generators/gemmini/software/gemmini-rocc-tests/build/imagenet/resnet50-pk
+
+# Run a small DNN workload in the functional simulator
+spike --extension=gemmini ../../generators/gemmini/software/gemmini-rocc-tests/build/imagenet/resnet50-baremetal
 
 # Run a smaller workload in baremetal mode, on a cycle-accurate simulator
-./scripts/run-verilator.sh template
-
-# Run a smaller workload with the proxy-kernel, on a cycle accurate simulator
-./scripts/run-verilator.sh --pk template
-
-# Or, if you want to generate waveforms in `waveforms/`:
-# ./scripts/run-verilator.sh --pk --debug template
+make CONFIG=GemminiRocketConfig run-binary BINARY=../../generators/gemmini/software/gemmini-rocc-tests/build/baremetalC/template-baremetal
 ```
 
 Next steps
@@ -266,7 +235,7 @@ In the output-stationary mode, the `D` values are "preloaded" into the systolic 
 
 `A`, `B`, and `D` are all of type `inputType`, while `C` is of type `outputType`.
 If the programmer wishes to write `C` into the scratchpad, then `C` is cast down to `inputType`.
-However, if the programmer instead wishes to write `C` into the scratchpad, then `C` is cast up to `accType`.
+However, if the programmer instead wishes to write `C` into the accumulator, then `C` is cast up to `accType`.
 
 Note that in the weight-stationary mode, an `inputType` D usually has insufficient bitwidth to accurately represent partial sums.
 Therefore, in the weight-stationary mode, `D` is usually just the 0-matrix, while the `accType` accumulator SRAMs are used to accumulate partial sum outputs of the systolic array instead.
