@@ -54,11 +54,16 @@ object GemminiISA {
   val COMPUTE_CISC = 17.U(7.W)
 
   val COUNTER_OP   = 126.U(7.W)
+  val SETLABEL_OP   = 127.U(7.W)
+  val CHECKSTATUS_OP   = 128.U(7.W)
 
   //==========================================================================
   // dataflow configuration
   //==========================================================================
   val GARBAGE_ADDR      = "hffffffff".U(32.W)
+
+  val LABEL_WIDTH = 5
+  val N_WIDTH = 5
 
   val MVIN_RS2_ADDR_WIDTH = 32
   val MVIN_RS2_COLS_WIDTH = 16
@@ -236,4 +241,3 @@ object GemminiISA {
     val local_addr = local_addr_t.cloneType
   }
 }
-

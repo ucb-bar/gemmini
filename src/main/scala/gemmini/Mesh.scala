@@ -91,7 +91,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, outputType: T, accType: T,
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_valid(c)) {
       case (in_v, tile) =>
-        tile.io.in_valid := ShiftRegister(in_v, tile_latency+1)
+        tile.io.in_valid := ShiftRegister(in_v, tile_latency+1) //in_valid can indicate if this tile is busy or not
         tile.io.out_valid
     }
   }

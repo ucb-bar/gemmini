@@ -50,7 +50,7 @@ object GemminiCustomConfigs {
   )
 
   // Specify which of your custom configs you want to build here
-  val customConfig = baselineInferenceConfig
+  val customConfig = defaultFpConfig//baselineInferenceConfig
 }
 
 
@@ -65,4 +65,3 @@ class GemminiCustomConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     }
   )
 })
-

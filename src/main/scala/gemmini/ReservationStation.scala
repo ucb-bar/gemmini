@@ -12,6 +12,42 @@ import midas.targetutils.PerfCounter
 import midas.targetutils.SynthesizePrintf
 
 
+class LabelStatus extends Module {
+  val io = IO(new Bundle {
+    val label = Input(UInt(5.W))               // Input label
+    val label_valid = Input(Bool())            // Is input label valid
+    val finished_label = Input(UInt(5.W))      // Finished label
+    val finished_label_valid = Input(Bool())   // Is finished label valid
+    val status_bits = Output(UInt(32.W))       // 32-bit status bits
+  })
+
+  // Initialize 32 status_bits registers, each starting at 0
+  val status_bits = RegInit(VecInit(Seq.fill(32)(0.S(32.W)))) // 32-bit signed integers for state
+
+  // Handle updates in the same cycle to avoid multiple writes to the same register
+  for (i <- 0 until 32) {
+    when(io.label_valid && io.label === i.U && io.finished_label_valid && io.finished_label === i.U) {
+      // If both label and finished_label refer to the same register, apply the net effect
+      status_bits(i) := status_bits(i) + 1.S - 1.S // No net change since both increment and decrement occur
+    } .elsewhen(io.label_valid && io.label === i.U) {
+      // If only label is valid, increment the corresponding register
+      status_bits(i) := status_bits(i) + 1.S
+    } .elsewhen(io.finished_label_valid && io.finished_label === i.U) {
+      // If only finished_label is valid, decrement the corresponding register
+      status_bits(i) := status_bits(i) - 1.S
+    }
+  }
+  // Output io.status_bits, where each bit indicates if the corresponding status_bits element is > 0
+  io.status_bits := status_bits.zipWithIndex.map { case (status, idx) =>
+    Mux(status > 0.S, 1.U(1.W), 0.U(1.W)) // Set bit to 1 if status is > 0, else 0
+  }.reduce((a, b) => Cat(a, b)) // Concatenate each bit to form a 32-bit UInt
+  // Debugging output to display register values
+  // for (i <- 0 until 32) {
+  //   printf(p"status_bits($i): ${status_bits(i)}\n")
+  // }
+}
+
+
 // TODO unify this class with GemminiCmdWithDeps
 class ReservationStationIssue[T <: Data](cmd_t: T, id_width: Int) extends Bundle {
   val valid = Output(Bool())
@@ -54,6 +90,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val busy = Output(Bool())
 
     val counter = new CounterEventIO()
+
+    val label = Input(UInt(5.W))
+    val label_valid = Input(Bool())
+    val finished_label = Output(UInt(5.W))
+    val finished_label_valid = Output(Bool())
   })
 
   // TODO make this a ChiselEnum
@@ -97,6 +138,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val complete_on_issue = Bool()
 
     val cmd = cmd_t.cloneType
+
+    val label = UInt(5.W)
+    val label_valid = Bool()
 
     // instead of one large deps vector, we need 3 separate ones if we want
     // easy indexing, small area while allowing them to be different sizes
@@ -192,6 +236,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     new_entry.cmd := io.alloc.bits
 
     new_entry.is_config := funct === CONFIG_CMD
+    new_entry.label := io.label
+    new_entry.label_valid := io.label_valid
 
     val op1 = Wire(UDValid(new OpT))
     op1.valid := false.B
@@ -446,7 +492,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       when (q === exq) { matmul_ex_issue_completed := complete_on_issue && from_matmul_fsm }
     }
   }
-
+  // val finished_label = UInt(5.W)
+  // val finished_label_valid = Bool()
   // Mark entries as completed once they've returned
   when (io.completed.fire) {
     val type_width = log2Up(res_max_per_type)
@@ -456,7 +503,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     when (queue_type === ldq) {
       entries.foreach(_.bits.deps_ld(issue_id) := false.B)
       entries_ld(issue_id).valid := false.B
-
+      finished_label := entries_ld(issue_id).bits.label
+      finished_label_valid := entries_ld(issue_id).bits.label_valid// is that correct?
       conv_ld_completed := entries_ld(issue_id).bits.cmd.from_conv_fsm
       matmul_ld_completed := entries_ld(issue_id).bits.cmd.from_matmul_fsm
 
@@ -464,7 +512,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }.elsewhen (queue_type === exq) {
       entries.foreach(_.bits.deps_ex(issue_id) := false.B)
       entries_ex(issue_id).valid := false.B
-
+      finished_label := entries_ex(issue_id).bits.label
+      finished_label_valid := entries_ex(issue_id).bits.label_valid
       conv_ex_completed := entries_ex(issue_id).bits.cmd.from_conv_fsm
       matmul_ex_completed := entries_ex(issue_id).bits.cmd.from_matmul_fsm
       
@@ -472,7 +521,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }.elsewhen (queue_type === stq) {
       entries.foreach(_.bits.deps_st(issue_id) := false.B)
       entries_st(issue_id).valid := false.B
-
+      finished_label := entries_st(issue_id).bits.label
+      finished_label_valid := entries_st(issue_id).bits.label_valid
       conv_st_completed := entries_st(issue_id).bits.cmd.from_conv_fsm
       matmul_st_completed := entries_st(issue_id).bits.cmd.from_matmul_fsm
       
@@ -481,6 +531,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       assert(queue_type =/= 3.U)
     }
   }
+  io.finished_label := finished_label
+  io.finished_label_valid := finished_label_valid
 
   // Explicitly mark "opb" in all ld/st queues entries as being invalid.
   // This helps us to reduce the total reservation table area

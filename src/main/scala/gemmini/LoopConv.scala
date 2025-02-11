@@ -9,6 +9,7 @@ import org.chipsalliance.cde.config.Parameters
 import GemminiISA._
 import LocalAddr._
 import Util._
+import gemmini.GemminiISA.SETLABEL_OP
 
 class LoopConvOuterBounds(val large_iterator_bitwidth: Int, val small_iterator_bitwidth: Int, val tiny_iterator_bitwidth: Int) extends Bundle {
   val batch_size = UInt(large_iterator_bitwidth.W)
@@ -79,6 +80,8 @@ class LoopConvLdBiasReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: I
   val dram_addr = UInt(coreMaxAddrBits.W)
   val no_bias = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  val label = UInt(5.W)
+  val label_valid = Bool()
 }
 
 class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_acc_addr: Int, acc_w: Int,
@@ -94,6 +97,8 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
     val wait_for_prev_loop = Input(Bool())
 
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
+    val label = Output(UInt(5.W))
+    val label_valid = Output(Bool())
   })
 
   object State extends ChiselEnum {
@@ -134,6 +139,8 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
     val spad_addr = UInt()
     val I = UInt()
     val J = UInt()
+    val label = UInt()
+    val label_valid = Bool()
   }
   val command_p = Module(new Pipeline[RoCCCommandWithAddr](new RoCCCommandWithAddr, latency)())
 
@@ -171,10 +178,15 @@ class LoopConvLdBias(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwi
   command_p.io.in.bits.spad_addr := spad_addr
   command_p.io.in.bits.I := I
   command_p.io.in.bits.J := J
+  command_p.io.in.bits.label := req.label
+  command_p.io.in.bits.label_valid := req.label_valid
 
   command_p.io.out.ready := io.cmd.ready && !io.rob_overloaded
   io.cmd.valid := command_p.io.out.valid && !io.rob_overloaded
   io.cmd.bits := command_p.io.out.bits.cmd
+  io.label := command_p.io.out.bits.label
+  io.label_valid := command_p.io.out.bits.label_valid
+  
   when (command_p.io.out.bits.cmd.inst.funct === LOAD3_CMD) {
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := o.dram_addr
@@ -230,6 +242,8 @@ class LoopConvLdInputReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: 
   val input_dilated = Bool()
   val trans_input_3120 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  val label = UInt(5.W)
+  val label_valid = Bool()
 }
 
 class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int,
@@ -247,6 +261,8 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
     val wait_for_prev_loop = Input(Bool())
 
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
+    val label = Output(UInt(5.W))
+    val label_valid = Output(Bool())
   })
 
   object State extends ChiselEnum {
@@ -309,6 +325,8 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
     val spad_addr = SInt()
     val I = SInt()
     val K = SInt()
+    val label = UInt()
+    val label_valid = Bool()
   }
   val command_p = Module(new Pipeline[RoCCCommandWithAddr](new RoCCCommandWithAddr, latency)())
   // Commands
@@ -345,10 +363,15 @@ class LoopConvLdInput(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitw
   command_p.io.in.bits.spad_addr := spad_addr
   command_p.io.in.bits.I := I
   command_p.io.in.bits.K := K
+  command_p.io.in.bits.label := req.label
+  command_p.io.in.bits.label_valid := req.label_valid
 
   command_p.io.out.ready := io.cmd.ready && !io.rob_overloaded
   io.cmd.valid := command_p.io.out.valid && !io.rob_overloaded
   io.cmd.bits := command_p.io.out.bits.cmd
+  io.label := command_p.io.out.bits.label
+  io.label_valid := command_p.io.out.bits.label_valid
+  
   when (command_p.io.out.bits.cmd.inst.funct === LOAD_CMD) {
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := o.dram_addr
@@ -409,6 +432,8 @@ class LoopConvLdWeightReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth:
   val trans_weight_0132 = Bool()
   val dw = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  val label = UInt(5.W)
+  val label_valid = Bool()
 }
 
 class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int,
@@ -420,7 +445,8 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new LoopConvLdWeightReq(coreMaxAddrBits, large_iterator_bitwidth, small_iterator_bitwidth, tiny_iterator_bitwidth, max_addr, concurrent_loops)))
     val cmd = Decoupled(Output(new RoCCCommand))
-
+    val label = Output(UInt(5.W))
+    val label_valid = Output(Bool())
     val idle = Output(Bool())
     val rob_overloaded = Input(Bool())
     val wait_for_prev_loop = Input(Bool())
@@ -489,6 +515,8 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
     val spad_addr = UInt()
     val K = UInt()
     val J = UInt()
+    val label = UInt()
+    val label_valid = Bool()
   }
   val command_p = Module(new Pipeline[RoCCCommandWithAddr](new RoCCCommandWithAddr, latency)())
 
@@ -521,15 +549,20 @@ class LoopConvLdWeight(block_size: Int, coreMaxAddrBits: Int, large_iterator_bit
   io.loop_id := req.loop_id
 
   command_p.io.in.valid := state =/= idle && !io.wait_for_prev_loop && (req.dram_addr =/= 0.U)
-  command_p.io.in.bits.cmd := Mux(state === config, config_cmd, mvin_cmd)
+  command_p.io.in.bits.cmd := Mux(state === config, config_cmd, mvin_cmd) //since label info is included in the gemminicmd rather than the rocccommand, we use the req to pass label info
   command_p.io.in.bits.dram_addr := dram_addr
   command_p.io.in.bits.spad_addr := spad_addr
   command_p.io.in.bits.K := K
   command_p.io.in.bits.J := J
+  command_p.io.in.bits.label := req.label // the data on the LHS changes, while the req remains
+  command_p.io.in.bits.label_valid := req.label_valid
 
   command_p.io.out.ready := io.cmd.ready && !io.rob_overloaded
   io.cmd.valid := command_p.io.out.valid && !io.rob_overloaded
   io.cmd.bits := command_p.io.out.bits.cmd
+  io.label := command_p.io.out.bits.label
+  io.label_valid := command_p.io.out.bits.label_valid
+ 
   when (command_p.io.out.bits.cmd.inst.funct === LOAD2_CMD) {
     val o = command_p.io.out.bits
     io.cmd.bits.rs1 := o.dram_addr
@@ -591,6 +624,8 @@ class LoopConvExecuteReq(val large_iterator_bitwidth: Int, val small_iterator_bi
   val trans_weight_0132 = Bool()
   val trans_input_3120 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  val label = UInt(5.W)
+  val label_valid = Bool()
 }
 
 class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_addr: Int,
@@ -609,6 +644,8 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     val rob_overloaded = Input(Bool())
 
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
+    val label = Output(UInt(5.W))
+    val label_valid = Output(Bool())
   })
 
   object State extends ChiselEnum {
@@ -687,6 +724,8 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
     val J = UInt()
     val K = UInt()
     val new_weights = Bool()
+    val label = UInt()
+    val label_valid = Bool()
   }
   val command_p = Module(new Pipeline[RoCCCommandWithAddr](new RoCCCommandWithAddr, latency)())
 
@@ -736,10 +775,14 @@ class LoopConvExecute(block_size: Int, large_iterator_bitwidth: Int, small_itera
   command_p.io.in.bits.J := J
   command_p.io.in.bits.K := K
   command_p.io.in.bits.new_weights := new_weights
+  command_p.io.in.bits.label := req.label
+  command_p.io.in.bits.label_valid := req.label_valid
 
   command_p.io.out.ready := io.cmd.ready && !io.rob_overloaded
   io.cmd.valid := command_p.io.out.valid && !io.rob_overloaded
   io.cmd.bits := command_p.io.out.bits.cmd
+  io.label := command_p.io.out.bits.label
+  io.label_valid := command_p.io.out.bits.label_valid
   when (command_p.io.out.bits.cmd.inst.funct === PRELOAD_CMD) {
     val o = command_p.io.out.bits
 
@@ -848,6 +891,8 @@ class LoopConvStReq(val coreMaxAddrBits: Int, val large_iterator_bitwidth: Int, 
   val activation = UInt(2.W) // TODO magic number
   val trans_output_1203 = Bool()
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  val label = UInt(5.W)
+  val label_valid = Bool()
 }
 
 class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth: Int, small_iterator_bitwidth: Int, tiny_iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, concurrent_loops: Int, latency: Int, config_mvout_rs2_t: ConfigMvoutRs2, mvout_rs2_t: MvoutRs2)(implicit p: Parameters) extends Module {
@@ -863,6 +908,8 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
     val rob_overloaded = Input(Bool())
 
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
+    val label = Output(UInt(5.W))
+    val label_valid = Output(Bool())
   })
 
   object State extends ChiselEnum {
@@ -913,6 +960,8 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
     val is_pool = Bool()
     val I = UInt()
     val J = UInt()
+    val label = UInt()
+    val label_valid = Bool()
   }
   val command_p = Module(new Pipeline[RoCCCommandWithAddr](new RoCCCommandWithAddr, latency)())
   // Commands
@@ -987,10 +1036,14 @@ class LoopConvSt(block_size: Int, coreMaxAddrBits: Int, large_iterator_bitwidth:
   command_p.io.in.bits.channels := channels
   command_p.io.in.bits.I := I
   command_p.io.in.bits.J := J
+  command_p.io.in.bits.label := req.label
+  command_p.io.in.bits.label_valid := req.label_valid
 
   command_p.io.out.ready := io.cmd.ready && !io.rob_overloaded
   io.cmd.valid := command_p.io.out.valid && !io.rob_overloaded
   io.cmd.bits := command_p.io.out.bits.cmd
+  io.label := command_p.io.out.bits.label
+  io.label_valid := command_p.io.out.bits.label_valid
   when (command_p.io.out.bits.cmd.inst.funct === STORE_CMD) {
     val o = command_p.io.out.bits
     when (o.is_pool) {
@@ -1066,6 +1119,10 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   val weights_dram_addr = UInt(coreMaxAddrBits.W)
   val input_dram_addr = UInt(coreMaxAddrBits.W)
   val output_dram_addr = UInt(coreMaxAddrBits.W)
+
+  val label = UInt(5.W)
+  val label_valid = Bool()
+  val label_proc = Bool()
 
   val no_bias = Bool()
   val wrot180 = Bool()
@@ -1166,6 +1223,12 @@ class LoopConvState(val block_size: Int, val large_iterator_bitwidth: Int, val s
   }
 }
 
+class ROCCCommandWithLabel extends Bundle {
+  val cmd = new RoCCCommand
+  val label = UInt(5.W)
+  val label_valid = Bool()
+}
+
 class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
                 max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
                 config_mvin_rs1_t: ConfigMvinRs1, mvin_rs2_t: MvinRs2, config_mvout_rs2_t: ConfigMvoutRs2, mvout_rs2_t: MvoutRs2,
@@ -1188,7 +1251,12 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
     val st_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val ex_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val busy = Output(Bool())
+    val label = Output(UInt(LABEL_WIDTH.W))
+    val label_valid = Output(Bool())
+    val status_bits = Output(UInt(32.W))
   })
+  
+
 
   // Create states
   val concurrent_loops = 2
@@ -1214,16 +1282,88 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   // Create command queue
   val cmd = Queue(io.in)
 
-  io.busy := cmd.valid || loop_configured
+  //before unroll the instructions, find out if this is a config_label inst.
+  // where is config_LD processed? we need to avoid it(TODO)
+  val is_config_lbl_cmd = cmd.bits.cmd.inst.funct === SETLABEL_OP  && cmd.bits.cmd.rs2(32) === 1.U
+  val N_CONFIG_cmd_lbl = cmd.bits.cmd.rs1(6, 2)
+  val LABEL_CONFIG_cmd_lbl = cmd.bits.cmd.rs2(4, 0)
+  val MODE_CONFIG_cmd_lbl = cmd.bits.cmd.rs1(32)
+  val raw_counter_lbl = RegInit(0.U(32.W))
+  val state_lbl = RegInit(0.U(2.W)) // 00 not assigning labels, 01: assigning labels, infinite, 10: assigning labels, finite
+  val N_lbl = RegInit(0.U(N_WIDTH.W))
+  val LABEL_lbl = RegInit(0.U(LABEL_WIDTH.W))
+  //receive the config
+  when(is_config_lbl_cmd === true.B){
+    LABEL_lbl := LABEL_CONFIG_cmd_lbl
+    N_lbl := N_CONFIG_cmd_lbl
+    state_lbl := Mux(MODE_CONFIG_cmd_lbl === 1.U, 1.U, 2.U) // 1: infinite, 2: finite
+    raw_counter_lbl := 0.U
+  }
+  //attach the label to each raw command
+  val label_rawcmd = Wire(UInt(LABEL_WIDTH.W))
+  val labelen_rawcmd = Wire(Bool())
+  when(state_lbl === 1.U || (state_lbl === 2.U && raw_counter_lbl < N_lbl)){
+    label_rawcmd := LABEL_lbl
+    raw_counter_lbl := raw_counter_lbl + 1.U
+    labelen_rawcmd := true.B
+  }.otherwise{
+    label_rawcmd := 0.U
+    labelen_rawcmd := false.B
+    raw_counter_lbl := 0.U
+  }
+  cmd.bits.label := label_rawcmd
+  cmd.bits.label_valid := labelen_rawcmd
+  //LoopConv assigns the label to coarse grained cmds
+  // then assign these bind(en & label) to the output of the unit
+  //now attached the label to the raw command
+  //then assign the correct label to the output of the unit
+  
+  //if(is_config_lbl_cmd){
+  //a counter for raw cmd
+  //assign the label for this unit's output
+  //}
+   //LSB
 
+  io.busy := cmd.valid || loop_configured
+  //not only ROCC command, but also label and label_en
   // Create arbiter
-  val arb = Module(new Arbiter(new RoCCCommand, 5))
-  arb.io.in(0) <> st.io.cmd
-  arb.io.in(1) <> ex.io.cmd
-  arb.io.in(2) <> ld_bias.io.cmd
-  arb.io.in(3) <> ld_weights.io.cmd
-  arb.io.in(4) <> ld_input.io.cmd
-  val unrolled_cmd = arb.io.out
+  val arb = Module(new Arbiter(new ROCCCommandWithLabel, 5))
+  val st_io = Wire(new ROCCCommandWithLabel)
+  st_io.cmd := st.io.cmd
+  st_io.label := st.io.label
+  st_io.label_valid := st.io.label_valid
+  arb.io.in(0) <> st_io
+  val ex_io = Wire(new ROCCCommandWithLabel)
+  ex_io.cmd := ex.io.cmd
+  ex_io.label := ex.io.label
+  ex_io.label_valid := ex.io.label_valid
+  arb.io.in(1) <> ex_io
+  val ld_bias_io = Wire(new ROCCCommandWithLabel)
+  ld_bias_io.cmd := ld_bias.io.cmd
+  ld_bias_io.label := ld_bias.io.label
+  ld_bias_io.label_valid := ld_bias.io.label_valid
+  arb.io.in(2) <> ld_bias_io
+  val ld_weights_io = Wire(new ROCCCommandWithLabel)
+  ld_weights_io.cmd := ld_weights.io.cmd
+  ld_weights_io.label := ld_weights.io.label
+  ld_weights_io.label_valid := ld_weights.io.label_valid
+  arb.io.in(3) <> ld_weights_io
+  val ld_input_io = Wire(new ROCCCommandWithLabel)
+  ld_input_io.cmd := ld_input.io.cmd
+  ld_input_io.label := ld_input.io.label
+  ld_input_io.label_valid := ld_input.io.label_valid
+  arb.io.in(4) <> ld_input_io
+  val unrolled_cmd = arb.io.out.cmd
+  val unrolled_label = arb.io.out.label
+  val unrolled_label_valid = arb.io.out.label_valid
+
+  // val arb = Module(new Arbiter(new RoCCCommand, 5))
+  // arb.io.in(0) <> st.io.cmd
+  // arb.io.in(1) <> ex.io.cmd
+  // arb.io.in(2) <> ld_bias.io.cmd
+  // arb.io.in(3) <> ld_weights.io.cmd
+  // arb.io.in(4) <> ld_input.io.cmd
+  // val unrolled_cmd = arb.io.out
 
   // Create reservation station utilization counters
   val ld_utilization = RegInit(0.U(log2Up(max_lds+1).W))
@@ -1249,6 +1389,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   io.out.bits.from_matmul_fsm := Mux(loop_configured, false.B, cmd.bits.from_matmul_fsm)
   io.out.bits.from_conv_fsm := Mux(loop_configured, true.B, cmd.bits.from_conv_fsm)
   io.out.valid := Mux(loop_configured, unrolled_cmd.valid, cmd.valid && !is_loop_config_cmd && !is_loop_run_cmd)
+  io.out.bits.label := Mux(loop_configured, unrolled_label, cmd.bits.label)
+  io.out.bits.label_valid := Mux(loop_configured, unrolled_label_valid, cmd.bits.label_valid)
 
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)
   arb.io.out.ready := io.out.ready
@@ -1344,6 +1486,9 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
       }
 
       is (LOOP_CONV_WS) {
+        loop_being_configured.label := label_rawcmd
+        loop_being_configured.label_valid := labelen_rawcmd
+        loop_being_configured.label_proc := true.B
         loop_being_configured.no_bias := cmd.bits.cmd.rs1(0)
 
         // TODO we added a default value for max_pixels_per_row just to maintain backwards compatibility. we should deprecate and remove it later
@@ -1376,6 +1521,17 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
     }
   }
 
+  val status_bits = Wire(0.U(32.W))
+  for (j <- 0 until 32){
+    status_bits(j) := 0.U
+  }
+  for(i <- 0 until concurrent_loops){
+    when(cmd.valid && loop_configured && loops(i).all_completed() && loops(i).label_valid){
+      status_bits(loops(i).label) := 1.U
+    }
+  }
+  io.status_bits := status_bits
+  
   // Wire up request signals
   val ld_bias_addr_start = RegInit(0.U(log2Up(max_acc_addr).W))
   val ex_c_addr_start = RegInit(0.U(log2Up(max_acc_addr).W))
@@ -1390,6 +1546,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   ld_bias.io.req.bits.dram_addr := loop_requesting_ld_bias.bias_dram_addr
   ld_bias.io.req.bits.no_bias := loop_requesting_ld_bias.no_bias
   ld_bias.io.req.bits.loop_id := loop_requesting_ld_bias_id
+  ld_bias.io.req.bits.label := loop_requesting_ld_bias.label
+  ld_bias.io.req.bits.label_valid := loop_requesting_ld_bias.label_valid
 
   ld_bias.io.req.valid := !loop_requesting_ld_bias.ld_bias_started && loop_requesting_ld_bias.configured
 
@@ -1415,6 +1573,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   ld_input.io.req.bits.input_dilated := loop_requesting_ld_input.input_dilated
   ld_input.io.req.bits.trans_input_3120 := loop_requesting_ld_input.trans_input_3120
   ld_input.io.req.bits.loop_id := loop_requesting_ld_input_id
+  ld_input.io.req.bits.label := loop_requesting_ld_input.label
+  ld_input.io.req.bits.label_valid := loop_requesting_ld_input.label_valid
 
   ld_input.io.req.valid := !loop_requesting_ld_input.ld_input_started && loop_requesting_ld_input.configured
 
@@ -1434,6 +1594,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   ld_weights.io.req.bits.trans_weight_0132 := loop_requesting_ld_weights.trans_weight_0132
   ld_weights.io.req.bits.dw := loop_requesting_ld_weights.dw
   ld_weights.io.req.bits.loop_id := loop_requesting_ld_weights_id
+  ld_weights.io.req.bits.label := loop_requesting_ld_weights.label
+  ld_weights.io.req.bits.label_valid := loop_requesting_ld_weights.label_valid
 
   ld_weights.io.req.valid := !loop_requesting_ld_weights.ld_weights_started && loop_requesting_ld_weights.configured
 
@@ -1457,6 +1619,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   ex.io.req.bits.trans_weight_0132 := loop_requesting_ex.trans_weight_0132
   ex.io.req.bits.trans_input_3120 := loop_requesting_ex.trans_input_3120
   ex.io.req.bits.loop_id := loop_requesting_ex_id
+  ex.io.req.bits.label := loop_requesting_ex.label
+  ex.io.req.bits.label_valid := loop_requesting_ex.label_valid
 
   ex.io.req.valid := !loop_requesting_ex.ex_started && loop_requesting_ex.ld_bias_started &&
     loop_requesting_ex.ld_input_started && loop_requesting_ex.ld_weights_started && loop_requesting_ex.configured
@@ -1481,6 +1645,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   st.io.req.bits.activation := loop_requesting_st.activation
   st.io.req.bits.trans_output_1203 := loop_requesting_st.trans_output_1203
   st.io.req.bits.loop_id := loop_requesting_st_id
+  st.io.req.bits.label := loop_requesting_st.label
+  st.io.req.bits.label_valid := loop_requesting_st.label_valid
 
   st.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started && loop_requesting_st.configured
 
@@ -1513,8 +1679,9 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   when (st.io.idle && loops(st.io.loop_id).running && loops(st.io.loop_id).st_started) {
     loops(st.io.loop_id).st_completed := true.B
   }
-
+  //using loop_id.label_proc and label and label_valid, we can know the status of each label in LoopConv
   when (head_loop.running && head_loop.all_completed()) {
+    head_loop.label_proc := false.B // what about teh tail loop? Should these two be bound to be config + compute?
     head_loop.reset()
     head_loop_id := ~head_loop_id
   }
@@ -1548,7 +1715,7 @@ object LoopConv {
     mod.io.ld_completed := ld_completed
     mod.io.st_completed := st_completed
     mod.io.ex_completed := ex_completed
-    (mod.io.out, mod.io.busy)
+    (mod.io.out, mod.io.busy,mod.io.label,mod.io.label_valid, mod.io.status_bits)
   }
 
   def castDramOffset(dram_offset: UInt): UInt = {

@@ -23,6 +23,8 @@ class LoopMatmulLdAReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val addr_start = UInt(log2Up(max_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
   val is_resadd = Bool()
+  val label = UInt(5.W)
+  val label_valid = Bool()
 }
 
 class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, input_w: Int,
@@ -36,6 +38,8 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     val idle = Output(Bool())
     val rob_overloaded = Input(Bool())
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
+    val label = Output(UInt(5.W))
+    val label_valid = Output(Bool())
   })
 
   object State extends ChiselEnum {
@@ -45,7 +49,7 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val state = RegInit(idle)
 
   val req = Reg(new LoopMatmulLdAReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, concurrent_loops))
-
+  //before idle(finish), req's reg will not be updated
   val i = Reg(UInt(iterator_bitwidth.W))
   val k = Reg(UInt(iterator_bitwidth.W))
 
@@ -94,7 +98,8 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   io.cmd.bits := mvin_cmd
 
   io.loop_id := req.loop_id
-
+  io.label := req.label
+  io.label_valid := req.label_valid
   when(req.dram_addr === 0.U){
     state := idle
   }.elsewhen(io.cmd.fire) {
@@ -134,6 +139,8 @@ class LoopMatmulLdBReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val addr_end = UInt(log2Up(max_addr+1).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
   val is_resadd = Bool()
+  val label = UInt(5.W)
+  val label_valid = Bool()
 }
 
 class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, input_w: Int,
@@ -150,6 +157,8 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     val rob_overloaded = Input(Bool())
 
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
+    val label = Output(UInt(5.W))
+    val label_valid = Output(Bool())
   })
 
   object State extends ChiselEnum {
@@ -209,6 +218,8 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   io.cmd.bits := mvin_cmd
 
   io.loop_id := req.loop_id
+  io.label := req.label
+  io.label_valid := req.label_valid
 
   when(req.dram_addr === 0.U){
     state := idle
@@ -248,6 +259,8 @@ class LoopMatmulLdDReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val low_d = Bool()
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
+  val label = UInt(5.W)
+  val label_valid = Bool()
 }
 
 class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int,
@@ -261,6 +274,8 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     val rob_overloaded = Input(Bool())
 
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
+    val label = Output(UInt(5.W))
+    val label_valid = Output(Bool())
   })
 
   object State extends ChiselEnum {
@@ -307,6 +322,8 @@ class LoopMatmulLdD(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   io.cmd.bits := mvin_cmd
 
   io.loop_id := req.loop_id
+  io.label := req.label
+  io.label_valid := req.label_valid
 
   when (req.dram_addr === 0.U) {
     state := idle
@@ -347,6 +364,8 @@ class LoopMatmulExecuteReq(val block_size: Int, val coreMaxAddrBits: Int, val it
   val c_addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
   val skip = Bool()
+  val label = UInt(5.W)
+  val label_valid = Bool()
 }
 
 class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int, concurrent_loops: Int,
@@ -373,6 +392,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
     val rob_overloaded = Input(Bool())
 
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
+    val label = Output(UInt(5.W))
+    val label_valid = Output(Bool())
   })
 
   object State extends ChiselEnum {
@@ -464,6 +485,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   io.cmd.bits := Mux(state === pre, pre_cmd, comp_cmd)
 
   io.loop_id := req.loop_id
+  io.label := req.label
+  io.label_valid := req.label_valid
 
   when(req.skip) {
     state := idle
@@ -509,6 +532,8 @@ class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
   val is_resadd = Bool()
+  val label = UInt(5.W)
+  val label_valid = Bool()
 }
 
 class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int, mvout_rs2_t: MvoutRs2)
@@ -529,6 +554,8 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     val rob_overloaded = Input(Bool())
 
     val loop_id = Output(UInt(log2Up(concurrent_loops).W))
+    val label = Output(UInt(5.W))
+    val label_valid = Output(Bool())
   })
 
   object State extends ChiselEnum {
@@ -640,6 +667,8 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   ))
 
   io.loop_id := req.loop_id
+  io.label := req.label
+  io.label_valid := req.label_valid
 
   when (req.dram_addr === 0.U) {
     state := idle
@@ -735,6 +764,9 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val ex_completed = Bool()
   val ldd_completed = Bool()
   val st_completed = Bool()
+  val label = UInt(5.W)
+  val label_valid = Bool()
+  val label_proc = Bool()
 
   def all_completed(dummy: Int=0): Bool = lda_completed && ldb_completed && ldd_completed && ex_completed && st_completed
 
@@ -763,6 +795,12 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   }
 }
 
+// class ROCCCommandWithLabel extends Bundle{
+//   val cmd = new RoCCCommand
+//   val label = UInt(5.W)
+//   val label_valid = Bool()
+// }
+
 class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
                  mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
@@ -774,11 +812,16 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new GemminiCmd(reservation_station_size)))
+    val in_label = Input(UInt(5.W))
+    val in_label_valid = Input(Bool())
     val out = Decoupled(new GemminiCmd(reservation_station_size))
     val ld_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val st_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val ex_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val busy = Output(Bool())
+    val out_label = Output(UInt(5.W))
+    val out_label_valid = Output(Bool())
+    val status_bits = Output(UInt(32.W))
   })
 
   // Create states
@@ -813,6 +856,10 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val ldab_arb = Module(new WeightedArbiter(new RoCCCommand(), maxWeightA=255, staticWeightAEnabled=true)) // TODO magic numbers
   ldab_arb.io.inA <> ldA.io.cmd
   ldab_arb.io.inB <> ldB.io.cmd
+  ldab_arb.io.inA.label <> ldA.io.label
+  ldab_arb.io.inA.label_valid <> ldA.io.label_valid
+  ldab_arb.io.inB.label <> ldB.io.label
+  ldab_arb.io.inB.label_valid <> ldB.io.label_valid
   val ab_loads_on_same_loop = ldA.io.loop_id === ldB.io.loop_id
   val forceA = !ab_loads_on_same_loop && ldA.io.loop_id === head_loop_id
   val forceB = !ab_loads_on_same_loop && ldB.io.loop_id === head_loop_id
@@ -827,12 +874,37 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ldab_arb.io.inB_j := ldB.io.j
 
   // Create global arbiter
-  val arb = Module(new Arbiter(new RoCCCommand(), 4))
-  arb.io.in(0) <> stC.io.cmd
-  arb.io.in(1) <> ex.io.cmd
-  arb.io.in(2) <> ldD.io.cmd
-  arb.io.in(3) <> ldab_arb.io.out
-  val unrolled_cmd = arb.io.out
+  // val arb = Module(new Arbiter(new RoCCCommand(), 4))
+  // arb.io.in(0) <> stC.io.cmd
+  // arb.io.in(1) <> ex.io.cmd
+  // arb.io.in(2) <> ldD.io.cmd
+  // arb.io.in(3) <> ldab_arb.io.out
+  // val unrolled_cmd = arb.io.out
+  val arb = Module(new Arbiter(new RoCCCommandWithLabel(), 4)) 
+  val stC_io = Wire(new RoCCCommandWithLabel)
+  stC_io.cmd := stC.io.cmd
+  stC_io.label := stC.io.label
+  stC_io.label_valid := stC.io.label_valid
+  arb.io.in(0) <> stC_io
+  val ex_io = Wire(new RoCCCommandWithLabel)
+  ex_io.cmd := ex.io.cmd
+  ex_io.label := ex.io.label
+  ex_io.label_valid := ex.io.label_valid
+  arb.io.in(1) <> ex_io
+  val ldD_io = Wire(new RoCCCommandWithLabel)
+  ldD_io.cmd := ldD.io.cmd
+  ldD_io.label := ldD.io.label
+  ldD_io.label_valid := ldD.io.label_valid
+  arb.io.in(2) <> ldD_io
+  val ldab_arb_io = Wire(new RoCCCommandWithLabel)
+  ldab_arb_io.cmd := ldab_arb.io.out
+  ldab_arb_io.label := ldab_arb.io.out_label
+  ldab_arb_io.label_valid := ldab_arb.io.out_label_valid
+  arb.io.in(3) <> ldab_arb_io
+  val unrolled_cmd = arb.io.out.cmd
+  val unrolled_label = arb.io.out.label
+  val unrolled_label_valid = arb.io.out.label_valid
+
 
   // Create reservation station utilization counters
   val ld_utilization = RegInit(0.U(log2Up(max_lds+1).W))
@@ -858,6 +930,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   io.out.bits.from_matmul_fsm := Mux(loop_configured, true.B, cmd.bits.from_matmul_fsm)
   io.out.bits.from_conv_fsm := Mux(loop_configured, false.B, cmd.bits.from_conv_fsm)
   io.out.valid := Mux(loop_configured, unrolled_cmd.valid, cmd.valid && !is_loop_config_cmd && !is_loop_run_cmd)
+  io.out_label := Mux(loop_configured, unrolled_label, io.in_label)
+  io.out_label_valid := Mux(loop_configured, unrolled_label_valid, io.in_label_valid)
 
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)
   arb.io.out.ready := io.out.ready
@@ -877,6 +951,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ex.io.ld_kb := ldB.io.k
   ex.io.ld_j := ldB.io.j
   ex.io.ld_i := ldA.io.i
+  ex.io.label := io.in_label
+  ex.io.label_valid := io.in_label_valid
 
   stC.io.ex_completed := (ex.io.loop_id =/= stC.io.loop_id) || ex.io.idle
   stC.io.ex_k := ex.io.k
@@ -946,9 +1022,23 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.configured := true.B
 
         loops_configured := loops_configured + 1.U
+        loop_being_configured.label_proc := true.B
+        loop_being_configured.label := io.in_label
+        loop_being_configured.label_valid := io.in_label_valid// there are several in ports for assigning the labels to the coarse grained LoopConv/ LoopMatmul, however, only need to assign the label once, to a single loop inst
       }
     }
   }
+
+  val status_bits = Wire(0.U(32.W))
+  for (j <- 0 until 32){
+    status_bits(j) := 0.U
+  }
+  for(i <- 0 until concurrent_loops){
+    when(cmd.valid && loop_configured && loops(i).all_completed() && loops(i).label_valid){
+      status_bits(loops(i).label) := 1.U
+    }
+  }
+  io.status_bits := status_bits
 
   // Wire up request signals
   val ld_d_addr_start = RegInit(0.U(log2Up(max_acc_addr).W))
@@ -967,6 +1057,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ldA.io.req.bits.addr_start := Mux(loop_requesting_ldA.a_ex_spad_id === 0.U, loop_requesting_ldA.a_addr_start, (loop_requesting_ldA.a_ex_spad_id - 1.U) * (max_addr / concurrent_loops).U)
   ldA.io.req.bits.loop_id := loop_requesting_ldA_id
   ldA.io.req.bits.is_resadd := is_resadd
+  ldA.io.req.bits.label := loop_requesting_ldA.label
+  ldA.io.req.bits.label_valid := loop_requesting_ldA.label_valid
 
   ldA.io.req.valid := !loop_requesting_ldA.lda_started && loop_requesting_ldA.configured
 
@@ -987,6 +1079,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ldB.io.req.bits.addr_end := Mux(loop_requesting_ldB.b_ex_spad_id === 0.U, loop_requesting_ldB.b_addr_end, (loop_requesting_ldB.b_ex_spad_id) * (max_addr / concurrent_loops).U)
   ldB.io.req.bits.loop_id := loop_requesting_ldB_id
   ldB.io.req.bits.is_resadd := is_resadd
+  ldB.io.req.bits.label := loop_requesting_ldB.label
+  ldB.io.req.bits.label_valid := loop_requesting_ldB.label_valid
 
   ldB.io.req.valid := !loop_requesting_ldB.ldb_started && loop_requesting_ldB.configured
 
@@ -1011,6 +1105,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ex.io.req.bits.c_addr_start := ex_c_addr_start
   ex.io.req.bits.loop_id := loop_requesting_ex_id
   ex.io.req.bits.skip := is_resadd
+  ex.io.req.bits.label := loop_requesting_ex.label
+  ex.io.req.bits.label_valid := loop_requesting_ex.label_valid
 
   ex.io.req.valid := !loop_requesting_ex.ex_started && loop_requesting_ex.lda_started &&
     loop_requesting_ex.ldb_started && loop_requesting_ex.ldd_started && loop_requesting_ex.configured 
@@ -1035,6 +1131,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ldD.io.req.bits.low_d := loop_requesting_ldD.low_d
   ldD.io.req.bits.addr_start := ld_d_addr_start
   ldD.io.req.bits.loop_id := loop_requesting_ldD_id
+  ldD.io.req.bits.label := loop_requesting_ldD.label
+  ldD.io.req.bits.label_valid := loop_requesting_ldD.label_valid
 
   ldD.io.req.valid := !loop_requesting_ldD.ldd_started && loop_requesting_ldD.configured
 
@@ -1061,6 +1159,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.addr_start := st_c_addr_start
   stC.io.req.bits.loop_id := loop_requesting_st_id
   stC.io.req.bits.is_resadd := is_resadd
+  stC.io.req.bits.label := loop_requesting_st.label
+  stC.io.req.bits.label_valid := loop_requesting_st.label_valid
 
 
   stC.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started && loop_requesting_st.configured
@@ -1102,6 +1202,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   }
 
   when (head_loop.running && head_loop.all_completed()) {
+    head_loop.label_proc := false.B // we can monitor the current labels
     head_loop.reset()
     head_loop_id := ~head_loop_id
   }
@@ -1118,7 +1219,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 }
 
 object LoopMatmul {
-  def apply(in: DecoupledIO[GemminiCmd], ld_completed: UInt, st_completed: UInt, ex_completed: UInt,
+  def apply(label: UInt, label_valid: Bool, in: DecoupledIO[GemminiCmd], ld_completed: UInt, st_completed: UInt, ex_completed: UInt,
             block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
             mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
@@ -1128,10 +1229,12 @@ object LoopMatmul {
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
       mvin_rs2_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t, mvout_rs2_t))
     mod.io.in <> in
+    mod.io.in_label := in_label
+    mod.io.in_label_valid := in_label_valid
     mod.io.ld_completed := ld_completed
     mod.io.st_completed := st_completed
     mod.io.ex_completed := ex_completed
-    (mod.io.out, mod.io.busy)
+    (mod.io.out, mod.io.busy, mod.io.out_label, mod.io.out_label_valid, mod.io.status_bits)
   }
 
   def castDramOffset(dram_offset: UInt): UInt = {

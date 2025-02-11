@@ -19,6 +19,8 @@ class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
   val from_matmul_fsm = Bool()
   val from_conv_fsm = Bool()
+  val label = UInt(5.W)
+  val label_valid = Bool()
 }
 
 class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiArrayConfig[T, U, V])
@@ -57,12 +59,16 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // Counters
   val counters = Module(new CounterController(outer.config.num_counter, outer.xLen))
-  io.resp <> counters.io.out  // Counter access command will be committed immediately
+  //io.resp <> counters.io.out  // Counter access command will be committed immediately
   counters.io.event_io.external_values(0) := 0.U
   counters.io.event_io.event_signal(0) := false.B
   counters.io.in.valid := false.B
   counters.io.in.bits := DontCare
   counters.io.event_io.collect(spad.module.io.counter)
+  
+  //status bits
+  val out_statusbits = Decoupled(new RoCCResponse)
+  val status_bits = Wire(UInt(32.W))
 
   // TLB
   implicit val edge = outer.spad.id_node.edges.out.head
@@ -135,6 +141,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   raw_cmd_q.io.enq.bits.rob_id := DontCare
   raw_cmd_q.io.enq.bits.from_conv_fsm := false.B
   raw_cmd_q.io.enq.bits.from_matmul_fsm := false.B
+  raw_cmd_q.io.enq.bits.label := DontCare
+  raw_cmd_q.io.enq.bits.label_valid := false.B
 
   val raw_cmd = raw_cmd_q.io.deq
 
@@ -142,7 +150,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val max_exs = reservation_station_entries_ex
   val max_sts = reservation_station_entries_st
 
-  val (conv_cmd, loop_conv_unroller_busy) = if (has_loop_conv) withClock (gated_clock) { LoopConv(raw_cmd, reservation_station.io.conv_ld_completed, reservation_station.io.conv_st_completed, reservation_station.io.conv_ex_completed,
+  val (conv_cmd, loop_conv_unroller_busy, conv_label, conv_label_valid, conv_status_bits) = if (has_loop_conv) withClock (gated_clock) { LoopConv(raw_cmd, reservation_station.io.conv_ld_completed, reservation_station.io.conv_st_completed, reservation_station.io.conv_ex_completed,
     meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes,
     new ConfigMvinRs1(mvin_scale_t_bits, block_stride_bits, pixel_repeats_bits), new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
@@ -151,9 +159,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     has_training_convs, has_max_pool, has_first_layer_optimizations, has_dw_convs) }
-  else (raw_cmd, false.B)
-
-  val (loop_cmd, loop_matmul_unroller_busy) = withClock (gated_clock) { LoopMatmul(if (has_loop_conv) conv_cmd else raw_cmd, reservation_station.io.matmul_ld_completed, reservation_station.io.matmul_st_completed, reservation_station.io.matmul_ex_completed,
+  else (raw_cmd, false.B, 0.U, false.B)
+//has_loop_conv = true
+  val (loop_cmd, loop_matmul_unroller_busy, loop_label, loop_label_valid, loop_status_bits) = withClock (gated_clock) { LoopMatmul(conv_label, conv_label_valid, if (has_loop_conv) conv_cmd else raw_cmd, reservation_station.io.matmul_ld_completed, reservation_station.io.matmul_st_completed, reservation_station.io.matmul_ex_completed,
     meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
@@ -161,13 +169,25 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
 
   val unrolled_cmd = Queue(loop_cmd)
+  val unrolled_label = Queue(loop_label)
+  val unrolled_label_valid = Queue(loop_label_valid)
+
   unrolled_cmd.ready := false.B
   counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
 
   // Wire up controllers to ROB
   reservation_station.io.alloc.valid := false.B
   reservation_station.io.alloc.bits := unrolled_cmd.bits
+  reservation_station.io.label := unrolled_label.bits
+  reservation_station.io.label_valid := unrolled_label_valid.bits
+  val labelstatus = Module(new LabelStatus()) // indicates the inside counter for each label
+  labelstatus.io.label := unrolled_label.bits
+  labelstatus.io.label_valid := unrolled_label_valid.bits
+  label_status.finished_label := reservation_station.io.finished_label
+  label_status.finished_label_valid := reservation_station.io.finished_label_valid
+  val rob_status_bits = labelstatus.io.status_bits
 
+  status_bits := rob_status_bits & conv_status_bits & loop_status_bits
   /*
   //-------------------------------------------------------------------------
   // finish muxing control signals to rob (risc) or tiler (cisc)
@@ -365,6 +385,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val is_flush = risc_funct === FLUSH_CMD
     val is_counter_op = risc_funct === COUNTER_OP
     val is_clock_gate_en = risc_funct === CLKGATE_EN
+    val is_check_status = risc_funct === CHECKSTATUS_OP
+
 
     /*
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
@@ -381,16 +403,39 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       unrolled_cmd.ready := true.B // TODO should we wait for an acknowledgement from the TLB?
     }
 
-    .elsewhen (is_counter_op) {
-      // If this is a counter access/configuration command, execute immediately
-      counters.io.in.valid := unrolled_cmd.valid
-      unrolled_cmd.ready := counters.io.in.ready
-      counters.io.in.bits := unrolled_cmd.bits.cmd
+    // .elsewhen (is_counter_op) {
+    //   // If this is a counter access/configuration command, execute immediately
+    //   counters.io.in.valid := unrolled_cmd.valid
+    //   unrolled_cmd.ready := counters.io.in.ready
+    //   counters.io.in.bits := unrolled_cmd.bits.cmd
+    // }
+
+    .elsewhen (is_check_status) {//TODO:check, not sure
+    // Set io.resp for status bits read, similar to the counter read configuration
+    out_statusbits.valid := unrolled_cmd.valid // but in counter file, it is only valid,after fire? TODO:check
+    //out_statusbits.bits := status_bits  // Connect status bits output to io.resp
+    out_statusbits.bits.data := status_bits
+    out_statusbits.bits.rd := unrolled_cmd.bits.cmd.inst.rd
+    out_statusbits.ready := io.resp.ready
+    io.resp.bits := out_statusbits.bits // Use out_statusbits.bits for status output
     }
+
+    .elsewhen (is_counter_op) {
+    // Execute counter command immediately as in previous setup
+    counters.io.in.valid := unrolled_cmd.valid
+    unrolled_cmd.ready := counters.io.in.ready
+    counters.io.in.bits := unrolled_cmd.bits.cmd
+    io.resp.bits := counters.io.out.bits
+    }
+
 
     .elsewhen (is_clock_gate_en) {
       unrolled_cmd.ready := true.B
     }
+
+    // .elsewhen (is_check_status){
+    //   out_statusbits.
+    // }
 
     .otherwise {
       reservation_station.io.alloc.valid := true.B
@@ -400,6 +445,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         unrolled_cmd.ready := true.B
       }
     }
+  }
+
+  // Determine final io.resp based on valid condition
+  when (counters.io.out.valid) {
+    io.resp.valid := counters.io.out.valid
+    io.resp.bits := counters.io.out.bits
+  } .elsewhen (out_statusbits.valid) {
+    io.resp.valid := out_statusbits.valid
+    io.resp.bits := out_statusbits.bits
+  } .otherwise {
+    io.resp.valid := false.B
   }
 
   // Debugging signals
