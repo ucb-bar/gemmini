@@ -154,13 +154,16 @@ class AccumulatorMem[T <: Data, U <: Data](
   //     write_q.io.enq
   //   })
   // } else None
-  io.ext_mem.get.foreach(_.write_req.valid := false.B)
-  io.ext_mem.get.foreach(_.write_req.bits.addr := 0.U(io.write.bits.addr.getWidth.W))
-  io.ext_mem.get.foreach(_.write_req.bits.mask := 0.U(io.write.bits.mask.getWidth.W))
-  io.ext_mem.get.foreach(_.write_req.bits.data := 0.U(io.write.bits.data.getWidth.W))
-  io.ext_mem.get.foreach(_.read_req.bits := 0.U((mask_len * mask_elem.getWidth).W))
-  io.ext_mem.get.foreach(_.read_req.valid := false.B)
-  io.ext_mem.get.foreach(_.read_resp.ready := false.B) // no reading from external accmem
+
+  io.ext_mem.foreach { ext_mem =>
+    ext_mem.foreach(_.write_req.valid := false.B)
+    ext_mem.foreach(_.write_req.bits.addr := 0.U(io.write.bits.addr.getWidth.W))
+    ext_mem.foreach(_.write_req.bits.mask := 0.U(io.write.bits.mask.getWidth.W))
+    ext_mem.foreach(_.write_req.bits.data := 0.U(io.write.bits.data.getWidth.W))
+    ext_mem.foreach(_.read_req.bits := 0.U((mask_len * mask_elem.getWidth).W))
+    ext_mem.foreach(_.read_req.valid := false.B)
+    ext_mem.foreach(_.read_resp.ready := false.B) // no reading from external accmem
+  }
   if (!acc_singleported && !is_dummy) {
     // if (use_shared_ext_mem && use_tl_ext_ram) {
     //   // duplicate write to external memory

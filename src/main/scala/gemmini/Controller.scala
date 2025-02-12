@@ -104,14 +104,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val ext_mem_io = if (use_shared_ext_mem && !use_tl_ext_mem)
     Some(IO(new ExtSpadMemIO(sp_banks, acc_banks, acc_sub_banks))) else None
 
-  // we need these 2 separate signals because ext_mem_io is not writable in this module
-  val ext_mem_spad = outer.spad.module.io.ext_mem.get.spad
-  val ext_mem_acc = outer.spad.module.io.ext_mem.get.acc
-
-  // connecting to unified TL interface
-  val source_counters = Seq.fill(4)(Counter(outer.num_ids))
-
   if (outer.use_ext_tl_mem) {
+    val ext_mem_spad = outer.spad.module.io.ext_mem.get.spad
+    val ext_mem_acc = outer.spad.module.io.ext_mem.get.acc
+    val source_counters = Seq.fill(4)(Counter(outer.num_ids))
+
     def connect(ext_mem: ExtMemIO, bank_base: Int, req_size: Int, r_node: TLBundle, r_edge: TLEdgeOut, r_source: Counter,
                 w_node: TLBundle, w_edge: TLEdgeOut, w_source: Counter): Unit = {
       r_node.a.valid := ext_mem.read_req.valid
@@ -174,8 +171,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // TLB
   implicit val edge = outer.spad.id_node.edges.out.head
-  // TODO(richard): bypass TLB
-  val tlb = Module(new FrontendTLB(3, tlb_size, dma_maxbytes, use_tlb_register_filter, use_firesim_simulation_counters, use_shared_tlb))
+  val tlb = Module(new FrontendTLB(if (outer.config.use_tl_ext_mem) 3 else 2,
+    tlb_size, dma_maxbytes, use_tlb_register_filter, use_firesim_simulation_counters, use_shared_tlb))
   (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
 
   tlb.io.exp.foreach(_.flush_skip := false.B)

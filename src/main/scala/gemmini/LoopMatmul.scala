@@ -1246,9 +1246,9 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     loop_requesting_st.running := true.B
     loop_requesting_st.st_started := true.B
 
-    // when (Mux(loop_requesting_st.spad_only, loop_requesting_st.inc_acc_addr, loop_requesting_st.c_dram_addr =/= 0.U)) {
-    //   st_c_addr_start := floorAdd(st_c_addr_start, (max_acc_addr / concurrent_loops).U, max_acc_addr.U)
-    // }
+    when (Mux(loop_requesting_st.spad_only, loop_requesting_st.inc_acc_addr, loop_requesting_st.c_dram_addr =/= 0.U)) {
+      st_c_addr_start := floorAdd(st_c_addr_start, (max_acc_addr / concurrent_loops).U, max_acc_addr.U)
+    }
   }
 
   when(is_resadd){

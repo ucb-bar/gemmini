@@ -211,9 +211,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
     if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters))
-  val spad_writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
+  val spad_writer = Option.when(config.use_tl_ext_mem)(LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
     if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter,
-    use_firesim_simulation_counters))
+    use_firesim_simulation_counters)))
 
   // TODO make a cross-bar vs two separate ports a config option
   // id_node :=* reader.node
@@ -259,8 +259,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       }
 
       // TLB ports
-      // TODO(richard): bypass TLB
-      val tlb = Vec(3, new FrontendTLBIO)
+      val tlb = Vec(2 + spad_writer.map(_ => 1).getOrElse(0), new FrontendTLBIO)
 
       // Misc. ports
       val busy = Output(Bool())
@@ -330,22 +329,25 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
     writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
 
-    spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool
-    write_issue_q.io.deq.ready := writer.module.io.req.ready && spad_writer.module.io.req.ready && writeData.valid
-    spad_writer.module.io.req.bits.vaddr := config.tl_ext_mem_base.U |
-      (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.inputType.getWidth / 8).U).asUInt
-    spad_writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
-    spad_writer.module.io.req.bits.len := Mux(writeData_is_full_width,
-      write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
-      write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
-    spad_writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
-      writeData_is_all_zeros -> 0.U,
-      writeData_is_full_width -> fullAccWriteData
-    ))
-    spad_writer.module.io.req.bits.block := write_issue_q.io.deq.bits.block
-    spad_writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
-    spad_writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
-    spad_writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
+    write_issue_q.io.deq.ready := writer.module.io.req.ready &&
+      spad_writer.map(_.module.io.req.ready).getOrElse(true.B) && writeData.valid
+    spad_writer.foreach { spad_writer =>
+      spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool
+      spad_writer.module.io.req.bits.vaddr := config.tl_ext_mem_base.U |
+        (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.inputType.getWidth / 8).U).asUInt
+      spad_writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
+      spad_writer.module.io.req.bits.len := Mux(writeData_is_full_width,
+        write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
+        write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
+      spad_writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
+        writeData_is_all_zeros -> 0.U,
+        writeData_is_full_width -> fullAccWriteData
+      ))
+      spad_writer.module.io.req.bits.block := write_issue_q.io.deq.bits.block
+      spad_writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
+      spad_writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
+      spad_writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
+    }
 
     io.dma.write.resp.valid := false.B
     io.dma.write.resp.bits.cmd_id := write_dispatch_q.bits.cmd_id
@@ -478,13 +480,18 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     io.tlb(0) <> writer.module.io.tlb
     io.tlb(1) <> reader.module.io.tlb
-    io.tlb(2) <> spad_writer.module.io.tlb
+    spad_writer match {
+      case Some(sw) => {
+        io.tlb(2) <> sw.module.io.tlb
+        sw.module.io.flush := io.flush
+      }
+      case None => {}
+    }
 
-    spad_writer.module.io.flush := io.flush
     writer.module.io.flush := io.flush
     reader.module.io.flush := io.flush
 
-    io.busy := writer.module.io.busy || spad_writer.module.io.busy || reader.module.io.busy ||
+    io.busy := writer.module.io.busy || spad_writer.map(_.module.io.busy).getOrElse(false.B) || reader.module.io.busy ||
       write_issue_q.io.deq.valid || write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
 
     val spad_mems = {
@@ -545,7 +552,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
         bio.read.resp.ready := Mux(bio.read.resp.bits.fromDMA, dma_read_resp.ready, ex_read_resp.ready)
 
-        dma_read_pipe.io.deq.ready := writer.module.io.req.ready && spad_writer.module.io.req.ready &&
+        dma_read_pipe.io.deq.ready := writer.module.io.req.ready &&
+          spad_writer.map(_.module.io.req.ready).getOrElse(true.B) &&
           (!write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
           write_issue_q.io.deq.valid) && !write_issue_q.io.deq.bits.laddr.is_garbage()
         when (dma_read_pipe.io.deq.fire) {
@@ -653,7 +661,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     acc_scale_unit.io.out.ready := false.B
 
     val dma_resp_ready =
-      (writer.module.io.req.ready && spad_writer.module.io.req.ready) &&
+      (writer.module.io.req.ready && spad_writer.map(_.module.io.req.ready).getOrElse(true.B)) &&
         write_issue_q.io.deq.bits.laddr.is_acc_addr &&
         !write_issue_q.io.deq.bits.laddr.is_garbage()
 
@@ -877,7 +885,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     io.counter := DontCare
     io.counter.collect(reader.module.io.counter)
     io.counter.collect(writer.module.io.counter)
-    spad_writer.module.io.counter := DontCare
+    spad_writer.foreach(_.module.io.counter := DontCare)
 //    io.counter.collect(spad_writer.module.io.counter)
   }
 }
