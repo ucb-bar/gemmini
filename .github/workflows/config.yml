@@ -12,7 +12,7 @@ env:
 
 jobs:
   install-gemmini:
-    runs-on: jktqos
+    runs-on: as4
     steps:
       - name: Delete old checkout
         run: |
@@ -24,7 +24,7 @@ jobs:
           .github/scripts/install-gemmini.sh
 
   spike-run-tests:
-    runs-on: jktqos
+    runs-on: as4
     needs: install-gemmini
     steps:
       - name: Delete old checkout
@@ -37,7 +37,7 @@ jobs:
           .github/scripts/run-tests-spike.sh
 
   build-gemmini-config:
-    runs-on: jktqos
+    runs-on: as4
     needs: install-gemmini
     steps:
       - name: Delete old checkout
@@ -50,7 +50,7 @@ jobs:
           .github/scripts/do-rtl-build.sh
 
   rtl-run-tests:
-    runs-on: jktqos
+    runs-on: as4
     needs: build-gemmini-config
     steps:
       - name: Delete old checkout
