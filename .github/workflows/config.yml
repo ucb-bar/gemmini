@@ -62,3 +62,13 @@ jobs:
         run: |
           .github/scripts/run-tests-rtl.sh
 
+  cleanup:
+    name: cleanup
+    needs: [spike-run-tests, rtl-run-tests]
+    runs-on: as4
+    if: ${{ always() }}
+    steps:
+      - name: Delete repo copy
+        run: |
+           rm -rf ${{ env.REMOTE_WORK_DIR }}
+           rm -rf ${{ env.JAVA_TMP_DIR }}
