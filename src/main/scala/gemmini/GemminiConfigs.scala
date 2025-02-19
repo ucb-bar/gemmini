@@ -18,8 +18,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              opcodes: OpcodeSet = OpcodeSet.custom3,
 
                                                                              inputType: T,
-                                                                             spatialArrayOutputType: T,
+                                                                             weightType: T,   
                                                                              accType: T,
+                                                                             spatialArrayInputType: T,
+                                                                             spatialArrayWeightType: T,
+                                                                             spatialArrayOutputType: T,
 
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
 
@@ -93,10 +96,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              use_firesim_simulation_counters: Boolean = false,
 
                                                                              use_shared_ext_mem: Boolean = false,
+                                                                             use_tl_ext_mem: Boolean = false,
+                                                                             tl_ext_mem_base: BigInt = 0,
                                                                              clock_gate: Boolean = false,
 
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
+  require(inputType.getWidth == weightType.getWidth)
   val sp_width = meshColumns * tileColumns * inputType.getWidth
   val sp_bank_entries = sp_capacity match {
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (sp_banks * sp_width)

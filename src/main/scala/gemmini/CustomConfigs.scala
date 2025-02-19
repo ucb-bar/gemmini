@@ -49,8 +49,18 @@ object GemminiCustomConfigs {
     acc_capacity = CapacityInKilobytes(128),
   )
 
+  val unifiedMemConfig = defaultConfig.copy(
+    has_training_convs = false,
+    has_max_pool = false,
+    use_tl_ext_mem = true,
+    sp_singleported = false,
+    spad_read_delay = 8,
+    use_shared_ext_mem = true,
+    acc_sub_banks = 1
+  )
+
   // Specify which of your custom configs you want to build here
-  val customConfig = baselineInferenceConfig
+  val customConfig = unifiedMemConfig
 }
 
 

@@ -92,7 +92,7 @@ class AccPipeShared[T <: Data : Arithmetic](latency: Int, t: Vec[Vec[T]], banks:
 class AccumulatorMem[T <: Data, U <: Data](
   n: Int, t: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U,
   acc_singleported: Boolean, acc_sub_banks: Int,
-  use_shared_ext_mem: Boolean,
+  use_shared_ext_mem: Boolean, use_tl_ext_ram: Boolean,
   acc_latency: Int, acc_type: T, is_dummy: Boolean
 )
   (implicit ev: Arithmetic[T]) extends Module {
@@ -134,8 +134,49 @@ class AccumulatorMem[T <: Data, U <: Data](
   val mask_len = t.getWidth / 8
   val mask_elem = UInt((t.getWidth / mask_len).W)
 
+  // val ext_mem_write_q_enq = if (use_shared_ext_mem && use_tl_ext_ram) {
+  //   require(acc_sub_banks == 1)
+  //   Some(io.ext_mem.get.map { ext_mem =>
+  //     val write_q = Module(new Queue(new Bundle {
+  //       val write_addr = UInt()
+  //       val write_data = UInt()
+  //       val write_mask = UInt()
+  //     }, 8, pipe = true, flow = true))
+
+  //     write_q.io.enq.valid := false.B
+  //     write_q.io.enq.bits := DontCare
+
+  //     ext_mem.write_valid := write_q.io.deq.valid
+  //     ext_mem.write_addr := write_q.io.deq.bits.write_addr
+  //     ext_mem.write_data := write_q.io.deq.bits.write_data
+  //     ext_mem.write_mask := write_q.io.deq.bits.write_mask
+  //     write_q.io.deq.ready := ext_mem.write_ready
+  //     write_q.io.enq
+  //   })
+  // } else None
+
+  io.ext_mem.foreach { ext_mem =>
+    ext_mem.foreach(_.write_req.valid := false.B)
+    ext_mem.foreach(_.write_req.bits.addr := 0.U(io.write.bits.addr.getWidth.W))
+    ext_mem.foreach(_.write_req.bits.mask := 0.U(io.write.bits.mask.getWidth.W))
+    ext_mem.foreach(_.write_req.bits.data := 0.U(io.write.bits.data.getWidth.W))
+    ext_mem.foreach(_.read_req.bits := 0.U((mask_len * mask_elem.getWidth).W))
+    ext_mem.foreach(_.read_req.valid := false.B)
+    ext_mem.foreach(_.read_resp.ready := false.B) // no reading from external accmem
+  }
   if (!acc_singleported && !is_dummy) {
-    require(!use_shared_ext_mem)
+    // if (use_shared_ext_mem && use_tl_ext_ram) {
+    //   // duplicate write to external memory
+    //   val enq = ext_mem_write_q_enq.get(0)
+    //   enq.valid := oldest_pipelined_write.valid
+    //   enq.bits.write_addr := oldest_pipelined_write.bits.addr
+    //   enq.bits.write_data := Mux(oldest_pipelined_write.bits.acc, adder_sum.asUInt, oldest_pipelined_write.bits.data.asUInt)
+    //   enq.bits.write_mask := oldest_pipelined_write.bits.mask.asUInt
+    //   // TODO (richard): add buffer here and potentially propagate backpressure to systolic array
+    //   assert(enq.ready || !enq.valid, "accumulator external memory write dropped")
+    // } else if (use_shared_ext_mem) {
+    //   require(false, "cannot use two-port external acc mem bank")
+    // }
     val mem = TwoPortSyncMem(n, t, mask_len) // TODO We assume byte-alignment here. Use aligned_to instead
     mem.io.waddr := oldest_pipelined_write.bits.addr
     mem.io.wen := oldest_pipelined_write.valid
@@ -163,27 +204,39 @@ class AccumulatorMem[T <: Data, U <: Data](
     for (i <- 0 until acc_sub_banks) {
       def isThisBank(addr: UInt) = addr(log2Ceil(acc_sub_banks)-1,0) === i.U
       def getBankIdx(addr: UInt) = addr >> log2Ceil(acc_sub_banks)
-      val (read, write) = if (use_shared_ext_mem) {
+      val (read, write) = if (use_shared_ext_mem && !use_tl_ext_ram) {
         def read(addr: UInt, ren: Bool): Data = {
-          io.ext_mem.get(i).read_en := ren
-          io.ext_mem.get(i).read_addr := addr
-          io.ext_mem.get(i).read_data
+          io.ext_mem.get(i).read_req.valid := ren
+          io.ext_mem.get(i).read_req.bits := addr
+          io.ext_mem.get(i).read_resp.bits
         }
-        io.ext_mem.get(i).write_en := false.B
-        io.ext_mem.get(i).write_addr := DontCare
-        io.ext_mem.get(i).write_data := DontCare
-        io.ext_mem.get(i).write_mask := DontCare
+        io.ext_mem.get(i).write_req.bits := DontCare
         def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = {
-          io.ext_mem.get(i).write_en := true.B
-          io.ext_mem.get(i).write_addr := addr
-          io.ext_mem.get(i).write_data := wdata.asUInt
-          io.ext_mem.get(i).write_mask := wmask.asUInt
+          io.ext_mem.get(i).write_req.valid := true.B
+          io.ext_mem.get(i).write_req.bits.addr := addr
+          io.ext_mem.get(i).write_req.bits.data := wdata.asUInt
+          io.ext_mem.get(i).write_req.bits.mask := wmask.asUInt
         }
         (read _, write _)
       } else {
         val mem = SyncReadMem(n / acc_sub_banks, Vec(mask_len, mask_elem))
+        io.ext_mem.get(i).read_req.bits := 0.U((mask_len * mask_elem.getWidth).W)
+        io.ext_mem.get(i).read_req.valid := false.B
+
         def read(addr: UInt, ren: Bool): Data = mem.read(addr, ren)
-        def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = mem.write(addr, wdata, wmask)
+        def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = if (use_tl_ext_ram) {
+          mem.write(addr, wdata, wmask)
+          // duplicate write signal to external memory
+          // val enq = ext_mem_write_q_enq.get(i)
+          // enq.valid := true.B
+          // enq.bits.write_mask := wmask.asUInt
+          // enq.bits.write_addr := addr
+          // enq.bits.write_data := wdata.asUInt
+          // // TODO (richard): propagate backpressure to systolic array, add fence ability
+          // assert(enq.ready, "accumulator external memory write dropped")
+        } else {
+          mem.write(addr, wdata, wmask)
+        }
         (read _, write _)
       }
 

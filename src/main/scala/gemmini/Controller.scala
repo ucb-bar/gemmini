@@ -3,14 +3,13 @@ package gemmini
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
-
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config._
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
-import freechips.rocketchip.util.ClockGate
-import freechips.rocketchip.tilelink.TLIdentityNode
+import freechips.rocketchip.util.{BundleField, ClockGate}
+import freechips.rocketchip.tilelink._
 import GemminiISA._
 import Util._
 
@@ -35,6 +34,58 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   val xLen = p(TileKey).core.xLen
   val spad = LazyModule(new Scratchpad(config))
 
+  val use_ext_tl_mem = config.use_shared_ext_mem && config.use_tl_ext_mem
+  val num_ids = 32 // TODO (richard): move to config
+  val spad_base = config.tl_ext_mem_base
+  val spad_data_len = config.sp_width / 8
+  val acc_data_len = config.sp_width / config.inputType.getWidth * config.accType.getWidth / 8
+  val max_data_len = spad_data_len // max acc_data_len
+
+  val mem_depth = config.sp_bank_entries * spad_data_len / max_data_len
+  val mem_width = max_data_len
+  println(f"unified shared memory size: ${mem_depth}x${mem_width}x${config.sp_banks}")
+
+  // make scratchpad read and write clients, per bank
+  //    _____  ________  _______  ___   ___
+  //   / __/ |/_/_  __/ / __/ _ \/ _ | / _ \
+  //  / _/_>  <  / /   _\ \/ ___/ __ |/ // /
+  // /___/_/|_| /_/   /___/_/  /_/ |_/____/
+  // ***************************************
+  // HOW TO USE EXTERNAL SCRATCHPAD:
+  // the scratchpad MUST BE INSTANTIATED ELSEWHERE if use_ext_tl_mem is enabled,
+  // else elaboration will not pass. the scratchpad needs to be dual ported
+  // and must be able to serve the entire scratchpad row (config.sp_width) in 1 cycle.
+  // three nodes must be hooked up correctly: spad_read_nodes, spad_write_nodes, and spad.spad_writer.node
+  // for deadlock avoidance, read and write should not be sharing a single channel anywhere until the SRAMs.
+  // see RadianceCluster.scala for an example
+  val spad_read_nodes = if (use_ext_tl_mem) TLClientNode(Seq.tabulate(config.sp_banks) {i =>
+    TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(
+      name = s"spad_read_node_$i",
+      sourceId = IdRange(0, num_ids),
+      visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
+      supportsProbe = TransferSizes(mem_width, mem_width),
+      supportsGet = TransferSizes(mem_width, mem_width)
+    )))
+  }) else TLIdentityNode()
+
+  val spad_write_nodes = if (use_ext_tl_mem) TLClientNode(Seq.tabulate(config.sp_banks) { i =>
+    TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(
+      name = s"spad_write_node_$i",
+      sourceId = IdRange(0, num_ids),
+      visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
+      supportsProbe = TransferSizes(mem_width, mem_width),
+      supportsPutFull = TransferSizes(mem_width, mem_width),
+      supportsPutPartial = TransferSizes(mem_width, mem_width)
+    )))
+  }) else TLIdentityNode()
+
+  // val acc_read_nodes = if (create_tl_mem) TLClientNode(Seq.tabulate(config.acc_banks) { i =>
+  //   TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(name = s"acc_read_node_$i", sourceId = IdRange(0, numIDs))))
+  // }) else TLIdentityNode()
+  // val acc_write_nodes = if (create_tl_mem) TLClientNode(Seq.tabulate(config.acc_banks) { i =>
+  //   TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(name = s"acc_write_node_$i", sourceId = IdRange(0, numIDs))))
+  // }) else TLIdentityNode()
+
   override lazy val module = new GemminiModule(this)
   override val tlNode = if (config.use_dedicated_tl_port) spad.id_node else TLIdentityNode()
   override val atlNode = if (config.use_dedicated_tl_port) TLIdentityNode() else spad.id_node
@@ -50,8 +101,62 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   import outer.config._
   import outer.spad
 
-  val ext_mem_io = if (use_shared_ext_mem) Some(IO(new ExtSpadMemIO(sp_banks, acc_banks, acc_sub_banks))) else None
-  ext_mem_io.foreach(_ <> outer.spad.module.io.ext_mem.get)
+  val ext_mem_io = if (use_shared_ext_mem && !use_tl_ext_mem)
+    Some(IO(new ExtSpadMemIO(sp_banks, acc_banks, acc_sub_banks))) else None
+
+  if (outer.use_ext_tl_mem) {
+    val ext_mem_spad = outer.spad.module.io.ext_mem.get.spad
+    val ext_mem_acc = outer.spad.module.io.ext_mem.get.acc
+    val source_counters = Seq.fill(4)(Counter(outer.num_ids))
+
+    def connect(ext_mem: ExtMemIO, bank_base: Int, req_size: Int, r_node: TLBundle, r_edge: TLEdgeOut, r_source: Counter,
+                w_node: TLBundle, w_edge: TLEdgeOut, w_source: Counter): Unit = {
+      r_node.a.valid := ext_mem.read_req.valid
+      r_node.a.bits := r_edge.Get(r_source.value,
+        (ext_mem.read_req.bits << req_size.U).asUInt | bank_base.U | outer.spad_base.U,
+        req_size.U)._2
+      ext_mem.read_req.ready := r_node.a.ready
+
+      val w_shifted_addr = (ext_mem.write_req.bits.addr << req_size.U).asUInt
+      val w_mask = (ext_mem.write_req.bits.mask << (w_shifted_addr & (w_edge.manager.beatBytes - 1).U)).asUInt
+
+      w_node.a.valid := ext_mem.write_req.valid
+      w_node.a.bits := w_edge.Put(w_source.value,
+        w_shifted_addr | bank_base.U | outer.spad_base.U,
+        req_size.U, ext_mem.write_req.bits.data, w_mask)._2
+      ext_mem.write_req.ready := w_node.a.ready
+
+      ext_mem.read_resp.valid := r_node.d.valid
+      ext_mem.read_resp.bits := r_node.d.bits.data
+      r_node.d.ready := ext_mem.read_resp.ready
+
+      w_node.d.ready := true.B // writes are not acknowledged in gemmini
+
+      when(ext_mem.read_req.fire) { r_source.inc() }
+      when(ext_mem.write_req.fire) { w_source.inc() }
+    }
+    (outer.spad_read_nodes.out zip outer.spad_write_nodes.out)
+      .zipWithIndex.foreach{ case (((r_node, r_edge), (w_node, w_edge)), i) =>
+        connect(ext_mem_spad(i), i * outer.mem_depth * outer.mem_width, log2Up(outer.spad_data_len),
+          r_node, r_edge, source_counters(0), w_node, w_edge, source_counters(1))
+    }
+
+
+    ext_mem_acc.foreach(_.foreach(x => {
+      x.read_resp.bits := 0.U(1.W)
+      x.read_resp.valid := false.B
+      x.read_req.ready := false.B
+      x.write_req.ready := false.B
+    }))
+    // (outer.acc_read_nodes.out zip outer.acc_write_nodes.out)
+    //   .zipWithIndex.foreach { case (((r_node, r_edge), (w_node, w_edge)), i) =>
+    //     // TODO (richard): one subbank only for now
+    //     connect(ext_mem_acc(i)(0), log2Up(outer.acc_data_len),
+    //       r_node, r_edge, source_counters(2), w_node, w_edge, source_counters(3))
+    // }
+  } else if (use_shared_ext_mem) {
+    ext_mem_io.foreach(_ <> outer.spad.module.io.ext_mem.get)
+  }
 
   val tagWidth = 32
 
@@ -66,7 +171,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // TLB
   implicit val edge = outer.spad.id_node.edges.out.head
-  val tlb = Module(new FrontendTLB(2, tlb_size, dma_maxbytes, use_tlb_register_filter, use_firesim_simulation_counters, use_shared_tlb))
+  val tlb = Module(new FrontendTLB(if (outer.config.use_tl_ext_mem) 3 else 2,
+    tlb_size, dma_maxbytes, use_tlb_register_filter, use_firesim_simulation_counters, use_shared_tlb))
   (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
 
   tlb.io.exp.foreach(_.flush_skip := false.B)
@@ -153,12 +259,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     has_training_convs, has_max_pool, has_first_layer_optimizations, has_dw_convs) }
   else (raw_cmd, false.B)
 
-  val (loop_cmd, loop_matmul_unroller_busy) = withClock (gated_clock) { LoopMatmul(if (has_loop_conv) conv_cmd else raw_cmd, reservation_station.io.matmul_ld_completed, reservation_station.io.matmul_st_completed, reservation_station.io.matmul_ex_completed,
+  val (loop_cmd, loop_matmul_unroller_busy, loop_completed) = withClock (gated_clock) { LoopMatmul(if (has_loop_conv) conv_cmd else raw_cmd, reservation_station.io.matmul_ld_completed, reservation_station.io.matmul_st_completed, reservation_station.io.matmul_ex_completed,
     meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
-    new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
+    new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
 
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
@@ -167,6 +273,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Wire up controllers to ROB
   reservation_station.io.alloc.valid := false.B
   reservation_station.io.alloc.bits := unrolled_cmd.bits
+
+  val completion_io = IO(new Bundle {
+    val completed = Output(loop_completed.cloneType)
+  })
+
+  completion_io.completed := loop_completed
 
   /*
   //-------------------------------------------------------------------------

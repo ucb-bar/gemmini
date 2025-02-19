@@ -18,7 +18,7 @@ git fetch
 git checkout $(cat $LOCAL_CHECKOUT_DIR/CHIPYARD.hash)
 
 export MAKEFLAGS="-j32"
-./build-setup.sh riscv-tools -f -s 6 -s 7 -s 8 -s 9 -v
+./build-setup.sh riscv-tools -s 6 -s 7 -s 8 -s 9 -v
 
 source env.sh
 

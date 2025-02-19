@@ -7,14 +7,13 @@ import Util._
 
 
 class ExtMemIO extends Bundle {
-  val read_en = Output(Bool())
-  val read_addr = Output(UInt())
-  val read_data = Input(UInt())
-
-  val write_en = Output(Bool())
-  val write_addr = Output(UInt())
-  val write_data = Output(UInt())
-  val write_mask = Output(UInt())
+  val read_req = DecoupledIO(UInt())
+  val read_resp = Flipped(DecoupledIO(UInt()))
+  val write_req = DecoupledIO(new Bundle {
+    val addr = Output(UInt())
+    val data = Output(UInt())
+    val mask = Output(UInt())
+  })
 }
 
 class ExtSpadMemIO(sp_banks: Int, acc_banks: Int, acc_sub_banks: Int) extends Bundle {
@@ -28,18 +27,18 @@ class SharedSyncReadMem(nSharers: Int, depth: Int, mask_len: Int, data_len: Int)
     val in = Vec(nSharers, Flipped(new ExtMemIO()))
   })
   val mem = SyncReadMem(depth, Vec(mask_len, UInt(data_len.W)))
-  val wens = io.in.map(_.write_en)
+  val wens = io.in.map(_.write_req.valid)
   val wen = wens.reduce(_||_)
-  val waddr = Mux1H(wens, io.in.map(_.write_addr))
-  val wmask = Mux1H(wens, io.in.map(_.write_mask))
-  val wdata = Mux1H(wens, io.in.map(_.write_data))
+  val waddr = Mux1H(wens, io.in.map(_.write_req.bits.addr))
+  val wmask = Mux1H(wens, io.in.map(_.write_req.bits.mask))
+  val wdata = Mux1H(wens, io.in.map(_.write_req.bits.data))
   assert(PopCount(wens) <= 1.U)
-  val rens = io.in.map(_.read_en)
+  val rens = io.in.map(_.read_req.valid)
   assert(PopCount(rens) <= 1.U)
   val ren = rens.reduce(_||_)
-  val raddr = Mux1H(rens, io.in.map(_.read_addr))
+  val raddr = Mux1H(rens, io.in.map(_.read_req.bits))
   val rdata = mem.read(raddr, ren && !wen)
-  io.in.foreach(_.read_data := rdata.asUInt)
+  io.in.foreach(_.read_resp.bits := rdata.asUInt)
   when (wen) {
     mem.write(waddr, wdata.asTypeOf(Vec(mask_len, UInt(data_len.W))), wmask.asTypeOf(Vec(mask_len, Bool())))
   }
@@ -68,12 +67,14 @@ class SharedExtMem(
       acc_mem.io.in(0) <> io.in(0).acc(i)(s)
       // The FP gemmini expects a taller, skinnier accumulator mem
       acc_mem.io.in(1) <> io.in(1).acc(i)(s)
-      acc_mem.io.in(1).read_addr := io.in(1).acc(i)(s).read_addr >> 1
-      io.in(1).acc(i)(s).read_data := acc_mem.io.in(1).read_data.asTypeOf(Vec(2, UInt((acc_data_len * acc_mask_len / 2).W)))(RegNext(io.in(1).acc(i)(s).read_addr(0)))
+      acc_mem.io.in(1).read_req.bits := io.in(1).acc(i)(s).read_req.bits >> 1
+      io.in(1).acc(i)(s).read_resp.bits := acc_mem.io.in(1).read_resp.bits.asTypeOf(Vec(2, UInt((acc_data_len * acc_mask_len / 2).W)))(RegNext(io.in(1).acc(i)(s).read_req.bits(0)))
 
-      acc_mem.io.in(1).write_addr := io.in(1).acc(i)(s).write_addr >> 1
-      acc_mem.io.in(1).write_data := Cat(io.in(1).acc(i)(s).write_data, io.in(1).acc(i)(s).write_data)
-      acc_mem.io.in(1).write_mask := Mux(io.in(1).acc(i)(s).write_addr(0), io.in(1).acc(i)(s).write_mask << (acc_mask_len / 2), io.in(1).acc(i)(s).write_mask)
+      acc_mem.io.in(1).write_req.bits.addr := io.in(1).acc(i)(s).write_req.bits.addr >> 1
+      acc_mem.io.in(1).write_req.bits.data := Cat(io.in(1).acc(i)(s).write_req.bits.data,
+        io.in(1).acc(i)(s).write_req.bits.data)
+      acc_mem.io.in(1).write_req.bits.mask := Mux(io.in(1).acc(i)(s).write_req.bits.addr(0),
+        io.in(1).acc(i)(s).write_req.bits.mask << (acc_mask_len / 2), io.in(1).acc(i)(s).write_req.bits.mask)
     }
   }
 }

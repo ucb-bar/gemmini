@@ -13,7 +13,7 @@ import Util._
   * @param rows Number of PEs on each row
   * @param columns Number of PEs on each column
   */
-class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Value, tree_reduction: Boolean, max_simultaneous_matmuls: Int, val rows: Int, val columns: Int)(implicit ev: Arithmetic[T]) extends Module {
+class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, tree_reduction: Boolean, max_simultaneous_matmuls: Int, val rows: Int, val columns: Int)(implicit ev: Arithmetic[T]) extends Module {
   val io = IO(new Bundle {
     val in_a        = Input(Vec(rows, inputType))
     val in_b        = Input(Vec(columns, outputType)) // This is the output of the tile next to it
@@ -39,7 +39,7 @@ class Tile[T <: Data](inputType: T, outputType: T, accType: T, df: Dataflow.Valu
 
   import ev._
 
-  val tile = Seq.fill(rows, columns)(Module(new PE(inputType, outputType, accType, df, max_simultaneous_matmuls)))
+  val tile = Seq.fill(rows, columns)(Module(new PE(inputType, weightType, outputType, accType, df, max_simultaneous_matmuls)))
   val tileT = tile.transpose
 
   // TODO: abstract hori/vert broadcast, all these connections look the same

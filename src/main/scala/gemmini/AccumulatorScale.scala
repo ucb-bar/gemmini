@@ -61,7 +61,7 @@ class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_fun
   assert(has_normalizations.B || (!io.in.fire) ||
     (act =/= Activation.LAYERNORM && act =/= Activation.SOFTMAX && act =/= Activation.IGELU))
 
-  val e_act = MuxCase(e, Seq(
+  val e_act: T = MuxCase(e, if (has_normalizations) Seq(
     (has_nonlinear_activations.B && act === Activation.RELU) -> e.relu,
     (has_nonlinear_activations.B && has_normalizations.B && act === Activation.LAYERNORM) ->
       (e - io.in.bits.mean),
@@ -69,14 +69,16 @@ class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_fun
       AccumulatorScale.igelu(e, io.in.bits.igelu_qb, io.in.bits.igelu_qc),
     (has_nonlinear_activations.B && has_normalizations.B && act === Activation.SOFTMAX) ->
       AccumulatorScale.iexp(e - io.in.bits.max, io.in.bits.iexp_qln2, io.in.bits.iexp_qln2_inv, io.in.bits.igelu_qb, io.in.bits.igelu_qc),
+  ) else Seq(
+    (has_nonlinear_activations.B && act === Activation.RELU) -> e.relu
   ))
 
-  val e_scaled = scale_func(e_act, MuxCase(io.in.bits.scale, Seq(
+  val e_scaled: T = scale_func(e_act, if (has_normalizations) MuxCase(io.in.bits.scale, Seq(
     (has_nonlinear_activations.B && has_normalizations.B && act === Activation.LAYERNORM) ->
       io.in.bits.inv_stddev,
     (has_nonlinear_activations.B && has_normalizations.B && act === Activation.SOFTMAX) ->
       io.in.bits.inv_sum_exp.asTypeOf(scale_t)
-  )).asTypeOf(scale_t))
+  )).asTypeOf(scale_t) else io.in.bits.scale.asTypeOf(scale_t))
 
   val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
 
@@ -114,7 +116,7 @@ class AccumulatorScale[T <: Data, U <: Data](
     val scale = io.in.bits.acc_read_resp.scale
 
     val activated_data = VecInit(data.map(v => VecInit(v.map { e =>
-      val e_act = MuxCase(e, Seq(
+      val e_act = MuxCase(e, if (has_normalizations) Seq(
         (has_nonlinear_activations.B && act === Activation.RELU) -> e.relu,
         (has_nonlinear_activations.B && has_normalizations.B && act === Activation.LAYERNORM) ->
           (e - io.in.bits.mean),
@@ -122,14 +124,16 @@ class AccumulatorScale[T <: Data, U <: Data](
           AccumulatorScale.igelu(e, igelu_qb, igelu_qc),
         (has_nonlinear_activations.B && has_normalizations.B && act === Activation.SOFTMAX) ->
           AccumulatorScale.iexp(e - io.in.bits.max, iexp_qln2, iexp_qln2_inv, igelu_qb, igelu_qc),
+      ) else Seq(
+        (has_nonlinear_activations.B && act === Activation.RELU) -> e.relu
       ))
 
-      val e_scaled = scale_func(e_act, MuxCase(scale, Seq(
+      val e_scaled: T = scale_func(e_act, if (has_normalizations) MuxCase(scale, Seq(
         (has_nonlinear_activations.B && has_normalizations.B && act === Activation.LAYERNORM) ->
           io.in.bits.inv_stddev,
         (has_nonlinear_activations.B && has_normalizations.B && act === Activation.SOFTMAX) ->
           io.in.bits.inv_sum_exp.asTypeOf(scale_t)
-      )).asTypeOf(scale_t))
+      )).asTypeOf(scale_t) else scale.asTypeOf(scale_t))
 
       val e_clipped = e_scaled.clippedToWidthOf(rDataType.head.head)
 
@@ -386,6 +390,7 @@ object AccumulatorScale {
   }
 
   def iexp[T <: Data](q: T, qln2: T, qln2_inv: T, qb: T, qc: T)(implicit ev: Arithmetic[T]): T = {
+    /*
     import ev._
 
     val zero = q.zero
@@ -402,6 +407,18 @@ object AccumulatorScale {
     val q_poly_iexp = qc.mac(qp_iexp + qb, qp_iexp + qb).withWidthOf(q)
     // we dont want a rounding shift
     //  TODO: z overflow
-    (q_poly_iexp.asUInt.do_>>(z_iexp_saturated.asUInt)).asTypeOf(q)
+    (q_poly_iexp.asUInt.do_>>(z_iexp_saturated.asUInt)).asTypeOf(q) */
+    import ev._
+
+    val zero = q.zero
+    val one = q.identity
+    def neg(x: T) = zero-x
+
+    val q_sign = Mux(q.zero > q, neg(one), one)
+    val q_abs = Mux(q.zero > q, neg(q), q)
+    val q_clipped = Mux(q_abs > neg(qb), neg(qb), q_abs)
+    val q_poly = qc.mac(q_clipped + qb, q_clipped + qb).withWidthOf(q)
+    val q_erf = (q_sign * q_poly).withWidthOf(q)
+    (q * (q_erf + qc)).withWidthOf(q)
   }}
 
