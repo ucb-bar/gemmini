@@ -102,7 +102,7 @@ spike --extension=gemmini pk ../../generators/gemmini/software/gemmini-rocc-test
 spike --extension=gemmini ../../generators/gemmini/software/gemmini-rocc-tests/build/imagenet/resnet50-baremetal
 
 # Run a smaller workload in baremetal mode, on a cycle-accurate simulator
-make CONFIG=GemminiRocketConfig run-binary BINARY=../../generators/gemmini/software/gemmini-rocc-tests/build/baremetalC/template-baremetal
+make CONFIG=GemminiRocketConfig run-binary BINARY=../../generators/gemmini/software/gemmini-rocc-tests/build/bareMetalC/template-baremetal
 ```
 
 Next steps
