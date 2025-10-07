@@ -23,6 +23,44 @@ case class DummySInt(w: Int) extends Bundle {
   }
 }
 
+// case class MxFloat(mxParams: MxParams, modeId: Int = 0) extends Bundle {
+//   val bits = UInt(mxParams.multOutWidth.W)
+//   def currentMode: PE_MxMode = mxParams.modesSupported(modeId)
+//   def Width_act: Int = currentMode.actWidth  
+//   def Width_w: Int = currentMode.weiWidth 
+//   def Width_out: Int = currentMode.outTotalWidth 
+// }
+
+// case class MxFloat(mxParams: MxParams, modeId: Int = 0) extends Bundle {
+//   def currentMode: PE_MxMode = mxParams.modesSupported(modeId)
+//   val numOutputs: Int = currentMode.numOutputs //TODO: add this in Mxparameters
+//   val bits = if (numOutputs == 1) {
+//     UInt(mxParams.multOutWidth.W)
+//   } else {
+//     Vec(numOutputs, UInt((mxParams.outTotalWidth / numOutputs).W))
+//   }
+  
+//   def Width_act: Int = currentMode.actWidth  
+//   def Width_w: Int = currentMode.weiWidth 
+//   def Width_out: Int = currentMode.outTotalWidth 
+//   def getSlice(index: Int): UInt = {
+//     if (numOutputs == 1) {
+//       bits.asUInt
+//     } else {
+//       require(index < numOutputs, s"Index $index out of range for numOutputs $numOutputs")
+//       bits(index)
+//     }
+//   }
+  
+//   def getAllSlices: Seq[UInt] = {
+//     if (numOutputs == 1) {
+//       Seq(bits.asUInt)
+//     } else {
+//       bits
+//     }
+//   }
+// }
+
 // The Arithmetic typeclass which implements various arithmetic operations on custom datatypes
 abstract class Arithmetic[T <: Data] {
   implicit def cast(t: T): ArithmeticOps[T]
@@ -543,4 +581,80 @@ object Arithmetic {
       override def minimum: DummySInt = self.dontCare
     }
   }
+ 
+
+  // implicit class MxFloatArithmetic(mxParams: MxParams) extends Arithmetic[MxFloat] {
+  //   override implicit def cast(self: MxFloat): ArithmeticOps[MxFloat] = new ArithmeticOps(self) {
+      
+  //     override def *(t: MxFloat): MxFloat = {
+  //       val result = Wire(new MxFloat(self.mxParams, self.modeId)) 
+  //       val mode = self.currentMode
+  //       result.bits := mode.outTotalWidth.U // Placeholder
+  //       result
+  //     }
+
+  //     override def mac(m1: MxFloat, m2: MxFloat): MxFloat = {
+  //       // Perform multiply
+  //       val mul = Module(new MxFpMul(supportedTypes: TypeSupport, lut: false))
+        
+  //       mul.io.in_activation = m1.bits
+  //       mul.io.in_a_type = 
+  //       mul.io.a_altfmt = 
+  //       mul.io.in_weights = 
+  //       mul.io.in_w_type =
+  //       mul.io.w_altfmt = 
+  //       mul.io.enable = true.B  // TODO：do we need an enable signal here?
+  //       val mul_result :=  cat(mul.io.out_s, mul.io.out_exp) //
+        
+  //       if (mode.numOutputs == 1) {
+    
+  //         val mul_resizer = Module(new RawFPToRecFN(
+  //         inExpWidth = getMultResultExpWidth(mode),
+  //         inSigWidth = getMultResultSigWidth(mode), 
+  //         outExpWidth = self.Width_act,
+  //         outSigWidth = self.Width_w))
+    
+  //         mul_resizer.io.in := mul_result
+  //         mul_resizer.io.roundingMode := consts.round_near_even
+  //         mul_resizer.io.detectTininess := consts.tininess_afterRounding
+  //         result.bits := mul_resizer.io.out
+    
+  //       } else {
+ 
+  //         val outputWidth = mode.outTotalWidth / mode.numOutputs
+  //         val selfSliceWidth = if (self.numOutputs == 1) {
+  //           self.bits.getWidth
+  //         } else {
+  //           self.bits(0).getWidth  
+  //         }
+  //         val mul_resizers = Seq.tabulate(mode.numOutputs) { i =>
+  //         Module(new RawFPToRecFN(
+  //         inExpWidth = getMultResultExpWidth(mode, outputWidth),
+  //         inSigWidth = getMultResultSigWidth(mode, outputWidth),
+  //         outExpWidth = getSelfSliceExpWidth(selfSliceWidth),
+  //         outSigWidth = getSelfSliceSigWidth(selfSliceWidth)
+  //         ))
+  //       }
+
+  //       for (i <- 0 until mode.numOutputs) {
+  //         val startBit = i * outputWidth
+  //         val endBit = startBit + outputWidth - 1
+  //         val sliced_mul_result = mul_result(endBit, startBit)
+  //         val self_slice = getSlice(i % self.numOutputs) 
+      
+  //         mul_resizers(i).io.in := sliced_mul_result
+  //         mul_resizers(i).io.roundingMode := consts.round_near_even
+  //         mul_resizers(i).io.detectTininess := consts.tininess_afterRounding
+
+  //         result.bits(i) := mul_resizers(i).io.out
+  //         }
+  //       }
+  
+  //       result
+  //     }
+      
+  //   }
+
+  // }
+
 }

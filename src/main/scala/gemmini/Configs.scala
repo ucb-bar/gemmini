@@ -38,8 +38,8 @@ object GemminiConfigs {
     dataflow = Dataflow.BOTH,
 
     // Scratchpad and accumulator
-    sp_capacity = CapacityInKilobytes(256),
-    acc_capacity = CapacityInKilobytes(64),
+    sp_capacity = CapacityInKilobytes(128),
+    acc_capacity = CapacityInKilobytes(32),
 
     sp_banks = 4,
     acc_banks = 2,
