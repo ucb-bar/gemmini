@@ -33,7 +33,7 @@ object GemminiConfigs {
     tileColumns = 1,
     meshRows = 16,
     meshColumns = 16,
-
+    quantWidth = 4, // this is added for MX quant 
     // Spatial array PE options
     dataflow = Dataflow.BOTH,
 
@@ -178,6 +178,7 @@ object GemminiConfigs {
     meshRows     = defaultConfig.meshRows,
     meshColumns  = defaultConfig.meshColumns,
     dataflow     = defaultConfig.dataflow,
+    quantWidth   = defaultConfig.quantWidth,
     sp_capacity  = CapacityInKilobytes(128),
     acc_capacity = CapacityInKilobytes(128),
     sp_banks     = defaultConfig.sp_banks,
