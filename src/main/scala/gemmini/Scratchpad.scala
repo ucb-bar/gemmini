@@ -199,8 +199,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
-  val spad_w = inputType.getWidth *  block_cols
-  val acc_w = accType.getWidth * block_cols
+  val spad_w = (inputType.getWidth *  block_cols)
+  val acc_w = (accType.getWidth * block_cols)
 
   val id_node = TLIdentityNode()
   val xbar_node = TLXbar()
@@ -379,7 +379,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     zero_writer_pixel_repeater.io.req.bits.last := zero_writer.io.resp.bits.last
     zero_writer_pixel_repeater.io.req.bits.tag := zero_writer.io.resp.bits.tag
     zero_writer_pixel_repeater.io.req.bits.mask := {
-      val n = inputType.getWidth / 8
+      val n = (inputType.getWidth + 7 )/ 8
       val mask = zero_writer.io.resp.bits.mask
       val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
       expanded

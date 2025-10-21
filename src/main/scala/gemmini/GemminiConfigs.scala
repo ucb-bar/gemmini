@@ -18,7 +18,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              opcodes: OpcodeSet = OpcodeSet.custom3,
 
                                                                              inputType: T,
-                                                                             weightType: T,   
+                                                                             weightType: T,
                                                                              accType: T,
                                                                              spatialArrayInputType: T,
                                                                              spatialArrayWeightType: T,
@@ -102,7 +102,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
-  require(inputType.getWidth == weightType.getWidth)
+  // require(inputType.getWidth == weightType.getWidth)
   val sp_width = meshColumns * tileColumns * inputType.getWidth
   val sp_bank_entries = sp_capacity match {
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (sp_banks * sp_width)
@@ -323,9 +323,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     }
 
     assert(tileColumns*meshColumns == tileRows*meshRows)
-    assert(Set(8, 16, 32, 64).contains(inputType.getWidth))
+    // assert(Set(8, 16, 32, 64).contains(inputType.getWidth))
     // assert(Set(8, 16, 32, 64).contains(outputType.getWidth))
-    assert(Set(8, 16, 32, 64).contains(accType.getWidth))
+    // assert(Set(8, 16, 32, 64).contains(accType.getWidth))
 
     val header = new StringBuilder()
     header ++= s"#ifndef $guard\n"

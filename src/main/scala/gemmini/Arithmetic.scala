@@ -11,15 +11,12 @@ import mxHardware._
 // Bundles that represent the raw bits of custom datatypes
 case class Float(expWidth: Int, sigWidth: Int, isRecoded: Boolean = false) extends Bundle {
   val bits = UInt((expWidth + sigWidth + (if (isRecoded) 1 else 0)).W)
-
   val bias: Int = (1 << (expWidth-1)) - 1
 }
 
 
 case class MxFloat(expWidth: Int, sigWidth: Int, count: Int, isRecoded: Boolean = false) extends Bundle {
-  val bits = UInt((count * (expWidth + sigWidth) + (if (isRecoded) 1 else 0)).W)
-  val mxType = new mxHardware.MxTypes()
-  val mode = new mxHardware.mxMode()
+  val bits = UInt((count * (expWidth + sigWidth + (if (isRecoded) 1 else 0))).W)
   val bias: Int = (1 << (expWidth-1)) - 1
 }
 
@@ -600,11 +597,30 @@ object Arithmetic {
         val multiplier = Module(new mxHardware.MxFpMul(lut = false))
         val result = Wire(MxFloat(multiplier.ts.cType.exp, multiplier.ts.cType.sig, 4, true))
 
+        val typeA = Wire(new MxTypes)
+        typeA.exp := self.expWidth.U
+        typeA.sig := self.sigWidth.U
+
+        val typeW = Wire(new MxTypes)
+        typeW.exp := t.expWidth.U
+        typeW.sig := t.sigWidth.U
+
+        val mode = Wire(new mxHardware.mxMode)
+        mode.actWidth := self.expWidth.U
+        mode.weiWidth := t.expWidth.U
+        mode.actInputs := self.count.U
+        mode.weiInputs := t.count.U
+        mode.numOutputs := t.count.U
+        mode.shift(0)(0) := 0.U
+        mode.shift(1)(0) := 0.U
+        mode.shift(0)(1) := 0.U
+        mode.shift(1)(1) := 0.U
+
         multiplier.io.in_activation := self.bits
-        multiplier.io.type_a := self.mxType
-        multiplier.io.mode := t.mode
+        multiplier.io.type_a := typeA
+        multiplier.io.mode := mode
         multiplier.io.in_weights := t.bits
-        multiplier.io.type_w := t.mxType
+        multiplier.io.type_w := typeW
         multiplier.io.enable := true.B  // TODO：do we need an enable signal here?
         result := multiplier.io.out
         result
@@ -615,13 +631,32 @@ object Arithmetic {
         val macc = Module(new mxHardware.MxFpMul(lut = false))
         val result = Wire(MxFloat(macc.ts.cType.exp, macc.ts.cType.sig, 4, true))
 
+        val typeA = Wire(new MxTypes)
+        typeA.exp := m1.expWidth.U
+        typeA.sig := m1.sigWidth.U
+
+        val typeW = Wire(new MxTypes)
+        typeW.exp := m2.expWidth.U
+        typeW.sig := m2.sigWidth.U
+
+        val mode = Wire(new mxHardware.mxMode)
+        mode.actWidth := m1.expWidth.U
+        mode.weiWidth := m2.expWidth.U
+        mode.actInputs := m1.count.U
+        mode.weiInputs := m2.count.U
+        mode.numOutputs := m2.count.U
+        mode.shift(0)(0) := 0.U
+        mode.shift(1)(0) := 0.U
+        mode.shift(0)(1) := 0.U
+        mode.shift(1)(1) := 0.U
+
         val rec_c = if (self.isRecoded) self.bits else VecInit(self.bits.asTypeOf(Vec(4, UInt((self.expWidth + self.sigWidth).W))).map(f => recFNFromFN(self.expWidth, self.sigWidth, f))).asUInt
 
         macc.io.in_activation := m1.bits
-        macc.io.type_a := m1.mxType
-        macc.io.mode := self.mode
+        macc.io.type_a := typeA
+        macc.io.mode := mode
         macc.io.in_weights := m2.bits
-        macc.io.type_w := m2.mxType
+        macc.io.type_w := typeW
         macc.io.enable := true.B  // TODO：do we need an enable signal here?
         macc.io.rec_c := rec_c
         result := macc.io.out

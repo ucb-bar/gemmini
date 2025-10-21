@@ -233,7 +233,7 @@ object GemminiMxFPConfigs {
     acc_latency = 2,
     acc_singleported = false,
     acc_sub_banks = -1,
-    sp_capacity = CapacityInKilobytes(128),
+    sp_capacity = CapacityInKilobytes(192),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
     dataflow = Dataflow.BOTH,
     acc_capacity = CapacityInKilobytes(32),
@@ -248,16 +248,16 @@ object GemminiMxFPConfigs {
     use_dedicated_tl_port = false,
     use_shared_ext_mem = false,
 
-    inputType = MxFloat(3, 3, 4),
-    weightType = MxFloat(3, 3, 2),
-    accType = MxFloat(8, 8, 4, true),
+    inputType = MxFloat(3, 3, 2),
+    weightType = MxFloat(3, 3, 4),
+    accType = MxFloat(7, 8, 4, true),
 
-    spatialArrayInputType = MxFloat(3, 3, 4),
-    spatialArrayWeightType = MxFloat(3, 3, 2),
+    spatialArrayInputType = MxFloat(3, 3, 2),
+    spatialArrayWeightType = MxFloat(3, 3, 4),
     spatialArrayOutputType = MxFloat(8, 8, 4, true),
 
-    // mvin_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 8), -1, identity = "1.0", c_str="((x) * (scale))")),
-    // mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 8), -1, identity = "1.0", c_str="((x) * (scale))")),
+    mvin_scale_args = None,
+    mvin_scale_acc_args = None,
     mvin_scale_shared = false,
 
     // acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 8), -1, identity = "1.0",
