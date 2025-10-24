@@ -16,7 +16,7 @@ case class Float(expWidth: Int, sigWidth: Int, isRecoded: Boolean = false) exten
 
 
 case class MxFloat(expWidth: Int, sigWidth: Int, count: Int, isRecoded: Boolean = false) extends Bundle {
-  val bits = UInt((count * (expWidth + sigWidth + (if (isRecoded) 1 else 0))).W)
+  val bits = UInt((1<<log2Ceil(count * (expWidth + sigWidth + (if (isRecoded) 1 else 0)))).W)
   val bias: Int = (1 << (expWidth-1)) - 1
 }
 
@@ -616,13 +616,13 @@ object Arithmetic {
         mode.shift(0)(1) := 0.U
         mode.shift(1)(1) := 0.U
 
-        multiplier.io.in_activation := self.bits
+        multiplier.io.in_activation := self.bits(self.expWidth + self.sigWidth-1, 0)
         multiplier.io.type_a := typeA
         multiplier.io.mode := mode
-        multiplier.io.in_weights := t.bits
+        multiplier.io.in_weights := t.bits(t.expWidth + t.sigWidth-1, 0)
         multiplier.io.type_w := typeW
         multiplier.io.enable := true.B  // TODO：do we need an enable signal here?
-        result := multiplier.io.out
+        result := multiplier.io.out.asTypeOf(self)
         result
       }
 
@@ -652,14 +652,14 @@ object Arithmetic {
 
         val rec_c = if (self.isRecoded) self.bits else VecInit(self.bits.asTypeOf(Vec(4, UInt((self.expWidth + self.sigWidth).W))).map(f => recFNFromFN(self.expWidth, self.sigWidth, f))).asUInt
 
-        macc.io.in_activation := m1.bits
+        macc.io.in_activation := m1.bits(m1.expWidth + m1.sigWidth - 1, 0)
         macc.io.type_a := typeA
         macc.io.mode := mode
-        macc.io.in_weights := m2.bits
+        macc.io.in_weights := m2.bits(m2.expWidth + m2.sigWidth -1, 0)
         macc.io.type_w := typeW
         macc.io.enable := true.B  // TODO：do we need an enable signal here?
         macc.io.rec_c := rec_c
-        result := macc.io.out
+        result := macc.io.out.asTypeOf(self)
         result
       }
 

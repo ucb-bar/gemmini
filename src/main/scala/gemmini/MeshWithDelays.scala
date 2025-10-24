@@ -154,10 +154,16 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val d_is_from_transposer = req.bits.pe_control.dataflow === Dataflow.WS.id.U && req.bits.bd_transpose
   val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
 
+  // TODO: Improve this function to actually reduce the size of MXFormats
+  def toInput(x: Data): T = {
+    val u = x.asUInt
+    u(inputType.getWidth - 1, 0).asTypeOf(inputType) 
+  }
+
   transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
   transposer.io.inRow.bits := MuxCase(VecInit(a_buf.flatten), Seq(
-    b_is_from_transposer -> VecInit(b_buf.flatten),
-    d_is_from_transposer -> VecInit(d_buf.flatten.reverse),
+    b_is_from_transposer -> VecInit(b_buf.flatten.map(toInput)),
+    d_is_from_transposer -> VecInit(d_buf.flatten.reverse.map(toInput)),
   ))
 
   transposer.io.outCol.ready := true.B

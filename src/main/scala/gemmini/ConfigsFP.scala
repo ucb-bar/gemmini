@@ -232,11 +232,11 @@ object GemminiMxFPConfigs {
     acc_banks = 1,
     acc_latency = 2,
     acc_singleported = false,
-    acc_sub_banks = -1,
-    sp_capacity = CapacityInKilobytes(192),
+    acc_sub_banks = 1,
+    sp_capacity = CapacityInKilobytes(256),
     shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
-    dataflow = Dataflow.BOTH,
-    acc_capacity = CapacityInKilobytes(32),
+    dataflow = Dataflow.WS,
+    acc_capacity = CapacityInKilobytes(64),
     spad_read_delay = 1,
 
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
@@ -254,7 +254,7 @@ object GemminiMxFPConfigs {
 
     spatialArrayInputType = MxFloat(3, 3, 2),
     spatialArrayWeightType = MxFloat(3, 3, 4),
-    spatialArrayOutputType = MxFloat(8, 8, 4, true),
+    spatialArrayOutputType = MxFloat(7, 8, 4, true),
 
     mvin_scale_args = None,
     mvin_scale_acc_args = None,
@@ -274,6 +274,7 @@ object GemminiMxFPConfigs {
     ex_write_to_acc = true,
 
     hardcode_d_to_garbage_addr = false,
+    has_normalizations = false,
 
     mesh_output_delay = 0,
 

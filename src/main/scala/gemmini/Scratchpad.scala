@@ -379,7 +379,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     zero_writer_pixel_repeater.io.req.bits.last := zero_writer.io.resp.bits.last
     zero_writer_pixel_repeater.io.req.bits.tag := zero_writer.io.resp.bits.tag
     zero_writer_pixel_repeater.io.req.bits.mask := {
-      val n = (inputType.getWidth + 7 )/ 8
+      val n = inputType.getWidth/ 8
       val mask = zero_writer.io.resp.bits.mask
       val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
       expanded
