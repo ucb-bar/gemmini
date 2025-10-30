@@ -262,7 +262,7 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
 
   val io = IO(new Bundle {
     val in_a = Input(inputType)
-    val in_b = Input(outputType)
+    val in_b = Input(weightType)
     val in_d = Input(outputType)
     val out_a = Output(inputType)
     val out_b = Output(outputType)

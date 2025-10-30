@@ -22,7 +22,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   val io = IO(new Bundle {
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b = Input(Vec(meshColumns, Vec(tileColumns, weightType)))
-    val in_d = Input(Vec(meshColumns, Vec(tileColumns, weightType))) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
+    val in_d = Input(Vec(meshColumns, Vec(tileColumns, outputType))) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
     val in_control = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
     val in_id = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Up(max_simultaneous_matmuls).W)))) // The unique id of this particular matmul
     val in_last = Input(Vec(meshColumns, Vec(tileColumns, Bool())))

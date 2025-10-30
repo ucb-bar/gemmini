@@ -250,11 +250,11 @@ object GemminiMxFPConfigs {
 
     inputType = MxFloat(3, 3, 2),
     weightType = MxFloat(3, 3, 4),
-    accType = MxFloat(7, 8, 4, true),
+    accType = MxFloat(8, 8, 4),
 
     spatialArrayInputType = MxFloat(3, 3, 2),
     spatialArrayWeightType = MxFloat(3, 3, 4),
-    spatialArrayOutputType = MxFloat(7, 8, 4, true),
+    spatialArrayOutputType = MxFloat(8, 8, 4, true),
 
     mvin_scale_args = None,
     mvin_scale_acc_args = None,

@@ -343,4 +343,5 @@ hs_err_pid*
 configs/
 generated-src/
 waveforms/
+project/
 

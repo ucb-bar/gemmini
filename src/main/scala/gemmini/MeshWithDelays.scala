@@ -39,7 +39,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
   val B_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
   val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType)) 
-  val D_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
+  val D_TYPE = Vec(meshColumns, Vec(tileColumns, outputType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
 
   assert(meshRows*tileRows == meshColumns*tileColumns)
