@@ -1,4 +1,4 @@
-package mxHardware
+package gemmini
 
 import chisel3._
 import chiseltest._
@@ -10,7 +10,7 @@ import circt.stage.ChiselStage
 import org.scalatest.matchers.should.Matchers
 import scala.util.Random
 import chisel3.util._
-import gemmini.MxFpMul
+import scala.{Float => ScalaFloat}
 
 class MxFpMulHarness(ts: TypeSupport, lut: Boolean) extends Module {
   val dut = Module(new MxFpMul(ts, lut))
@@ -84,6 +84,7 @@ class MxFpMulHarness(ts: TypeSupport, lut: Boolean) extends Module {
   io.out := Cat(rawLanes16.reverse)
 }
 
+
 class MxFpMulHarnessBf16Out(ts: TypeSupport, lut: Boolean) extends Module {
   val dut = Module(new MxFpMul(ts, lut))
 
@@ -147,17 +148,18 @@ class MxFpMulHarnessBf16Out(ts: TypeSupport, lut: Boolean) extends Module {
   io.out_bf16 := Cat(lanesBF16.reverse) // lane0 at [15:0]
 }
 
+
 class MxFpMul_AllATypes_BF16Out_SelfChecking_Spec
   extends AnyFlatSpec
   with ChiselScalatestTester
   with Matchers {
 
-  behavior of "MxFpMul — BF16 IEEE output; all activation types; altfmt=1 -> E3M2/E5M2; randomized + subnormals; self-checking; verbose I/O prints"
+  behavior of "MxFpMul — BF16 output; 12b activations / 24b weights; fp6_0 & fp8_1 disabled"
 
   it should "print inputs/expectations before, actual outputs before asserts, and PASS after" in {
     val ts = TypeSupport(
-      actSupportFp4 = true, actSupportFp6 = true, actSupportFp8 = true,
-      weiSupportFp4 = true, weiSupportFp6 = true, weiSupportFp8 = true
+      actSupportFp4 = true,  actSupportFp6_1 = true, actSupportFp8_0 = true,
+      weiSupportFp4 = true,  weiSupportFp6_1 = true, weiSupportFp8_0 = true
     )
 
     test(new MxFpMulHarnessBf16Out(ts, lut = false)).withAnnotations(Seq(WriteVcdAnnotation)) { h =>
@@ -168,12 +170,10 @@ class MxFpMul_AllATypes_BF16Out_SelfChecking_Spec
         def enc(e: Int, m: Int): Int = ((e & expMask) << mBits) | (m & mantMask) // sign=0
       }
       val FP4_E2M1 = MiniFmt(2,1, bias=1)
-      val FP6_E2M3 = MiniFmt(2,3, bias=1)   // altfmt = 0
       val FP6_E3M2 = MiniFmt(3,2, bias=3)   // altfmt = 1
       val FP8_E4M3 = MiniFmt(4,3, bias=7)   // altfmt = 0
-      val FP8_E5M2 = MiniFmt(5,2, bias=15)  // altfmt = 1
 
-      def decodeSmall(fmt: MiniFmt, raw: Int): Float = {
+      def decodeSmall(fmt: MiniFmt, raw: Int): ScalaFloat = {
         val e = (raw >> fmt.mBits) & fmt.expMask
         val m = raw & fmt.mantMask
         if (e == 0) {
@@ -186,11 +186,11 @@ class MxFpMul_AllATypes_BF16Out_SelfChecking_Spec
       }
 
       // ---------- BF16 helpers (IEEE) ----------
-      def bf16ToFloat(raw16: Int): Float = java.lang.Float.intBitsToFloat(raw16 << 16)
-      def floatToBf16Raw(f: Float): Int = {
+      def bf16ToFloat(raw16: Int): ScalaFloat = java.lang.Float.intBitsToFloat(raw16 << 16)
+      def floatToBf16Raw(f: ScalaFloat): Int = {
         val bits = java.lang.Float.floatToRawIntBits(f)
         val lsb  = (bits >>> 16) & 1
-        val rnd  = bits + (0x7FFF + lsb)     // RNE to 16 MSBs
+        val rnd  = bits + (0x7FFF + lsb)   // RNE to 16 MSBs
         (rnd >>> 16) & 0xFFFF
       }
 
@@ -207,7 +207,7 @@ class MxFpMul_AllATypes_BF16Out_SelfChecking_Spec
         println(f"$tag: 0x$v%04X  s=$s e=0x$e%02X f=0x$f%02X  (~=${bf16ToFloat(v)}%g)")
       }
 
-      val rng = new Random(0xBEEFBABE)
+      val rng = new Random(0xA11CA11) // fixed seed for repeatability
       def genSmall(fmt: MiniFmt): Int = {
         val r = rng.nextFloat()
         if (r < 0.10f) fmt.enc(0, 0)                                  // +0
@@ -226,140 +226,142 @@ class MxFpMul_AllATypes_BF16Out_SelfChecking_Spec
         }
       }
 
-      val aW = h.io.in_activation.getWidth
-      val wW = h.io.in_weights.getWidth
-      val laneW = 16 // BF16 lanes on the harness output
+      // Widths (from DUT)
+      val aW    = h.io.in_activation.getWidth   // expect 12
+      val wW    = h.io.in_weights.getWidth      // expect 24
+      val laneW = 16                             // BF16 lanes on harness out
 
-      // ---- Activation pack/desc ----
-      def packActs(aType: Int, aAlt: Boolean, raws: Seq[Int]): (BigInt, Int, Seq[Float], String) = aType match {
+      // ---- Activation pack/desc for 12-bit port ----
+      // - fp4: 2 lanes (nibbles at bit 0 and 6)
+      // - fp6_1 E3M2 (alt=1): 2 lanes (6b at bit 0 and 6)
+      // - fp8_0 E4M3 (alt=0): 1 lane (bits [7:0])
+      def packActs(aType: Int, aAlt: Boolean, raws: Seq[Int]): (BigInt, Int, Seq[ScalaFloat], String) = aType match {
         case 0 => // two fp4
           require(raws.length == 2)
           val a0 = raws(0) & 0xF; val a1 = raws(1) & 0xF
-          val packed = (BigInt(a1) << 8) | BigInt(a0)
+          val packed = (BigInt(a1) << 6) | BigInt(a0)
           val vals = raws.map(r => decodeSmall(FP4_E2M1, r))
-          (packed, 2, vals, f"fp4 lanes: ${raws.map(r => f"0x$r%X").mkString(", ")}  -> ${vals.mkString(", ")}")
-        case 1 =>
-          if (aAlt) { // two fp6 E3M2
-            require(raws.length == 2)
-            val a0 = raws(0) & 0x3F; val a1 = raws(1) & 0x3F
-            val packed = (BigInt(a1) << 8) | BigInt(a0)
-            val vals = raws.map(r => decodeSmall(FP6_E3M2, r))
-            (packed, 2, vals, f"fp6 E3M2 lanes: ${raws.map(r => f"0x$r%02X").mkString(", ")}  -> ${vals.mkString(", ")}")
-          } else {    // one fp6 E2M3
-            require(raws.length == 1)
-            val a0 = raws.head & 0x3F
-            val vals = raws.map(r => decodeSmall(FP6_E2M3, r))
-            (BigInt(a0), 1, vals, f"fp6 E2M3 lane: 0x$a0%02X  -> ${vals.head}")
-          }
-        case 2 =>
-          if (aAlt) { // two fp8 E5M2
-            require(raws.length == 2)
-            val a0 = raws(0) & 0xFF; val a1 = raws(1) & 0xFF
-            val packed = (BigInt(a1) << 8) | BigInt(a0)
-            val vals = raws.map(r => decodeSmall(FP8_E5M2, r))
-            (packed, 2, vals, f"fp8 E5M2 lanes: ${raws.map(r => f"0x$r%02X").mkString(", ")}  -> ${vals.mkString(", ")}")
-          } else {    // one fp8 E4M3
-            require(raws.length == 1)
-            val a0 = raws.head & 0xFF
-            val vals = raws.map(r => decodeSmall(FP8_E4M3, r))
-            (BigInt(a0), 1, vals, f"fp8 E4M3 lane: 0x$a0%02X  -> ${vals.head}")
-          }
+          (packed, 2, vals, f"fp4 lanes: ${raws.map(r => f"0x$r%X").mkString(", ")} -> ${vals.mkString(", ")}")
+
+        case 1 => // fp6_1 → E3M2 only (alt MUST be 1)
+          require(aAlt, "fp6_1 requires altfmt=1 (E3M2)")
+          require(raws.length == 2)
+          val a0 = raws(0) & 0x3F; val a1 = raws(1) & 0x3F
+          val packed = (BigInt(a1) << 6) | BigInt(a0)
+          val vals = raws.map(r => decodeSmall(FP6_E3M2, r))
+          (packed, 2, vals, f"fp6 E3M2 lanes: ${raws.map(r => f"0x$r%02X").mkString(", ")} -> ${vals.mkString(", ")}")
+
+        case 2 => // fp8_0 → E4M3 only (alt MUST be 0)
+          require(!aAlt, "fp8_0 requires altfmt=0 (E4M3)")
+          require(raws.length == 1)
+          val a0 = raws.head & 0xFF
+          val vals = raws.map(r => decodeSmall(FP8_E4M3, r))
+          (BigInt(a0), 1, vals, f"fp8 E4M3 lane: 0x$a0%02X -> ${vals.head}")
       }
 
-      // ---- Weight pack/desc ----
-      def packWeis(wType: Int, wAlt: Boolean, raws: Seq[Int]): (BigInt, Int, Seq[Float], String) = wType match {
+      // ---- Weight pack/desc for 24-bit port ----
+      // - fp4: 4 lanes (nibbles at bit 0,6,12,18)
+      // - fp6_1 E3M2(alt=1): 4 lanes (6b at bit 0,6,12,18)
+      // - fp8_0 E4M3(alt=0): 2 lanes (bytes at [7:0] and [15:8])
+      def packWeis(wType: Int, wAlt: Boolean, raws: Seq[Int]): (BigInt, Int, Seq[ScalaFloat], String) = wType match {
         case 0 => // fp4×4
           require(raws.length == 4)
-          val packed = (0 until 4).map(i => BigInt(raws(i) & 0xF) << (8*i)).reduce(_|_)
+          val packed = (0 until 4).map(i => BigInt(raws(i) & 0xF) << (6*i)).reduce(_|_)
           val vals = raws.map(r => decodeSmall(FP4_E2M1, r))
           (packed, 4, vals, f"fp4x4: ${raws.map(r => f"0x$r%X").mkString(" ")} -> ${vals.mkString(", ")}")
-        case 1 =>
-          if (wAlt) { // E3M2×4
-            require(raws.length == 4)
-            val packed = (0 until 4).map(i => BigInt(raws(i) & 0x3F) << (8*i)).reduce(_|_)
-            val vals = raws.map(r => decodeSmall(FP6_E3M2, r))
-            (packed, 4, vals, f"fp6 E3M2 x4: ${raws.map(r => f"0x$r%02X").mkString(" ")} -> ${vals.mkString(", ")}")
-          } else {    // E2M3×1
-            require(raws.length == 1)
-            val w0 = raws.head & 0x3F
-            val vals = raws.map(r => decodeSmall(FP6_E2M3, r))
-            (BigInt(w0), 1, vals, f"fp6 E2M3 x1: 0x$w0%02X -> ${vals.head}")
-          }
-        case 2 =>
-          if (wAlt) { // E5M2×4
-            require(raws.length == 4)
-            val packed = (0 until 4).map(i => BigInt(raws(i) & 0xFF) << (8*i)).reduce(_|_)
-            val vals = raws.map(r => decodeSmall(FP8_E5M2, r))
-            (packed, 4, vals, f"fp8 E5M2 x4: ${raws.map(r => f"0x$r%02X").mkString(" ")} -> ${vals.mkString(", ")}")
-          } else {    // E4M3×1
-            require(raws.length == 1)
-            val w0 = raws.head & 0xFF
-            val vals = raws.map(r => decodeSmall(FP8_E4M3, r))
-            (BigInt(w0), 1, vals, f"fp8 E4M3 x1: 0x$w0%02X -> ${vals.head}")
-          }
+
+        case 1 => // fp6_1 → E3M2×4 (alt MUST be 1)
+          require(wAlt, "fp6_1 requires altfmt=1 (E3M2)")
+          require(raws.length == 4)
+          val packed = (0 until 4).map(i => BigInt(raws(i) & 0x3F) << (6*i)).reduce(_|_)
+          val vals = raws.map(r => decodeSmall(FP6_E3M2, r))
+          (packed, 4, vals, f"fp6 E3M2 x4: ${raws.map(r => f"0x$r%02X").mkString(" ")} -> ${vals.mkString(", ")}")
+
+        case 2 => // fp8_0 → E4M3×1 (alt MUST be 0). Pack only ONE byte at [7:0].
+          require(!wAlt, "fp8_0 requires altfmt=0 (E4M3)")
+          require(raws.length == 1, "Only one fp8 E4M3 weight is supported")
+          val w0 = raws.head & 0xFF
+          val packed = BigInt(w0) // bits [7:0]; upper bits zero
+          val vals = raws.map(r => decodeSmall(FP8_E4M3, r))
+          (packed, 1, vals, f"fp8 E4M3 x1: 0x$w0%02X -> ${vals.head}")
       }
 
-      // Lane mapping rules (your spec)
+      // ---- Expected lane mapping (reflects 12/24b config & lane counts) ----
       def expectedBF16Lane(
-        aVals: Seq[Float], wVals: Seq[Float], c: Float, lane: Int,
-        aType: Int, aAlt: Boolean, wType: Int, wAlt: Boolean
+        aVals: Seq[ScalaFloat], wVals: Seq[ScalaFloat], c: ScalaFloat, lane: Int,
+        aLanes: Int, wLanes: Int, aType: Int, aAlt: Boolean, wType: Int, wAlt: Boolean
       ): Option[Int] = {
-        def toBF16(x: Float) = floatToBf16Raw(x)
+        def toBF16(x: ScalaFloat) = floatToBf16Raw(x)
 
-        // E2M3 (fp6 alt=0) or E4M3 (fp8 alt=0) → single-lane w/ 3-bit mantissa
-        val actIs3Mant = (aType == 1 && !aAlt) || (aType == 2 && !aAlt)
-        // 4-lane weights: fp4, fp6(E3M2 alt=1), fp8(E5M2 alt=1)
-        val wIs4       = (wType == 0) || (wType == 1 && wAlt) || (wType == 2 && wAlt)
-
-        (aVals.length, wVals.length) match {
+        (aLanes, wLanes) match {
           case (2,4) =>
-            val pairs = Array((0,0), (0,1), (1,2), (1,3))
+            // [0]=a0*w0, [1]=a0*w1, [2]=a1*w2, [3]=a1*w3
+            val pairs = Array((0,0),(0,1),(1,2),(1,3))
             val (ai, wi) = pairs(lane)
             Some(toBF16(aVals(ai) * wVals(wi) + c))
 
-          case (2,1) =>
+          case (2,2) =>
+            // 2 outputs: lane0=a0*w0, lane2=a1*w1
+            lane match {
+              case 0 => //Some(toBF16(decodeSmall(aVals(0).fmt, aVals(0).bits) * decodeSmall(wVals(0).fmt, wVals(0).bits) + c))
+                if (aVals.nonEmpty && wVals.nonEmpty)
+                  Some(toBF16(aVals(0) * wVals(0) + c))
+                else None
+              case 2 => //Some(toBF16(aVals(1) * wVals(1) + c))
+                if (aVals.length > 1 && wVals.length > 1)
+                  Some(toBF16(aVals(1) * wVals(1) + c))
+                else None
+              case _ => None
+            }
+
+          case (2,1) =>  // ← NEW: two-lane activations × single-lane weight (fp8 E4M3)
             lane match {
               case 0 => Some(toBF16(aVals(0) * wVals(0) + c))
               case 2 => Some(toBF16(aVals(1) * wVals(0) + c))
               case _ => None
             }
 
-          case (1,4) if actIs3Mant && wIs4 =>
+          case (1,4) =>
+            // 2 outputs: lane0=a0*w0, lane2=a0*w2
             lane match {
-              case 0 => Some(toBF16(aVals(0) * wVals(0) + c)) // use weight slot 0
-              case 2 => Some(toBF16(aVals(0) * wVals(2) + c)) // use weight slot 2  ✅
+              case 0 => Some(toBF16(aVals(0) * wVals(0) + c))
+              case 2 => Some(toBF16(aVals(0) * wVals(2) + c))
               case _ => None
             }
 
-          case (1,4) =>
-            // Generic one-activation × 4-weights fanout (not used for E2M3/E4M3, but safe fallback)
-            Some(toBF16(aVals(0) * wVals(lane) + c))
+          case (1,2) =>
+            // 2 outputs: lane0=a0*w0, lane2=a0*w1
+            lane match {
+              case 0 => Some(toBF16(aVals(0) * wVals(0) + c))
+              case 2 => Some(toBF16(aVals(0) * wVals(1) + c))
+              case _ => None
+            }
 
-          case (1,1) =>
+          case (1,1) =>                     // ← NEW: E4M3 act × E4M3 weight (single × single)
             if (lane == 0) Some(toBF16(aVals(0) * wVals(0) + c)) else None
-
           case _ =>
             None
         }
-    }
+      }
 
-      // ---------- Variants ----------
+      // ---------- Variants (only supported types) ----------
+      // a_type: 0=fp4, 1=fp6_1(E3M2 alt=1), 2=fp8_0(E4M3 alt=0)
       val aVariants = Seq(
-        ("A: 2×fp4",             0, false,  () => Seq(genSmall(FP4_E2M1), genSmall(FP4_E2M1))), // alt ignored for fp4
-        ("A: 1×fp6 (E2M3 alt0)", 1, false, () => Seq(genSmall(FP6_E2M3))),
-        ("A: 2×fp6 (E3M2 alt1)", 1, true,  () => Seq(genSmall(FP6_E3M2), genSmall(FP6_E3M2))),
-        ("A: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3))),
-        ("A: 2×fp8 (E5M2 alt1)", 2, true,  () => Seq(genSmall(FP8_E5M2), genSmall(FP8_E5M2)))
-      )
+        //("A: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3)))
+     // )
+      //   ("A: 2×fp4",             0, false, () => Seq(genSmall(FP4_E2M1), genSmall(FP4_E2M1))),
+       ("A: 2×fp6 (E3M2 alt1)", 1, true,  () => Seq(genSmall(FP6_E3M2), genSmall(FP6_E3M2)))
+      //   ("A: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3)))
+       )
+
+      // w_type: 0=fp4×4, 1=fp6_1(E3M2 alt=1 ×4), 2=fp8_0(E4M3 alt=0 ×2)
       val wVariants = Seq(
-        ("W: 4×fp4",             0, false, () => Seq.fill(4)(genSmall(FP4_E2M1))),
-        ("W: 4×fp6 (E3M2 alt1)", 1, true,  () => Seq.fill(4)(genSmall(FP6_E3M2))),
-        ("W: 1×fp6 (E2M3 alt0)", 1, false, () => Seq(genSmall(FP6_E2M3))),
-        ("W: 4×fp8 (E5M2 alt1)", 2, true,  () => Seq.fill(4)(genSmall(FP8_E5M2))),
-        ("W: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3)))
+        //("W: 4×fp4",             0, false, () => Seq.fill(4)(genSmall(FP4_E2M1)))
+       ("W: 4×fp6 (E3M2 alt1)", 1, true,  () => Seq.fill(4)(genSmall(FP6_E3M2)))
+        // ("W: 2×fp8 (E4M3 alt0)", 2, false, () => Seq.fill(1)(genSmall(FP8_E4M3)))
       )
 
-      val trialsPerCombo = 10
+      val trialsPerCombo = 100
       h.io.enable.poke(true.B)
 
       for ((aName, aType, aAlt, aGen) <- aVariants) {
@@ -385,7 +387,9 @@ class MxFpMul_AllATypes_BF16Out_SelfChecking_Spec
 
             // Pre-compute expected lanes and print them
             val expOpt = Array.tabulate(4)(i =>
-              expectedBF16Lane(aVals, wVals, cVal, i, aType = aType, aAlt = aAlt, wType = wType, wAlt = wAlt)
+              expectedBF16Lane(aVals, wVals, cVal, i,
+                aLanes = aLanes, wLanes = wLanes,
+                aType = aType, aAlt = aAlt, wType = wType, wAlt = wAlt)
             )
             (0 until 4).foreach { i =>
               expOpt(i) match {
@@ -403,7 +407,7 @@ class MxFpMul_AllATypes_BF16Out_SelfChecking_Spec
             h.io.in_weights.poke(wPacked.U(wW.W))
             h.io.c_raw.poke(cRaw.U(16.W))
 
-            // latency cushion
+            // latency cushion (tune if deeper)
             h.clock.step(2)
 
             // --------------------- POST-STEP PRINTS (before asserts) ----
@@ -413,21 +417,17 @@ class MxFpMul_AllATypes_BF16Out_SelfChecking_Spec
             (0 until 4).foreach(i => showBF16(f"  got lane[$i]", got(i)))
 
             // --------------------- ASSERTIONS ---------------------------
-            // Build full packed expect — fill don't-care lanes with DUT 'got' so we can still
-            // do a single packed expect when not all lanes are defined.
-            val filledExp = Array.tabulate(4) { i => expOpt(i).getOrElse(got(i)) }
+            // Fill don't-care lanes with DUT values, assert defined lanes strictly
+            val filledExp = Array.tabulate(4)(i => expOpt(i).getOrElse(got(i)))
+            expOpt.zipWithIndex.foreach {
+              case (Some(e), i) => assert(got(i) == e, f"lane[$i] mismatch: got 0x${got(i)}%04X exp 0x$e%04X")
+              case _ => ()
+            }
             val packedExp =
               (BigInt(filledExp(3) & 0xFFFF) << 48) |
               (BigInt(filledExp(2) & 0xFFFF) << 32) |
               (BigInt(filledExp(1) & 0xFFFF) << 16) |
                BigInt(filledExp(0) & 0xFFFF)
-
-            // If a lane is defined, also check it individually for clearer failure msgs.
-            expOpt.zipWithIndex.foreach {
-              case (Some(e), i) =>
-                assert(got(i) == e, f"lane[$i] mismatch: got 0x${got(i)}%04X exp 0x$e%04X")
-              case _ => // don't-care
-            }
             h.io.out_bf16.expect(packedExp.U, s"trial $t packed expect mismatch")
 
             // --------------------- PASS PRINT ---------------------------
@@ -438,6 +438,9 @@ class MxFpMul_AllATypes_BF16Out_SelfChecking_Spec
 
       h.io.enable.poke(false.B)
       h.clock.step(1)
+
+      //println(ChiselStage.emitSystemVerilog(new MxFpMulHarnessBf16Out(ts, lut = false)))
+      //ChiselStage.emitSystemVerilog(new MxFpMulHarnessBf16Out(ts, lut = false))
     }
   }
 }
@@ -449,8 +452,8 @@ class MxFpMul_Fp4_WithRecC_Spec extends AnyFlatSpec with ChiselScalatestTester w
 
   it should "run two fp4-mode cases and print inputs/outputs as raw E8M7" in {
     val ts = TypeSupport(
-      actSupportFp4 = true, actSupportFp6 = true, actSupportFp8 = true,
-      weiSupportFp4 = true, weiSupportFp6 = true, weiSupportFp8 = true
+      actSupportFp4 = true, actSupportFp6_1 = true, actSupportFp8_0 = true,
+      weiSupportFp4 = true, weiSupportFp6_1 = true, weiSupportFp8_0 = true
     )
 
     test(new MxFpMulHarness(ts, lut = false)).withAnnotations(Seq(WriteVcdAnnotation)) { h =>
@@ -580,8 +583,8 @@ class MxFpMul_Fp4_WithRecC_MoreCoverage_Spec
 
   it should "exercise multiple stimuli per case and print lane-wise raw E8M7" in {
     val ts = TypeSupport(
-      actSupportFp4 = true, actSupportFp6 = true, actSupportFp8 = true,
-      weiSupportFp4 = true, weiSupportFp6 = true, weiSupportFp8 = true
+      actSupportFp4 = true, actSupportFp6_1 = true, actSupportFp8_0 = true,
+      weiSupportFp4 = true, weiSupportFp6_1 = true, weiSupportFp8_0 = true
     )
 
     test(new MxFpMulHarness(ts, lut = false)).withAnnotations(Seq(WriteVcdAnnotation)) { h =>

@@ -1,8 +1,83 @@
-package mxHardware 
+package gemmini 
 
 import chisel3._
 import chisel3.util._
 import chisel3.experimental.BundleLiterals._
+
+// -----------------------------------------------------------------------------
+// TYPE SUPPORT CONFIGURATION
+// -----------------------------------------------------------------------------
+
+case class TypeSupport (
+  actSupportFp4: Boolean = true,
+  actSupportFp6_0: Boolean = false,
+  actSupportFp6_1: Boolean = false,
+  actSupportFp8_0: Boolean = false,
+  actSupportFp8_1: Boolean = false,
+  weiSupportFp4: Boolean = true,
+  weiSupportFp6_0: Boolean = false,
+  weiSupportFp6_1: Boolean = false,
+  weiSupportFp8_0: Boolean = false,
+  weiSupportFp8_1: Boolean = false
+) {
+
+  // output parameters
+  val outType1 = MxFormats(8, 8)
+  val outType2 = MxFormats(8, 8)
+  val outType4 = MxFormats(8, 8)
+
+  // Add parameters
+  val cType = MxFormats(8, 8)
+
+  // input parameters
+  val inAWidth = 12
+  val inBWidth = 24
+
+  // exp adder width
+  val expAdderWidths = Seq(4, 3, 4, 3)
+  val totalAdderWidth = 4*(outType4.exp) 
+
+  val modes = (
+    (if (actSupportFp4 && weiSupportFp4) List(PE_MxMode.mode0) else List()) ++
+    (if (actSupportFp4 && weiSupportFp6_1) List(PE_MxMode.mode1) else List()) ++
+    (if (actSupportFp4 && weiSupportFp6_0) List(PE_MxMode.mode2) else List()) ++
+    (if (actSupportFp4 && weiSupportFp8_1) List(PE_MxMode.mode1) else List()) ++
+    (if (actSupportFp4 && weiSupportFp8_0) List(PE_MxMode.mode2) else List()) ++
+
+    (if (actSupportFp6_1 && weiSupportFp4) List(PE_MxMode.mode3) else List()) ++
+    (if (actSupportFp6_1 && weiSupportFp6_1) List(PE_MxMode.mode4) else List()) ++
+    (if (actSupportFp6_1 && weiSupportFp6_0) List(PE_MxMode.mode5) else List()) ++
+    (if (actSupportFp6_1 && weiSupportFp8_1) List(PE_MxMode.mode4) else List()) ++
+    (if (actSupportFp6_1 && weiSupportFp8_0) List(PE_MxMode.mode5) else List()) ++
+
+    (if (actSupportFp6_0 && weiSupportFp4) List(PE_MxMode.mode6) else List()) ++
+    (if (actSupportFp6_0 && weiSupportFp6_1) List(PE_MxMode.mode7) else List()) ++
+    (if (actSupportFp6_0 && weiSupportFp6_0) List(PE_MxMode.mode8) else List()) ++
+    (if (actSupportFp6_0 && weiSupportFp8_1) List(PE_MxMode.mode7) else List()) ++
+    (if (actSupportFp6_0 && weiSupportFp8_0) List(PE_MxMode.mode8) else List()) ++
+
+    (if (actSupportFp8_1 && weiSupportFp4) List(PE_MxMode.mode3) else List()) ++
+    (if (actSupportFp8_1 && weiSupportFp6_1) List(PE_MxMode.mode4) else List()) ++
+    (if (actSupportFp8_1 && weiSupportFp6_0) List(PE_MxMode.mode5) else List()) ++
+    (if (actSupportFp8_1 && weiSupportFp8_1) List(PE_MxMode.mode4) else List()) ++
+    (if (actSupportFp8_1 && weiSupportFp8_0) List(PE_MxMode.mode5) else List()) ++
+
+    (if (actSupportFp8_0 && weiSupportFp4) List(PE_MxMode.mode6) else List()) ++
+    (if (actSupportFp8_0 && weiSupportFp6_1) List(PE_MxMode.mode7) else List()) ++
+    (if (actSupportFp8_0 && weiSupportFp6_0) List(PE_MxMode.mode8) else List()) ++
+    (if (actSupportFp8_0 && weiSupportFp8_1) List(PE_MxMode.mode7) else List()) ++
+    (if (actSupportFp8_0 && weiSupportFp8_0) List(PE_MxMode.mode8) else List())
+  ).distinct
+
+  val mxparameters = MxParams(modes)
+  val peInAWidth = mxparameters.inPE_act_totalWidth
+  val peInBWidth = mxparameters.inPE_wei_totalWidth
+  val peOutWidth = mxparameters.outPE_width 
+}
+
+// -----------------------------------------------------------------------------
+// BUNDLES AND DECODING
+// -----------------------------------------------------------------------------
 
 class mxMode extends Bundle {
   val actWidth = UInt(3.W)
@@ -12,6 +87,47 @@ class mxMode extends Bundle {
   val shift = Vec(2, Vec(2, UInt(3.W)))
   val numOutputs = UInt(3.W)
 }
+
+class MxTypes extends Bundle {
+  val exp = UInt(3.W)
+  val sig = UInt(3.W)
+}
+
+case class MxFormats (
+  val exponent: Int = 4,
+  val significand: Int = 4
+) {
+  val exp = exponent
+  val sig = significand
+  val ieee = exp + sig
+  val recoded = exp + sig + 1
+  val bias: Int = (1 << (exponent - 1)) - 1
+}
+
+object MxFormats {
+  def fp4 = MxFormats(2, 2)
+  def fp6_0 = MxFormats(2, 4)
+  def fp6_1 = MxFormats(3, 3)
+  def fp8_0 = MxFormats(4, 4)
+  def fp8_1 = MxFormats(5, 3)
+}
+
+object MxTypes {
+  def apply(code: UInt, altfmt: Bool): MxTypes = {
+    val tbl = VecInit(Seq(
+      (new MxTypes).Lit(_.exp -> 2.U, _.sig -> 2.U), // 0 fp4
+      (new MxTypes).Lit(_.exp -> 2.U, _.sig -> 4.U), // 1 fp6_0
+      (new MxTypes).Lit(_.exp -> 4.U, _.sig -> 4.U), // 3 fp8_0
+      (new MxTypes).Lit(_.exp -> 3.U, _.sig -> 3.U), // 2 fp6_1
+      (new MxTypes).Lit(_.exp -> 5.U, _.sig -> 3.U)  // 4 fp8_1
+  ))
+    Mux(altfmt, WireInit(tbl(code +& 2.U)), WireInit(tbl(code)))
+  }
+}
+
+// -----------------------------------------------------------------------------
+// MODE DECODER
+// -----------------------------------------------------------------------------
 
 object mxModeDecode {
   private def litTable = VecInit(PE_MxMode.allModes.map { m =>
@@ -133,67 +249,12 @@ case class MxParams (
 object MxParams {
   def fp4 = MxParams()
   def fp6 = MxParams(List(PE_MxMode.mode4, PE_MxMode.mode8, PE_MxMode.mode5, PE_MxMode.mode7))
-  def fp8 = MxParams(List(PE_MxMode.mode8))
+  def fp6_0 = MxParams(List(PE_MxMode.mode2, PE_MxMode.mode5, PE_MxMode.mode6, PE_MxMode.mode7, PE_MxMode.mode8))
+  def fp6_1 = MxParams(List(PE_MxMode.mode1, PE_MxMode.mode3, PE_MxMode.mode4, PE_MxMode.mode5, PE_MxMode.mode7))
+  def fp8_0 = MxParams(List(PE_MxMode.mode2, PE_MxMode.mode5, PE_MxMode.mode6, PE_MxMode.mode7, PE_MxMode.mode8))
+  def fp8_1 = MxParams(List(PE_MxMode.mode1, PE_MxMode.mode3, PE_MxMode.mode4, PE_MxMode.mode5, PE_MxMode.mode7))
   def allfp4 = MxParams(List(PE_MxMode.mode0, PE_MxMode.mode1, PE_MxMode.mode2, PE_MxMode.mode3, PE_MxMode.mode6))
   def allfp6 = MxParams(List(PE_MxMode.mode1, PE_MxMode.mode3, PE_MxMode.mode4, PE_MxMode.mode5, PE_MxMode.mode7))
   def allfp8 = MxParams(List(PE_MxMode.mode2, PE_MxMode.mode5, PE_MxMode.mode6, PE_MxMode.mode7, PE_MxMode.mode8))
   def all = MxParams(List(PE_MxMode.mode0, PE_MxMode.mode1, PE_MxMode.mode2, PE_MxMode.mode3, PE_MxMode.mode4, PE_MxMode.mode5, PE_MxMode.mode6, PE_MxMode.mode7, PE_MxMode.mode8))
-}
-
-case class TypeSupport (
-  actSupportFp4: Boolean = true,
-  actSupportFp6: Boolean = false,
-  actSupportFp8: Boolean = false,
-  weiSupportFp4: Boolean = true,
-  weiSupportFp6: Boolean = false,
-  weiSupportFp8: Boolean = false
-) {
-  val modes = (
-    (if (actSupportFp4 && weiSupportFp4) List(PE_MxMode.mode0) else List()) ++
-    (if (actSupportFp4 && weiSupportFp6) List(PE_MxMode.mode1, PE_MxMode.mode2) else List()) ++
-    (if (actSupportFp4 && weiSupportFp8) List(PE_MxMode.mode2, PE_MxMode.mode1) else List()) ++
-    (if (actSupportFp6 && weiSupportFp4) List(PE_MxMode.mode3, PE_MxMode.mode6) else List()) ++
-    (if (actSupportFp6 && weiSupportFp6) List(PE_MxMode.mode4, PE_MxMode.mode8, PE_MxMode.mode5, PE_MxMode.mode7) else List()) ++
-    (if (actSupportFp6 && weiSupportFp8) List(PE_MxMode.mode5, PE_MxMode.mode4, PE_MxMode.mode8, PE_MxMode.mode7) else List()) ++
-    (if (actSupportFp8 && weiSupportFp4) List(PE_MxMode.mode6, PE_MxMode.mode3) else List()) ++
-    (if (actSupportFp8 && weiSupportFp6) List(PE_MxMode.mode7, PE_MxMode.mode4, PE_MxMode.mode5, PE_MxMode.mode8) else List()) ++
-    (if (actSupportFp8 && weiSupportFp8) List(PE_MxMode.mode8, PE_MxMode.mode5, PE_MxMode.mode4, PE_MxMode.mode7) else List())
-  ).distinct
-  val mxparameters = MxParams(modes)
-}
-
-
-case class MxFormats (
-  val exponent: Int = 4,
-  val significand: Int = 4
-) {
-  val exp = exponent
-  val sig = significand
-  val bias: Int = (1 << (exponent - 1)) - 1
-}
-
-object MxFormats {
-  def fp4 = MxFormats(2, 2)
-  def fp6_0 = MxFormats(2, 4)
-  def fp6_1 = MxFormats(3, 3)
-  def fp8_0 = MxFormats(4, 4)
-  def fp8_1 = MxFormats(5, 3)
-}
-
-class MxTypes extends Bundle {
-  val exp = UInt(3.W)
-  val sig = UInt(3.W)
-}
-
-object MxTypes {
-  def apply(code: UInt, altfmt: Bool): MxTypes = {
-    val tbl = VecInit(Seq(
-      (new MxTypes).Lit(_.exp -> 2.U, _.sig -> 2.U), // 0 fp4
-      (new MxTypes).Lit(_.exp -> 2.U, _.sig -> 4.U), // 1 fp6_0
-      (new MxTypes).Lit(_.exp -> 4.U, _.sig -> 4.U), // 3 fp8_0
-      (new MxTypes).Lit(_.exp -> 3.U, _.sig -> 3.U), // 2 fp6_1
-      (new MxTypes).Lit(_.exp -> 5.U, _.sig -> 3.U)  // 4 fp8_1
-    ))
-    Mux(altfmt, WireInit(tbl(code +& 2.U)), WireInit(tbl(code)))
-  }
 }

@@ -3,7 +3,7 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import mxHardware._  // Import MxFp types from mxHardware package
+//import mxHardware._  // Import MxFp types from mxHardware package
 
 class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
   val dataflow = UInt(1.W)

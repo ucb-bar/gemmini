@@ -1,4 +1,4 @@
-package mxHardware 
+package gemmini 
 
 import chisel3._
 import chisel3.util._
@@ -17,8 +17,8 @@ object requiredPEMode {
   def apply(a: MxTypes, w: MxTypes): mxMode = {
     val key = Cat(a.sig, w.sig)
     val idx = MuxLookup(key, 0.U) (Seq(
-      Cat(2.U(3.W), 2.U(3.W)) -> 0.U,  // (2,2)
-      Cat(2.U(3.W), 3.U(3.W)) -> 1.U,  // (2,3)
+      Cat(2.U(3.W), 2.U(3.W)) -> 0.U,
+      Cat(2.U(3.W), 3.U(3.W)) -> 1.U,
       Cat(2.U(3.W), 4.U(3.W)) -> 2.U,
       Cat(3.U(3.W), 2.U(3.W)) -> 3.U,
       Cat(3.U(3.W), 3.U(3.W)) -> 4.U,
