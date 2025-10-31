@@ -763,23 +763,27 @@ object Arithmetic {
       }
 
       override def withWidthOf(t: MxFloat): MxFloat = {
-        val result = Wire(MxFloat(t.expWidth, t.sigWidth, t.count, t.isRecoded))
-        val elems = Wire(Vec(t.count, UInt((t.expWidth + t.sigWidth + (if (t.isRecoded) 1 else 0)).W)))
-        val input = self.bits.asTypeOf(Vec(self.count, UInt((self.expWidth + self.sigWidth + (if (self.isRecoded) 1 else 0)).W)))
+        if ((self.isRecoded && !t.isRecoded) || (!self.isRecoded && t.isRecoded)) { 
+          val result = Wire(MxFloat(t.expWidth, t.sigWidth, t.count, t.isRecoded))
+          val elems = Wire(Vec(t.count, UInt((t.expWidth + t.sigWidth + (if (t.isRecoded) 1 else 0)).W)))
+          val input = self.bits.asTypeOf(Vec(self.count, UInt((self.expWidth + self.sigWidth + (if (self.isRecoded) 1 else 0)).W)))
 
-        for (i <- 0 until t.count) {
-          val elem = input(i)
-          val self_rec = if (self.isRecoded) elem else recFNFromFN(self.expWidth, self.sigWidth, elem)
+          for (i <- 0 until t.count) {
+            val elem = input(i)
+            val self_rec = if (self.isRecoded) elem else recFNFromFN(self.expWidth, self.sigWidth, elem)
 
-          val resizer = Module(new RecFNToRecFN(self.expWidth, self.sigWidth, t.expWidth, t.sigWidth))
-          resizer.io.in := self_rec
-          resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-          resizer.io.detectTininess := consts.tininess_afterRounding
+            val resizer = Module(new RecFNToRecFN(self.expWidth, self.sigWidth, t.expWidth, t.sigWidth))
+            resizer.io.in := self_rec
+            resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+            resizer.io.detectTininess := consts.tininess_afterRounding
 
-          elems(i) := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
+            elems(i) := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
+          }
+          result := elems.asTypeOf(result)
+          result
+        } else {
+          self
         }
-        result := elems.asTypeOf(result)
-        result
  
       }
 
