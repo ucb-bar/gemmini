@@ -216,8 +216,8 @@ object GemminiMxFPConfigs {
     opcodes = OpcodeSet.custom3,
     tileRows = 1,
     tileColumns = 1,
-    meshRows = 16,
-    meshColumns = 16,
+    meshRows = 4,
+    meshColumns = 4,
 
     ld_queue_length = 8,
     st_queue_length = 2,

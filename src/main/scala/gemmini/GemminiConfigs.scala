@@ -365,7 +365,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     // Datatype of the systolic array
     val limits = limitsOfDataType(inputType)
     header ++= s"typedef ${c_type(inputType)} elem_t;\n"
-    if (inputType.isInstanceOf[Float] && !((inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (8, 24) || (inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (11, 53)))
+    if (inputType.isInstanceOf[MxFloat] || inputType.isInstanceOf[Float] && !((inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (8, 24) || (inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (11, 53)))
     {
       header ++= "#define ELEM_T_IS_LOWPREC_FLOAT\n"
       header ++= s"static const float elem_t_max = ${limits._2};\n"
@@ -377,12 +377,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     header ++= s"typedef ${c_type(accType)} acc_t;\n"
     header ++= s"typedef ${full_c_type(inputType)} full_t;\n\n"
 
-    if (inputType.isInstanceOf[Float]) {
+    if (inputType.isInstanceOf[Float] || inputType.isInstanceOf[MxFloat]) {
       header ++= "#define ELEM_T_IS_FLOAT\n"
-      header ++= s"#define ELEM_T_EXP_BITS ${inputType.asInstanceOf[Float].expWidth}\n"
-      header ++= s"#define ELEM_T_SIG_BITS ${inputType.asInstanceOf[Float].sigWidth}\n"
-      header ++= s"#define ACC_T_EXP_BITS ${accType.asInstanceOf[Float].expWidth}\n"
-      header ++= s"#define ACC_T_SIG_BITS ${accType.asInstanceOf[Float].sigWidth}\n"
+      header ++= s"#define ELEM_T_EXP_BITS ${inputType.asInstanceOf[MxFloat].expWidth}\n"
+      header ++= s"#define ELEM_T_SIG_BITS ${inputType.asInstanceOf[MxFloat].sigWidth}\n"
+      header ++= s"#define ACC_T_EXP_BITS ${accType.asInstanceOf[MxFloat].expWidth}\n"
+      header ++= s"#define ACC_T_SIG_BITS ${accType.asInstanceOf[MxFloat].sigWidth}\n"
       header ++= s"typedef ${c_type(UInt(inputType.getWidth.W))} elem_t_bits;\n"
       header ++= s"typedef ${c_type(UInt(accType.getWidth.W))} acc_t_bits;\n\n"
     }

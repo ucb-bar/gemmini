@@ -834,8 +834,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val dataD_unpadded = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
 
   val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayInputType)))
-  val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(weightType).withWidthOf(spatialArrayWeightType)))
-  val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(accType).withWidthOf(spatialArrayOutputType)))
+  val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, weightType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, weightType.zero)}.map(d => d.asTypeOf(weightType).withWidthOf(spatialArrayWeightType)))
+  val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, accType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, accType.zero)}.map(d => d.asTypeOf(accType).withWidthOf(spatialArrayOutputType)))
 
   // Pop responses off the scratchpad io ports
   when (mesh_cntl_signals_q.io.deq.fire) {
