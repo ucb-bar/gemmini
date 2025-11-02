@@ -37,9 +37,9 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
-  val B_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
-  val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType)) 
-  val D_TYPE = Vec(meshColumns, Vec(tileColumns, outputType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
+  val B_TYPE = Vec(meshColumns, Vec(tileColumns, outputType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
+  val C_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) 
+  val D_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
 
   assert(meshRows*tileRows == meshColumns*tileColumns)
@@ -202,8 +202,13 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   // We want to output C when we're output-stationary, but B when we're weight-stationary
   // TODO these would actually overlap when we switch from output-stationary to weight-stationary
-  io.resp.bits.data := shifted(Mux(mesh.io.out_control(0)(0).dataflow === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
-
+  if (df == Dataflow.BOTH) {
+    io.resp.bits.data := shifted(Mux(mesh.io.out_control(0)(0).dataflow === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
+  } else if (df == Dataflow.WS) {
+    io.resp.bits.data := shifted(mesh.io.out_b, outBanks, true)
+  } else {
+    io.resp.bits.data := shifted(mesh.io.out_b, outBanks, true)
+  }
   io.resp.valid := shifted(mesh.io.out_valid, outBanks, reverse = true)(0)(0)
 
   val out_last = shifted(mesh.io.out_last, outBanks, reverse = true)(0)(0)

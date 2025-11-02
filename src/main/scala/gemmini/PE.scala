@@ -262,8 +262,8 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
 
   val io = IO(new Bundle {
     val in_a = Input(inputType)
-    val in_b = Input(weightType)
-    val in_d = Input(outputType)
+    val in_b = Input(outputType)
+    val in_d = Input(weightType)
     val out_a = Output(inputType)
     val out_b = Output(outputType)
     val out_c = Output(outputType)
@@ -283,7 +283,7 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
     val bad_dataflow = Output(Bool())
   })
 
-  val cType = if (df == Dataflow.WS) inputType else accType
+  val cType = if (df == Dataflow.WS) weightType else accType
 
   // When creating PEs that support multiple dataflows, the
   // elaboration/synthesis tools often fail to consolidate and de-duplicate

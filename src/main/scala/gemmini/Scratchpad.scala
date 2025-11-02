@@ -199,7 +199,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
-  val spad_w = (inputType.getWidth *  block_cols)
+  val spad_w = (weightType.getWidth *  block_cols)
   val acc_w = (accType.getWidth * block_cols)
 
   val id_node = TLIdentityNode()
@@ -209,10 +209,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter,
     use_firesim_simulation_counters))
   val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
-    if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter,
+    if (acc_read_full_width) acc_w else spad_w, aligned_to, weightType, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters))
   val spad_writer = Option.when(config.use_tl_ext_mem)(LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
-    if (acc_read_full_width) acc_w else spad_w, aligned_to, inputType, block_cols, use_tlb_register_filter,
+    if (acc_read_full_width) acc_w else spad_w, aligned_to, weightType, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters)))
 
   // TODO make a cross-bar vs two separate ports a config option
@@ -244,7 +244,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           acc_bank_entries, accType, acc_scale_t.asInstanceOf[V]
         ))))
         val read_resp = Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
-          Vec(meshColumns, Vec(tileColumns, inputType)),
+          Vec(meshColumns, Vec(tileColumns, weightType)),
           Vec(meshColumns, Vec(tileColumns, accType))
         )))
         val write = Flipped(Vec(acc_banks, Decoupled(new AccumulatorWriteReq(
@@ -319,7 +319,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
     writer.module.io.req.bits.len := Mux(writeData_is_full_width,
       write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
-      write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
+      write_issue_q.io.deq.bits.len * (weightType.getWidth / 8).U)
     writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
        writeData_is_all_zeros -> 0.U,
        writeData_is_full_width -> fullAccWriteData
@@ -334,11 +334,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     spad_writer.foreach { spad_writer =>
       spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool
       spad_writer.module.io.req.bits.vaddr := config.tl_ext_mem_base.U |
-        (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.inputType.getWidth / 8).U).asUInt
+        (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.weightType.getWidth / 8).U).asUInt
       spad_writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
       spad_writer.module.io.req.bits.len := Mux(writeData_is_full_width,
         write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
-        write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
+        write_issue_q.io.deq.bits.len * (weightType.getWidth / 8).U)
       spad_writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
         writeData_is_all_zeros -> 0.U,
         writeData_is_full_width -> fullAccWriteData
@@ -370,16 +370,16 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     zero_writer.io.req.bits.block_stride := io.dma.read.req.bits.block_stride
     zero_writer.io.req.bits.tag := io.dma.read.req.bits
 
-    val zero_writer_pixel_repeater = Module(new PixelRepeater(inputType, local_addr_t, block_cols, aligned_to, new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), passthrough = !has_first_layer_optimizations))
+    val zero_writer_pixel_repeater = Module(new PixelRepeater(weightType, local_addr_t, block_cols, aligned_to, new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), passthrough = !has_first_layer_optimizations))
     zero_writer_pixel_repeater.io.req.valid := zero_writer.io.resp.valid
-    zero_writer_pixel_repeater.io.req.bits.in := 0.U.asTypeOf(Vec(block_cols, inputType))
+    zero_writer_pixel_repeater.io.req.bits.in := 0.U.asTypeOf(Vec(block_cols, weightType))
     zero_writer_pixel_repeater.io.req.bits.laddr := zero_writer.io.resp.bits.laddr
     zero_writer_pixel_repeater.io.req.bits.len := zero_writer.io.resp.bits.tag.cols
     zero_writer_pixel_repeater.io.req.bits.pixel_repeats := zero_writer.io.resp.bits.tag.pixel_repeats
     zero_writer_pixel_repeater.io.req.bits.last := zero_writer.io.resp.bits.last
     zero_writer_pixel_repeater.io.req.bits.tag := zero_writer.io.resp.bits.tag
     zero_writer_pixel_repeater.io.req.bits.mask := {
-      val n = inputType.getWidth/ 8
+      val n = weightType.getWidth/ 8
       val mask = zero_writer.io.resp.bits.mask
       val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
       expanded
@@ -406,7 +406,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     val (mvin_scale_in, mvin_scale_out) = VectorScalarMultiplier(
       config.mvin_scale_args,
-      config.inputType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits),
+      config.weightType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits),
       is_acc = false
     )
     val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out) else (
@@ -462,7 +462,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     val zero_writer_bytes_read = Mux(zero_writer_pixel_repeater.io.resp.bits.laddr.is_acc_addr,
       zero_writer_pixel_repeater.io.resp.bits.tag.cols * (accType.getWidth / 8).U,
-      zero_writer_pixel_repeater.io.resp.bits.tag.cols * (inputType.getWidth / 8).U)
+      zero_writer_pixel_repeater.io.resp.bits.tag.cols * (weightType.getWidth / 8).U)
 
     // For DMA read responses, mvin_scale gets first priority, then mvin_scale_acc, and then zero_writer
     io.dma.read.resp.valid := mvin_scale_finished || mvin_scale_acc_finished || zero_writer_finished
@@ -614,7 +614,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     }
 
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
-    val spad_row_t = Vec(meshColumns, Vec(tileColumns, inputType))
+    val spad_row_t = Vec(meshColumns, Vec(tileColumns, weightType))
 
     val (acc_norm_unit_in, acc_norm_unit_out) = Normalizer(
       is_passthru = !config.has_normalizations,
@@ -849,7 +849,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.bits.mask :=
             Mux(from_mvin_scale,
               {
-                val n = accType.getWidth / inputType.getWidth
+                val n = accType.getWidth / weightType.getWidth
                 // val mask = mvin_scale_out.bits.tag.mask take ((spad_w / (aligned_to * 8)) max 1)
                 val mask = mvin_scale_pixel_repeater.io.resp.bits.mask take ((spad_w / (aligned_to * 8)) max 1)
                 val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
@@ -866,7 +866,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.valid := true.B
           bio.write.bits.data := 0.U.asTypeOf(acc_row_t)
           bio.write.bits.mask := {
-            val n = accType.getWidth / inputType.getWidth
+            val n = accType.getWidth / weightType.getWidth
             val mask = zero_writer_pixel_repeater.io.resp.bits.mask
             val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
             expanded
