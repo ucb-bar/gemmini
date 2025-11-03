@@ -40,7 +40,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val block_rows = meshRows * tileRows
   val block_stride = block_rows.U
   val block_cols = meshColumns * tileColumns
-  val max_blocks = (dma_maxbytes / (block_cols * inputType.getWidth / 8)) max 1
+  val max_blocks = (dma_maxbytes / (block_cols * weightType.getWidth / 8)) max 1
 
   val activation = RegInit(0.U(Activation.bitwidth.W)) // TODO magic number
   val igelu_qb = RegInit(0.U.asTypeOf(accType))
