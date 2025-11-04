@@ -164,9 +164,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   }
   assert(acc_scale_latency > 0)
 
-  val mvin_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvin_cols_bits = log2Up(((dma_maxbytes / (weightType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
-  val mvout_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvout_cols_bits = log2Up(((dma_maxbytes / (weightType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
 
   val load_states = 3
@@ -350,8 +350,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     val max_bytes = 64
     header ++= s"#define MAX_BYTES $max_bytes\n"
 
-    if (tileColumns*meshColumns*inputType.getWidth/8 <= max_bytes) {
-      header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${inputType.getWidth/8}))\n"
+    if (tileColumns*meshColumns*weightType.getWidth/8 <= max_bytes) {
+      header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${weightType.getWidth/8}))\n"
     } else {
       header ++= s"#define MAX_BLOCK_LEN 1\n"
     }
@@ -363,7 +363,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     }
 
     // Datatype of the systolic array
-    val limits = limitsOfDataType(inputType)
+    val limits = limitsOfDataType(weightType)
     header ++= s"typedef ${c_type(inputType)} elem_t;\n"
     if (inputType.isInstanceOf[MxFloat] || inputType.isInstanceOf[Float] && !((inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (8, 24) || (inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (11, 53)))
     {

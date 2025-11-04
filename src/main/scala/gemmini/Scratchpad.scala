@@ -427,7 +427,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     mvin_scale_in.bits.last := reader.module.io.resp.bits.last
     mvin_scale_in.bits.tag := reader.module.io.resp.bits
 
-    val mvin_scale_pixel_repeater = Module(new PixelRepeater(accType, local_addr_t, block_cols, aligned_to, mvin_scale_out.bits.tag.cloneType, passthrough = !has_first_layer_optimizations))
+    val mvin_scale_pixel_repeater = Module(new PixelRepeater(weightType, local_addr_t, block_cols, aligned_to, mvin_scale_out.bits.tag.cloneType, passthrough = !has_first_layer_optimizations))
     mvin_scale_pixel_repeater.io.req.valid := mvin_scale_out.valid
     mvin_scale_pixel_repeater.io.req.bits.in := mvin_scale_out.bits.out
     mvin_scale_pixel_repeater.io.req.bits.mask := mvin_scale_out.bits.tag.mask take mvin_scale_pixel_repeater.io.req.bits.mask.size
