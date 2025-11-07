@@ -20,14 +20,23 @@ class AccumulatorScaleResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDa
 
 class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
   fullDataType: Vec[Vec[T]], scale_t: U,
-  rDataType: Vec[Vec[T]]
+  rDataType: Vec[Vec[T]],
+  scaleVecWidth: Int = 1
 ) extends Bundle {
-  val in = Flipped(Decoupled(new NormalizedOutput[T,U](fullDataType, scale_t)))
+  val in = Flipped(Decoupled(new NormalizedOutput[T,U](fullDataType, scale_t, scaleVecWidth)))
   val out = Decoupled(new AccumulatorScaleResp[T](fullDataType, rDataType))
+}
+
+
+class ScaleGenerationInput[U <: Data](scale_t: U, width: Int) extends Bundle {
+  val act_scale = scale_t.cloneType           
+  val weight_scales = Vec(width, scale_t.cloneType) 
 }
 
 class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extends Bundle {
   val scale = u.cloneType
+  val act_scale = u.cloneType
+  val weight_scale = u.cloneType
   val act = UInt(Activation.bitwidth.W)
   val igelu_qb = t.cloneType
   val igelu_qc = t.cloneType
@@ -41,6 +50,27 @@ class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extend
   val full_data = t.cloneType
   val id = UInt(2.W) // TODO hardcoded
   val index = UInt()
+}
+
+class ScaleMultiplier[U <: Data](scale_t: U, width: Int) extends Module {
+  val io = IO(new Bundle {
+    val act_scale = Input(scale_t.cloneType)
+    val weight_scales = Input(Vec(width, scale_t.cloneType))
+    val combined_scales = Output(Vec(width, scale_t.cloneType))
+  })
+  
+  // Mx scale:E8M0
+  for (i <- 0 until width) {
+    io.combined_scales(i) := multiplyScales(io.act_scale, io.weight_scales(i))
+  }
+  def multiplyScales(a: U, b: U): U = {
+    val a_uint = a.asUInt
+    val b_uint = b.asUInt
+    val bias = 127.U
+    val sum = a_uint +& b_uint 
+    val result = Mux(sum >= bias, sum - bias, 0.U)
+    result.asTypeOf(a)  
+  }
 }
 
 class AccScalePipe[T <: Data, U <: Data](t: T, rDataType: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U,
@@ -94,18 +124,34 @@ class AccumulatorScale[T <: Data, U <: Data](
   scale_func: (T, U) => T,
   num_scale_units: Int,
   latency: Int,
-  has_nonlinear_activations: Boolean, has_normalizations: Boolean)(implicit ev: Arithmetic[T]) extends Module {
+  has_nonlinear_activations: Boolean, has_normalizations: Boolean)(implicit ev: Arithmetic[T], scaleVecWidth: Int = 1 ) extends Module {
 
   import ev._
 
   val io = IO(new AccumulatorScaleIO[T,U](
-    fullDataType, scale_t, rDataType
+    fullDataType, scale_t, rDataType, scaleVecWidth
   )(ev))
   val t = io.in.bits.acc_read_resp.data(0)(0).cloneType
   val acc_read_data = io.in.bits.acc_read_resp.data
   val out = Wire(Decoupled(new AccumulatorScaleResp[T](
     fullDataType, rDataType)(ev)))
 
+  val combined_scales = Wire(Vec(width, scale_t.cloneType))
+  
+  if (scaleVecWidth > 1) {
+    val act_scale = io.in.bits.act_scale
+    val weight_scales = io.in.bits.weight_scales.get
+    
+    for (i <- 0 until width) {
+      combined_scales(i) := multiplyScales(act_scale, weight_scales(i))
+    }
+  } else {
+    val single_scale = io.in.bits.act_scale  
+    for (i <- 0 until width) {
+      combined_scales(i) := single_scale
+    }
+  }
+  
   if (num_scale_units == -1) {
     val data = io.in.bits.acc_read_resp.data
     val act = io.in.bits.acc_read_resp.act

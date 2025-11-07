@@ -7,7 +7,7 @@ import Util._
 
 class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, scale_t: U) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
-  val scale = scale_t
+  val scale = Vec(fullDataType.length, Vec(fullDataType(0).length, scale_t.cloneType)) 
   val igelu_qb = acc_t.cloneType
   val igelu_qc = acc_t.cloneType
   val iexp_qln2 = acc_t.cloneType
@@ -18,6 +18,9 @@ class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, sca
   val fromDMA = Bool()
 
 }
+
+
+
 
 class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
   val data = fullDataType.cloneType
