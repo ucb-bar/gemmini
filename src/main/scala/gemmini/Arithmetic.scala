@@ -6,7 +6,6 @@ package gemmini
 import chisel3._
 import chisel3.util._
 import hardfloat._
-import mxHardware._
 
 // Bundles that represent the raw bits of custom datatypes
 case class Float(expWidth: Int, sigWidth: Int, isRecoded: Boolean = false) extends Bundle {
@@ -598,7 +597,7 @@ object Arithmetic {
       // TODO: fix the inputs to the multiplier and mac modules
       override def *(t: MxFloat): MxFloat = {
         require(!self.isRecoded && !t.isRecoded)
-        val multiplier = Module(new mxHardware.MxFpMul(lut = false))
+        val multiplier = Module(new MxFpMul(lut = false))
         val result = Wire(MxFloat(multiplier.ts.cType.exp, multiplier.ts.cType.sig, 4, true))
 
         val typeA = Wire(new MxTypes)
@@ -609,7 +608,7 @@ object Arithmetic {
         typeW.exp := t.expWidth.U
         typeW.sig := t.sigWidth.U
 
-        val mode = Wire(new mxHardware.mxMode)
+        val mode = Wire(new mxMode)
         mode.actWidth := self.expWidth.U
         mode.weiWidth := t.expWidth.U
         mode.actInputs := self.count.U
@@ -632,7 +631,7 @@ object Arithmetic {
 
       override def mac(m1: MxFloat, m2: MxFloat): MxFloat = {
         require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
-        val macc = Module(new mxHardware.MxFpMul(lut = false))
+        val macc = Module(new MxFpMul(lut = false))
         val result = Wire(MxFloat(macc.ts.cType.exp, macc.ts.cType.sig, 4, true))
 
         val typeA = Wire(new MxTypes)
@@ -643,7 +642,7 @@ object Arithmetic {
         typeW.exp := m2.expWidth.U
         typeW.sig := m2.sigWidth.U
 
-        val mode = Wire(new mxHardware.mxMode)
+        val mode = Wire(new mxMode)
         mode.actWidth := m1.expWidth.U
         mode.weiWidth := m2.expWidth.U
         mode.actInputs := m1.count.U
