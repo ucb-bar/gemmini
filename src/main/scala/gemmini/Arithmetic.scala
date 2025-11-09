@@ -672,43 +672,58 @@ object Arithmetic {
 
 
       override def +(t: MxFloat): MxFloat = {
-        self
-        // val t_rec = if (t.isRecoded) t.bits else recFNFromFN(t.expWidth, t.sigWidth, t.bits)
+        require(self.count == t.count)
+        val sigA = self.sigWidth
+        val expA = self.expWidth
+        val sigB = t.sigWidth
+        val expB = t.expWidth
 
-        // // Recode all operands
-        // val t_rec = if (t.isRecoded) t.bits else recFNFromFN(t.expWidth, t.sigWidth, t.bits)
-        // val self_rec = if (self.isRecoded) self.bits else recFNFromFN(self.expWidth, self.sigWidth, self.bits)
+        val sig = sigA.max(sigB)
+        val exp = expA.max(expB)
 
-        // // Generate 1 as a float
-        // val in_to_rec_fn = Module(new INToRecFN(1, self.expWidth, self.sigWidth))
-        // in_to_rec_fn.io.signedIn := false.B
-        // in_to_rec_fn.io.in := 1.U
-        // in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-        // in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+        val sum = Wire(MxFloat(sig, exp, self.count))
 
-        // val one_rec = in_to_rec_fn.io.out
+        val result = self.bits.asTypeOf(Vec(self.count, UInt((expA + sigA).W))).zipWithIndex.map { case (elem, i) =>
+          val t_elem = t.bits.asTypeOf(Vec(t.count, UInt((expB + sigB).W)))(i)
 
-        // // Resize t
-        // val t_resizer = Module(new RecFNToRecFN(t.expWidth, t.sigWidth, self.expWidth, self.sigWidth))
-        // t_resizer.io.in := t_rec
-        // t_resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-        // t_resizer.io.detectTininess := consts.tininess_afterRounding
-        // val t_rec_resized = t_resizer.io.out
+          val rec_elem = if (self.isRecoded) elem else recFNFromFN(expA, sigA, elem)
+          val rec_t = if (t.isRecoded) t_elem else recFNFromFN(expB, sigB, t_elem)
 
-        // // Perform addition
-        // val muladder = Module(new MulAddRecFN(self.expWidth, self.sigWidth))
+          // resize 
+          val self_resizer = Module(new RecFNToRecFN(expA, sigA, exp, sig))
+          self_resizer.io.in := rec_elem
+          self_resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          self_resizer.io.detectTininess := consts.tininess_afterRounding
+          val self_rec_resized = self_resizer.io.out
 
-        // muladder.io.op := 0.U
-        // muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-        // muladder.io.detectTininess := consts.tininess_afterRounding
+          val t_resizer = Module(new RecFNToRecFN(expB, sigB, exp, sig))
+          t_resizer.io.in := rec_t
+          t_resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          t_resizer.io.detectTininess := consts.tininess_afterRounding
+          val t_rec_resized = t_resizer.io.out
 
-        // muladder.io.a := t_rec_resized
-        // muladder.io.b := one_rec
-        // muladder.io.c := self_rec
+          // recoded one
+          val in_to_rec_fn = Module(new INToRecFN(1, exp, sig))
+          in_to_rec_fn.io.signedIn := false.B
+          in_to_rec_fn.io.in := 1.U
+          in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+          val one_rec = in_to_rec_fn.io.out
 
-        // val result = Wire(Float(self.expWidth, self.sigWidth, self.isRecoded))
-        // result.bits := (if (result.isRecoded) muladder.io.out else fNFromRecFN(self.expWidth, self.sigWidth, muladder.io.out))
-        // result
+          // add
+          val muladder = Module(new MulAddRecFN(exp, sig))
+          muladder.io.op := 0.U
+          muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          muladder.io.detectTininess := consts.tininess_afterRounding 
+          muladder.io.a := t_rec_resized
+          muladder.io.b := one_rec
+          muladder.io.c := self_rec_resized
+
+          (if (self.isRecoded) muladder.io.out else fNFromRecFN(exp, sig, muladder.io.out))
+          
+        }
+        sum := VecInit(result).asTypeOf(sum)
+        sum
       }
 
       override def -(t: MxFloat): MxFloat = {
