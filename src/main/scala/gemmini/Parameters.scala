@@ -8,6 +8,35 @@ import chisel3.experimental.BundleLiterals._
 // TYPE SUPPORT CONFIGURATION
 // -----------------------------------------------------------------------------
 
+trait HasTypeSupport {
+  val ts: TypeSupport
+
+  lazy val inAWidth = ts.inAWidth
+  lazy val inBWidth = ts.inBWidth
+  lazy val outType1 = ts.outType1
+  lazy val outType2 = ts.outType2
+  lazy val outType4 = ts.outType4
+  lazy val cType = ts.cType
+  lazy val peInAWidth = ts.peInAWidth
+  lazy val peInBWidth = ts.peInBWidth
+  lazy val peOutWidth = ts.peOutWidth
+  lazy val expAdderWidths = ts.expAdderWidths
+  lazy val totalAdderWidth = ts.totalAdderWidth
+
+  lazy val mxparameters = ts.mxparameters
+
+  lazy val actSupportFp4 = ts.actSupportFp4
+  lazy val actSupportFp6_0 = ts.actSupportFp6_0
+  lazy val actSupportFp6_1 = ts.actSupportFp6_1
+  lazy val actSupportFp8_0 = ts.actSupportFp8_0
+  lazy val actSupportFp8_1 = ts.actSupportFp8_1
+  lazy val weiSupportFp4 = ts.weiSupportFp4
+  lazy val weiSupportFp6_0 = ts.weiSupportFp6_0
+  lazy val weiSupportFp6_1 = ts.weiSupportFp6_1
+  lazy val weiSupportFp8_0 = ts.weiSupportFp8_0
+  lazy val weiSupportFp8_1 = ts.weiSupportFp8_1
+}
+
 case class TypeSupport (
   actSupportFp4: Boolean = true,
   actSupportFp6_0: Boolean = false,

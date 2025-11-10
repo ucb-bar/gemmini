@@ -18,7 +18,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              opcodes: OpcodeSet = OpcodeSet.custom3,
 
                                                                              inputType: T,
-                                                                             weightType: T,   
+                                                                             weightType: T,
                                                                              accType: T,
                                                                              spatialArrayInputType: T,
                                                                              spatialArrayWeightType: T,
@@ -102,8 +102,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
-  require(inputType.getWidth == weightType.getWidth)
-  val sp_width = meshColumns * tileColumns * inputType.getWidth
+  // require(inputType.getWidth == weightType.getWidth)
+  val sp_width = meshColumns * tileColumns * weightType.getWidth
   val sp_bank_entries = sp_capacity match {
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (sp_banks * sp_width)
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / sp_banks
@@ -164,9 +164,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   }
   assert(acc_scale_latency > 0)
 
-  val mvin_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvin_cols_bits = log2Up(((dma_maxbytes / (weightType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
-  val mvout_cols_bits = log2Up(((dma_maxbytes / (inputType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvout_cols_bits = log2Up(((dma_maxbytes / (weightType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
 
   val load_states = 3
@@ -323,9 +323,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     }
 
     assert(tileColumns*meshColumns == tileRows*meshRows)
-    assert(Set(8, 16, 32, 64).contains(inputType.getWidth))
+    // assert(Set(8, 16, 32, 64).contains(inputType.getWidth))
     // assert(Set(8, 16, 32, 64).contains(outputType.getWidth))
-    assert(Set(8, 16, 32, 64).contains(accType.getWidth))
+    // assert(Set(8, 16, 32, 64).contains(accType.getWidth))
 
     val header = new StringBuilder()
     header ++= s"#ifndef $guard\n"
@@ -350,8 +350,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     val max_bytes = 64
     header ++= s"#define MAX_BYTES $max_bytes\n"
 
-    if (tileColumns*meshColumns*inputType.getWidth/8 <= max_bytes) {
-      header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${inputType.getWidth/8}))\n"
+    if (tileColumns*meshColumns*weightType.getWidth/8 <= max_bytes) {
+      header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${weightType.getWidth/8}))\n"
     } else {
       header ++= s"#define MAX_BLOCK_LEN 1\n"
     }
@@ -363,9 +363,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     }
 
     // Datatype of the systolic array
-    val limits = limitsOfDataType(inputType)
+    val limits = limitsOfDataType(weightType)
     header ++= s"typedef ${c_type(inputType)} elem_t;\n"
-    if (inputType.isInstanceOf[Float] && !((inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (8, 24) || (inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (11, 53)))
+    if (inputType.isInstanceOf[MxFloat] || inputType.isInstanceOf[Float] && !((inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (8, 24) || (inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (11, 53)))
     {
       header ++= "#define ELEM_T_IS_LOWPREC_FLOAT\n"
       header ++= s"static const float elem_t_max = ${limits._2};\n"
@@ -376,6 +376,16 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     }
     header ++= s"typedef ${c_type(accType)} acc_t;\n"
     header ++= s"typedef ${full_c_type(inputType)} full_t;\n\n"
+
+    if (inputType.isInstanceOf[MxFloat]) {
+      header ++= "#define ELEM_T_IS_FLOAT\n"
+      header ++= s"#define ELEM_T_EXP_BITS ${inputType.asInstanceOf[MxFloat].expWidth}\n"
+      header ++= s"#define ELEM_T_SIG_BITS ${inputType.asInstanceOf[MxFloat].sigWidth}\n"
+      header ++= s"#define ACC_T_EXP_BITS ${accType.asInstanceOf[MxFloat].expWidth}\n"
+      header ++= s"#define ACC_T_SIG_BITS ${accType.asInstanceOf[MxFloat].sigWidth}\n"
+      header ++= s"typedef ${c_type(UInt(inputType.getWidth.W))} elem_t_bits;\n"
+      header ++= s"typedef ${c_type(UInt(accType.getWidth.W))} acc_t_bits;\n\n"
+    }
 
     if (inputType.isInstanceOf[Float]) {
       header ++= "#define ELEM_T_IS_FLOAT\n"

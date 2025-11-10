@@ -324,6 +324,7 @@ project/plugins/project/
 # Scala-IDE specific
 .scala_dependencies
 .worksheet
+.metals
 ### Java template
 *.class
 
@@ -342,4 +343,5 @@ hs_err_pid*
 configs/
 generated-src/
 waveforms/
+project/
 

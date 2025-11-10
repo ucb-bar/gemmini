@@ -209,3 +209,92 @@ class GemminiBF16Default8Config extends Config((site, here, up) => {
   )
 })
 
+object GemminiMxFPConfigs {
+  // import Arithmetic.FloatArithmetic._
+  import Arithmetic.MxFloatArithmetic._
+  val defaultMxFPConfig = GemminiArrayConfig[MxFloat, Float, Float](
+    opcodes = OpcodeSet.custom3,
+    tileRows = 1,
+    tileColumns = 1,
+    meshRows = 4,
+    meshColumns = 4,
+
+    ld_queue_length = 8,
+    st_queue_length = 2,
+    ex_queue_length = 8,
+
+    reservation_station_entries_ld = 8,
+    reservation_station_entries_st = 4,
+    reservation_station_entries_ex = 16,
+
+    sp_banks = 4,
+    sp_singleported = true,
+    acc_banks = 1,
+    acc_latency = 2,
+    acc_singleported = false,
+    acc_sub_banks = 1,
+    sp_capacity = CapacityInKilobytes(256),
+    shifter_banks = 1, // TODO add separate parameters for left and up shifter banks
+    dataflow = Dataflow.WS,
+    acc_capacity = CapacityInKilobytes(64),
+    spad_read_delay = 1,
+
+    dma_maxbytes = 64, // TODO get this from cacheblockbytes
+    dma_buswidth = 128, // TODO get this from SystemBusKey
+    aligned_to = 1,
+    tlb_size = 4,
+    use_tlb_register_filter = true,
+    max_in_flight_mem_reqs = 16,
+    use_dedicated_tl_port = false,
+    use_shared_ext_mem = false,
+
+    inputType = MxFloat(3, 3, 2),
+    weightType = MxFloat(3, 3, 4),
+    accType = MxFloat(8, 8, 4),
+
+    spatialArrayInputType = MxFloat(3, 3, 2),
+    spatialArrayWeightType = MxFloat(3, 3, 4),
+    spatialArrayOutputType = MxFloat(8, 8, 4, true, false),
+
+    mvin_scale_args = None,
+    mvin_scale_acc_args = None,
+    mvin_scale_shared = false,
+
+    // acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 8), -1, identity = "1.0",
+    //   c_str = "((x) * (scale))"
+    // )),
+    acc_read_full_width = true,
+    acc_read_small_width = true,
+
+    tile_latency = 1,
+
+    ex_read_from_spad = true,
+    ex_read_from_acc = true,
+    ex_write_to_spad = true,
+    ex_write_to_acc = true,
+
+    hardcode_d_to_garbage_addr = false,
+    has_normalizations = false,
+
+    mesh_output_delay = 0,
+
+    has_training_convs = false,
+    has_max_pool = false,
+    has_nonlinear_activations = false,
+
+    num_counter = 8,
+  )
+ 
+}
+
+// =========== MxFP Config ==========
+class GemminiMxFPDefaultConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiMxFPConfigs.defaultMxFPConfig))
+    }
+  )
+})
+

@@ -10,7 +10,16 @@ import hardfloat._
 // Bundles that represent the raw bits of custom datatypes
 case class Float(expWidth: Int, sigWidth: Int, isRecoded: Boolean = false) extends Bundle {
   val bits = UInt((expWidth + sigWidth + (if (isRecoded) 1 else 0)).W)
+  val bias: Int = (1 << (expWidth-1)) - 1
+}
 
+
+case class MxFloat(expWidth: Int, sigWidth: Int, count: Int, isRecoded: Boolean = false, pad: Boolean = true) extends Bundle {
+  val bits = if (pad) {
+    UInt((1<<log2Ceil(count * (expWidth + sigWidth + (if (isRecoded) 1 else 0)))).W)
+  } else {
+    UInt((count * (expWidth + sigWidth + (if (isRecoded) 1 else 0))).W)
+  }
   val bias: Int = (1 << (expWidth-1)) - 1
 }
 
@@ -580,6 +589,275 @@ object Arithmetic {
       override def zero = self.dontCare
       override def minimum: DummySInt = self.dontCare
     }
+  }
+
+  implicit object MxFloatArithmetic extends Arithmetic[MxFloat] {
+    override implicit def cast(self: MxFloat): ArithmeticOps[MxFloat] = new ArithmeticOps(self) {
+
+      // TODO: fix the inputs to the multiplier and mac modules
+      override def *(t: MxFloat): MxFloat = {
+        require(!self.isRecoded && !t.isRecoded)
+        val multiplier = Module(new MxFpMul(lut = false))
+        val result = Wire(MxFloat(multiplier.ts.cType.exp, multiplier.ts.cType.sig, 4, true))
+
+        val typeA = Wire(new MxTypes)
+        typeA.exp := self.expWidth.U
+        typeA.sig := self.sigWidth.U
+
+        val typeW = Wire(new MxTypes)
+        typeW.exp := t.expWidth.U
+        typeW.sig := t.sigWidth.U
+
+        val mode = Wire(new mxMode)
+        mode.actWidth := self.expWidth.U
+        mode.weiWidth := t.expWidth.U
+        mode.actInputs := self.count.U
+        mode.weiInputs := t.count.U
+        mode.numOutputs := t.count.U
+        mode.shift(0)(0) := 0.U
+        mode.shift(1)(0) := 0.U
+        mode.shift(0)(1) := 0.U
+        mode.shift(1)(1) := 0.U
+
+        multiplier.io.in_activation := self.bits(self.expWidth + self.sigWidth-1, 0)
+        multiplier.io.type_a := typeA
+        multiplier.io.mode := mode
+        multiplier.io.in_weights := t.bits(t.expWidth + t.sigWidth-1, 0)
+        multiplier.io.type_w := typeW
+        multiplier.io.enable := true.B  // TODO：do we need an enable signal here?
+        result := multiplier.io.out.asTypeOf(self)
+        result
+      }
+
+      override def mac(m1: MxFloat, m2: MxFloat): MxFloat = {
+        require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
+        val macc = Module(new MxFpMul(lut = false))
+        val result = Wire(MxFloat(macc.ts.cType.exp, macc.ts.cType.sig, 4, true))
+
+        val typeA = Wire(new MxTypes)
+        typeA.exp := m1.expWidth.U
+        typeA.sig := m1.sigWidth.U
+
+        val typeW = Wire(new MxTypes)
+        typeW.exp := m2.expWidth.U
+        typeW.sig := m2.sigWidth.U
+
+        val mode = Wire(new mxMode)
+        mode.actWidth := m1.expWidth.U
+        mode.weiWidth := m2.expWidth.U
+        mode.actInputs := m1.count.U
+        mode.weiInputs := m2.count.U
+        mode.numOutputs := m2.count.U
+        mode.shift(0)(0) := 0.U
+        mode.shift(1)(0) := 0.U
+        mode.shift(0)(1) := 0.U
+        mode.shift(1)(1) := 0.U
+
+        val rec_c = if (self.isRecoded) self.bits else VecInit(self.bits.asTypeOf(Vec(4, UInt((self.expWidth + self.sigWidth).W))).map(f => recFNFromFN(self.expWidth, self.sigWidth, f))).asUInt
+
+        macc.io.in_activation := m1.bits((m1.count)*(m1.expWidth + m1.sigWidth) - 1, 0)
+        macc.io.type_a := typeA
+        macc.io.mode := mode
+        macc.io.in_weights := m2.bits((m2.count)*(m2.expWidth + m2.sigWidth) - 1, 0)
+        macc.io.type_w := typeW
+        macc.io.enable := true.B  // TODO：do we need an enable signal here?
+        macc.io.rec_c := rec_c
+        result := macc.io.out.asTypeOf(self)
+        result
+      }
+
+      // TODO: Replace placeholder arithmetic
+      // Currently just returns self.bits to get things to compile
+
+
+      override def +(t: MxFloat): MxFloat = {
+        require(self.count == t.count)
+        val sigA = self.sigWidth
+        val expA = self.expWidth
+        val sigB = t.sigWidth
+        val expB = t.expWidth
+
+        val sig = sigA.max(sigB)
+        val exp = expA.max(expB)
+
+        val sum = Wire(MxFloat(sig, exp, self.count))
+
+        val result = self.bits.asTypeOf(Vec(self.count, UInt((expA + sigA).W))).zipWithIndex.map { case (elem, i) =>
+          val t_elem = t.bits.asTypeOf(Vec(t.count, UInt((expB + sigB).W)))(i)
+
+          val rec_elem = if (self.isRecoded) elem else recFNFromFN(expA, sigA, elem)
+          val rec_t = if (t.isRecoded) t_elem else recFNFromFN(expB, sigB, t_elem)
+
+          // resize 
+          val self_resizer = Module(new RecFNToRecFN(expA, sigA, exp, sig))
+          self_resizer.io.in := rec_elem
+          self_resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          self_resizer.io.detectTininess := consts.tininess_afterRounding
+          val self_rec_resized = self_resizer.io.out
+
+          val t_resizer = Module(new RecFNToRecFN(expB, sigB, exp, sig))
+          t_resizer.io.in := rec_t
+          t_resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          t_resizer.io.detectTininess := consts.tininess_afterRounding
+          val t_rec_resized = t_resizer.io.out
+
+          // recoded one
+          val in_to_rec_fn = Module(new INToRecFN(1, exp, sig))
+          in_to_rec_fn.io.signedIn := false.B
+          in_to_rec_fn.io.in := 1.U
+          in_to_rec_fn.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          in_to_rec_fn.io.detectTininess := consts.tininess_afterRounding
+          val one_rec = in_to_rec_fn.io.out
+
+          // add
+          val muladder = Module(new MulAddRecFN(exp, sig))
+          muladder.io.op := 0.U
+          muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          muladder.io.detectTininess := consts.tininess_afterRounding 
+          muladder.io.a := t_rec_resized
+          muladder.io.b := one_rec
+          muladder.io.c := self_rec_resized
+
+          (if (self.isRecoded) muladder.io.out else fNFromRecFN(exp, sig, muladder.io.out))
+          
+        }
+        sum := VecInit(result).asTypeOf(sum)
+        sum
+      }
+
+      override def -(t: MxFloat): MxFloat = {
+        self
+        // val t_sgn = t.bits(t.getWidth-1)
+        // val neg_t = Cat(~t_sgn, t.bits(t.getWidth-2,0)).asTypeOf(t)
+        // self + neg_t
+      }
+
+      override def >>(u: UInt): MxFloat = {
+        self
+        // Recode self
+        // val self_rec = if (self.isRecoded) self.bits else recFNFromFN(self.expWidth, self.sigWidth, self.bits)
+
+        // // Get 2^(-u) as a recoded float
+        // val shift_exp = Wire(UInt(self.expWidth.W))
+        // shift_exp := self.bias.U - u
+        // val shift_fn = Cat(0.U(1.W), shift_exp, 0.U((self.sigWidth-1).W))
+        // val shift_rec = recFNFromFN(self.expWidth, self.sigWidth, shift_fn)
+
+        // assert(shift_exp =/= 0.U, "scaling by denormalized numbers is not currently supported")
+
+        // // Multiply self and 2^(-u)
+        // val muladder = Module(new MulRecFN(self.expWidth, self.sigWidth))
+
+        // muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+        // muladder.io.detectTininess := consts.tininess_afterRounding
+
+        // muladder.io.a := self_rec
+        // muladder.io.b := shift_rec
+
+        // val result = Wire(Float(self.expWidth, self.sigWidth, self.isRecoded))
+        // result.bits := (if (result.isRecoded) muladder.io.out else fNFromRecFN(self.expWidth, self.sigWidth, muladder.io.out))
+        // result
+      }
+
+      override def >(t: MxFloat): Bool = {
+        false.B
+        // Recode all operands
+        // val t_rec = if (t.isRecoded) t.bits else recFNFromFN(t.expWidth, t.sigWidth, t.bits)
+        // val self_rec = if (self.isRecoded) self.bits else recFNFromFN(self.expWidth, self.sigWidth, self.bits)
+
+        // // Resize t to self's width
+        // val t_resizer = Module(new RecFNToRecFN(t.expWidth, t.sigWidth, self.expWidth, self.sigWidth))
+        // t_resizer.io.in := t_rec
+        // t_resizer.io.roundingMode := consts.round_near_even
+        // t_resizer.io.detectTininess := consts.tininess_afterRounding
+        // val t_rec_resized = t_resizer.io.out
+
+        // val comparator = Module(new CompareRecFN(self.expWidth, self.sigWidth))
+        // comparator.io.a := self_rec
+        // comparator.io.b := t_rec_resized
+        // comparator.io.signaling := false.B
+
+        // comparator.io.gt
+      }
+
+      override def withWidthOf(t: MxFloat): MxFloat = {
+        if ((self.isRecoded && !t.isRecoded) || (!self.isRecoded && t.isRecoded)) { 
+          val result = Wire(MxFloat(t.expWidth, t.sigWidth, t.count, t.isRecoded))
+          val elems = Wire(Vec(t.count, UInt((t.expWidth + t.sigWidth + (if (t.isRecoded) 1 else 0)).W)))
+          val input = self.bits.asTypeOf(Vec(self.count, UInt((self.expWidth + self.sigWidth + (if (self.isRecoded) 1 else 0)).W)))
+
+          for (i <- 0 until t.count) {
+            val elem = input(i)
+            val self_rec = if (self.isRecoded) elem else recFNFromFN(self.expWidth, self.sigWidth, elem)
+
+            val resizer = Module(new RecFNToRecFN(self.expWidth, self.sigWidth, t.expWidth, t.sigWidth))
+            resizer.io.in := self_rec
+            resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+            resizer.io.detectTininess := consts.tininess_afterRounding
+
+            elems(i) := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
+          }
+          result := elems.asTypeOf(result)
+          result
+        } else {
+          self
+        }
+ 
+      }
+
+
+      //override def withWidthOf(t: MxFloat): MxFloat = {
+       // self
+        // val self_rec = if (self.isRecoded) self.bits else recFNFromFN(self.expWidth, self.sigWidth, self.bits)
+
+        // val resizer = Module(new RecFNToRecFN(self.expWidth, self.sigWidth, t.expWidth, t.sigWidth))
+        // resizer.io.in := self_rec
+        // resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+        // resizer.io.detectTininess := consts.tininess_afterRounding
+
+        // val result = Wire(Float(t.expWidth, t.sigWidth, t.isRecoded))
+        // result.bits := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
+        // result
+      // }
+
+      override def clippedToWidthOf(t: MxFloat): MxFloat = {
+        self
+        // TODO check for overflow. Right now, we just assume that overflow doesn't happen
+        // val self_rec = if (self.isRecoded) self.bits else recFNFromFN(self.expWidth, self.sigWidth, self.bits)
+
+        // val resizer = Module(new RecFNToRecFN(self.expWidth, self.sigWidth, t.expWidth, t.sigWidth))
+        // resizer.io.in := self_rec
+        // resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+        // resizer.io.detectTininess := consts.tininess_afterRounding
+
+        // val result = Wire(Float(t.expWidth, t.sigWidth, t.isRecoded))
+        // result.bits := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
+        // result
+      }
+
+      override def relu: MxFloat = {
+        self
+        // val raw = if (self.isRecoded) rawFloatFromRecFN(self.expWidth, self.sigWidth, self.bits) else rawFloatFromFN(self.expWidth, self.sigWidth, self.bits)
+
+        // val result = Wire(Float(self.expWidth, self.sigWidth, self.isRecoded))
+        // result.bits := Mux(!raw.isZero && raw.sign, 0.U, self.bits)
+        // result
+      }
+
+      override def zero: MxFloat = 0.U.asTypeOf(self)
+      override def identity: MxFloat = {
+        self
+        // require(!self.isRecoded)
+        // Cat(0.U(2.W), ~(0.U((self.expWidth-1).W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
+      }
+      override def minimum: MxFloat = {
+        self
+        // require(!self.isRecoded)
+        // Cat(1.U, ~(0.U(self.expWidth.W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
+      }
+      
+    }
+
   }
  
 

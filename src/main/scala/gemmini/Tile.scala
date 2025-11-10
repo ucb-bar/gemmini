@@ -17,14 +17,14 @@ class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df
   val io = IO(new Bundle {
     val in_a        = Input(Vec(rows, inputType))
     val in_b        = Input(Vec(columns, outputType)) // This is the output of the tile next to it
-    val in_d        = Input(Vec(columns, outputType))
+    val in_d        = Input(Vec(columns, weightType))
 
     val in_control  = Input(Vec(columns, new PEControl(accType)))
     val in_id       = Input(Vec(columns, UInt(log2Up(max_simultaneous_matmuls).W)))
     val in_last  = Input(Vec(columns, Bool()))
 
     val out_a       = Output(Vec(rows, inputType))
-    val out_c       = Output(Vec(columns, outputType))
+    val out_c       = Output(Vec(columns, weightType))
     val out_b       = Output(Vec(columns, outputType))
 
     val out_control = Output(Vec(columns, new PEControl(accType)))

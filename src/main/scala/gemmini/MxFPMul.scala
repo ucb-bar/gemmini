@@ -6,29 +6,21 @@ import hardfloat._
 import freechips.rocketchip.util._
 import freechips.rocketchip.tile._
 
-class MxFpMul (supportedTypes: TypeSupport, lut: Boolean) extends Module {
+class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
   // TODO: I am definining these parameters here, but this shouldn't be like this, I will change this module to extend parameter class
-  val inAWidth = supportedTypes.inAWidth
-  val inBWidth = supportedTypes.inBWidth
-  val outType1 = supportedTypes.outType1
-  val outType2 = supportedTypes.outType2
-  val outType4 = supportedTypes.outType4
-  val cType = supportedTypes.cType
-  val peInAWidth = supportedTypes.peInAWidth
-  val peInBWidth = supportedTypes.peInBWidth
-  val peOutWidth = supportedTypes.peOutWidth
-  val expAdderWidths = supportedTypes.expAdderWidths
-  val totalAdderWidth = supportedTypes.totalAdderWidth
+  val ts = TypeSupport(
+    actSupportFp4 = true, actSupportFp6_1 = true, actSupportFp8_0 = true,
+    weiSupportFp4 = true, weiSupportFp6_1 = true, weiSupportFp8_0 = true
+  )
 
   val io = IO(new Bundle {
     val in_activation = Input(UInt(inAWidth.W))
-    val in_a_type = Input(UInt(2.W))
-    val a_altfmt = Input(Bool())
+    val type_a = Input(new MxTypes())
     val in_weights = Input(UInt(inBWidth.W))
-    val in_w_type = Input(UInt(2.W))
-    val w_altfmt = Input(Bool())
+    val type_w = Input(new MxTypes())
+    val mode = Input(new mxMode())
     val enable = Input(Bool())
-    val rec_c = Input(UInt((cType.exp + cType.sig + 1).W))
+    val rec_c = Input(UInt((4*(cType.exp + cType.sig + 1)).W))
     val out = Output(UInt((4*(cType.exp + cType.sig + 1)).W))
   })
 
@@ -63,13 +55,6 @@ class MxFpMul (supportedTypes: TypeSupport, lut: Boolean) extends Module {
     }
   }
 
-  // Classify input types
-  val type_a = MxTypes(io.in_a_type, io.a_altfmt)
-  val type_w = MxTypes(io.in_w_type, io.w_altfmt)
-
-  // Classify the PE mode needed
-  val peNeeded = requiredPEMode(type_a, type_w)
-
   // Separate input into lanes
   val lanes2_a = io.in_activation.asTypeOf(Vec(2, UInt((inAWidth/2).W)))
   val lanes1_a = io.in_activation.asTypeOf(Vec(1, UInt((inAWidth).W))) 
@@ -89,60 +74,60 @@ class MxFpMul (supportedTypes: TypeSupport, lut: Boolean) extends Module {
   // Classify input lanes
   // Get exps, sigs, and signs from the classified inputs in the right format for the PE and Exp Adder
   // Define zero inputs for masking 
-  if (supportedTypes.actSupportFp4) {
+  if (actSupportFp4) {
     val in_a_w2_cl = lanes2_a.map { f => classify(MxFormats.fp4, f(3, 0)) }
     val (exps_a_w2, sigs_a_w2, signs_a_w2) = in_a_w2_cl.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i*2), peInAWidth / 2, (inAWidth - peInAWidth)/2) }.unzip3
     val in_a_w2_zero = in_a_w2_cl.map(f => f.isZero)
 
-    when (type_a.sig === 2.U) {
+    when (io.type_a.sig === 2.U) {
       inA_pe := VecInit(sigs_a_w2).asUInt
       inA_exp := VecInit(exps_a_w2).asUInt
       inA_sign := VecInit(signs_a_w2).asUInt
       in_a_mask := VecInit.tabulate(4){i => in_a_w2_zero(i/2)}.asUInt
     }
   }
-  if (supportedTypes.actSupportFp6_1) {
+  if (actSupportFp6_1) {
     val in_a_w3_cl_fp6 = lanes2_a.map { f => classify(MxFormats.fp6_1, f(5, 0)) }
     val (exps_a_w3_fp6_1, sigs_a_w3_fp6_1, signs_a_w3_fp6_1) = in_a_w3_cl_fp6.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i*2), peInAWidth / 2, (inAWidth - peInAWidth)/2) }.unzip3
     val in_a_w3_zero_fp6 = in_a_w3_cl_fp6.map(f => f.isZero)
 
-    when (type_a.exp === 3.U && type_a.sig === 3.U && io.a_altfmt === true.B) {
+    when (io.type_a.exp === 3.U && io.type_a.sig === 3.U) {
       inA_pe := VecInit(sigs_a_w3_fp6_1).asUInt
       inA_exp := VecInit(exps_a_w3_fp6_1).asUInt
       inA_sign := VecInit(signs_a_w3_fp6_1).asUInt
       in_a_mask := VecInit.tabulate(4){i => in_a_w3_zero_fp6(i/2)}.asUInt
     }
   }
-  if (supportedTypes.actSupportFp8_1) {
+  if (actSupportFp8_1) {
     val in_a_w3_cl_fp8 = lanes2_a.map { f => classify(MxFormats.fp8_1, f(7, 0)) }
     val (exps_a_w3_fp8_1, sigs_a_w3_fp8_1, signs_a_w3_fp8_1) = in_a_w3_cl_fp8.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i*2), peInAWidth / 2, (inAWidth - peInAWidth)/2) }.unzip3
     val in_a_w3_zero_fp8 = in_a_w3_cl_fp8.map(f => f.isZero)
 
-    when (type_a.exp === 5.U && type_a.sig === 3.U && io.a_altfmt === true.B) {
+    when (io.type_a.exp === 5.U && io.type_a.sig === 3.U) {
       inA_pe := VecInit(sigs_a_w3_fp8_1).asUInt
       inA_exp := VecInit(exps_a_w3_fp8_1).asUInt
       inA_sign := VecInit(signs_a_w3_fp8_1).asUInt
       in_a_mask := VecInit.tabulate(4){i => in_a_w3_zero_fp8(i/2)}.asUInt
     }
   }
-  if (supportedTypes.actSupportFp6_0) {
+  if (actSupportFp6_0) {
     val in_a_w4_cl_fp6 = lanes1_a.map { f => classify(MxFormats.fp6_0, f(5, 0)) }
     val (exps_a_w4_fp6_0, sigs_a_w4_fp6_0, signs_a_w4_fp6_0) = in_a_w4_cl_fp6.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i*2), peInAWidth, inAWidth - peInAWidth) }.unzip3
     val in_a_w4_zero_fp6 = in_a_w4_cl_fp6.map(f => f.isZero)
 
-    when (type_a.exp === 2.U && type_a.sig === 4.U && io.a_altfmt === false.B) {
+    when (io.type_a.exp === 2.U && io.type_a.sig === 4.U) {
       inA_pe := VecInit(sigs_a_w4_fp6_0).asUInt
       inA_exp := VecInit(exps_a_w4_fp6_0).asUInt
       inA_sign := VecInit(signs_a_w4_fp6_0).asUInt
       in_a_mask := VecInit.tabulate(4){i => in_a_w4_zero_fp6(0)}.asUInt
     }
   }
-  if (supportedTypes.actSupportFp8_0) {
+  if (actSupportFp8_0) {
     val in_a_w4_cl_fp8 = lanes1_a.map { f => classify(MxFormats.fp8_0, f(7, 0)) }
     val (exps_a_w4_fp8_0, sigs_a_w4_fp8_0, signs_a_w4_fp8_0) = in_a_w4_cl_fp8.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i*2), peInAWidth, inAWidth - peInAWidth) }.unzip3
     val in_a_w4_zero_fp8 = in_a_w4_cl_fp8.map(f => f.isZero)
 
-    when (type_a.exp === 4.U && type_a.sig === 4.U && io.a_altfmt === false.B) {
+    when (io.type_a.exp === 4.U && io.type_a.sig === 4.U) {
       inA_pe := VecInit(sigs_a_w4_fp8_0).asUInt
       inA_exp := VecInit(exps_a_w4_fp8_0).asUInt
       inA_sign := VecInit(signs_a_w4_fp8_0).asUInt
@@ -150,60 +135,60 @@ class MxFpMul (supportedTypes: TypeSupport, lut: Boolean) extends Module {
     }
   }
 
-  if (supportedTypes.weiSupportFp4) {
+  if (weiSupportFp4) {
     val in_w_w2_cl = lanes4_w.map { f => classify(MxFormats.fp4, f(3, 0)) }
     val (exps_w_w2, sigs_w_w2, signs_w_w2) = in_w_w2_cl.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i), peInBWidth / 4, (inBWidth - peInBWidth)/4) }.unzip3
     val in_w_w2_zero = in_w_w2_cl.map(f => f.isZero)
 
-    when (type_w.sig === 2.U) {
+    when (io.type_w.sig === 2.U) {
       inW_pe := VecInit(sigs_w_w2).asUInt
       inW_exp := VecInit(exps_w_w2).asUInt
       inW_sign := VecInit(signs_w_w2).asUInt
       in_w_mask := VecInit.tabulate(4){i => in_w_w2_zero(i)}.asUInt
     }
   }
-  if (supportedTypes.weiSupportFp6_1) {
+  if (weiSupportFp6_1) {
     val in_w_w3_cl_fp6 = lanes4_w.map { f => classify(MxFormats.fp6_1, f(5, 0)) }
     val (exps_w_w3_fp6_1, sigs_w_w3_fp6_1, signs_w_w3_fp6_1) = in_w_w3_cl_fp6.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i), peInBWidth / 4, (inBWidth - peInBWidth)/4) }.unzip3
     val in_w_w3_zero_fp6 = in_w_w3_cl_fp6.map(f => f.isZero)
 
-    when (type_w.exp === 3.U && type_w.sig === 3.U && io.w_altfmt === true.B) {
+    when (io.type_w.exp === 3.U && io.type_w.sig === 3.U) {
       inW_pe := VecInit(sigs_w_w3_fp6_1).asUInt
       inW_exp := VecInit(exps_w_w3_fp6_1).asUInt
       inW_sign := VecInit(signs_w_w3_fp6_1).asUInt
       in_w_mask := VecInit.tabulate(4){i => in_w_w3_zero_fp6(i)}.asUInt
     }
   }
-  if (supportedTypes.weiSupportFp8_1) {
+  if (weiSupportFp8_1) {
     val in_w_w3_cl_fp8 = lanes4_w.map { f => classify(MxFormats.fp8_1, f(7, 0)) }
     val (exps_w_w3_fp8_1, sigs_w_w3_fp8_1, signs_w_w3_fp8_1) = in_w_w3_cl_fp8.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i), peInBWidth / 4, (inBWidth - peInBWidth)/4) }.unzip3
     val in_w_w3_zero_fp8 = in_w_w3_cl_fp8.map(f => f.isZero)
 
-    when (type_w.exp === 5.U && type_w.sig === 3.U && io.w_altfmt === true.B) {
+    when (io.type_w.exp === 5.U && io.type_w.sig === 3.U) {
       inW_pe := VecInit(sigs_w_w3_fp8_1).asUInt
       inW_exp := VecInit(exps_w_w3_fp8_1).asUInt
       inW_sign := VecInit(signs_w_w3_fp8_1).asUInt
       in_w_mask := VecInit.tabulate(4){i => in_w_w3_zero_fp8(i)}.asUInt
     }
   }
-  if (supportedTypes.weiSupportFp6_0) {
+  if (weiSupportFp6_0) {
     val in_w_w4_cl_fp6 = lanes1_w.map { f => classify(MxFormats.fp6_0, f(5, 0)) }
     val (exps_w_w4_fp6_0, sigs_w_w4_fp6_0, signs_w_w4_fp6_0) = in_w_w4_cl_fp6.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i), peInBWidth, inBWidth - peInBWidth) }.unzip3
     val in_w_w4_zero_fp6 = in_w_w4_cl_fp6.map(f => f.isZero)
 
-    when (type_w.exp === 2.U && type_w.sig === 4.U && io.w_altfmt === false.B) {
+    when (io.type_w.exp === 2.U && io.type_w.sig === 4.U) {
       inW_pe := VecInit(sigs_w_w4_fp6_0).asUInt
       inW_exp := VecInit(exps_w_w4_fp6_0).asUInt
       inW_sign := VecInit(signs_w_w4_fp6_0).asUInt
       in_w_mask := VecInit.tabulate(4){i => in_w_w4_zero_fp6(0)}.asUInt
     }
   }
-  if (supportedTypes.weiSupportFp8_0) {
+  if (weiSupportFp8_0) {
     val in_w_w4_cl_fp8 = lanes1_w.map { f => classify(MxFormats.fp8_0, f(7, 0)) }
     val (exps_w_w4_fp8_0, sigs_w_w4_fp8_0, signs_w_w4_fp8_0) = in_w_w4_cl_fp8.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i), peInBWidth, inBWidth - peInBWidth) }.unzip3
     val in_w_w4_zero_fp8 = in_w_w4_cl_fp8.map(f => f.isZero)
 
-    when (type_w.exp === 4.U && type_w.sig === 4.U && io.w_altfmt === false.B) {
+    when (io.type_w.exp === 4.U && io.type_w.sig === 4.U) {
       inW_pe := VecInit(sigs_w_w4_fp8_0).asUInt
       inW_exp := VecInit(exps_w_w4_fp8_0).asUInt
       inW_sign := VecInit(signs_w_w4_fp8_0).asUInt
@@ -215,8 +200,8 @@ class MxFpMul (supportedTypes: TypeSupport, lut: Boolean) extends Module {
 
   // PE Instantiation
   val out_pe = Wire(UInt(peOutWidth.W))
-  val PE = Module(new MxPE(supportedTypes.mxparameters, lut))
-  PE.io.modeDecoded := peNeeded
+  val PE = Module(new MxPE(mxparameters, lut))
+  PE.io.modeDecoded := io.mode
   PE.io.enable := io.enable
   PE.io.mask_a := ~in_a_mask.asUInt
   PE.io.mask_w := ~in_w_mask.asUInt
@@ -228,7 +213,7 @@ class MxFpMul (supportedTypes: TypeSupport, lut: Boolean) extends Module {
   val out_e = Wire(UInt(totalAdderWidth.W))
   val expAdder = Module(new MxExp(inA_exp_width = inAWidth - peInAWidth, inW_exp_width = inBWidth - peInBWidth, outWidth = totalAdderWidth, elemW = expAdderWidths, outTypes = Seq(outType1, outType4, outType1, outType4)))
   expAdder.io.enable := io.enable
-  expAdder.io.modeDecoded := peNeeded
+  expAdder.io.modeDecoded := io.mode
   expAdder.io.mask_a := ~in_a_mask.asUInt
   expAdder.io.mask_w := ~in_w_mask.asUInt
   expAdder.io.in_a := inA_exp
@@ -241,12 +226,12 @@ class MxFpMul (supportedTypes: TypeSupport, lut: Boolean) extends Module {
     val out4_toRec_norm_2 = normalize(out_pe((i+1)*(peOutWidth/4)-1, i*peOutWidth/4), outType4.sig - 1, 5)
     val out4_toRec_norm_3 = normalize(out_pe((i+1)*(peOutWidth/4)-1, i*peOutWidth/4), outType4.sig - 1, 4)
 
-    val out4_rec_exp = Mux(type_a.sig === 2.U && type_w.sig === 2.U,  out4_toRec_norm_3._2,
-                          Mux(type_a.sig === 3.U && type_w.sig === 3.U,  out4_toRec_norm_1._2, out4_toRec_norm_2._2))
-    val shift_dir = Mux(type_a.sig === 2.U && type_w.sig === 2.U,  out4_toRec_norm_3._3,
-                          Mux(type_a.sig === 3.U && type_w.sig === 3.U,  out4_toRec_norm_1._3, out4_toRec_norm_2._3))
-    val out4_rec_sig = Mux(type_a.sig === 2.U && type_w.sig === 2.U,  out4_toRec_norm_3._1,
-                          Mux(type_a.sig === 3.U && type_w.sig === 3.U,  out4_toRec_norm_1._1, out4_toRec_norm_2._1))
+    val out4_rec_exp = Mux(io.type_a.sig === 2.U && io.type_w.sig === 2.U,  out4_toRec_norm_3._2,
+                          Mux(io.type_a.sig === 3.U && io.type_w.sig === 3.U,  out4_toRec_norm_1._2, out4_toRec_norm_2._2))
+    val shift_dir = Mux(io.type_a.sig === 2.U && io.type_w.sig === 2.U,  out4_toRec_norm_3._3,
+                          Mux(io.type_a.sig === 3.U && io.type_w.sig === 3.U,  out4_toRec_norm_1._3, out4_toRec_norm_2._3))
+    val out4_rec_sig = Mux(io.type_a.sig === 2.U && io.type_w.sig === 2.U,  out4_toRec_norm_3._1,
+                          Mux(io.type_a.sig === 3.U && io.type_w.sig === 3.U,  out4_toRec_norm_1._1, out4_toRec_norm_2._1))
 
     MxPEOutToRaw(
       expWidth = outType4.exp,
@@ -261,9 +246,9 @@ class MxFpMul (supportedTypes: TypeSupport, lut: Boolean) extends Module {
     val out2_toRec_norm_1 = normalize(out_pe((i+1)*(peOutWidth/2)-1, i*peOutWidth/2), outType2.sig - 1, 7)
     val out2_toRec_norm_2 = normalize(out_pe((i+1)*(peOutWidth/2)-1, i*peOutWidth/2), outType2.sig - 1 , 6)
 
-    val out2_toRec_exp = Mux(type_a.sig === 2.U || type_w.sig === 2.U, out2_toRec_norm_2._2, out2_toRec_norm_1._2)
-    val shift_dir = Mux(type_a.sig === 2.U || type_w.sig === 2.U, out2_toRec_norm_2._3, out2_toRec_norm_1._3)
-    val out2_toRec_sig = Mux(type_a.sig === 2.U || type_w.sig === 2.U, out2_toRec_norm_2._1, out2_toRec_norm_1._1)
+    val out2_toRec_exp = Mux(io.type_a.sig === 2.U || io.type_w.sig === 2.U, out2_toRec_norm_2._2, out2_toRec_norm_1._2)
+    val shift_dir = Mux(io.type_a.sig === 2.U || io.type_w.sig === 2.U, out2_toRec_norm_2._3, out2_toRec_norm_1._3)
+    val out2_toRec_sig = Mux(io.type_a.sig === 2.U || io.type_w.sig === 2.U, out2_toRec_norm_2._1, out2_toRec_norm_1._1)
 
     MxPEOutToRaw(
       expWidth = outType2.exp,
@@ -288,12 +273,12 @@ class MxFpMul (supportedTypes: TypeSupport, lut: Boolean) extends Module {
   }
 
   val addUnits = Seq.fill(4)(Module(new hardfloatHelper.MxMulAddRecFN(cType.exp, cType.sig)))
-  val laneMask  = VecInit((0 until 4).map(i => io.enable && (i.U < peNeeded.numOutputs)))
+  val laneMask  = VecInit((0 until 4).map(i => io.enable && (i.U < io.mode.numOutputs)))
   val outputs = Wire(Vec(4, UInt(((cType.exp + cType.sig + 1)).W)))
 
   for (i <- 0 until 4) {
-    val rawIn = Mux(peNeeded.numOutputs === 4.U, out4_toRec(i), Mux(peNeeded.numOutputs === 2.U, out2_toRec(i/2), out1_toRec(0)))
-    val recIn_c = io.rec_c
+    val rawIn = Mux(io.mode.numOutputs === 4.U, out4_toRec(i), Mux(io.mode.numOutputs === 2.U, out2_toRec(i/2), out1_toRec(0)))
+    val recIn_c = io.rec_c.asTypeOf(Vec(4, UInt((cType.exp + cType.sig + 1).W)))(i)
 
     addUnits(i).io.roundingMode := hardfloat.consts.round_near_even
     addUnits(i).io.detectTininess := hardfloat.consts.tininess_afterRounding

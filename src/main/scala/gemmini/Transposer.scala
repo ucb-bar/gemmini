@@ -92,7 +92,7 @@ class PipelinedTransposer[T <: Data](val dim: Int, val dataType: T) extends Tran
 }
 
 class AlwaysOutTransposer[T <: Data](val dim: Int, val dataType: T) extends Transposer[T] {
-  require(isPow2(dim))
+  // require(isPow2(dim))
 
   val LEFT_DIR = 0.U(1.W)
   val UP_DIR = 1.U(1.W)

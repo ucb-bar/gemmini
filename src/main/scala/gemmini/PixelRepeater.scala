@@ -7,7 +7,7 @@ import Util._
 
 class PixelRepeaterReq[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols: Int, aligned_to: Int, tag_t: Tag) extends Bundle {
   val in: Vec[T] = Vec(block_cols, t.cloneType)
-  val mask: Vec[Bool] = Vec(block_cols * (t.getWidth/8) / aligned_to, Bool())
+  val mask: Vec[Bool] = Vec(block_cols * ((t.getWidth)/8) / aligned_to, Bool())
   val laddr: LocalAddr = laddr_t.cloneType
   val len: UInt = UInt(log2Up(block_cols+1).W) // TODO magic number
   val pixel_repeats: UInt = UInt(8.W) // TODO magic number
@@ -19,7 +19,7 @@ class PixelRepeaterReq[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_c
 
 class PixelRepeaterResp[T <: Data, Tag <: Data](t: T, laddr_t: LocalAddr, block_cols: Int, aligned_to: Int, tag_t: Tag) extends Bundle {
   val out: Vec[T] = Vec(block_cols, t.cloneType)
-  val mask: Vec[Bool] = Vec(block_cols * (t.getWidth/8) / aligned_to, Bool())
+  val mask: Vec[Bool] = Vec(block_cols * ((t.getWidth)/8) / aligned_to, Bool())
   val laddr: LocalAddr = laddr_t.cloneType
   val last: Bool = Bool()
   val tag: Tag = tag_t.cloneType

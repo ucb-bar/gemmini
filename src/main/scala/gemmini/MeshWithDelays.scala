@@ -37,8 +37,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
-  val B_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
-  val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType)) 
+  val B_TYPE = Vec(meshColumns, Vec(tileColumns, outputType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
+  val C_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) 
   val D_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
 
@@ -154,10 +154,16 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val d_is_from_transposer = req.bits.pe_control.dataflow === Dataflow.WS.id.U && req.bits.bd_transpose
   val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
 
+  // TODO: Improve this function to actually reduce the size of MXFormats
+  def toInput(x: Data): T = {
+    val u = x.asUInt
+    u(inputType.getWidth - 1, 0).asTypeOf(inputType) 
+  }
+
   transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
   transposer.io.inRow.bits := MuxCase(VecInit(a_buf.flatten), Seq(
-    b_is_from_transposer -> VecInit(b_buf.flatten),
-    d_is_from_transposer -> VecInit(d_buf.flatten.reverse),
+    b_is_from_transposer -> VecInit(b_buf.flatten.map(toInput)),
+    d_is_from_transposer -> VecInit(d_buf.flatten.reverse.map(toInput)),
   ))
 
   transposer.io.outCol.ready := true.B
@@ -196,8 +202,13 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   // We want to output C when we're output-stationary, but B when we're weight-stationary
   // TODO these would actually overlap when we switch from output-stationary to weight-stationary
-  io.resp.bits.data := shifted(Mux(mesh.io.out_control(0)(0).dataflow === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
-
+  if (df == Dataflow.BOTH) {
+    io.resp.bits.data := shifted(Mux(mesh.io.out_control(0)(0).dataflow === Dataflow.OS.id.U, mesh.io.out_c, mesh.io.out_b), outBanks, true)
+  } else if (df == Dataflow.WS) {
+    io.resp.bits.data := shifted(mesh.io.out_b, outBanks, true)
+  } else {
+    io.resp.bits.data := shifted(mesh.io.out_b, outBanks, true)
+  }
   io.resp.valid := shifted(mesh.io.out_valid, outBanks, reverse = true)(0)(0)
 
   val out_last = shifted(mesh.io.out_last, outBanks, reverse = true)(0)(0)
