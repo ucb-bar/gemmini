@@ -7,7 +7,7 @@ import Util._
 
 class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, scale_t: U) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
-  val scale = Vec(fullDataType.length, Vec(fullDataType(0).length, scale_t.cloneType)) 
+  val scale = scale_t
   val igelu_qb = acc_t.cloneType
   val igelu_qc = acc_t.cloneType
   val iexp_qln2 = acc_t.cloneType
@@ -18,9 +18,6 @@ class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, sca
   val fromDMA = Bool()
 
 }
-
-
-
 
 class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
   val data = fullDataType.cloneType
@@ -48,7 +45,7 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
 
 
 class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U,
-  acc_sub_banks: Int, use_shared_ext_mem: Boolean
+  acc_sub_banks: Int, use_shared_ext_mem: Boolean, use_mx_scaling: Boolean
 ) extends Bundle {
   val read = Flipped(new AccumulatorReadIO(n, t, scale_t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
@@ -96,7 +93,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   n: Int, t: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U,
   acc_singleported: Boolean, acc_sub_banks: Int,
   use_shared_ext_mem: Boolean, use_tl_ext_ram: Boolean,
-  acc_latency: Int, acc_type: T, is_dummy: Boolean
+  acc_latency: Int, acc_type: T, is_dummy: Boolean, use_mx_scaling: Boolean
 )
   (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
@@ -109,7 +106,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   import ev._
 
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem))
+  val io = IO(new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling))
 
   require (acc_latency >= 2)
 
