@@ -8,20 +8,16 @@ import chisel3.experimental.BundleLiterals._
 // TYPE SUPPORT CONFIGURATION
 // -----------------------------------------------------------------------------
 
-trait HasTypeSupport {
+trait HasMxPEParameters {
   val ts: TypeSupport
 
   lazy val inAWidth = ts.inAWidth
   lazy val inBWidth = ts.inBWidth
-  lazy val outType1 = ts.outType1
-  lazy val outType2 = ts.outType2
-  lazy val outType4 = ts.outType4
-  lazy val cType = ts.cType
+
   lazy val peInAWidth = ts.peInAWidth
   lazy val peInBWidth = ts.peInBWidth
   lazy val peOutWidth = ts.peOutWidth
   lazy val expAdderWidths = ts.expAdderWidths
-  lazy val totalAdderWidth = ts.totalAdderWidth
 
   lazy val mxparameters = ts.mxparameters
 
@@ -49,22 +45,12 @@ case class TypeSupport (
   weiSupportFp8_0: Boolean = false,
   weiSupportFp8_1: Boolean = false
 ) {
-
-  // output parameters
-  val outType1 = MxFormats(8, 8)
-  val outType2 = MxFormats(8, 8)
-  val outType4 = MxFormats(8, 8)
-
-  // Add parameters
-  val cType = MxFormats(8, 8)
-
   // input parameters
   val inAWidth = 12
   val inBWidth = 24
 
   // exp adder width
   val expAdderWidths = Seq(4, 3, 4, 3)
-  val totalAdderWidth = 4*(outType4.exp) 
 
   val modes = (
     (if (actSupportFp4 && weiSupportFp4) List(PE_MxMode.mode0) else List()) ++

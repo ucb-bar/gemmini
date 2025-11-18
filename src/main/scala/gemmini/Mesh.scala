@@ -18,7 +18,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
                                    df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int,
                                    max_simultaneous_matmuls: Int, output_delay: Int,
                                    val tileRows: Int, val tileColumns: Int,
-                                   val meshRows: Int, val meshColumns: Int) extends Module {
+                                   val meshRows: Int, val meshColumns: Int, meshProdPrecisionList : Seq[(Int, Int)], meshAccPrecisionList : Seq[T]) extends Module {
+
   val io = IO(new Bundle {
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b = Input(Vec(meshColumns, Vec(tileColumns, outputType)))
@@ -35,8 +36,13 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     val out_last = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
   })
 
+  private val ev = implicitly[Arithmetic[T]]
+  import ev._
+
   // mesh(r)(c) => Tile at row r, column c
-  val mesh: Seq[Seq[Tile[T]]] = Seq.fill(meshRows, meshColumns)(Module(new Tile(inputType, weightType, outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns)))
+  val mesh: Seq[Seq[Tile[T]]] = Seq.tabulate(meshRows, meshColumns) { (r, c) =>
+    Module(new Tile(inputType, weightType, meshAccPrecisionList(r), accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns, meshProdPrecisionList(r), meshAccPrecisionList(r)))
+    }
   val meshT = mesh.transpose
 
   def pipe[T <: Data](valid: Bool, t: T, latency: Int): T = {
@@ -57,10 +63,10 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
 
   // Chain tile_out_b -> tile_b_in (pipeline b across each column)
   for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft((io.in_b(c), io.in_valid(c))) {
-      case ((in_b, valid), tile) =>
-        tile.io.in_b := pipe(valid.head, in_b, tile_latency+1)
-        (tile.io.out_b, tile.io.out_valid)
+    meshT(c).foldLeft((io.in_b(c), io.in_valid(c), 0)) {
+      case ((in_b, valid, r_idx), tile) =>
+        tile.io.in_b := pipe(valid.head, VecInit(in_b.map(_.withWidthOf(meshAccPrecisionList(r_idx)))), tile_latency+1)
+        (tile.io.out_b, tile.io.out_valid, r_idx + 1)
     }
   }
 

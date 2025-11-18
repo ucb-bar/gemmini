@@ -216,8 +216,8 @@ object GemminiMxFPConfigs {
     opcodes = OpcodeSet.custom3,
     tileRows = 1,
     tileColumns = 1,
-    meshRows = 4,
-    meshColumns = 4,
+    meshRows = 16,
+    meshColumns = 16,
 
     ld_queue_length = 8,
     st_queue_length = 2,
@@ -255,6 +255,19 @@ object GemminiMxFPConfigs {
     spatialArrayInputType = MxFloat(3, 3, 2),
     spatialArrayWeightType = MxFloat(3, 3, 4),
     spatialArrayOutputType = MxFloat(8, 8, 4, true, false),
+
+    meshProdPrecisionList = Seq.fill(4) {(5, 6)} ++ 
+                                 Seq.fill(4) {(6, 6)} ++ 
+                                 Seq.fill(4) {(7, 7)} ++ 
+                                 Seq.fill(4) {(8, 8)}, 
+
+    meshAccPrecisionList =     Seq.fill(4) {MxFloat(7, 7, 4, true, false)} ++ 
+                                 Seq.fill(4) {MxFloat(7, 7, 4, true, false)} ++ 
+                                 Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
+                                 Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++
+                                 Seq.fill(1){MxFloat(8, 8, 4, true, false)},    // this one needs to match accType                              
+
+                                 // 16x16 mesh with varying precisions
 
     mvin_scale_args = None,
     mvin_scale_acc_args = None,

@@ -25,6 +25,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              spatialArrayOutputType: T,
 
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
+                                                                             meshProdPrecisionList : Seq[(Int, Int)] = Seq(), // empty seq means default precision for inputType/weightType/accType
+                                                                             meshAccPrecisionList : Seq[T] = Seq(),
 
                                                                              tileRows: Int = 1,
                                                                              tileColumns: Int = 1,
