@@ -294,7 +294,7 @@ object GemminiMxFPConfigs {
     has_training_convs = false,
     has_max_pool = false,
     has_nonlinear_activations = false,
-
+    
     num_counter = 8,
   )
  

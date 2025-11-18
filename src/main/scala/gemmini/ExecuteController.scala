@@ -834,8 +834,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val dataD_unpadded = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
 
   val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayInputType)))
-  val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, accType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, accType.zero)}.map(d => d.asTypeOf(accType).withWidthOf(spatialArrayOutputType)))
-  val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, weightType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, weightType.zero)}.map(d => d.asTypeOf(weightType).withWidthOf(spatialArrayWeightType)))
+  val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayWeightType)))
+  val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayWeightType)))
 
   // Pop responses off the scratchpad io ports
   when (mesh_cntl_signals_q.io.deq.fire) {
@@ -877,7 +877,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.d.valid := cntl.d_fire && dataD_valid
 
     mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, spatialArrayInputType)))
-    mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, spatialArrayOutputType)))
+    mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, spatialArrayWeightType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, spatialArrayWeightType)))
 
     mesh.io.req.valid := mesh_cntl_signals_q.io.deq.fire && (cntl.a_fire || cntl.b_fire || cntl.d_fire)
@@ -889,12 +889,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   when (cntl_valid && cntl.perform_single_preload) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, dataA.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, accType)))
+    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
   }
 
   when (cntl_valid && cntl.perform_single_mul) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshColumns, Vec(tileColumns, accType)))
+    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshColumns, Vec(tileColumns, inputType)))
     mesh.io.req.bits.tag.addr.make_this_garbage()
   }
 
@@ -923,7 +923,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Write to normal scratchpad
   for(i <- 0 until sp_banks) {
     val activated_wdata = VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map { e =>
-      val e_clipped = e.clippedToWidthOf(weightType)
+      val e_clipped = e.clippedToWidthOf(inputType)
       val e_act = MuxCase(e_clipped, Seq(
         (activation === Activation.RELU) -> e_clipped.relu))
 
@@ -934,7 +934,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.srams.write(i).valid := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
       io.srams.write(i).addr := w_row
       io.srams.write(i).data := activated_wdata.asUInt
-      io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(weightType.getWidth / (aligned_to * 8))(b))
+      io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(inputType.getWidth / (aligned_to * 8))(b))
     } else {
       io.srams.write(i).valid := false.B
       io.srams.write(i).addr := DontCare

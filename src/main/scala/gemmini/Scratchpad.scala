@@ -239,6 +239,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       }
 
       // Accumulator ports
+      val acc_scale_t_size = 1
       val acc = new Bundle {
         val read_req = Flipped(Vec(acc_banks, Decoupled(new AccumulatorReadReq(
           acc_bank_entries, accType, acc_scale_t.asInstanceOf[V]
@@ -643,7 +644,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       acc_scale_num_units,
       acc_scale_latency,
       has_nonlinear_activations,
-      has_normalizations,
+      has_normalizations
     ))
 
     val acc_waiting_to_be_scaled = write_scale_q.io.deq.valid &&
@@ -690,10 +691,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         acc_bank_entries, acc_row_t, acc_scale_func, acc_scale_t.asInstanceOf[V],
         acc_singleported, acc_sub_banks,
         use_shared_ext_mem, use_tl_ext_mem,
-        acc_latency, accType, is_dummy
+        acc_latency, accType, is_dummy, config.use_mx_scaling, config.scale_mem_depth, config.scale_mem_bank_width, config.scale_mem_numBanks
       )) }
       val bank_ios = VecInit(banks.map(_.io))
+      
 
+      //TODO: Adding the logic for writing the scaling factor memory through the accmulatorMem
+
+      
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.acc_bank())
 

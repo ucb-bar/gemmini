@@ -36,7 +36,7 @@ object GemminiConfigs {
     //quantWidth = 4, // this is added for MX quant 
     // Spatial array PE options
     dataflow = Dataflow.BOTH,
-
+    
     // Scratchpad and accumulator
     sp_capacity = CapacityInKilobytes(128),
     acc_capacity = CapacityInKilobytes(32),
@@ -164,6 +164,7 @@ object GemminiConfigs {
     ex_read_from_acc = true,
     ex_write_to_spad = true,
     ex_write_to_acc = true,
+    use_mx_scaling = true
   )
 
   val dummyConfig = GemminiArrayConfig[DummySInt, Float, Float](
@@ -198,6 +199,7 @@ object GemminiConfigs {
     dma_maxbytes = defaultConfig.dma_maxbytes,
     dma_buswidth = defaultConfig.dma_buswidth,
     tlb_size = defaultConfig.tlb_size,
+    use_mx_scaling = defaultConfig.use_mx_scaling,
 
     mvin_scale_args = Some(ScaleArguments(
       (t: DummySInt, f: Float) => t.dontCare,
