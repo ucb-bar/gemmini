@@ -58,6 +58,9 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
     val op2 = Output(t.cloneType)
     val sum = Input(t.cloneType)
   }
+  val scale_mem_write = if (use_mx_scaling) {
+    Some(Flipped(Decoupled(new ScalingFactorWriteReq(9, 256))))
+  } else None
 }
 
 class AccPipe[T <: Data : Arithmetic](latency: Int, t: T)(implicit ev: Arithmetic[T]) extends Module {
@@ -89,11 +92,13 @@ class AccPipeShared[T <: Data : Arithmetic](latency: Int, t: Vec[Vec[T]], banks:
   })
 }
 
+
 class AccumulatorMem[T <: Data, U <: Data](
   n: Int, t: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U,
   acc_singleported: Boolean, acc_sub_banks: Int,
   use_shared_ext_mem: Boolean, use_tl_ext_ram: Boolean,
-  acc_latency: Int, acc_type: T, is_dummy: Boolean, use_mx_scaling: Boolean
+  acc_latency: Int, acc_type: T, is_dummy: Boolean, use_mx_scaling: Boolean, scale_mem_depth: Int,
+  scale_mem_bank_width: Int, scale_mem_numBanks: Int
 )
   (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
@@ -102,22 +107,134 @@ class AccumulatorMem[T <: Data, U <: Data](
 
   // TODO make a new aligned_to variable specifically for AccumulatorMem. We should assume that inputs are at least
   // accType.getWidth/8 aligned, because it won't make sense to do matrix additions directly in the DMA otherwise.
-
+  
   import ev._
 
   // TODO unify this with TwoPortSyncMemIO
   val io = IO(new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling))
+  
+  val scaleFactorMem = if (use_mx_scaling) {
+    Some(Module(new ScalingFactorMem(
+      depth = scale_mem_depth,
+      bankWidth = scale_mem_bank_width,
+      actOutputScalingWidth = 8,
+      numBanks = 4
+    )))
+  } else None
+  
+  def calculateScaleAddr(write_addr: UInt): UInt = {
+    write_addr  // Using the accmulator write addr to caculate the scaling memory read addr, for simplification 
+  }
+  def applyMxScaling(data: Vec[Vec[T]], scales: Vec[Vec[UInt]]): Vec[Vec[T]] = {
+    val scaled = Wire(data.cloneType)
+    for (i <- 0 until data.length) {
+      for (j <- 0 until data(i).length) {
+        scaled(i)(j) := applyE9M0Scale(data(i)(j), scales(i)(j), 8, 7)
+      }
+    }
+    scaled 
+  }
+  def applyE9M0Scale[T <: Data](
+    value: T,
+    scale_e9m0: UInt,
+    expBits: Int,
+    mantBits: Int
+  )(implicit ev: Arithmetic[T]): T = {
+
+  val valueUInt = value.asUInt
+  val totalBits = valueUInt.getWidth
+
+  require(totalBits == 1 + expBits + mantBits,
+    s"value width = $totalBits, but 1(sign)+$expBits(exp)+$mantBits(mant) != total")
+
+  val sign     = valueUInt(totalBits - 1)
+  val expHigh  = totalBits - 2
+  val expLow   = expHigh - expBits + 1
+  val exp      = valueUInt(expHigh, expLow)
+  val mantHigh = expLow - 1
+  val mantLow  = 0
+  val mant     = valueUInt(mantHigh, mantLow)
+
+  val scaleS:  SInt = Cat(0.U(1.W), scale_e9m0).asSInt
+  val expS:    SInt = Cat(0.U(1.W), exp).asSInt
+
+  // E9M0: scale = 2^(scale_e9m0 - 255)
+  val scaleOffset: SInt = scaleS - 255.S
+  val newExp: SInt      = expS + scaleOffset
+
+  val maxExp = ((1 << expBits) - 1).S
+
+  val clampedExpS = Wire(SInt(newExp.getWidth.W))
+  when (newExp < 0.S) {
+    clampedExpS := 0.S
+  } .elsewhen (newExp > maxExp) {
+    clampedExpS := maxExp
+  } .otherwise {
+    clampedExpS := newExp
+  }
+
+  val clampedExp = clampedExpS.asUInt(expBits - 1, 0)
+
+  val outUInt = Cat(sign, clampedExp, mant)
+  outUInt.asTypeOf(value)
+}
 
   require (acc_latency >= 2)
 
   val pipelined_writes = Reg(Vec(acc_latency, Valid(new AccumulatorWriteReq(n, t))))
   val oldest_pipelined_write = pipelined_writes(acc_latency-1)
+
+  
   pipelined_writes(0).valid := io.write.fire
   pipelined_writes(0).bits  := io.write.bits
-  for (i <- 1 until acc_latency) {
-    pipelined_writes(i) := pipelined_writes(i-1)
-  }
+  val scaled_data = WireInit(0.U.asTypeOf(t))
+  
+if (use_mx_scaling) {
+  val scale_mem = scaleFactorMem.get
+  //wirte scale_mem
+  scale_mem.io.write <> io.scale_mem_write.get
+  scale_mem.io.write.valid := false.B
+  scale_mem.io.write.bits := DontCare
+  
+  val waiting_for_scale = RegInit(false.B)
+  //read_scale_mem
+  scale_mem.io.read_req.valid := false.B
+  scale_mem.io.read_req.bits.addr := DontCare
+  scale_mem.io.read_req.bits.scaling_enable := false.B
+  scale_mem.io.read_resp.ready := true.B
 
+  
+  when(io.write.fire && !waiting_for_scale) { //when accmulation buffer gets the write signal
+    scale_mem.io.read_req.valid := true.B
+    scale_mem.io.read_req.bits.scaling_enable := true.B
+    scale_mem.io.read_req.bits.addr := calculateScaleAddr(io.write.bits.addr)  
+    when(scale_mem.io.read_req.fire) {
+        waiting_for_scale := true.B
+      }
+    }
+  when(scale_mem.io.read_resp.fire && waiting_for_scale) {
+      //scale_buffer := mx_scale_io.scale_resp.bits.combined_scales
+        scaled_data := applyMxScaling( //next cycle the scale arrives
+        pipelined_writes(0).bits.data, 
+        scale_mem.io.read_resp.bits.combined_scales)
+        waiting_for_scale := false.B  
+   }.elsewhen(io.write.fire){ // while issue the new scale read, the current scale ready singal set to low
+      waiting_for_scale := true.B  
+   }
+}
+
+  for (i <- 1 until acc_latency) {
+    when ((i==0).B){
+      if(use_mx_scaling){
+        pipelined_writes(i).bits.data := scaled_data} 
+      else {
+        pipelined_writes(i) := pipelined_writes(i-1)
+        }
+    }.otherwise{
+      pipelined_writes(i) := pipelined_writes(i-1)
+    }
+  }
+  
   val rdata_for_adder = Wire(t)
   rdata_for_adder := DontCare
   val rdata_for_read_resp = Wire(t)
