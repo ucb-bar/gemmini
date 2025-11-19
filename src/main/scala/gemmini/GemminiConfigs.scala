@@ -25,6 +25,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              spatialArrayOutputType: T,
 
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
+                                                                             meshProdPrecisionList : Seq[(Int, Int)] = Seq(), // empty seq means default precision for inputType/weightType/accType
+                                                                             meshAccPrecisionList : Seq[T] = Seq(),
 
                                                                              tileRows: Int = 1,
                                                                              tileColumns: Int = 1,
@@ -99,11 +101,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              use_tl_ext_mem: Boolean = false,
                                                                              tl_ext_mem_base: BigInt = 0,
                                                                              clock_gate: Boolean = false,
-                                                                              use_mx_scaling: Boolean = true,
-                                                                              scale_mem_depth: Int = 256 , 
-                                                                              scale_mem_bank_width: Int = 128 ,   
-                                                                              scale_mem_numBanks: Int = 4 , 
-                                                                        
+
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   // require(inputType.getWidth == weightType.getWidth)

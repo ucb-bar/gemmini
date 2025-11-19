@@ -4,15 +4,22 @@ import chisel3._
 import chisel3.util._
 import hardfloat._
 import freechips.rocketchip.util._
-import freechips.rocketchip.tile._
+import freechips.rocketchip.tile._ 
 
-class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
+class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: MxFloat) extends Module with HasMxPEParameters {
+  println("Creating MxFpMul with product precision: " + fpProductPrecision + " and acc precision: " + fpAccPrecision)
   // TODO: I am definining these parameters here, but this shouldn't be like this, I will change this module to extend parameter class
+  val outType1 = MxFormats(fpProductPrecision._1, fpProductPrecision._2)
+  val outType2 = MxFormats(fpProductPrecision._1, fpProductPrecision._2)
+  val outType4 = MxFormats(fpProductPrecision._1, fpProductPrecision._2)
+  val cType = MxFormats(fpAccPrecision.expWidth, fpAccPrecision.sigWidth)
+  val totalAdderWidth = 4*(outType4.exp) 
+
   val ts = TypeSupport(
     actSupportFp4 = true, actSupportFp6_1 = true, actSupportFp8_0 = true,
     weiSupportFp4 = true, weiSupportFp6_1 = true, weiSupportFp8_0 = true
   )
-
+  
   val io = IO(new Bundle {
     val in_activation = Input(UInt(inAWidth.W))
     val type_a = Input(new MxTypes())
@@ -31,7 +38,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
       val leftShift = Mux(isPositiveShift, 0.U, PriorityEncoder(prod.asBools.reverse))
       val expAdj = Mux(isPositiveShift, 1.U, leftShift -& 1.U)
       val aligned = prod << leftShift
-      (Mux(isZero, 0.U(outBits.W), aligned(outBits-1, 0)), Mux(isZero, 0.U, expAdj), isPositiveShift)
+      (Mux(isZero, 0.U(outBits.W), aligned(inBits - 2, inBits - 1 - outBits)), Mux(isZero, 0.U, expAdj), isPositiveShift)
     } else {
       val isZero = prod === 0.U
       val extraPad = outBits - inBits
@@ -66,8 +73,8 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
   val inW_pe   = WireDefault(0.U(peInBWidth.W))
   val inA_exp  = WireDefault(0.U((inAWidth - peInAWidth).W))
   val inW_exp  = WireDefault(0.U((inBWidth - peInBWidth).W))
-  val inA_sign = WireDefault(0.U((peInAWidth/2).W))
-  val inW_sign = WireDefault(0.U((peInBWidth/4).W))
+  val inA_sign = WireDefault(0.U(4.W))
+  val inW_sign = WireDefault(0.U(4.W))
   val in_a_mask= WireDefault("b1111".U(4.W))
   val in_w_mask= WireDefault("b1111".U(4.W))
 
@@ -82,7 +89,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     when (io.type_a.sig === 2.U) {
       inA_pe := VecInit(sigs_a_w2).asUInt
       inA_exp := VecInit(exps_a_w2).asUInt
-      inA_sign := VecInit(signs_a_w2).asUInt
+      inA_sign := VecInit.tabulate(4){ i => signs_a_w2(i/2) }.asUInt
       in_a_mask := VecInit.tabulate(4){i => in_a_w2_zero(i/2)}.asUInt
     }
   }
@@ -94,7 +101,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     when (io.type_a.exp === 3.U && io.type_a.sig === 3.U) {
       inA_pe := VecInit(sigs_a_w3_fp6_1).asUInt
       inA_exp := VecInit(exps_a_w3_fp6_1).asUInt
-      inA_sign := VecInit(signs_a_w3_fp6_1).asUInt
+      inA_sign := VecInit.tabulate(4){ i => signs_a_w3_fp6_1(i/2) }.asUInt
       in_a_mask := VecInit.tabulate(4){i => in_a_w3_zero_fp6(i/2)}.asUInt
     }
   }
@@ -106,7 +113,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     when (io.type_a.exp === 5.U && io.type_a.sig === 3.U) {
       inA_pe := VecInit(sigs_a_w3_fp8_1).asUInt
       inA_exp := VecInit(exps_a_w3_fp8_1).asUInt
-      inA_sign := VecInit(signs_a_w3_fp8_1).asUInt
+      inA_sign := VecInit.tabulate(4){ i => signs_a_w3_fp8_1(i/2) }.asUInt
       in_a_mask := VecInit.tabulate(4){i => in_a_w3_zero_fp8(i/2)}.asUInt
     }
   }
@@ -118,7 +125,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     when (io.type_a.exp === 2.U && io.type_a.sig === 4.U) {
       inA_pe := VecInit(sigs_a_w4_fp6_0).asUInt
       inA_exp := VecInit(exps_a_w4_fp6_0).asUInt
-      inA_sign := VecInit(signs_a_w4_fp6_0).asUInt
+      inA_sign := VecInit.tabulate(4){ i => signs_a_w4_fp6_0(0) }.asUInt
       in_a_mask := VecInit.tabulate(4){i => in_a_w4_zero_fp6(0)}.asUInt
     }
   }
@@ -130,7 +137,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     when (io.type_a.exp === 4.U && io.type_a.sig === 4.U) {
       inA_pe := VecInit(sigs_a_w4_fp8_0).asUInt
       inA_exp := VecInit(exps_a_w4_fp8_0).asUInt
-      inA_sign := VecInit(signs_a_w4_fp8_0).asUInt
+      inA_sign := VecInit.tabulate(4){ i => signs_a_w4_fp8_0(0) }.asUInt
       in_a_mask := VecInit.tabulate(4){i => in_a_w4_zero_fp8(0)}.asUInt
     }
   }
@@ -143,7 +150,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     when (io.type_w.sig === 2.U) {
       inW_pe := VecInit(sigs_w_w2).asUInt
       inW_exp := VecInit(exps_w_w2).asUInt
-      inW_sign := VecInit(signs_w_w2).asUInt
+      inW_sign := VecInit.tabulate(4){ i => signs_w_w2(i) }.asUInt
       in_w_mask := VecInit.tabulate(4){i => in_w_w2_zero(i)}.asUInt
     }
   }
@@ -155,7 +162,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     when (io.type_w.exp === 3.U && io.type_w.sig === 3.U) {
       inW_pe := VecInit(sigs_w_w3_fp6_1).asUInt
       inW_exp := VecInit(exps_w_w3_fp6_1).asUInt
-      inW_sign := VecInit(signs_w_w3_fp6_1).asUInt
+      inW_sign := VecInit.tabulate(4){ i => signs_w_w3_fp6_1(i) }.asUInt
       in_w_mask := VecInit.tabulate(4){i => in_w_w3_zero_fp6(i)}.asUInt
     }
   }
@@ -167,7 +174,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     when (io.type_w.exp === 5.U && io.type_w.sig === 3.U) {
       inW_pe := VecInit(sigs_w_w3_fp8_1).asUInt
       inW_exp := VecInit(exps_w_w3_fp8_1).asUInt
-      inW_sign := VecInit(signs_w_w3_fp8_1).asUInt
+      inW_sign := VecInit.tabulate(4){ i => signs_w_w3_fp8_1(i) }.asUInt
       in_w_mask := VecInit.tabulate(4){i => in_w_w3_zero_fp8(i)}.asUInt
     }
   }
@@ -179,7 +186,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     when (io.type_w.exp === 2.U && io.type_w.sig === 4.U) {
       inW_pe := VecInit(sigs_w_w4_fp6_0).asUInt
       inW_exp := VecInit(exps_w_w4_fp6_0).asUInt
-      inW_sign := VecInit(signs_w_w4_fp6_0).asUInt
+      inW_sign := VecInit.tabulate(4){ i => signs_w_w4_fp6_0(0) }.asUInt
       in_w_mask := VecInit.tabulate(4){i => in_w_w4_zero_fp6(0)}.asUInt
     }
   }
@@ -191,12 +198,13 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     when (io.type_w.exp === 4.U && io.type_w.sig === 4.U) {
       inW_pe := VecInit(sigs_w_w4_fp8_0).asUInt
       inW_exp := VecInit(exps_w_w4_fp8_0).asUInt
-      inW_sign := VecInit(signs_w_w4_fp8_0).asUInt
+      inW_sign := VecInit.tabulate(4){ i => signs_w_w4_fp8_0(0) }.asUInt
       in_w_mask := VecInit.tabulate(4){i => in_w_w4_zero_fp8(0)}.asUInt
     }
   }
 
-  // TODO: Compute the sign of the outputs
+  // Compute the sign of the outputs
+  val out_signs = inA_sign ^ inW_sign
 
   // PE Instantiation
   val out_pe = Wire(UInt(peOutWidth.W))
@@ -222,9 +230,9 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
 
 
   val out4_toRec = VecInit.tabulate(4) { i =>
-    val out4_toRec_norm_1 = normalize(out_pe((i+1)*(peOutWidth/4)-1, i*peOutWidth/4), outType4.sig - 1, 6)
-    val out4_toRec_norm_2 = normalize(out_pe((i+1)*(peOutWidth/4)-1, i*peOutWidth/4), outType4.sig - 1, 5)
-    val out4_toRec_norm_3 = normalize(out_pe((i+1)*(peOutWidth/4)-1, i*peOutWidth/4), outType4.sig - 1, 4)
+    val out4_toRec_norm_1 = normalize(out_pe((i)*(peOutWidth/4) + 5, i*peOutWidth/4), outType4.sig - 1, 6)
+    val out4_toRec_norm_2 = normalize(out_pe((i)*(peOutWidth/4) + 4, i*peOutWidth/4), outType4.sig - 1, 5)
+    val out4_toRec_norm_3 = normalize(out_pe((i)*(peOutWidth/4) + 3, i*peOutWidth/4), outType4.sig - 1, 4)
 
     val out4_rec_exp = Mux(io.type_a.sig === 2.U && io.type_w.sig === 2.U,  out4_toRec_norm_3._2,
                           Mux(io.type_a.sig === 3.U && io.type_w.sig === 3.U,  out4_toRec_norm_1._2, out4_toRec_norm_2._2))
@@ -236,15 +244,15 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     MxPEOutToRaw(
       expWidth = outType4.exp,
       sigWidth = outType4.sig,
-      sign = 0.U(1.W), // TODO: fix sign handling
+      sign = out_signs(i),
       exp = Mux(shift_dir === 0.U, out_e((i+1)*(totalAdderWidth/4)-1, i*(totalAdderWidth/4)) -% out4_rec_exp, out_e((i+1)*(totalAdderWidth/4)-1, i*(totalAdderWidth/4)) +% out4_rec_exp),
       sig = out4_rec_sig
     )
   }
 
   val out2_toRec = VecInit.tabulate(2) { i =>
-    val out2_toRec_norm_1 = normalize(out_pe((i+1)*(peOutWidth/2)-1, i*peOutWidth/2), outType2.sig - 1, 7)
-    val out2_toRec_norm_2 = normalize(out_pe((i+1)*(peOutWidth/2)-1, i*peOutWidth/2), outType2.sig - 1 , 6)
+    val out2_toRec_norm_1 = normalize(out_pe((i)*(peOutWidth/2) + 6, i*peOutWidth/2), outType2.sig - 1, 7)
+    val out2_toRec_norm_2 = normalize(out_pe((i)*(peOutWidth/2) + 5, i*peOutWidth/2), outType2.sig - 1 , 6)
 
     val out2_toRec_exp = Mux(io.type_a.sig === 2.U || io.type_w.sig === 2.U, out2_toRec_norm_2._2, out2_toRec_norm_1._2)
     val shift_dir = Mux(io.type_a.sig === 2.U || io.type_w.sig === 2.U, out2_toRec_norm_2._3, out2_toRec_norm_1._3)
@@ -253,7 +261,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     MxPEOutToRaw(
       expWidth = outType2.exp,
       sigWidth = outType2.sig,
-      sign = 0.U(1.W), // TODO: fix sign handling
+      sign = out_signs(i*2),
       exp = Mux(shift_dir === 0.U, out_e((i)*(totalAdderWidth/2) + outType2.exp - 1, (i)*(totalAdderWidth/2)) -% out2_toRec_exp, out_e((i)*(totalAdderWidth/2) + outType2.exp - 1, (i)*(totalAdderWidth/2)) +% out2_toRec_exp),
       sig = out2_toRec_sig
     )
@@ -266,7 +274,7 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
     MxPEOutToRaw(
       expWidth = outType1.exp,
       sigWidth = outType1.sig,
-      sign = 0.U(1.W), // TODO: fix sign handling
+      sign = out_signs(0),
       exp = Mux(out1_toRec_norm._3 === 0.U, out_e((i)*(totalAdderWidth) + outType1.exp - 1, i*(totalAdderWidth)) -% out1_toRec_norm._2, out_e((i)*(totalAdderWidth) + outType1.exp - 1, i*(totalAdderWidth)) +% out1_toRec_norm._2),
       sig = out1_toRec_norm._1
     )
@@ -276,8 +284,22 @@ class MxFpMul (lut: Boolean) extends Module with HasTypeSupport{
   val laneMask  = VecInit((0 until 4).map(i => io.enable && (i.U < io.mode.numOutputs)))
   val outputs = Wire(Vec(4, UInt(((cType.exp + cType.sig + 1)).W)))
 
+  def resize(in: RawFloat, inT: MxFormats, outT: MxFormats): RawFloat = {
+    val resize_unit = Module(new RoundAnyRawFNToRecFN(inT.exp, inT.sig, outT.exp, outT.sig, 0))
+    resize_unit.io.in := in
+    resize_unit.io.roundingMode := hardfloat.consts.round_near_even
+    resize_unit.io.detectTininess := hardfloat.consts.tininess_afterRounding
+    resize_unit.io.invalidExc := false.B
+    resize_unit.io.infiniteExc := false.B
+    rawFloatFromRecFN(outT.exp, outT.sig, resize_unit.io.out)
+  }
+
   for (i <- 0 until 4) {
-    val rawIn = Mux(io.mode.numOutputs === 4.U, out4_toRec(i), Mux(io.mode.numOutputs === 2.U, out2_toRec(i/2), out1_toRec(0)))
+    val rawIn = Mux(io.mode.numOutputs === 4.U, 
+                      resize(out4_toRec(i), outType4, cType), 
+                      Mux(io.mode.numOutputs === 2.U, 
+                        resize(out2_toRec(i/2), outType2, cType),
+                        resize(out1_toRec(0), outType1, cType)))
     val recIn_c = io.rec_c.asTypeOf(Vec(4, UInt((cType.exp + cType.sig + 1).W)))(i)
 
     addUnits(i).io.roundingMode := hardfloat.consts.round_near_even
@@ -304,7 +326,11 @@ object MxPEOutToRaw {
     val isZeroFractIn = (fractIn === 0.U)
 
     val normDist = countLeadingZeros(fractIn)
-    val subnormFract = (fractIn << normDist) (sigWidth - 3, 0) << 1
+    val subnormFract = if (sigWidth > 2) {
+      (fractIn << normDist) (sigWidth - 3, 0) << 1
+    } else {
+      0.U
+    }
     val adjustedExp =
       Mux(isZeroExpIn,
         normDist ^ ((BigInt(1) << (expWidth + 1)) - 1).U,

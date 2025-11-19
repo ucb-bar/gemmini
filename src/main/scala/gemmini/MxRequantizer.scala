@@ -69,7 +69,7 @@ case class GemminiRequantizerConfig(
 )
 
 
-class MxScaleGeneratorIO(
+class MxRequantizerIO(
   sp_data_width: Int,  
   sp_addr_width: Int,
   scaleMem_data_width: Int,
@@ -86,7 +86,7 @@ class MxScaleGeneratorIO(
   val requant_data_out = Decoupled(new RequantizerOutBundle(outputnumLanes))
 }
    
-class MxScaleGenerator[T <: Data: Arithmetic](
+class MxRequantizer[T <: Data: Arithmetic](
   sp_data_width: Int, 
   sp_addr_width: Int,
   scaleMem_data_width: Int,
@@ -98,21 +98,21 @@ class MxScaleGenerator[T <: Data: Arithmetic](
   
   import ev._
   
-  val io = IO(new MxScaleGeneratorIO(
-    scaleMem_data_width, 
-    scaleMem_addr_width, 
-    scaleSize, 
+  val io = IO(new MxRequantizerIO(
+    sp_data_width, 
+    sp_addr_width, 
     scaleMem_data_width,
     scaleMem_addr_width,
+    scaleSize, 
     scaleMembasewrite,
     config
   ))
    
- 
+  io.requnat_data_in.ready := true.B 
   val scales_per_write = scaleMem_data_width / 8
   val scale_write_addr_counter = RegInit(0.U(log2Ceil(scaleMem_addr_width).W))
 
-  val scale_buffer = RegInit(0.U.asTypeOf(Vec(scaleSize, UInt(8.W))))
+  val scale_buffer = RegInit(VecInit(Seq.fill(scaleSize)(0.U(8.W))))
   val quant_dataType = io.requnat_data_in.bits.dataType  
  
   val format_reg = RegInit(MuxLookup(quant_dataType, MxFloatFormat.FP8)(Seq(
@@ -152,7 +152,7 @@ class MxScaleGenerator[T <: Data: Arithmetic](
 
   val (exp_bits, mant_bits, pmax, log2_pmax_floor) = MxFloatFormat(format_reg)
 
-  val data_buffer = RegInit(0.U.asTypeOf(Vec(io.outputnumLanes, UInt(io.inputdataWidth.W))))
+  val data_buffer =  RegInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(io.inputdataWidth.W))))
   val data_buffer_counter = RegInit(0.U(1.W))
   val half_lanes = io.inputnumLanes 
   val requant_data_in_valid_d = RegNext(io.requnat_data_in.valid, false.B) 
@@ -211,14 +211,13 @@ class MxScaleGenerator[T <: Data: Arithmetic](
   val quantize_valid_d = RegNext(quantize_valid, false.B)
 
   val total_bits_per_element = 1.U + exp_bits + mant_bits 
-  val quant_fp6 = Wire(Vec(io.outputnumLanes, UInt(6.W)))
-
+  val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
+  
   when(quantize_valid) {
-    io.requant_data_out.valid := true.B
     io.requant_data_out.bits.dataType := quant_dataType
     io.requant_data_out.bits.address := io.requnat_data_in.bits.address
 
-    val extracted_data = if (total_bits_per_element == 4) {
+    val extracted_data = if (total_bits_per_element == 4) {io.requant_data_out.fire
     Cat((0 until io.outputnumLanes).map(i => quantized_buffer(i)(3, 0)).reverse)
     } else if (total_bits_per_element == 8) {
     Cat(quantized_buffer.reverse)
@@ -229,28 +228,31 @@ class MxScaleGenerator[T <: Data: Arithmetic](
     VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
 
     io.requant_data_out.bits.data := extracted_data
-    when(io.requant_data_out.fire) {
-      io.requant_data_out.valid := true.B
-      printf(p"[MxQuantize] Quantized block with scale=0x${Hexadecimal(scale_e8m0)}, exp=${scale_exponent}\n")
-    }
+    io.requant_data_out.valid := true.B
+    printf(p"[MxQuantize] Quantized block with scale=0x${Hexadecimal(scale_e8m0)}, exp=${scale_exponent}\n")
+    
   }.otherwise {
-     io.requant_data_out.valid := false.B
      io.requant_data_out.bits.data := 0.U
   }
   
   //do projecttion for fp6 to Int4
 
-  val projected_data = RegInit(Vec(io.outputnumLanes, UInt(4.W)))
+  val projected_data = RegInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(4.W))))
+
   val quantLut = Module(new QuantLut(
   wdataWidth = 96,
   raddrWidth = 4,
   rdataWidth = 6,
   outputnumLanes = io.outputnumLanes
 ))
+
 quantLut.io.lut_write.valid := false.B
 quantLut.io.lut_write.bits := DontCare
 quantLut.io.quant_fp6.valid := false.B
 quantLut.io.quant_fp6.bits := DontCare
+quantLut.io.lut_read_req.valid := false.B
+quantLut.io.lut_read_req.bits := DontCare
+quantLut.io.lut_read_resp.ready := false.B
 
 when(quantize_valid && (total_bits_per_element === 6.U)) {
       quantLut.io.quant_fp6.valid := true.B
@@ -262,12 +264,9 @@ when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
     io.requant_data_out.bits.dataType := quant_dataType
     io.requant_data_out.bits.address := io.requnat_data_in.bits.address
     io.requant_data_out.bits.data := Cat(quantLut.io.projected_data.bits.reverse)
-    when(io.requant_data_out.fire) {
-      io.requant_data_out.valid := true.B
-      printf(p"[MxQuantize] Quantized block with scale=0x${Hexadecimal(scale_e8m0)}, exp=${scale_exponent}\n")
-    }
+    printf(p"[MxQuantize] Quantized block with scale=0x${Hexadecimal(scale_e8m0)}, exp=${scale_exponent}\n")
+
   }.otherwise {
-     io.requant_data_out.valid := false.B
      io.requant_data_out.bits.data := 0.U
   }
 
@@ -290,7 +289,7 @@ when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
   when(scale_buffer_full) {
     io.scaleMem_write.valid := true.B
     io.scaleMem_write.bits.addr := (scaleMembasewrite.U + scale_write_addr_counter) << 1.U
-    io.scaleMem_write.bits.data := scale_buffer
+    io.scaleMem_write.bits.data := Cat(scale_buffer.reverse)
     
     when(io.scaleMem_write.fire) {
       val scale_buffer_packed = Cat(scale_buffer.reverse)

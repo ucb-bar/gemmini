@@ -88,6 +88,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def relu: T
   def zero: T
   def minimum: T
+  def mac_mx(m1: T, m2: T, meshFpProductPrecisionList: (Int, Int), meshFpAccPrecisionList: T): T 
 
   // Optional parameters, which only need to be defined if you want to enable various optimizations for transformers
   def divider(denom_t: UInt, options: Int = 0): Option[(DecoupledIO[UInt], DecoupledIO[T])] = None
@@ -131,6 +132,10 @@ object Arithmetic {
       override def zero: UInt = 0.U
       override def identity: UInt = 1.U
       override def minimum: UInt = 0.U
+      override def mac_mx(m1: UInt, m2: UInt, fpProductPrecision: (Int, Int), fpAccPrecision: UInt): UInt = {
+        this.mac(m1, m2)
+      }
+
     }
   }
 
@@ -140,6 +145,10 @@ object Arithmetic {
       override def mac(m1: SInt, m2: SInt) = m1 * m2 + self
       override def +(t: SInt) = self + t
       override def -(t: SInt) = self - t
+
+      override def mac_mx(m1: SInt, m2: SInt, fpProductPrecision: (Int, Int), fpAccPrecision: SInt): SInt = {
+        this.mac(m1, m2)
+      }
 
       override def >>(u: UInt) = {
         // The equation we use can be found here: https://riscv.github.io/documents/riscv-v-spec/#_vector_fixed_point_rounding_mode_register_vxrm
@@ -436,6 +445,10 @@ object Arithmetic {
         out
       }
 
+      override def mac_mx(m1: Float, m2: Float, fpProductPrecision: (Int, Int), fpAccPrecision: Float): Float = {
+        this.mac(m1, m2)
+      }
+
       override def +(t: Float): Float = {
         require(self.getWidth >= t.getWidth) // This just makes it easier to write the resizing code
 
@@ -578,6 +591,7 @@ object Arithmetic {
     override implicit def cast(self: DummySInt) = new ArithmeticOps(self) {
       override def *(t: DummySInt) = self.dontCare
       override def mac(m1: DummySInt, m2: DummySInt) = self.dontCare
+      override def mac_mx(m1:DummySInt, m2: DummySInt, fpProductPrecision: (Int, Int), fpAccPrecision: DummySInt) = self.dontCare
       override def +(t: DummySInt) = self.dontCare
       override def -(t: DummySInt) = self.dontCare
       override def >>(t: UInt) = self.dontCare
@@ -594,45 +608,10 @@ object Arithmetic {
   implicit object MxFloatArithmetic extends Arithmetic[MxFloat] {
     override implicit def cast(self: MxFloat): ArithmeticOps[MxFloat] = new ArithmeticOps(self) {
 
-      // TODO: fix the inputs to the multiplier and mac modules
-      override def *(t: MxFloat): MxFloat = {
-        require(!self.isRecoded && !t.isRecoded)
-        val multiplier = Module(new MxFpMul(lut = false))
-        val result = Wire(MxFloat(multiplier.ts.cType.exp, multiplier.ts.cType.sig, 4, true))
-
-        val typeA = Wire(new MxTypes)
-        typeA.exp := self.expWidth.U
-        typeA.sig := self.sigWidth.U
-
-        val typeW = Wire(new MxTypes)
-        typeW.exp := t.expWidth.U
-        typeW.sig := t.sigWidth.U
-
-        val mode = Wire(new mxMode)
-        mode.actWidth := self.expWidth.U
-        mode.weiWidth := t.expWidth.U
-        mode.actInputs := self.count.U
-        mode.weiInputs := t.count.U
-        mode.numOutputs := t.count.U
-        mode.shift(0)(0) := 0.U
-        mode.shift(1)(0) := 0.U
-        mode.shift(0)(1) := 0.U
-        mode.shift(1)(1) := 0.U
-
-        multiplier.io.in_activation := self.bits(self.expWidth + self.sigWidth-1, 0)
-        multiplier.io.type_a := typeA
-        multiplier.io.mode := mode
-        multiplier.io.in_weights := t.bits(t.expWidth + t.sigWidth-1, 0)
-        multiplier.io.type_w := typeW
-        multiplier.io.enable := true.B  // TODO：do we need an enable signal here?
-        result := multiplier.io.out.asTypeOf(self)
-        result
-      }
-
-      override def mac(m1: MxFloat, m2: MxFloat): MxFloat = {
+      override def mac_mx(m1: MxFloat, m2: MxFloat, fpProductPrecision: (Int, Int), fpAccPrecision: MxFloat): MxFloat = {
         require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
-        val macc = Module(new MxFpMul(lut = false))
-        val result = Wire(MxFloat(macc.ts.cType.exp, macc.ts.cType.sig, 4, true))
+        val macc = Module(new MxFpMul(lut = false)(fpProductPrecision, fpAccPrecision))
+        val result = Wire(MxFloat(macc.cType.exp, macc.cType.sig, 4, true))
 
         val typeA = Wire(new MxTypes)
         typeA.exp := m1.expWidth.U
@@ -664,6 +643,82 @@ object Arithmetic {
         macc.io.rec_c := rec_c
         result := macc.io.out.asTypeOf(self)
         result
+      }
+
+      // TODO: fix the inputs to the multiplier and mac modules
+      override def *(t: MxFloat): MxFloat = {
+        self
+        // require(!self.isRecoded && !t.isRecoded)
+        // val fpProductPrecision = (8, 8)
+        // val fpAccPrecision = (8, 8)
+        // val multiplier = Module(new MxFpMul(lut = false)(fpProductPrecision, fpAccPrecision))
+        // val result = Wire(MxFloat(multiplier.ts.cType.exp, multiplier.ts.cType.sig, 4, true))
+
+        // val typeA = Wire(new MxTypes)
+        // typeA.exp := self.expWidth.U
+        // typeA.sig := self.sigWidth.U
+
+        // val typeW = Wire(new MxTypes)
+        // typeW.exp := t.expWidth.U
+        // typeW.sig := t.sigWidth.U
+
+        // val mode = Wire(new mxMode)
+        // mode.actWidth := self.expWidth.U
+        // mode.weiWidth := t.expWidth.U
+        // mode.actInputs := self.count.U
+        // mode.weiInputs := t.count.U
+        // mode.numOutputs := t.count.U
+        // mode.shift(0)(0) := 0.U
+        // mode.shift(1)(0) := 0.U
+        // mode.shift(0)(1) := 0.U
+        // mode.shift(1)(1) := 0.U
+
+        // multiplier.io.in_activation := self.bits(self.expWidth + self.sigWidth-1, 0)
+        // multiplier.io.type_a := typeA
+        // multiplier.io.mode := mode
+        // multiplier.io.in_weights := t.bits(t.expWidth + t.sigWidth-1, 0)
+        // multiplier.io.type_w := typeW
+        // multiplier.io.enable := true.B  // TODO：do we need an enable signal here?
+        // result := multiplier.io.out.asTypeOf(self)
+        // result
+      }
+
+      override def mac(m1: MxFloat, m2: MxFloat): MxFloat = {
+        self
+        // require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
+        // val macc = Module(new MxFpMul(lut = false)((8, 8), (8, 8)))
+        // val result = Wire(MxFloat(macc.ts.cType.exp, macc.ts.cType.sig, 4, true))
+
+        // val typeA = Wire(new MxTypes)
+        // typeA.exp := m1.expWidth.U
+        // typeA.sig := m1.sigWidth.U
+
+        // val typeW = Wire(new MxTypes)
+        // typeW.exp := m2.expWidth.U
+        // typeW.sig := m2.sigWidth.U
+
+        // val mode = Wire(new mxMode)
+        // mode.actWidth := m1.expWidth.U
+        // mode.weiWidth := m2.expWidth.U
+        // mode.actInputs := m1.count.U
+        // mode.weiInputs := m2.count.U
+        // mode.numOutputs := m2.count.U
+        // mode.shift(0)(0) := 0.U
+        // mode.shift(1)(0) := 0.U
+        // mode.shift(0)(1) := 0.U
+        // mode.shift(1)(1) := 0.U
+
+        // val rec_c = if (self.isRecoded) self.bits else VecInit(self.bits.asTypeOf(Vec(4, UInt((self.expWidth + self.sigWidth).W))).map(f => recFNFromFN(self.expWidth, self.sigWidth, f))).asUInt
+
+        // macc.io.in_activation := m1.bits((m1.count)*(m1.expWidth + m1.sigWidth) - 1, 0)
+        // macc.io.type_a := typeA
+        // macc.io.mode := mode
+        // macc.io.in_weights := m2.bits((m2.count)*(m2.expWidth + m2.sigWidth) - 1, 0)
+        // macc.io.type_w := typeW
+        // macc.io.enable := true.B  // TODO：do we need an enable signal here?
+        // macc.io.rec_c := rec_c
+        // result := macc.io.out.asTypeOf(self)
+        // result
       }
 
       // TODO: Replace placeholder arithmetic
@@ -781,27 +836,23 @@ object Arithmetic {
       }
 
       override def withWidthOf(t: MxFloat): MxFloat = {
-        if ((self.isRecoded && !t.isRecoded) || (!self.isRecoded && t.isRecoded)) { 
-          val result = Wire(MxFloat(t.expWidth, t.sigWidth, t.count, t.isRecoded))
-          val elems = Wire(Vec(t.count, UInt((t.expWidth + t.sigWidth + (if (t.isRecoded) 1 else 0)).W)))
-          val input = self.bits.asTypeOf(Vec(self.count, UInt((self.expWidth + self.sigWidth + (if (self.isRecoded) 1 else 0)).W)))
+        val result = Wire(MxFloat(t.expWidth, t.sigWidth, t.count, t.isRecoded))
+        val elems = Wire(Vec(t.count, UInt((t.expWidth + t.sigWidth + (if (t.isRecoded) 1 else 0)).W)))
+        val input = self.bits.asTypeOf(Vec(self.count, UInt((self.expWidth + self.sigWidth + (if (self.isRecoded) 1 else 0)).W)))
 
-          for (i <- 0 until t.count) {
-            val elem = input(i)
-            val self_rec = if (self.isRecoded) elem else recFNFromFN(self.expWidth, self.sigWidth, elem)
+        for (i <- 0 until t.count) {
+          val elem = input(i)
+          val self_rec = if (self.isRecoded) elem else recFNFromFN(self.expWidth, self.sigWidth, elem)
 
-            val resizer = Module(new RecFNToRecFN(self.expWidth, self.sigWidth, t.expWidth, t.sigWidth))
-            resizer.io.in := self_rec
-            resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-            resizer.io.detectTininess := consts.tininess_afterRounding
+          val resizer = Module(new RecFNToRecFN(self.expWidth, self.sigWidth, t.expWidth, t.sigWidth))
+          resizer.io.in := self_rec
+          resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+          resizer.io.detectTininess := consts.tininess_afterRounding
 
-            elems(i) := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
-          }
-          result := elems.asTypeOf(result)
-          result
-        } else {
-          self
+          elems(i) := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
         }
+        result := elems.asTypeOf(result)
+        result
  
       }
 
@@ -934,5 +985,6 @@ object Arithmetic {
   //   }
 
   // }
+
 
 }

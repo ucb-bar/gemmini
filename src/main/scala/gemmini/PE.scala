@@ -11,7 +11,7 @@ class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
 
 }
 
-class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T) (implicit ev: Arithmetic[T]) extends Module {
+class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFpProductPrecisionList: (Int, Int), meshFpAccPrecisionList: T) (implicit ev: Arithmetic[T]) extends Module {
   import ev._
   val io = IO(new Bundle {
     val in_a  = Input(inputType)
@@ -20,7 +20,7 @@ class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T) (impli
     val out_d = Output(dType)
   })
 
-  io.out_d := io.in_c.mac(io.in_a, io.in_b)
+  io.out_d := io.in_c.mac_mx(io.in_a, io.in_b, meshFpProductPrecisionList, meshFpAccPrecisionList)
 }
 
 // TODO update documentation
@@ -28,7 +28,7 @@ class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T) (impli
   * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
   * @param width Data width of operands
   */
-class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, max_simultaneous_matmuls: Int)
+class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, max_simultaneous_matmuls: Int, meshFpProductPrecision: (Int, Int), meshFpAccPrecision: T)
                    (implicit ev: Arithmetic[T]) extends Module { // Debugging variables
   import ev._
 
@@ -62,7 +62,7 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
   // MAC units. To force mac circuitry to be re-used, we create a "mac_unit"
   // module here which just performs a single MAC operation
   val mac_unit = Module(new MacUnit(inputType, weightType,
-    if (df == Dataflow.WS) outputType else accType, outputType))
+    if (df == Dataflow.WS) outputType else accType, outputType, meshFpProductPrecision, meshFpAccPrecision))
 
   val a  = io.in_a
   val b  = io.in_b
