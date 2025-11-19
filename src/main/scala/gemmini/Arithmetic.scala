@@ -97,6 +97,25 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def mult_with_reciprocal[U <: Data](reciprocal: U) = self
 }
 
+
+object FType {
+  val H = new FType(5, 11)
+  val S = new FType(8, 24)
+  val D = new FType(11, 53)
+  val BF16 = new FType(8, 8)
+  val E5M3 = new FType(5, 4)
+  val E4M4 = new FType(5, 4)
+  val E4M3 = new FType(4, 4)
+  val E5M2 = new FType(5, 3)
+  val E2M1 = new FType(2, 2)
+  val E3M1 = new FType(3, 2)
+  val E2M3 = new FType(2, 4)
+  val E3M2 = new FType(3, 3)
+  val E3M3 = new FType(3, 4)
+  val E8M7 = new FType(8, 8)
+  val all = List(H, S, D)
+}
+
 object Arithmetic {
   implicit object UIntArithmetic extends Arithmetic[UInt] {
     override implicit def cast(self: UInt) = new ArithmeticOps(self) {
