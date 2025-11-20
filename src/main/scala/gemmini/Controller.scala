@@ -6,12 +6,13 @@ import java.nio.file.{Files, Paths}
 import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config._
-import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tile._
 import freechips.rocketchip.util.{BundleField, ClockGate}
 import freechips.rocketchip.tilelink._
 import GemminiISA._
 import Util._
+import freechips.rocketchip.diplomacy.{AddressSet, IdRange, TransferSizes}
+import org.chipsalliance.diplomacy.lazymodule.LazyModule
 
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val cmd = new RoCCCommand
@@ -156,6 +157,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // }
   } else if (use_shared_ext_mem) {
     ext_mem_io.foreach(_ <> outer.spad.module.io.ext_mem.get)
+  }
+
+
+  val mx_io = Option.when(outer.config.use_mx_scaling) {
+    val mx_io = IO(new Bundle {
+      val scale_mem = Flipped(Decoupled(spad.module.io.scale_mem.get.bits.cloneType))
+    })
+
+    // mx connections with gemmini tile
+    mx_io.scale_mem <> spad.module.io.scale_mem.get
+    mx_io
   }
 
   val tagWidth = 32

@@ -259,7 +259,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         None
       }
 
-      val scaled_mem = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
+      val scale_mem = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
 
       // TLB ports
       val tlb = Vec(2 + spad_writer.map(_ => 1).getOrElse(0), new FrontendTLBIO)
@@ -704,10 +704,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       // Reading from the Accumulator banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
-        // TODO (richard): connect this from GemminiTile
         bio.scale_mem_write.foreach { w =>
-          w.valid := false.B
-          w.bits := DontCare
+          w.valid := io.scale_mem.get.valid
+          w.bits := io.scale_mem.get.bits
+          io.scale_mem.get.ready := w.ready
         }
 
         if (use_shared_ext_mem) {
