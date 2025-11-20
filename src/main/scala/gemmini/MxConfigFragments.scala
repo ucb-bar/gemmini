@@ -7,11 +7,12 @@ case class GemminiScalingFactorMemConfig(
   baseAddr: BigInt,
   sizeInBytes: BigInt = 32 << 10,
   sramLineSizeInBytes: Int = 32,
-  logicalLineSizeInBytes: Int = 32,
+  numBanks: Int = 4,
 ) {
+  def depth: Int = (sizeInBytes / sramLineSizeInBytes / numBanks).toInt
+  def bankWidthBits = sramLineSizeInBytes * 8
   def addrBits = log2Ceil(sizeInBytes)
   def lineOffsetBits = log2Ceil(sramLineSizeInBytes)
-  def bankSelectBits = log2Ceil(logicalLineSizeInBytes / sramLineSizeInBytes)
 }
 
 case class GemminiRequantizerConfig(
@@ -41,6 +42,11 @@ object RequantizerDataType extends ChiselEnum {
 class ScalingFactorWriteReq(addrWidth: Int, dataWidth: Int) extends Bundle {
   val addr = UInt(addrWidth.W)
   val data = UInt(dataWidth.W)
+
+  def this(config: GemminiScalingFactorMemConfig) = {
+    // writes two interleaved banks at once
+    this(config.addrBits, config.bankWidthBits * 2)
+  }
 }
 
 class RequantizerInBundle(numLanes: Int, dataWidth: Int = 16) extends Bundle {

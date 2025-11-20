@@ -1,7 +1,7 @@
 
 package gemmini
 
-import chisel3.{Bool, _}
+import chisel3._
 import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.diplomacy.{LazyModule, LazyModuleImp}
@@ -258,6 +258,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       } else {
         None
       }
+
+      val scaled_mem = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
 
       // TLB ports
       val tlb = Vec(2 + spad_writer.map(_ => 1).getOrElse(0), new FrontendTLBIO)
@@ -691,19 +693,23 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         acc_bank_entries, acc_row_t, acc_scale_func, acc_scale_t.asInstanceOf[V],
         acc_singleported, acc_sub_banks,
         use_shared_ext_mem, use_tl_ext_mem,
-        acc_latency, accType, is_dummy, config.use_mx_scaling, config.scale_mem_depth, config.scale_mem_bank_width, config.scale_mem_numBanks
+        acc_latency, accType, is_dummy, config.use_mx_scaling,
+        config.scale_mem,
       )) }
       val bank_ios = VecInit(banks.map(_.io))
       
 
-      //TODO: Adding the logic for writing the scaling factor memory through the accmulatorMem
-
-      
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.acc_bank())
 
       // Reading from the Accumulator banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
+        // TODO (richard): connect this from GemminiTile
+        bio.scale_mem_write.foreach { w =>
+          w.valid := false.B
+          w.bits := DontCare
+        }
+
         if (use_shared_ext_mem) {
           io.ext_mem.get.acc(i) <> bio.ext_mem.get
         }
