@@ -7,18 +7,6 @@ import org.chipsalliance.cde.config.Parameters
 
 import scala.math.{pow}
 
-class QuantLutWriteBundle(wdataWidth: Int) extends Bundle {
-  val data = UInt(wdataWidth.W)
-}
-
-class QuantLutReadReq(raddrWidth: Int) extends Bundle {
-  val lutaddr = UInt(raddrWidth.W)
-}
-
-class QuantLutReadResp(rdataWidth: Int) extends Bundle {
-  val lutdata = UInt(rdataWidth.W)
-}
-
 class QuantLutIO(
   wdataWidth: Int,
   raddrWidth: Int,

@@ -5,6 +5,7 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
+import freechips.rocketchip.tile.FType
 import hardfloat._
 
 // Bundles that represent the raw bits of custom datatypes
@@ -97,8 +98,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def mult_with_reciprocal[U <: Data](reciprocal: U) = self
 }
 
-
-object FType {
+object MxFType {
   val H = new FType(5, 11)
   val S = new FType(8, 24)
   val D = new FType(11, 53)
