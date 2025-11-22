@@ -123,7 +123,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   } else None
   
   def calculateScaleAddr(write_addr: UInt): UInt = {
-    write_addr  // Using the accmulator write addr to caculate the scaling memory read addr, for simplification 
+    write_addr  // TODO: Using the accmulator write addr to caculate the scaling memory read addr, for simplification 
   }
   def applyMxScaling(data: Vec[Vec[T]], scales: Vec[Vec[UInt]]): Vec[Vec[T]] = {
     val scaled = Wire(data.cloneType)

@@ -115,17 +115,8 @@ class MxRequantizer[T <: Data: Arithmetic](
   val scale_buffer = RegInit(VecInit(Seq.fill(scaleSize)(0.U(8.W))))
   val quant_dataType = io.requnat_data_in.bits.dataType  
  
-  val format_reg = RegInit(MuxLookup(quant_dataType, MxFloatFormat.FP8)(Seq(
-  RequantizerDataType.FP4 -> MxFloatFormat.FP4,  
-  RequantizerDataType.FP6 -> MxFloatFormat.FP6,  
-  RequantizerDataType.FP8 -> MxFloatFormat.FP8   
-  )))
+  val format_reg = RegNext(quant_dataType.asUInt, 2.U)
   
-  val format_length = RegInit(MuxLookup(quant_dataType, MxFloatFormat.FP8)(Seq(
-  RequantizerDataType.FP4 -> 4.U,  
-  RequantizerDataType.FP6 -> 6.U,  
-  RequantizerDataType.FP8 -> 8.U   
- )))
 
   io.scaleMem_write.valid := false.B
   io.scaleMem_write.bits := DontCare
@@ -208,35 +199,28 @@ class MxRequantizer[T <: Data: Arithmetic](
 
 
   val quantize_valid = RegNext(data_buffer_counter === 0.U && requant_data_in_valid_d, false.B)
-  val quantize_valid_d = RegNext(quantize_valid, false.B)
+  //val quantize_valid_d = RegNext(quantize_valid, false.B)
 
-  val total_bits_per_element = 1.U + exp_bits + mant_bits 
+  val total_bits_per_element = WireDefault(0.U(4.W))
+  total_bits_per_element := 1.U  +&  exp_bits  +&  mant_bits 
+
   val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
+  quant_fp6 := Mux(total_bits_per_element === 6.U, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(5, 0))), 
+    VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
+  val extracted_data = WireDefault((0.U((io.outputnumLanes*8).W)))
   
   when(quantize_valid) {
-    io.requant_data_out.bits.dataType := quant_dataType
-    io.requant_data_out.bits.address := io.requnat_data_in.bits.address
-
-    val extracted_data = if (total_bits_per_element == 4) {io.requant_data_out.fire
-    Cat((0 until io.outputnumLanes).map(i => quantized_buffer(i)(3, 0)).reverse)
-    } else if (total_bits_per_element == 8) {
-    Cat(quantized_buffer.reverse)
-    } else {
-    0.U((io.outputnumLanes * 8).W)
+    when(total_bits_per_element === 4.U){
+      extracted_data := Cat((0 until io.outputnumLanes).map(i => quantized_buffer(i)(3, 0)).reverse)
+    }.elsewhen(total_bits_per_element === 8.U){
+      extracted_data := Cat(quantized_buffer.reverse)
+    }.otherwise{
+      extracted_data := 0.U((io.outputnumLanes*8).W)
     }
-    quant_fp6 := Mux(total_bits_per_element === 6.U, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(5, 0))), 
-    VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
-
-    io.requant_data_out.bits.data := extracted_data
-    io.requant_data_out.valid := true.B
-    printf(p"[MxQuantize] Quantized block with scale=0x${Hexadecimal(scale_e8m0)}, exp=${scale_exponent}\n")
-    
-  }.otherwise {
-     io.requant_data_out.bits.data := 0.U
+    //printf(p"[MxQuantize] extracted_data=0x${Hexadecimal(extracted_data)}\n")
   }
   
   //do projecttion for fp6 to Int4
-
   val projected_data = RegInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(4.W))))
 
   val quantLut = Module(new QuantLut(
@@ -262,10 +246,16 @@ when(quantize_valid && (total_bits_per_element === 6.U)) {
 when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
     io.requant_data_out.valid := true.B
     io.requant_data_out.bits.dataType := quant_dataType
-    io.requant_data_out.bits.address := io.requnat_data_in.bits.address
+    io.requant_data_out.bits.address := io.requnat_data_in.bits.address  +& config.baseAddr.U
     io.requant_data_out.bits.data := Cat(quantLut.io.projected_data.bits.reverse)
-    printf(p"[MxQuantize] Quantized block with scale=0x${Hexadecimal(scale_e8m0)}, exp=${scale_exponent}\n")
-
+    //printf(p"[MxQuantize] Quantized block with scale=0x${Hexadecimal(scale_e8m0)}, exp=${scale_exponent}\n")
+  }.elsewhen(quantize_valid && ((total_bits_per_element === 4.U) || (total_bits_per_element === 8.U))){
+    io.requant_data_out.valid := true.B
+    io.requant_data_out.bits.dataType := quant_dataType
+    io.requant_data_out.bits.address := io.requnat_data_in.bits.address +& config.baseAddr.U
+    io.requant_data_out.bits.data := extracted_data
+    //printf(p"[MxQuantize] Quantized block with scale=0x${Hexadecimal(scale_e8m0)}, exp=${scale_exponent}\n")
+    //printf(p"[MxQuantize] io.requant_data_out.bits.data=0x${Hexadecimal(io.requant_data_out.bits.data)}\n")
   }.otherwise {
      io.requant_data_out.bits.data := 0.U
   }
@@ -275,32 +265,35 @@ when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
 
   when(data_buffer_counter === 0.U && requant_data_in_valid_d) {
     for (i <- 0 until scaleSize) {
-      scale_buffer(i) := scale_e8m0
+      when(i.U === scale_write_counter) {
+       scale_buffer(i) := scale_e8m0
+      }
     }
-    
-    when(scale_write_counter === (scaleSize - 1).U) {
+    when((scale_write_counter === (scaleSize - 1).U) ) {
       scale_write_counter := 0.U
       scale_buffer_full := true.B
     }.otherwise {
       scale_write_counter := scale_write_counter + 1.U
+      scale_buffer_full := false.B
     }
   }
   
   when(scale_buffer_full) {
     io.scaleMem_write.valid := true.B
-    io.scaleMem_write.bits.addr := (scaleMembasewrite.U + scale_write_addr_counter) << 1.U
+    io.scaleMem_write.bits.addr := (scaleMembasewrite.U +& scale_write_addr_counter) << 1.U //todo, isa determines the scaleMembasewrite for initial addr of scaling memory write rows 
     io.scaleMem_write.bits.data := Cat(scale_buffer.reverse)
     
     when(io.scaleMem_write.fire) {
       val scale_buffer_packed = Cat(scale_buffer.reverse)
       printf(p"[MxScaleGen]: addr=${scale_write_addr_counter}, data=0x${Hexadecimal(scale_buffer_packed)}\n")
       
-      scale_buffer_full := false.B
-      when(scale_write_addr_counter === ((1 << scaleMem_addr_width) - 1).U) {
+      when(scale_write_addr_counter === ((1 << scaleMem_addr_width) - 1).U) { //TODO: do we need to make scale_write_addr_counter be resetable?
         scale_write_addr_counter := 0.U
       }.otherwise {
         scale_write_addr_counter := scale_write_addr_counter + 1.U
       }
     }
-  }
+  }// }.otherwise{
+  //   io.scaleMem_write.valid := false.B
+  // }
 }
