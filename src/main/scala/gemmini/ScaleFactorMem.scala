@@ -11,11 +11,6 @@ import chisel3.util._
 // - Output: combined_scales = outer_product(act_scales, weight_scales)
 //   Result is a 16×16 matrix (each scale is E8M0 format)
 
-class ScalingFactorWriteReq(addrWidth: Int, dataWidth: Int) extends Bundle {
-  val addr = UInt(addrWidth.W)  
-  val data = UInt((2*dataWidth).W)  // 256 bits
-}
-
 class ScalingFactorReadReq(addrWidth: Int) extends Bundle {
   val addr = UInt(addrWidth.W) 
   val scaling_enable = Bool() 
@@ -26,7 +21,7 @@ class ScalingFactorReadResp(numRows: Int, numCols: Int) extends Bundle {
 }
 
 class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: Int) extends Bundle {
-  val write = Flipped(Decoupled(new ScalingFactorWriteReq(addrWidth, dataWidth)))  
+  val write = Flipped(Decoupled(new ScalingFactorWriteReq(addrWidth, 2*dataWidth)))  
   val read_req = Flipped(Decoupled(new ScalingFactorReadReq(addrWidth)))      
   val read_resp = Decoupled(new ScalingFactorReadResp(numRows, numCols))               
 }
@@ -53,22 +48,18 @@ class ScalingFactorMem(
   ))
   
   // Create 4 banks: Banks 0,1 = Activation, Banks 2,3 = Weight
-  val banks = Seq.fill(numBanks)(SyncReadMem(depth, Vec(bytesPerBank, UInt(8.W))))
+  val bankDataT = Vec(bytesPerBank, UInt(8.W))
+  val banks = Seq.fill(numBanks)(SyncReadMem(depth, bankDataT))
   
   io.write.ready := !io.read_req.bits.scaling_enable
   
   when(io.write.fire) {
     val bank_sel = io.write.bits.addr(0)      
-    val row_addr = io.write.bits.addr >> 1.U  
+    val row_addr = (io.write.bits.addr >> 1).asUInt
 
-    val write_bytes_low = Wire(Vec(bytesPerBank, UInt(8.W)))
-    val write_bytes_high = Wire(Vec(bytesPerBank, UInt(8.W)))
-    
-    for(i <- 0 until bytesPerBank) {
-      write_bytes_low(i) := io.write.bits.data((i+1)*8-1, i*8)
-      write_bytes_high(i) := io.write.bits.data((i+1)*8-1 + bankWidth, i*8 + bankWidth)
-    }
-  
+    val write_bytes_low = io.write.bits.data(bytesPerBank * 8 - 1, 0).asTypeOf(bankDataT)
+    val write_bytes_high = io.write.bits.data(bytesPerBank * 2 * 8 - 1, bytesPerBank * 8).asTypeOf(bankDataT)
+
     when(bank_sel === 0.U) {
       banks(0).write(row_addr, write_bytes_low)
       banks(1).write(row_addr, write_bytes_high)
@@ -124,9 +115,9 @@ class ScalingFactorMem(
     for(j <- 0 until numScalesPerBank) {
       when(read_fire_d1) {
         combined_scales_buffer(i)(j) := multiplyScalesE8M0(act_scales(i), weight_scales(j))
-        when (((i == 0).B && (j < 4).B)){
-          printf(p"ScalingFactorMem] combined_scales_buffer=${combined_scales_buffer(0)(0)}, act_scales=${act_scales(0)} , weight_scales=${weight_scales(0)}\n")
-        }
+        //when (((i < 4).B && (j < 4).B)){
+        //printf(p"ScalingFactorMem] combined_scales_buffer=${combined_scales_buffer(i)(j)}, act_scales=${act_scales(i)} , weight_scales=${weight_scales(j)}\n")
+       // }
         combined_scales_valid := true.B  
       }.otherwise {
         combined_scales_buffer(i)(j) := 0.U

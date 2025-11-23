@@ -30,9 +30,12 @@ class AccumulatorMemWithScalingTest extends AnyFlatSpec with ChiselScalatestTest
       acc_type = dataType,
       is_dummy = false,
       use_mx_scaling = true,
-      scale_mem_depth = 256,
-      scale_mem_bank_width = 128,
-      scale_mem_numBanks = 4
+      scale_mem = Some(GemminiScalingFactorMemConfig(
+      baseAddr = 0x80000000L,
+      sizeInBytes = 32 << 10,
+      sramLineSizeInBytes = 32,
+      numBanks = 4
+    ))
     )
   }
 

@@ -68,21 +68,21 @@ class ScalingFactorMemTest extends AnyFlatSpec with ChiselScalatestTester {
           gotResponse = true
           println(s"✓ Response received after $cycles cycles")
           
-          println("\nE9M0 Outer Product Result (first 4×4):")
-          println("       Weight[0]  Weight[1]  Weight[2]  Weight[3]")
-          println("       (E8M0=128) (E8M0=129) (E8M0=130) (E8M0=131)")
+          //println("\nE9M0 Outer Product Result (first 4×4):")
+          //println("       Weight[0]  Weight[1]  Weight[2]  Weight[3]")
+          //println("       (E8M0=128) (E8M0=129) (E8M0=130) (E8M0=131)")
           for (i <- 0 until 4) {
             val actE8M0 = actScales(i)
-            print(f"Act[$i%2d]")
-            print(f" (E8M0=$actE8M0%3d)  ")
+            //print(f"Act[$i%2d]")
+            //print(f" (E8M0=$actE8M0%3d)  ")
             for (j <- 0 until 4) {
               val combinedE9M0 = dut.io.read_resp.bits.combined_scales(i)(j).peek().litValue.toInt
-              print(f"$combinedE9M0%9d  ")
+              //print(f"$combinedE9M0%9d  ")
 
               val act = actScales(i)
               val weight = weightScales(j)
               val expectedE9M0 = act + weight  
-              
+              print(f"index:[$i,$j], actScale: $act, weightScale: $weight, CombinedScale: $combinedE9M0%9d \n")
               assert(combinedE9M0 == expectedE9M0, 
                 f"Mismatch at [$i,$j]: got $combinedE9M0, expected $expectedE9M0(E8M0: $act + $weight)")
             }

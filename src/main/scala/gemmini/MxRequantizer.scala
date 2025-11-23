@@ -2,9 +2,6 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import Util._
-import scala.util.matching.Regex
-
 
 object MxFloatFormat {
   // Format encoding
@@ -39,35 +36,6 @@ object MxFloatFormat {
     (exp_bits, mant_bits, pmax, log2_pmax_floor)
   }
 }
-
-object RequantizerDataType extends ChiselEnum {
-  val FP4, FP6, FP8 = Value
-}
-
-class RequantizerInBundle(numLanes: Int, dataWidth: Int = 16) extends Bundle {
-  val data = Vec(numLanes, UInt(dataWidth.W))
-  val address = UInt(32.W) // in bytes
-  val dataType = RequantizerDataType()
-}
-
-class RequantizerOutBundle(numLanes: Int) extends Bundle {
-  val data = UInt((numLanes * 8).W) // maximum data type is fp8 (1 byte/lane), valid from lsb
-  val address = UInt(32.W)
-  val dataType = RequantizerDataType() // data type determines response size
-}
-
-case class GemminiRequantizerConfig(
-  baseAddr: BigInt,
-  numInputLanes: Int = 16,
-  numOutputLanes: Int = 32,
-  gpuMaxFactor: Int = 2, // maximum fp16->fp8 for gpus, determines address space size
-  gpuWordSize: Int = 4,
-  inputBits: Int = 16,
-  minOutputBits: Int = 4,
-  maxOutputBits: Int = 8,
-  outputIdBits: Int = 3,
-)
-
 
 class MxRequantizerIO(
   sp_data_width: Int,  

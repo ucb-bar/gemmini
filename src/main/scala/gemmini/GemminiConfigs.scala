@@ -101,9 +101,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              use_tl_ext_mem: Boolean = false,
                                                                              tl_ext_mem_base: BigInt = 0,
                                                                              clock_gate: Boolean = false,
-                                                                             scale_mem_depth: Int = 256 , 
-                                                                             scale_mem_bank_width: Int = 128 ,   
-                                                                             scale_mem_numBanks: Int = 4 ,
+                                                                             scale_mem: Option[GemminiScalingFactorMemConfig] = None,
+                                                                             requantizer: Option[GemminiRequantizerConfig] = None,
+                                                                             lut: Option[GemminiLUTConfig] = None,
                                                                              use_mx_scaling: Boolean = true,
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
