@@ -42,7 +42,6 @@ object RequantizerDataType extends ChiselEnum {
 class ScalingFactorWriteReq(addrWidth: Int, dataWidth: Int) extends Bundle {
   val addr = UInt(addrWidth.W)
   val data = UInt(dataWidth.W)
-  
   def this(config: GemminiScalingFactorMemConfig) = {
     // writes two interleaved banks at once
     this(config.addrBits, config.bankWidthBits * 2)

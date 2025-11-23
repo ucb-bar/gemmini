@@ -21,9 +21,10 @@ class ScalingFactorReadResp(numRows: Int, numCols: Int) extends Bundle {
 }
 
 class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: Int) extends Bundle {
-  val write = Flipped(Decoupled(new ScalingFactorWriteReq(addrWidth, 2*dataWidth)))  
-  val read_req = Flipped(Decoupled(new ScalingFactorReadReq(addrWidth)))      
-  val read_resp = Decoupled(new ScalingFactorReadResp(numRows, numCols))               
+  // writes happen to all interleaved banks for a line
+  val write = Flipped(Decoupled(new ScalingFactorWriteReq(addrWidth, dataWidth * 2)))
+  val read_req = Flipped(Decoupled(new ScalingFactorReadReq(addrWidth)))
+  val read_resp = Decoupled(new ScalingFactorReadResp(numRows, numCols))
 }
 
 class ScalingFactorMem(
@@ -47,7 +48,7 @@ class ScalingFactorMem(
     numScalesPerBank   // 16 columns (weight scales)
   ))
   
-  // Create 4 banks: Banks 0,1 = Activation, Banks 2,3 = Weight
+  // Create 4 banks: Banks 0,1 = Activation, Banks 2,Vec(bytesPerBank, UInt(8.W))3 = Weight
   val bankDataT = Vec(bytesPerBank, UInt(8.W))
   val banks = Seq.fill(numBanks)(SyncReadMem(depth, bankDataT))
   

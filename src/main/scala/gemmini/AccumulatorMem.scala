@@ -97,7 +97,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   n: Int, t: Vec[Vec[T]], scale_func: (T, U) => T, scale_t: U,
   acc_singleported: Boolean, acc_sub_banks: Int,
   use_shared_ext_mem: Boolean, use_tl_ext_ram: Boolean,
-  acc_latency: Int, acc_type: T, is_dummy: Boolean, use_mx_scaling: Boolean, 
+  acc_latency: Int, acc_type: T, is_dummy: Boolean, use_mx_scaling: Boolean,
   scale_mem: Option[GemminiScalingFactorMemConfig]
 )
   (implicit ev: Arithmetic[T]) extends Module {
@@ -172,7 +172,6 @@ class AccumulatorMem[T <: Data, U <: Data](
     } .otherwise {
       clampedExpS := newExp
     }
-
     val clampedExp = clampedExpS.asUInt(expBits - 1, 0)
 
     val outUInt = Cat(sign, clampedExp, mant)
@@ -189,38 +188,37 @@ class AccumulatorMem[T <: Data, U <: Data](
     pipelined_writes(0).bits  := io.write.bits
     val scaled_data = WireInit(0.U.asTypeOf(t))
 
+  if (use_mx_scaling) {
+    val scale_mem = scaleFactorMem.get
+    //wirte scale_mem
+    scale_mem.io.write <> io.scale_mem_write.get
+    scale_mem.io.write.valid := false.B
+    scale_mem.io.write.bits := DontCare
+    
+    val waiting_for_scale = RegInit(false.B)
+    //read_scale_mem
+    scale_mem.io.read_req.valid := false.B
+    scale_mem.io.read_req.bits.addr := DontCare
+    scale_mem.io.read_req.bits.scaling_enable := false.B
+    scale_mem.io.read_resp.ready := true.B
 
-if (use_mx_scaling) {
-  val scale_mem = scaleFactorMem.get
-  //wirte scale_mem
-  scale_mem.io.write <> io.scale_mem_write.get
-  scale_mem.io.write.valid := false.B
-  scale_mem.io.write.bits := DontCare
-  
-  val waiting_for_scale = RegInit(false.B)
-  //read_scale_mem
-  scale_mem.io.read_req.valid := false.B
-  scale_mem.io.read_req.bits.addr := DontCare
-  scale_mem.io.read_req.bits.scaling_enable := false.B
-  scale_mem.io.read_resp.ready := true.B
-
-  
-  when(io.write.fire && !waiting_for_scale) { //when accmulation buffer gets the write signal
-    scale_mem.io.read_req.valid := true.B
-    scale_mem.io.read_req.bits.scaling_enable := true.B
-    scale_mem.io.read_req.bits.addr := calculateScaleAddr(io.write.bits.addr)  
-    when(scale_mem.io.read_req.fire) {
+    when(io.write.fire && !waiting_for_scale) { //when accmulation buffer gets the write signal
+      scale_mem.io.read_req.valid := true.B
+      scale_mem.io.read_req.bits.scaling_enable := true.B
+      scale_mem.io.read_req.bits.addr := calculateScaleAddr(io.write.bits.addr)
+      when(scale_mem.io.read_req.fire) {
         waiting_for_scale := true.B
       }
     }
-  when(scale_mem.io.read_resp.fire && waiting_for_scale) {
+
+    when(scale_mem.io.read_resp.fire && waiting_for_scale) {
       //scale_buffer := mx_scale_io.scale_resp.bits.combined_scales
-        scaled_data := applyMxScaling( //next cycle the scale arrives
-        pipelined_writes(0).bits.data, 
-        scale_mem.io.read_resp.bits.combined_scales)
-        waiting_for_scale := false.B  
+      scaled_data := applyMxScaling( //next cycle the scale arrives
+      pipelined_writes(0).bits.data,
+      scale_mem.io.read_resp.bits.combined_scales)
+      waiting_for_scale := false.B
     }.elsewhen(io.write.fire){ // while issue the new scale read, the current scale ready singal set to low
-      waiting_for_scale := true.B  
+      waiting_for_scale := true.B
     }
   }
 

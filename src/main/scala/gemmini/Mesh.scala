@@ -18,8 +18,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
                                    df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int,
                                    max_simultaneous_matmuls: Int, output_delay: Int,
                                    val tileRows: Int, val tileColumns: Int,
-                                   val meshRows: Int, val meshColumns: Int, 
-                                   meshProdPrecisionList : Seq[(Int, Int)], 
+                                   val meshRows: Int, val meshColumns: Int,
+                                   meshProdPrecisionList : Seq[(Int, Int)],
                                    meshAccPrecisionList : Seq[T]) extends Module {
 
   val io = IO(new Bundle {

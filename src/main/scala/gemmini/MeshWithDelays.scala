@@ -33,7 +33,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   (val inputType: T,  val weightType: T, val outputType: T, accType: T,
    tagType: U, df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int, output_delay: Int,
    tileRows: Int, tileColumns: Int, meshRows: Int, meshColumns: Int,
-   leftBanks: Int, upBanks: Int, meshProdPrecisionList : Seq[(Int, Int)], 
+   leftBanks: Int, upBanks: Int, meshProdPrecisionList : Seq[(Int, Int)],
    meshAccPrecisionList : Seq[T], outBanks: Int = 1, n_simultaneous_matmuls: Int = -1)
   extends Module {
 

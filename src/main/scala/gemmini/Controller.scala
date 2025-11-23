@@ -159,8 +159,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     ext_mem_io.foreach(_ <> outer.spad.module.io.ext_mem.get)
   }
 
- 
-    val mx_io = Option.when(outer.config.use_mx_scaling) {
+
+  val mx_io = Option.when(outer.config.use_mx_scaling) {
     val mx_io = IO(new Bundle {
       val scale_mem = Flipped(Decoupled(spad.module.io.scale_mem.get.bits.cloneType))
     })
