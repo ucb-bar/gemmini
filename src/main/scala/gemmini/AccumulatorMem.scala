@@ -51,13 +51,14 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
 
   val ext_mem = if (use_shared_ext_mem) Some(Vec(acc_sub_banks, new ExtMemIO)) else None
-
+  
   val adder = new Bundle {
     val valid = Output(Bool())
     val op1 = Output(t.cloneType)
     val op2 = Output(t.cloneType)
     val sum = Input(t.cloneType)
   }
+  val dataType = Input(UInt(2.W)) //this is the input mxformat datatype
   val scale_mem_write = if (use_mx_scaling) {
     Some(Flipped(Decoupled(new ScalingFactorWriteReq(9, 256))))
   } else None
@@ -125,15 +126,15 @@ class AccumulatorMem[T <: Data, U <: Data](
   def calculateScaleAddr(write_addr: UInt): UInt = {
     write_addr  // TODO: Using the accmulator write addr to caculate the scaling memory read addr, for simplification 
   }
-  def applyMxScaling(data: Vec[Vec[T]], scales: Vec[Vec[UInt]]): Vec[Vec[T]] = {
-    val scaled = Wire(data.cloneType)
-    for (i <- 0 until data.length) {
-      for (j <- 0 until data(i).length) {
-        scaled(i)(j) := applyE9M0Scale(data(i)(j), scales(i)(j), 8, 7)
-      }
-    }
-    scaled 
-  }
+  // def applyMxScaling(data: Vec[Vec[T]], scales: Vec[Vec[UInt]]): Vec[Vec[T]] = {
+  //   val scaled = Wire(data.cloneType)
+  //   for (i <- 0 until data.length) {
+  //     for (j <- 0 until data(i).length) {
+  //       scaled(i)(j) := applyE9M0Scale(data(i)(j), scales(i)(j), 8, 7)
+  //     }
+  //   }
+  //   scaled 
+  // }
   def applyE9M0Scale[T <: Data](
     value: T,
     scale_e9m0: UInt,
@@ -143,7 +144,7 @@ class AccumulatorMem[T <: Data, U <: Data](
 
     val valueUInt = value.asUInt
     val totalBits = valueUInt.getWidth
-
+   
     require(totalBits == 1 + expBits + mantBits,
       s"value width = $totalBits, but 1(sign)+$expBits(exp)+$mantBits(mant) != total")
 
@@ -157,9 +158,9 @@ class AccumulatorMem[T <: Data, U <: Data](
 
     val scaleS:  SInt = Cat(0.U(1.W), scale_e9m0).asSInt
     val expS:    SInt = Cat(0.U(1.W), exp).asSInt
-
+    printf(p"[AccumulatorMem] combined_scales=${scaleS}\n")
     // E9M0: scale = 2^(scale_e9m0 - 255)
-    val scaleOffset: SInt = scaleS - 255.S
+    val scaleOffset: SInt = scaleS - 254.S
     val newExp: SInt      = expS + scaleOffset
 
     val maxExp = ((1 << expBits) - 1).S
@@ -177,55 +178,105 @@ class AccumulatorMem[T <: Data, U <: Data](
     val outUInt = Cat(sign, clampedExp, mant)
     outUInt.asTypeOf(value)
   }   
-
+  
+  def applyMxScaling(
+    data: Vec[Vec[T]], 
+    scales: Vec[Vec[UInt]]
+  ): Vec[Vec[T]] = {
+    VecInit(data.zip(scales).map { case (dataRow, scaleRow) =>
+    VecInit(dataRow.zip(scaleRow).map { case (elem, scale) =>
+      applyE9M0Scale(elem, scale, 8, 7)
+      })
+    })
+  }
+ 
     require (acc_latency >= 2)
-
+    val dataType = io.dataType
+    val scaled_data = WireInit(0.U.asTypeOf(t)) //fee
+    val outerSize = t.length
+    val innerSize = t(0).length
+    val scales_w = WireInit(VecInit(Seq.fill(outerSize)(VecInit(Seq.fill(innerSize)(0.U(8.W))))))
+    val scales_r = RegInit(VecInit(Seq.fill(outerSize)(VecInit(Seq.fill(innerSize)(0.U(8.W))))))
+    val scalecounter = RegInit(0.U(1.W))
     val pipelined_writes = Reg(Vec(acc_latency, Valid(new AccumulatorWriteReq(n, t))))
-    val oldest_pipelined_write = pipelined_writes(acc_latency-1)
-
+    val oldest_pipelined_write = Wire(Valid(new AccumulatorWriteReq(n, t)))
+    
+    if(use_mx_scaling){
+      when(dataType === 0.U){
+        oldest_pipelined_write := pipelined_writes(acc_latency-1)
+      }.otherwise{
+        oldest_pipelined_write := pipelined_writes(acc_latency - 1)
+        oldest_pipelined_write.bits.data := scaled_data
+      }
+    }else{
+      oldest_pipelined_write := pipelined_writes(acc_latency-1)
+    }
 
     pipelined_writes(0).valid := io.write.fire
     pipelined_writes(0).bits  := io.write.bits
-    val scaled_data = WireInit(0.U.asTypeOf(t))
+    
+    
 
   if (use_mx_scaling) {
     val scale_mem = scaleFactorMem.get
+    scale_mem.io.dataType := io.dataType
     //wirte scale_mem
     scale_mem.io.write <> io.scale_mem_write.get
-    scale_mem.io.write.valid := false.B
-    scale_mem.io.write.bits := DontCare
+    // scale_mem.io.write.valid := false.B
+    // scale_mem.io.write.bits := DontCare
     
-    val waiting_for_scale = RegInit(false.B)
+    //val waiting_for_scale = RegInit(true.B)
     //read_scale_mem
     scale_mem.io.read_req.valid := false.B
     scale_mem.io.read_req.bits.addr := DontCare
     scale_mem.io.read_req.bits.scaling_enable := false.B
     scale_mem.io.read_resp.ready := true.B
-
-    when(io.write.fire && !waiting_for_scale) { //when accmulation buffer gets the write signal
+    //scale_buffer = RegInit(VecInit(Seq.fill(4)(0.U(9.W))))
+    
+    when(io.write.fire) { //when accmulation buffer gets the write signal
+      //printf(p"[AccumulatorMem] here!!!\n")
       scale_mem.io.read_req.valid := true.B
       scale_mem.io.read_req.bits.scaling_enable := true.B
       scale_mem.io.read_req.bits.addr := calculateScaleAddr(io.write.bits.addr)
-      when(scale_mem.io.read_req.fire) {
-        waiting_for_scale := true.B
+    }
+   
+    when(scale_mem.io.read_resp.valid) {
+       
+      when(dataType === 0.U) {
+        //val scaleValues_0 = scale_mem.io.read_resp.bits.combined_scales.slice(0, 16)
+        //printf(p"[AccumulatorMem] combined_scales=${scale_mem.io.read_resp.bits.combined_scales}\n")
+        for (i <- 0 until 16) {
+          scaled_data(i)(0) := applyE9M0Scale(pipelined_writes(0).bits.data(i)(0), scale_mem.io.read_resp.bits.combined_scales(i),  8, 7)
+          //printf(p"[AccumulatorMem] combined_scales=${scale_mem.io.read_resp.bits.combined_scales(i)}, before scale=${pipelined_writes(0).bits.data(i)(0)}, after scale=${scaled_data(i)(0)}\n")
+        } 
+        //waiting_for_scale := false.B
+      }.otherwise {
+        when(scalecounter === 1.U) {
+          //waiting_for_scale := false.B
+          scalecounter := 0.U
+          for (i <- 0 until outerSize/2) {
+            scaled_data(i)(0) := applyE9M0Scale(pipelined_writes(1).bits.data(i)(0), scales_r(i)(0), 8, 7)}
+          for (i <- 0 until outerSize/2) {
+            scaled_data(i + outerSize/2)(0) := applyE9M0Scale(pipelined_writes(1).bits.data(i + outerSize/2)(0), scale_mem.io.read_resp.bits.combined_scales(i)(0), 8, 7)}
+        }.otherwise {
+          for (i <- 0 until outerSize/2) {
+            scales_r(i)(0) := scale_mem.io.read_resp.bits.combined_scales(i)(0)
+          }
+          scalecounter := 1.U
+        }
       }
     }
-
-    when(scale_mem.io.read_resp.fire && waiting_for_scale) {
-      //scale_buffer := mx_scale_io.scale_resp.bits.combined_scales
-      scaled_data := applyMxScaling( //next cycle the scale arrives
-      pipelined_writes(0).bits.data,
-      scale_mem.io.read_resp.bits.combined_scales)
-      waiting_for_scale := false.B
-    }.elsewhen(io.write.fire){ // while issue the new scale read, the current scale ready singal set to low
-      waiting_for_scale := true.B
-    }
-  }
-
+    // }.elsewhen(io.write.fire) {
+    //     waiting_for_scale := true.B
+    // }
+ }
   for (i <- 1 until acc_latency) {
-    when ((i==0).B){
+    when ((i==1).B){
       if(use_mx_scaling){
-        pipelined_writes(i).bits.data := scaled_data} 
+        when(dataType === 0.U){
+          pipelined_writes(i) := pipelined_writes(i-1)
+          pipelined_writes(i).bits.data := scaled_data}
+        }
       else {
         pipelined_writes(i) := pipelined_writes(i-1)
         }
@@ -238,11 +289,26 @@ class AccumulatorMem[T <: Data, U <: Data](
   rdata_for_adder := DontCare
   val rdata_for_read_resp = Wire(t)
   rdata_for_read_resp := DontCare
-
+  
   val adder_sum = io.adder.sum
-  io.adder.valid := pipelined_writes(0).valid && pipelined_writes(0).bits.acc
+
+  
   io.adder.op1 := rdata_for_adder
-  io.adder.op2 := pipelined_writes(0).bits.data
+  if(use_mx_scaling){
+    when(dataType === 0.U){
+      io.adder.op2 := scaled_data
+      io.adder.valid := pipelined_writes(0).valid && pipelined_writes(0).bits.acc
+    }.otherwise{
+      io.adder.op2 := scaled_data
+      io.adder.valid := pipelined_writes(1).valid && pipelined_writes(1).bits.acc
+    }
+  }
+  else {
+     io.adder.op2 := pipelined_writes(0).bits.data
+     io.adder.valid := pipelined_writes(0).valid && pipelined_writes(0).bits.acc
+  }
+ 
+  
 
   val block_read_req = WireInit(false.B)
   val block_write_req = WireInit(false.B)
