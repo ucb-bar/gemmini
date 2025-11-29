@@ -709,6 +709,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           w.bits := io.scale_mem.get.bits
           io.scale_mem.get.ready := w.ready
         }
+        bio.dataType := 0.U // TODO (nicolas): make this configurable with mxReg
 
         if (use_shared_ext_mem) {
           io.ext_mem.get.acc(i) <> bio.ext_mem.get

@@ -45,7 +45,7 @@ class BF16ScaleRoundToFP6(
 ) extends BF16ScaleRoundToTiny(
   tinyWidth      = 6,
   outputnumLanes = outputnumLanes,
-  format         = FType.E4M3,
+  format         = MxFType.E4M3,
   pack           = (in: UInt) => E4M3ToFp6(in)
 )
 
@@ -54,7 +54,7 @@ class BF16ScaleRoundToFP4(
 ) extends BF16ScaleRoundToTiny(
   tinyWidth      = 4,
   outputnumLanes = outputnumLanes,
-  format         = FType.E3M1,
+  format         = MxFType.E3M1,
   pack           = (in: UInt) => E3M1Tofp4(in)
 )
 
@@ -63,7 +63,7 @@ class BF16ScaleRoundToFP8(
 ) extends BF16ScaleRoundToTiny(
   tinyWidth      = 8,
   outputnumLanes = outputnumLanes,
-  format         = FType.E5M3,
+  format         = MxFType.E5M3,
   pack           = (in: UInt) => E5M3ToFp8(in)
 )
 
