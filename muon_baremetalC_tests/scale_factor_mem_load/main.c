@@ -6,9 +6,23 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+extern volatile uint64_t tohost;
+extern volatile uint64_t fromhost;
+
+void __attribute__((noreturn)) tohost_exit(uintptr_t code)
+{
+  tohost = (code << 1) | 1;
+  while (1);
+}
+
+void exit(int code)
+{
+  tohost_exit(code);
+}
+
+
 #define SCALE_FACT_MEM 0x40088000
 
-volatile unsigned long sink;
 int main(void) {
 
   const uint32_t src[] = { 0x11223344, 0x55667788, 0xDEADBEEF, 0x11223344 };
