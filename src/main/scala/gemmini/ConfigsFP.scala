@@ -293,7 +293,6 @@ object GemminiMxFPConfigs {
     has_training_convs = false,
     has_max_pool = false,
     has_nonlinear_activations = false,
-    testConfig = true,
 
     num_counter = 8,
     requantizer = Some(GemminiRequantizerConfig( 
@@ -314,6 +313,8 @@ object GemminiMxFPConfigs {
         numBanks = 4,
         ))
   )
+
+  val testMxFPConfig = defaultMxFPConfig.copy(testConfig = true)
  
 }
 
@@ -324,6 +325,16 @@ class GemminiMxFPDefaultConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiMxFPConfigs.defaultMxFPConfig))
+    }
+  )
+})
+
+class GemminiMxFPTestConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiMxFPConfigs.testMxFPConfig))
     }
   )
 })
