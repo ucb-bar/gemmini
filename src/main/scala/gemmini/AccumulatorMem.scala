@@ -99,6 +99,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   acc_singleported: Boolean, acc_sub_banks: Int,
   use_shared_ext_mem: Boolean, use_tl_ext_ram: Boolean,
   acc_latency: Int, acc_type: T, is_dummy: Boolean, use_mx_scaling: Boolean,
+  testConfig: Boolean,
   scale_mem: Option[GemminiScalingFactorMemConfig]
 )
   (implicit ev: Arithmetic[T]) extends Module {
@@ -119,7 +120,8 @@ class AccumulatorMem[T <: Data, U <: Data](
       depth = conf.depth,
       bankWidth = conf.bankWidthBits,
       actOutputScalingWidth = 8,
-      numBanks = conf.numBanks
+      numBanks = conf.numBanks,
+      testConfig = testConfig
     ))
   }
   

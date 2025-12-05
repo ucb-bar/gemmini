@@ -107,6 +107,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              lut: Option[GemminiLUTConfig] = None,
 
                                                                              use_mx_scaling: Boolean = true,
+                                                                             testConfig: Boolean = false,
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   // require(inputType.getWidth == weightType.getWidth)

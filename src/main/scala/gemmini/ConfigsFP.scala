@@ -264,8 +264,7 @@ object GemminiMxFPConfigs {
     meshAccPrecisionList =     Seq.fill(4) {MxFloat(7, 7, 4, true, false)} ++ 
                                  Seq.fill(4) {MxFloat(7, 7, 4, true, false)} ++ 
                                  Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
-                                 Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++
-                                 Seq.fill(1){MxFloat(8, 8, 4, true, false)},    // this one needs to match accType                              
+                                 Seq.fill(4) {MxFloat(8, 8, 4, true, false)},
 
                                  // 16x16 mesh with varying precisions
 
@@ -294,8 +293,26 @@ object GemminiMxFPConfigs {
     has_training_convs = false,
     has_max_pool = false,
     has_nonlinear_activations = false,
+    testConfig = true,
 
     num_counter = 8,
+    requantizer = Some(GemminiRequantizerConfig( 
+      baseAddr = 0x10000000L,
+      numInputLanes = 16,
+      numOutputLanes = 32,
+      gpuMaxFactor = 2,
+      gpuWordSize = 4,
+      inputBits = 16,
+      minOutputBits = 4,
+      maxOutputBits = 8,
+      outputIdBits = 3
+    )),
+    scale_mem = Some(GemminiScalingFactorMemConfig(
+        baseAddr = 0x10000000L + 0x8000,
+        sizeInBytes = 16 << 10,
+        sramLineSizeInBytes = 256 / 8,
+        numBanks = 4,
+        ))
   )
  
 }

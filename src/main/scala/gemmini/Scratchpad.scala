@@ -694,6 +694,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         acc_singleported, acc_sub_banks,
         use_shared_ext_mem, use_tl_ext_mem,
         acc_latency, accType, is_dummy, config.use_mx_scaling,
+        config.testConfig,
         config.scale_mem,
       )) }
       val bank_ios = VecInit(banks.map(_.io))

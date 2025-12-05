@@ -159,14 +159,18 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     ext_mem_io.foreach(_ <> outer.spad.module.io.ext_mem.get)
   }
 
+  spad.module.io.scale_mem.foreach { ch =>
+    ch.valid := false.B
+    ch.bits  := DontCare
+  }
 
-  val mx_io = Option.when(outer.config.use_mx_scaling) {
+  val mx_io = Option.when(outer.config.use_mx_scaling && !outer.config.testConfig) {
     val mx_io = IO(new Bundle {
       val scale_mem = Flipped(Decoupled(spad.module.io.scale_mem.get.bits.cloneType))
     })
 
-    // mx connections with gemmini tile
     mx_io.scale_mem <> spad.module.io.scale_mem.get
+
     mx_io
   }
 

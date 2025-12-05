@@ -32,7 +32,8 @@ class ScalingFactorMem(
   depth: Int = 256,                     
   bankWidth: Int = 128,                 
   actOutputScalingWidth: Int = 8,       
-  numBanks: Int = 4                     
+  numBanks: Int = 4,
+  testConfig: Boolean = false
 ) extends Module {
 
   val rowAddrWidth = log2Ceil(depth)      
@@ -56,6 +57,9 @@ class ScalingFactorMem(
   // Create 4 banks: Banks 0,1 = Activation, Banks 2,Vec(bytesPerBank, UInt(8.W))3 = Weight
   val bankDataT = Vec(bytesPerBank, UInt(8.W))
   val banks = Seq.fill(numBanks)(SyncReadMem(depth, bankDataT))
+
+  val initByte = 0x7c.U(8.W)
+  val defaultRow = VecInit(Seq.fill(bytesPerBank)(initByte)) 
   
   io.write.ready := !io.read_req.bits.scaling_enable
   
@@ -99,8 +103,8 @@ class ScalingFactorMem(
   val weight_bank_data_vec = WireDefault(VecInit(Seq.fill(numScalesPerBank*2)(0.U(8.W))))
   when(io.dataType === 0.U){
     when(read_bank_sel === 0.U) {
-    val bank0_data = banks(0).read(read_row_addr, read_fire_real)
-    val bank2_data = banks(2).read(read_row_addr, read_fire_real)
+      val bank0_data = if (testConfig) { defaultRow } else { banks(0).read(read_row_addr, read_fire_real)}
+      val bank2_data = if (testConfig) { defaultRow } else { banks(2).read(read_row_addr, read_fire_real)}
     for (i <- 0 until numScalesPerBank) {
       act_bank_data_vec(i) := bank0_data(i)
       weight_bank_data_vec(i) := bank2_data(i)
@@ -108,23 +112,22 @@ class ScalingFactorMem(
       //printf(p"[ScalingFactorMem] Read bank2_data=${bank2_data(i)}\n")
     }
   }.otherwise {
-    val bank1_data = banks(1).read(read_row_addr, read_fire_real)
-    val bank3_data = banks(3).read(read_row_addr, read_fire_real)
-    
+    val bank1_data = if (testConfig) { defaultRow } else { banks(1).read(read_row_addr, read_fire_real)}
+    val bank3_data = if (testConfig) { defaultRow } else { banks(3).read(read_row_addr, read_fire_real)}
+
     for (i <- 0 until numScalesPerBank) {
       act_bank_data_vec(i) := bank1_data(i)
       weight_bank_data_vec(i) := bank3_data(i)
     }
   }
   }.otherwise{
-    val a_bank0_data = banks(0).read(read_row_addr, read_fire_real)
-    val a_bank1_data = banks(1).read(read_row_addr, read_fire_real)
-    
+    val a_bank0_data = if (testConfig) {defaultRow} else { banks(0).read(read_row_addr, read_fire_real)}
+    val a_bank1_data = if (testConfig) {defaultRow} else { banks(1).read(read_row_addr, read_fire_real)}
+    val w_bank0_data = if (testConfig) {defaultRow} else { banks(2).read(read_row_addr, read_fire_real)}
+    val w_bank1_data = if (testConfig) {defaultRow} else { banks(3).read(read_row_addr, read_fire_real)}
+
     a_bank0_data.zipWithIndex.foreach { case (data, i) => act_bank_data_vec(i) := data}
     a_bank1_data.zipWithIndex.foreach { case (data, i) => act_bank_data_vec(numScalesPerBank + i) := data}
-    val w_bank0_data = banks(2).read(read_row_addr, read_fire_real)
-    val w_bank1_data = banks(3).read(read_row_addr, read_fire_real)
-    
     w_bank0_data.zipWithIndex.foreach { case (data, i) => weight_bank_data_vec(i) := data}
     w_bank1_data.zipWithIndex.foreach { case (data, i) => weight_bank_data_vec(numScalesPerBank + i) := data}
   }
