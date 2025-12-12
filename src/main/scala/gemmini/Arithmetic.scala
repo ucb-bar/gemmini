@@ -632,31 +632,31 @@ object Arithmetic {
         val macc = Module(new MxFpMul(lut = false)(fpProductPrecision, fpAccPrecision))
         val result = Wire(MxFloat(macc.cType.exp, macc.cType.sig, 4, true))
 
+        val temp_expA = 4
+        val temp_sigA = 4
+
+        val temp_expB = 4
+        val temp_sigB = 4
+
+        val temp_countA = 1
+        val temp_countB = 1
+
         val typeA = Wire(new MxTypes)
-        typeA.exp := m1.expWidth.U
-        typeA.sig := m1.sigWidth.U
+        typeA.exp := temp_expA.U
+        typeA.sig := temp_sigA.U
 
         val typeW = Wire(new MxTypes)
-        typeW.exp := m2.expWidth.U
-        typeW.sig := m2.sigWidth.U
+        typeW.exp := temp_expB.U
+        typeW.sig := temp_sigB.U
 
-        val mode = Wire(new mxMode)
-        mode.actWidth := m1.expWidth.U
-        mode.weiWidth := m2.expWidth.U
-        mode.actInputs := m1.count.U
-        mode.weiInputs := m2.count.U
-        mode.numOutputs := m2.count.U
-        mode.shift(0)(0) := 0.U
-        mode.shift(1)(0) := 0.U
-        mode.shift(0)(1) := 0.U
-        mode.shift(1)(1) := 0.U
+        val mode = requiredPEMode(typeA, typeW)
 
         val rec_c = if (self.isRecoded) self.bits else VecInit(self.bits.asTypeOf(Vec(4, UInt((self.expWidth + self.sigWidth).W))).map(f => recFNFromFN(self.expWidth, self.sigWidth, f))).asUInt
 
-        macc.io.in_activation := m1.bits((m1.count)*(m1.expWidth + m1.sigWidth) - 1, 0)
+        macc.io.in_activation := m1.bits((temp_countA)*(temp_expA + temp_sigA) - 1, 0)
         macc.io.type_a := typeA
         macc.io.mode := mode
-        macc.io.in_weights := m2.bits((m2.count)*(m2.expWidth + m2.sigWidth) - 1, 0)
+        macc.io.in_weights := m2.bits((temp_countB)*(temp_expB + temp_sigB) - 1, 0)
         macc.io.type_w := typeW
         macc.io.enable := true.B  // TODO：do we need an enable signal here?
         macc.io.rec_c := rec_c
