@@ -248,11 +248,11 @@ object GemminiMxFPConfigs {
     use_dedicated_tl_port = false,
     use_shared_ext_mem = false,
 
-    inputType = MxFloat(3, 3, 2),
+    inputType = MxFloat(3, 3, 2), //consider worst case for total bit length, inputType maximal is 12bits? same case for projection? 
     weightType = MxFloat(3, 3, 4),
     accType = MxFloat(8, 8, 4),
 
-    spatialArrayInputType = MxFloat(3, 3, 2),
+    spatialArrayInputType = MxFloat(3, 3, 2), 
     spatialArrayWeightType = MxFloat(3, 3, 4),
     spatialArrayOutputType = MxFloat(8, 8, 4, true, false),
 

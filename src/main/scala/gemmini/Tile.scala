@@ -33,6 +33,9 @@ class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df
 
     val in_valid = Input(Vec(columns, Bool()))
     val out_valid = Output(Vec(columns, Bool()))
+    
+    val activation_mx_format = Input(UInt(2.W))
+    val weight_mx_format = Input(UInt(2.W))
 
     val bad_dataflow = Output(Bool())
   })
@@ -41,6 +44,14 @@ class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df
 
   val tile = Seq.fill(rows, columns)(Module(new PE(inputType, weightType, outputType, accType, df, max_simultaneous_matmuls, meshFpProductPrecision, meshFpAccPrecision)))
   val tileT = tile.transpose
+
+  for (r <- 0 until rows) {
+    for (c <- 0 until columns) {
+      val pe = tile(r)(c)
+      pe.io.activation_mx_format := io.activation_mx_format
+      pe.io.weight_mx_format := io.weight_mx_format
+    }
+  }
 
   // TODO: abstract hori/vert broadcast, all these connections look the same
   // Broadcast 'a' horizontally across the Tile

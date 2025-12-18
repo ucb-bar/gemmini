@@ -23,6 +23,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
                                    meshAccPrecisionList : Seq[T]) extends Module {
 
   val io = IO(new Bundle {
+    val activation_mx_format = Input(UInt(2.W))
+    val weight_mx_format = Input(UInt(2.W))
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b = Input(Vec(meshColumns, Vec(tileColumns, outputType)))
     val in_d = Input(Vec(meshColumns, Vec(tileColumns, weightType))) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
@@ -46,11 +48,19 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     Module(new Tile(inputType, weightType, meshAccPrecisionList(r), accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns, meshProdPrecisionList(r), meshAccPrecisionList(r)))
     }
   val meshT = mesh.transpose
-
+  
   def pipe[T <: Data](valid: Bool, t: T, latency: Int): T = {
     // The default "Pipe" function apparently resets the valid signals to false.B. We would like to avoid using global
     // signals in the Mesh, so over here, we make it clear that the reset signal will never be asserted
     chisel3.withReset(false.B) { Pipe(valid, t, latency).bits }
+  }
+  
+  for (r <- 0 until meshRows) {
+    for (c <- 0 until meshColumns) {
+      val tile = mesh(r)(c)
+      tile.io.activation_mx_format := io.activation_mx_format
+      tile.io.weight_mx_format := io.weight_mx_format
+    }
   }
 
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)

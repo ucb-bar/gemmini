@@ -75,7 +75,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // Instruction-related variables
   val current_dataflow = if (dataflow == Dataflow.BOTH) Reg(UInt(1.W)) else dataflow.id.U
-
+  
+  val input_mx_format = RegInit(0.U(2.W))
+  val weight_mx_format = RegInit(0.U(2.W))
+  val output_mx_format = RegInit(0.U(2.W))
+  val uselut = RegInit(false.B)
+  val enable_mxquant = RegInit(false.B)
+  
   val functs = cmd.bits.map(_.cmd.inst.funct)
   val rs1s = VecInit(cmd.bits.map(_.cmd.rs1))
   val rs2s = VecInit(cmd.bits.map(_.cmd.rs2))
@@ -185,6 +191,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Instantiate the actual mesh
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecisionList, meshAccPrecisionList))
+  
+  mesh.io.activation_mx_format := input_mx_format  
+  mesh.io.weight_mx_format := weight_mx_format
+  
 
   mesh.io.a.valid := false.B
   mesh.io.b.valid := false.B
@@ -437,7 +447,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
         Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
           read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter_mulpre)))
-
+      
+      io.srams.read(i).req.bits.input_mx_format := input_mx_format
+      io.srams.read(i).req.bits.weight_mx_format := weight_mx_format
+      
       // TODO this just overrides the previous line. Should we erase the previous line?
       when(im2col_en === false.B) {
         io.srams.read(i).req.bits.addr := MuxCase(a_address.sp_row(),
@@ -458,7 +471,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val read_a_from_acc = a_valid && a_read_from_acc && dataABankAcc === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros && !(im2col_wire&&im2col_en)
     val read_b_from_acc = b_valid && b_read_from_acc && dataBBankAcc === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
     val read_d_from_acc = d_valid && d_read_from_acc && dataDBankAcc === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
-
+    
     Seq((read_a_from_acc, a_ready), (read_b_from_acc, b_ready), (read_d_from_acc, d_ready)).foreach { case (rd, r) =>
       when(rd && !io.acc.read_req(i).ready) {
         r := false.B
@@ -466,6 +479,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
 
     if (ex_read_from_acc) {
+      io.acc.read_req(i).bits.weight_mx_format := weight_mx_format
+      io.acc.read_req(i).bits.activation_mx_format := activation_mx_format
       io.acc.read_req(i).valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
       io.acc.read_req(i).bits.scale := acc_scale
       io.acc.read_req(i).bits.full := false.B
@@ -555,7 +570,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_t) // TODO magic number
               a_transpose := config_ex_rs1.a_transpose
               bd_transpose := config_ex_rs1.b_transpose
-
+              input_mx_format := config_ex_rs1.input_mx_format
+              weight_mx_format := config_ex_rs1.weight_mx_format
+              output_mx_format := config_ex_rs1.output_mx_format
+              uselut := config_ex_rs1.uselut
+              enable_mxquant := config_ex_rs1.enable_mxquant
+              
               if (dataflow == Dataflow.BOTH) {
                 current_dataflow := config_ex_rs1.dataflow
               }
