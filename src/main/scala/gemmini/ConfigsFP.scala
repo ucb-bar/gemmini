@@ -256,13 +256,13 @@ object GemminiMxFPConfigs {
     spatialArrayWeightType = MxFloat(3, 3, 4),
     spatialArrayOutputType = MxFloat(8, 8, 4, true, false),
 
-    meshProdPrecisionList = Seq.fill(4) {(5, 6)} ++ 
-                                 Seq.fill(4) {(6, 6)} ++ 
-                                 Seq.fill(4) {(7, 7)} ++ 
+    meshProdPrecisionList = Seq.fill(4) {(8, 8)} ++ 
+                                 Seq.fill(4) {(8, 8)} ++ 
+                                 Seq.fill(4) {(8, 8)} ++ 
                                  Seq.fill(4) {(8, 8)}, 
 
-    meshAccPrecisionList =     Seq.fill(4) {MxFloat(7, 7, 4, true, false)} ++ 
-                                 Seq.fill(4) {MxFloat(7, 7, 4, true, false)} ++ 
+    meshAccPrecisionList =     Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
+                                 Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
                                  Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
                                  Seq.fill(4) {MxFloat(8, 8, 4, true, false)},
 

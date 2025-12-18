@@ -58,7 +58,7 @@ class ScalingFactorMem(
   val bankDataT = Vec(bytesPerBank, UInt(8.W))
   val banks = Seq.fill(numBanks)(SyncReadMem(depth, bankDataT))
 
-  val initByte = 0x7c.U(8.W)
+  val initByte = 0x7e.U(8.W)
   val defaultRow = VecInit(Seq.fill(bytesPerBank)(initByte)) 
   
   io.write.ready := !io.read_req.bits.scaling_enable
