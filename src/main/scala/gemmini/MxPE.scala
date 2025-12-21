@@ -1,7 +1,12 @@
+package gemmini 
+
+import chisel3._
+import chisel3.util._
+
 class MxPE(mxparameters: MxParams, lut: Boolean) extends Module {
   val io = IO(new Bundle {
     val modeDecoded = Input(new mxMode())
-    val input_mx_format = Input(UInt(2.W))   // 0=FP8, 1=FP6, 2=FP4
+    val activation_mx_format = Input(UInt(2.W))   // 0=FP8, 1=FP6, 2=FP4
     val weight_mx_format = Input(UInt(2.W))
     val in_a = Input(UInt(mxparameters.inPE_act_totalWidth.W))
     val in_w = Input(UInt(mxparameters.inPE_wei_totalWidth.W))
@@ -20,7 +25,7 @@ class MxPE(mxparameters: MxParams, lut: Boolean) extends Module {
       val a = Wire(UInt(mxparameters.actflexMulInWidth.W))
       val a_en = Wire(Bool())
       val w_en = Wire(Bool())
-      when (io.input_mx_format === 2.U) {  // FP4
+      when (io.activation_mx_format === 2.U) {  // FP4
         when (io.modeDecoded.actInputs === 1.U) {
           a := io.in_a(2*(i+1) - 1, 2*i)
           a_en := io.mask_a(0)
@@ -28,7 +33,7 @@ class MxPE(mxparameters: MxParams, lut: Boolean) extends Module {
           a := io.in_a(mxparameters.actflexMulInWidth*(i+1) - 1, mxparameters.actflexMulInWidth*i)
           a_en := io.mask_a(i*2)
         }
-      } .elsewhen (io.input_mx_format === 1.U) {  // FP6
+      } .elsewhen (io.activation_mx_format === 1.U) {  // FP6
         a := io.in_a(6*(i+1) - 1, 6*i)
         a_en := io.mask_a(i)
       } .otherwise {  // FP8 (default)
@@ -58,8 +63,8 @@ class MxPE(mxparameters: MxParams, lut: Boolean) extends Module {
       fm.io.enable := io.enable && a_en && w_en
       
       
-      fm.io.w_mode := (io.input_mx_format === 1.U).B  // FP6 mode
-      fm.io.act_mode := (io.weight_mx_format === 1.U).B
+      fm.io.w_mode := (io.activation_mx_format === 1.U)  // FP6 mode
+      fm.io.act_mode := (io.weight_mx_format === 1.U)
 
       if (mxparameters.multOutWidth == 6) {
         outFM(i*2 + j) := fm.io.output
@@ -71,7 +76,7 @@ class MxPE(mxparameters: MxParams, lut: Boolean) extends Module {
     }
   }
 
-  when (io.input_mx_format === 2.U || io.weight_mx_format === 2.U) { 
+  when (io.activation_mx_format === 2.U || io.weight_mx_format === 2.U) { 
     val outShift0 = outFM(3) << io.modeDecoded.shift(0)(0)
     val outShift1 = outFM(2) << io.modeDecoded.shift(0)(1)
     val outShift2 = outFM(1) << io.modeDecoded.shift(1)(0)

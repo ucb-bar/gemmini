@@ -124,7 +124,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   val input_mx_format = io.read.req.bits.input_mx_format
 
 
-  val bits_per_element = MuxLookup(active_mx_format, 8.U)(Seq(
+  val bits_per_element = MuxLookup(input_mx_format, 8.U)(Seq(
     0.U -> 8.U,  // FP8
     1.U -> 4.U,  // FP6
     2.U -> 4.U   // FP4
@@ -558,8 +558,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }.elsewhen (dmawrite) {
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.sp_row()
           bio.read.req.bits.fromDMA := true.B
-          bio.read.req.bits.weight_mx_format := weight_mx_format  // Default FP8 for DMA
-          bio.read.req.bits.input_mx_format := input_mx_format
+          bio.read.req.bits.weight_mx_format := ex_read_req.bits.weight_mx_format  // Default FP8 for DMA
+          bio.read.req.bits.input_mx_format := ex_read_req.bits.input_mx_format
           when (bio.read.req.fire) {
             write_dispatch_q.ready := true.B
             write_norm_q.io.enq.valid := true.B

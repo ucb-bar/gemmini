@@ -31,7 +31,7 @@ class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFp
   * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
   * @param width Data width of operands
   */
-class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, max_simultaneous_matmuls: Int, meshFpProductPrecision: (Int, Int), meshFpAccPrecision: T, activation_mx_format: UInt, weight_mx_format: UInt)
+class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, max_simultaneous_matmuls: Int, meshFpProductPrecision: (Int, Int), meshFpAccPrecision: T)
                    (implicit ev: Arithmetic[T]) extends Module { // Debugging variables
   import ev._
 
@@ -81,8 +81,7 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
   val id = io.in_id
   val last = io.in_last
   val valid = io.in_valid
-  val activation_mx_format = io.activation_mx_format
-  val weight_mx_format = io.weight_mx_format
+
 
   io.out_a := a
   io.out_control.dataflow := dataflow
@@ -94,8 +93,8 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
 
 
   mac_unit.io.in_a := a
-  mac_unit.io.activation_mx_format := activation_mx_format
-  mac_unit.io.weight_mx_format := weight_mx_format  
+  mac_unit.io.activation_mx_format := io.activation_mx_format
+  mac_unit.io.weight_mx_format :=  io.weight_mx_format  
 
   val last_s = RegEnable(prop, valid)
   val flip = last_s =/= prop

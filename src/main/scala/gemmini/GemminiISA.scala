@@ -211,7 +211,7 @@ object GemminiISA {
     val a_stride = UInt(CONFIG_EX_RS1_A_STRIDE_WIDTH.W)
     val output_mx_format = UInt(CONFIG_EX_RS1_OUTPUT_MX_FORMAT_WIDTH.W) // bits [15:14]
     val weight_mx_format = UInt(CONFIG_EX_RS1_WEIGHT_MX_FORMAT_WIDTH.W) // bits [13:12]
-    val input_mx_format = UInt(CONFIG_EX_RS1_INPUT_MX_FORMAT_WIDTH.W)   // bits [11:10]
+    val activation_mx_format = UInt(CONFIG_EX_RS1_INPUT_MX_FORMAT_WIDTH.W)   // bits [11:10]
     val b_transpose = UInt(CONFIG_EX_RS1_B_TRANSPOSE_WIDTH.W)
     val a_transpose = UInt(CONFIG_EX_RS1_A_TRANSPOSE_WIDTH.W)
     val set_only_strides = UInt(CONFIG_EX_RS1_SET_ONLY_STRIDES_WIDTH.W)

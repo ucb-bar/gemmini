@@ -217,7 +217,7 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
   PE.io.mask_w := ~in_w_mask.asUInt
   PE.io.in_a := inA_pe
   PE.io.in_w := inW_pe
-  PE.io.input_mx_format := io.input_mx_format
+  PE.io.activation_mx_format := io.input_mx_format
   PE.io.weight_mx_format := io.weight_mx_format
   out_pe := PE.io.output
 

@@ -76,7 +76,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Instruction-related variables
   val current_dataflow = if (dataflow == Dataflow.BOTH) Reg(UInt(1.W)) else dataflow.id.U
   
-  val input_mx_format = RegInit(0.U(2.W))
+  val activation_mx_format = RegInit(0.U(2.W))
   val weight_mx_format = RegInit(0.U(2.W))
   val output_mx_format = RegInit(0.U(2.W))
   val uselut = RegInit(false.B)
@@ -192,7 +192,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecisionList, meshAccPrecisionList))
   
-  mesh.io.activation_mx_format := input_mx_format  
+  mesh.io.activation_mx_format := activation_mx_format  
   mesh.io.weight_mx_format := weight_mx_format
   
 
@@ -448,7 +448,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
         Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
           read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter_mulpre)))
       
-      io.srams.read(i).req.bits.input_mx_format := input_mx_format
+      io.srams.read(i).req.bits.input_mx_format := activation_mx_format
       io.srams.read(i).req.bits.weight_mx_format := weight_mx_format
       
       // TODO this just overrides the previous line. Should we erase the previous line?
@@ -570,7 +570,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_t) // TODO magic number
               a_transpose := config_ex_rs1.a_transpose
               bd_transpose := config_ex_rs1.b_transpose
-              input_mx_format := config_ex_rs1.input_mx_format
+              activation_mx_format := config_ex_rs1.activation_mx_format
               weight_mx_format := config_ex_rs1.weight_mx_format
               output_mx_format := config_ex_rs1.output_mx_format
               uselut := config_ex_rs1.uselut

@@ -23,8 +23,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
                                    meshAccPrecisionList : Seq[T]) extends Module {
 
   val io = IO(new Bundle {
-    val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
+    val activation_mx_format = Input(UInt(2.W))
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b = Input(Vec(meshColumns, Vec(tileColumns, outputType)))
     val in_d = Input(Vec(meshColumns, Vec(tileColumns, weightType))) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
@@ -38,8 +38,6 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     val out_control = Output(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
     val out_id = Output(Vec(meshColumns, Vec(tileColumns, UInt(log2Up(max_simultaneous_matmuls).W))))
     val out_last = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
-    val input_mx_format = Input(UInt(2.W))
-    val weight_mx_format = Input(UInt(2.W))
   })
 
   private val ev = implicitly[Arithmetic[T]]
@@ -65,11 +63,11 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     }
   }
 
-  for (r <- 0 until meshRows; c <- 0 until meshColumns) {
-    val tile = mesh(r)(c)
-    tile.io.input_mx_format := io.input_mx_format
-    tile.io.weight_mx_format := io.weight_mx_format
-  }
+  // for (r <- 0 until meshRows; c <- 0 until meshColumns) {
+  //   val tile = mesh(r)(c)
+  //   tile.io.activation_mx_format := io.activation_mx_format
+  //   tile.io.weight_mx_format := io.weight_mx_format
+  // }
   
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage

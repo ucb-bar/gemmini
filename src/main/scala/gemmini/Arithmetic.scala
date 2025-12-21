@@ -660,8 +660,8 @@ object Arithmetic {
         macc.io.type_w := typeW
         macc.io.enable := true.B  // TODO：do we need an enable signal here?
         macc.io.rec_c := rec_c
-        macc.io.weight_mx_format =  weight_mx_format
-        macc.io.activation_mx_format = activation_mx_format
+        macc.io.weight_mx_format :=  weight_mx_format
+        macc.io.input_mx_format := activation_mx_format
         result := macc.io.out.asTypeOf(self)
         result
       }
