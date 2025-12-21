@@ -17,7 +17,7 @@ case class GemminiScalingFactorMemConfig(
 
 case class GemminiRequantizerConfig(
   baseAddr: BigInt,
-  numInputLanes: Int = 16,
+  numInputLanes: Int = 64, // TODO: note 16 only for fp8, 64 for fp6/fp4
   numOutputLanes: Int = 32,
   gpuMaxFactor: Int = 2, // maximum fp16->fp8 for gpus, determines address space size
   gpuWordSize: Int = 4,

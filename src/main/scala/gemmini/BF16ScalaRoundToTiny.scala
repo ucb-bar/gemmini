@@ -150,13 +150,13 @@ class BF16ScaleRoundToTiny(
     val io = IO(new Bundle {
     val in_bf16      = Input(Vec(outputnumLanes, UInt(16.W)))
     val scale_e8m0   = Input(UInt(inputexpWidth.W))
-    val out_fp6      = Output(Vec(outputnumLanes, UInt(6.W)))
+    val out_fp6      = Output(Vec(outputnumLanes, UInt(8.W)))
   })
 
-  val data_buffer = Reg(Vec(outputnumLanes, UInt(16.W)))
+  val data_buffer = RegInit(VecInit(Seq.fill(outputnumLanes)(0.U(16.W))))
   data_buffer := io.in_bf16
 
-  val quantized_buffer = Wire(Vec(outputnumLanes, UInt(6.W)))
+  val quantized_buffer =  WireInit(VecInit(Seq.fill(outputnumLanes)(0.U(8.W))))
   io.out_fp6 := quantized_buffer
 
   val scale_exp_unbiased = io.scale_e8m0
@@ -186,7 +186,7 @@ class BF16ScaleRoundToTiny(
 
     val scaled_bf16 = Cat(sign, scaled_exp, input_sig)
     val raw_in = hardfloat.rawFloatFromFN(inputexpWidth, inputsigWidth, scaled_bf16)
-
+    
     val roundAnyRawFNToRecFN = Module(new RoundAnyRawFNToRecFN(
       inputexpWidth,        // inExpWidth
       inputsigWidth,        // inSigWidth
