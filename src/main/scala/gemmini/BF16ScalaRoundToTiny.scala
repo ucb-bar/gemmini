@@ -80,19 +80,6 @@ object E3M1Tofp4 {
   }
 }
 
-object E5M3ToFp8 {
-  def apply(in: UInt): UInt = {
-    val sign      = in(8)
-    val exp       = in(7, 3)
-    val sig       = in(2, 0)
-    val bias_diff = 8.U
-
-    val adjExp = Mux(exp < bias_diff, 0.U, exp - bias_diff)
-
-    Mux(adjExp(4), "b01111111".U(8.W), sign ## adjExp(3, 0) ## sig)
-  }
-}
-
 
 object E4M3ToFp6 {
   def apply(in: UInt): UInt = {
@@ -132,22 +119,50 @@ object E4M3ToFp6 {
     val outSig2 = Mux(useSubnormal, subSig2, normSig2)
 
     Mux(overflow,
-      "b011111".U(6.W),
+      sign ## "b11111".U(5.W),
       sign ## outExp3 ## outSig2
     )
   }
 }
 
+object E5M3ToFp8 {
+  def isE5M3NaN(in: UInt): Bool = { in(7, 3) === "b11111".U(5.W) && in(2, 0).orR }
+  def isE5M3Inf(in: UInt): Bool = { in(7, 3) === "b11111".U(5.W) && !in(2, 0).orR }
+  val FP8Min = "b0000001".U(7.W)
+  val FP8Max = "b1111110".U(7.W)
+
+  def apply (in: UInt): UInt = {
+    require(in.getWidth == 9)
+    val sign = in(8)
+    val exp  = in(7, 3) // 5-bit exponent (E5)
+    val sig  = in(2, 0) // 3-bit fraction
+
+    val biasDiff = 8.U(5.W)
+    val exp_adj = Mux(exp <= biasDiff, 0.U, Mux(15.U <= (exp - biasDiff), 15.U, exp - biasDiff))
+
+    // printf(p"exp_adj = ${Binary(exp_adj)} sign = ${sign} sig = ${Binary(sig)}, exp: ${Binary(exp)}\n")
+
+    Mux(isE5M3NaN(in),
+      sign ## "b1111111".U(7.W), // NaN
+      Mux(isE5M3Inf(in),
+        sign ## "b1111110".U(7.W), // Inf
+        sign ## exp_adj(3, 0) ## sig // Normal/Zero
+      )
+    )
+    
+  }
+}
+
 class BF16ScaleRoundToTiny(
   val tinyWidth:     Int,
-  val outputnumLanes: Int,
+  val outputnumLanes: Int = 4,
   val inputexpWidth: Int = 8,  // BF16 exp
   val inputsigWidth: Int = 8,  // we treat 7 frac bits + 1 pad
   val format:        FType,
   val pack:          UInt => UInt // ieee(<== format.ieee) => tiny format (4/6/8 bits)
 ) extends Module {
     
-    val io = IO(new Bundle {
+  val io = IO(new Bundle {
     val in_bf16      = Input(Vec(outputnumLanes, UInt(16.W)))
     val scale_e8m0   = Input(UInt(inputexpWidth.W))
     val out_fp6      = Output(Vec(outputnumLanes, UInt(8.W)))
@@ -160,7 +175,7 @@ class BF16ScaleRoundToTiny(
   io.out_fp6 := quantized_buffer
 
   val scale_exp_unbiased = io.scale_e8m0
-  val maxExp             = ((1 << (inputexpWidth)) - 1).U(inputexpWidth.W) // e.g. 0x7F for BF16
+  val maxExp             = ((1 << (inputexpWidth)) - 2).U(inputexpWidth.W) // e.g. 0xFE for BF16
 
   for (i <- 0 until outputnumLanes) {
     val input_value = data_buffer(i)
@@ -170,13 +185,24 @@ class BF16ScaleRoundToTiny(
     val input_exp = input_value(14, 7)
     val input_sig = input_value(6, 0)
 
+    val isNaN = input_exp.andR && input_sig.orR
+    val isInf = input_exp.andR && !input_sig.orR
+
     val scale = Mux(scale_exp_unbiased(inputexpWidth-1), (~(scale_exp_unbiased - 1.U)), scale_exp_unbiased)
     val summed_u = Mux(scale_exp_unbiased(inputexpWidth-1), input_exp - scale, input_exp + scale)
     val underflow = scale_exp_unbiased(inputexpWidth-1) && (input_exp < scale)
-    val overflow  = !scale_exp_unbiased(inputexpWidth-1) && (summed_u < input_exp)
+    val overflow  = (!scale_exp_unbiased(inputexpWidth-1) && ((summed_u < input_exp) || (summed_u >= maxExp)))
 
     val scaled_exp = Wire(UInt(inputexpWidth.W))
-    when (underflow) {
+    val sig = Wire(UInt((inputsigWidth - 1).W))
+    sig := input_sig
+
+    when (isNaN) {
+      scaled_exp := ((1 << (inputexpWidth)) - 1).U(inputexpWidth.W) 
+    } .elsewhen (isInf) {
+      scaled_exp := ((1 << (inputexpWidth)) - 1).U(inputexpWidth.W) 
+      sig := 0.U((inputsigWidth - 1).W)
+    } .elsewhen (underflow) {
       scaled_exp := 0.U
     } .elsewhen (overflow) {
       scaled_exp := maxExp
@@ -184,7 +210,10 @@ class BF16ScaleRoundToTiny(
       scaled_exp := summed_u
     }
 
-    val scaled_bf16 = Cat(sign, scaled_exp, input_sig)
+    // printf(p"input_value=${Binary(input_value)} scale=${Binary(scale_exp_unbiased)} scaled_exp=${Binary(scaled_exp)} sig=${Binary(sig)}\n")
+    // printf(p"isNaN=${isNaN} isInf=${isInf} underflow=${underflow} overflow=${overflow}\n")
+
+    val scaled_bf16 = Cat(sign, scaled_exp, sig)
     val raw_in = hardfloat.rawFloatFromFN(inputexpWidth, inputsigWidth, scaled_bf16)
     
     val roundAnyRawFNToRecFN = Module(new RoundAnyRawFNToRecFN(
@@ -204,6 +233,8 @@ class BF16ScaleRoundToTiny(
     val rec_e4m3 = roundAnyRawFNToRecFN.io.out          // recoded E4M3
     val ieee_e4m3 = format.ieee(rec_e4m3)
 
-    quantized_buffer(i) := E4M3ToFp6(ieee_e4m3)
+    // printf(p"rec_e4m3=${Binary(rec_e4m3)} ieee_e4m3=${Binary(ieee_e4m3)}, scaled_bf16=${Binary(scaled_bf16)}\n")
+
+    quantized_buffer(i) := pack(ieee_e4m3)
   }
 }
