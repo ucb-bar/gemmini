@@ -8,6 +8,8 @@ import Util._
 import org.chipsalliance.cde.config.Parameters
 import midas.targetutils.PerfCounter
 
+
+
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
                                   (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
@@ -46,6 +48,18 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val counter = new CounterEventIO()
   })
+
+
+def needsBuffering(mx_format: UInt): Bool = {
+  mx_format === 2.U  // FP8 needs buffering
+}
+
+def extractHalf(data: UInt, use_high_half: Bool): UInt = {
+  Mux(use_high_half, 
+    data(255, 128),  // high 128b
+    data(127, 0))    // low 128b
+}
+  
 
   val block_size = meshRows*tileRows
 
@@ -283,6 +297,17 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val b_garbage = b_address_rs2.is_garbage() || !start_inputting_b
   val d_garbage = d_address_rs1.is_garbage() || !start_inputting_d
 
+  //MX format related
+  //val b_data_buffer = Reg(UInt(sp_width.W))
+  val d_data_buffer = Reg(UInt(sp_width.W))
+
+  //  buffer valid indicators
+  val d_buffer_valid = RegInit(false.B)
+
+  // half buffer indicators
+  val d_buffer_half = RegInit(false.B)
+
+
   // TODO merge these into one enum
   val perform_single_preload = RegInit(false.B)
   val perform_single_mul = RegInit(false.B)
@@ -434,8 +459,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val read_a = a_valid && !a_read_from_acc && dataAbank === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros && !(im2col_wire&&im2col_en)
     val read_b = b_valid && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
     val read_d = d_valid && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
+    
+    val d_needs_sram_read = read_d && !(needsBuffering(weight_mx_format) && d_buffer_valid && !d_buffer_half)
 
-    Seq((read_a, a_ready), (read_b, b_ready), (read_d, d_ready)).foreach { case (rd, r) =>
+    Seq((read_a, a_ready), (read_b, b_ready), (d_needs_sram_read, d_ready)).foreach { case (rd, r) =>
       when (rd && !io.srams.read(i).req.ready) {
         r := false.B
       }
@@ -574,8 +601,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               weight_mx_format := config_ex_rs1.weight_mx_format
               output_mx_format := config_ex_rs1.output_mx_format
               uselut := config_ex_rs1.uselut
-              enable_mxquant := config_ex_rs1.enable_mxquant
-              
+              if (output_mx_format != 3.U){
+                enable_mxquant := true.B
+              } else {
+                enable_mxquant := false.B
+              }
               if (dataflow == Dataflow.BOTH) {
                 current_dataflow := config_ex_rs1.dataflow
               }
@@ -839,10 +869,18 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     cntl.accumulate_zeros -> false.B,
     cntl.b_read_from_acc -> accReadValid(cntl.b_bank_acc)
   ))
-  val dataD_valid = cntl.d_garbage || cntl.d_unpadded_cols === 0.U || MuxCase(readValid(cntl.d_bank), Seq(
-    cntl.preload_zeros -> false.B,
-    cntl.d_read_from_acc -> accReadValid(cntl.d_bank_acc)
-  ))
+  
+  //val dataD_valid = cntl.d_garbage || cntl.d_unpadded_cols === 0.U || MuxCase(readValid(cntl.d_bank), Seq(
+  //  cntl.preload_zeros -> false.B,
+  //  cntl.d_read_from_acc -> accReadValid(cntl.d_bank_acc)
+  //))
+
+  val dataD_valid = cntl.d_garbage || cntl.d_unpadded_cols === 0.U || 
+  Mux(needsBuffering(weight_mx_format) && d_buffer_valid,
+    true.B,
+    MuxCase(readValid(cntl.d_bank), Seq(
+      cntl.preload_zeros -> false.B,
+      cntl.d_read_from_acc -> accReadValid(cntl.d_bank_acc))))
 
   //added for negative bitshift
   val preload_zero_counter = RegInit(0.U(5.W))
@@ -851,7 +889,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val dataA_unpadded = Mux(cntl.im2colling, im2ColData, Mux(cntl.a_read_from_acc, accReadData(cntl.a_bank_acc), readData(cntl.a_bank)))
   val dataB_unpadded = MuxCase(readData(cntl.b_bank), Seq(cntl.accumulate_zeros -> 0.U, cntl.b_read_from_acc -> accReadData(cntl.b_bank_acc)))
-  val dataD_unpadded = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
+  
+  val dataD_from_sram = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
+
+  val dataD_unpadded = Mux(needsBuffering(weight_mx_format) && d_buffer_valid, extractHalf(d_data_buffer, d_buffer_half), dataD_from_sram)
+
+  //val dataD_unpadded = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
 
   val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayInputType)))
   val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, accType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, accType.zero)}.map(d => d.asTypeOf(accType).withWidthOf(spatialArrayOutputType)))
@@ -876,11 +919,24 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
 
     when (cntl.d_fire && mesh.io.d.fire && !cntl.d_garbage && !cntl.preload_zeros && cntl.d_unpadded_cols > 0.U) {
-      when (cntl.d_read_from_acc) {
-        io.acc.read_resp(cntl.d_bank_acc).ready := !io.acc.read_resp(cntl.d_bank_acc).bits.fromDMA
-      }.otherwise {
-        io.srams.read(cntl.d_bank).resp.ready := !io.srams.read(cntl.d_bank).resp.bits.fromDMA
+      when (needsBuffering(weight_mx_format)) {
+        when (!d_buffer_valid) {
+          when (!cntl.d_read_from_acc && readValid(cntl.d_bank)) {
+            d_data_buffer := readData(cntl.d_bank)
+            d_buffer_valid := true.B
+            d_buffer_half := false.B
+          }
+        }.elsewhen (!d_buffer_half) {
+          d_buffer_half := true.B
+        }.otherwise {
+          d_buffer_valid := false.B
+          d_buffer_half := false.B
+        }
       }
+    }
+    when (!firing) {
+      d_buffer_valid := false.B
+      d_buffer_half := false.B
     }
   }
 

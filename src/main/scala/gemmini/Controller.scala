@@ -45,6 +45,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
 
   val mem_depth = config.sp_bank_entries * spad_data_len / max_data_len
   val mem_width = max_data_len
+
   println(f"unified shared memory size: ${mem_depth}x${mem_width}x${config.sp_banks}")
 
   // make scratchpad read and write clients, per bank
@@ -165,19 +166,22 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     ch.bits  := DontCare
   }
 
+  
+  //val scaleMembasewrite := config.scaleMembasewrite
 
-  // val mx_requantizer = Option.when(outer.config.use_mx_scaling && !outer.config.testConfig) {
-  // val q = outer.config.requantizer.get
-  // Module(new MxRequantizer(
-  //   sp_data_width = config.sp_width,
-  //   sp_addr_width = log2Ceil(config.sp_bank_entries),
-  //   scaleMem_data_width = config.scaleMem_data_width,
-  //   scaleMem_addr_width = log2Ceil(config.scaleMem_bank_entries),
-  //   scaleSize = config.scaleSize,
-  //   scaleMembasewrite = config.scaleMembasewrite,
-  //   config = q
-  // ))
-  // }
+  
+  val mx_requantizer = Option.when(outer.config.use_mx_scaling && !outer.config.testConfig) {
+  val q = outer.config.requantizer.get
+      Module(new MxRequantizer(
+        sp_data_width = outer.config.sp_width,
+        sp_addr_width = log2Ceil(outer.config.sp_bank_entries),
+        scaleMem_data_width = outer.config.scaleMem_data_width,
+        scaleMem_addr_width = log2Ceil(outer.config.scaleMem_bank_entries),
+        scaleSize = outer.config.scaleSize,
+        scaleMembasewrite = 0, // TODO: add this into the instruction
+        config = q
+      ))
+  }
 
   val mx_io = Option.when(outer.config.use_mx_scaling && !outer.config.testConfig) {
   val q = outer.config.requantizer.get
@@ -191,8 +195,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   mx_io.scale_mem <> spad.module.io.scale_mem.get
   
-  //mx_requantizer.get.io.requnat_data_in <> mx_io.requant_in
-  //mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
+  mx_requantizer.get.io.requnat_data_in <> mx_io.requant_in
+  mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
   
   mx_io.requant_in.valid := false.B
   mx_io.requant_in.bits := DontCare
@@ -203,8 +207,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   mx_io
 }
-
-// val quant_to_spad_write = if ((config.use_mx_scaling && !config.testConfig && !ex_controller.enable_mxquant)) {
+//enable_mxquant indicate if gemmini outputs will be quantized or not
+// val quant_to_spad_write = if ((outer.config.use_mx_scaling && !outer.config.testConfig && !ex_controller.enable_mxquant)) {
+//   val any_bank_valid = ex_controller.io.srams.write.map(_.valid).reduce(_ || _)
+//   val active_bank_id = PriorityEncoder(ex_controller.io.srams.write.map(_.valid))
+//   val active_bank_write = ex_controller.io.srams.write(active_bank_id)
   
 //   val requantized_writes = Wire(Vec(config.sp_banks, 
 //     new ScratchpadWriteIO(config.sp_bank_entries, config.sp_width, 

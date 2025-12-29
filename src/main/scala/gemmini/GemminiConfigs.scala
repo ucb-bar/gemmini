@@ -27,7 +27,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
                                                                              meshProdPrecisionList : Seq[(Int, Int)] = Seq(), // empty seq means default precision for inputType/weightType/accType
                                                                              meshAccPrecisionList : Seq[T] = Seq(),
-
+                                                             
                                                                              tileRows: Int = 1,
                                                                              tileColumns: Int = 1,
                                                                              meshRows: Int = 16,
@@ -51,7 +51,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              acc_sub_banks: Int = -1,
                                                                              acc_capacity: GemminiMemCapacity = CapacityInKilobytes(64),
                                                                              acc_latency: Int = 2,
+                                                                             
 
+                                                                             scaleMem_data_width: Int = 128,
+                                                                             scaleMem_bank_entries: Int = 256,
+                                                                             scaleSize: Int = 32,
+                                                                             
                                                                              dma_maxbytes: Int = 64, // TODO get this from cacheblockbytes
                                                                              dma_buswidth: Int = 128, // TODO get this from SystemBusKey
 
