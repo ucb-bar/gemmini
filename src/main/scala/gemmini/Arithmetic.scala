@@ -106,6 +106,7 @@ object MxFType {
   val E5M3 = new FType(5, 4)
   val E4M4 = new FType(5, 4)
   val E4M3 = new FType(4, 4)
+  val E4M2 = new FType(4, 3)
   val E5M2 = new FType(5, 3)
   val E2M1 = new FType(2, 2)
   val E3M1 = new FType(3, 2)

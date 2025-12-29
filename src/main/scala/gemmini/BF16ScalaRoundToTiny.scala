@@ -1,14 +1,9 @@
 package gemmini
 
 import chisel3._
-import chiseltest._
-import org.scalatest.flatspec.AnyFlatSpec
 import hardfloat._
 import freechips.rocketchip.util._
 import freechips.rocketchip.tile._
-import circt.stage.ChiselStage
-import org.scalatest.matchers.should.Matchers
-import scala.util.Random
 import chisel3.util._
 
 
@@ -45,8 +40,8 @@ class BF16ScaleRoundToFP6(
 ) extends BF16ScaleRoundToTiny(
   tinyWidth      = 6,
   outputnumLanes = outputnumLanes,
-  format         = MxFType.E4M3,
-  pack           = (in: UInt) => E4M3ToFp6(in)
+  format         = MxFType.E4M2,
+  pack           = (in: UInt) => E4M2ToFp6(in)
 )
 
 class BF16ScaleRoundToFP4(
@@ -68,60 +63,99 @@ class BF16ScaleRoundToFP8(
 )
 
 object E3M1Tofp4 {
+  def isE3M1NaN(in: UInt): Bool = { in(3, 1) === "b111".U(3.W) && in(0) }
+  def isE3M1Inf(in: UInt): Bool = { in(3, 1) === "b111".U(3.W) && !in(0) }
+  val FP4Min = "b001".U(3.W)
+  val FP4Max = "b111".U(3.W)
+
   def apply(in: UInt): UInt = {
     val sign      = in(4)
     val exp       = in(3, 1)
     val sig       = in(0)
-    val bias_diff = 2.U
 
-    val adjExp = Mux(exp < bias_diff, 0.U, exp - bias_diff)
+    val biasDiff = 2.U(3.W)
+    val isZero = (exp === 0.U) && (sig === 0.U)
+    val isSpecial = isE3M1NaN(in) || isE3M1Inf(in)
+    
+    val mapToZero = (exp < 2.U) || isZero
+    val mapToSubnorm = (exp === 2.U) && (sig === 0.U)
+    val mapToMinNorm = (exp === 2.U) && (sig === 1.U)
 
-    Mux(adjExp(2), "b0111".U(4.W), sign ## adjExp(1, 0) ## sig)
+    val mapToMax = (exp > (biasDiff +& 3.U)) || isSpecial
+
+    val exp_adj = (exp - biasDiff)(1, 0)
+    val outNorm = sign ## exp_adj ## sig
+    val outMinNorm = sign ## "b010".U(3.W)
+
+    Mux(mapToZero,
+      0.U(4.W),
+      Mux(mapToMax,
+        sign ## FP4Max,
+        Mux(mapToSubnorm,
+          sign ## FP4Min, 
+          Mux(mapToMinNorm,
+            outMinNorm,
+            outNorm
+          )
+        )
+      )
+    )
   }
 }
 
 
-object E4M3ToFp6 {
+object E4M2ToFp6 {
   def apply(in: UInt): UInt = {
-    require(in.getWidth == 8)
+    require(in.getWidth == 7)
 
-    val sign  = in(7)
-    val exp   = in(6, 3) // 4-bit exponent (E4)
-    val sig   = in(2, 0) // 3-bit fraction
+    val sign  = in(6)
+    val exp   = in(5, 2) // 4-bit exponent (E4)
+    val sig   = in(1, 0) // 2-bit fraction
 
     val biasDiff = 4.U(4.W) 
+    val isZero = (exp === 0.U) && (sig === 0.U)
+    val mapToZero = (exp <= 2.U) || isZero
 
-    val fullSig = Cat(1.U(1.W), sig)
+    val mapToSubnorm = (exp <= biasDiff) && !mapToZero
 
-    val underflow = exp <= biasDiff
+    val k = WireInit(0.U(2.W))
+    when (exp === 3.U) {
+      k := MuxLookup(sig, 0.U) (Seq(
+        "b00".U -> 1.U,
+        "b01".U -> 1.U,
+        "b10".U -> 2.U,
+        "b11".U -> 2.U
+      ))
+    } .elsewhen (exp === 4.U) {
+      k := MuxLookup(sig, 0.U) (Seq(
+        "b00".U -> 2.U,
+        "b01".U -> 2.U,
+        "b10".U -> 3.U,
+        "b11".U -> 3.U
+      ))
+    }
+    val outSub = sign ## 0.U(3.W) ## k
 
-    val expMinusBias = exp - biasDiff 
-    val adjExp       = Mux(underflow, 0.U, expMinusBias)
+    val normExp = (exp - biasDiff)(2, 0)
+    val normSig = sig
+    val outNorm = sign ## normExp ## normSig
 
-    // Overflow in FP6: adjExp >= 8 -> adjExp(3) == 1
-    val overflow = adjExp(3)
 
-    // Subnormal handling for underflow
-    val shift = (biasDiff - exp + 1.U)(1, 0) 
+    val mapToMax = (exp > (biasDiff +& 7.U))
+    val outMax = sign ## "b11111".U(5.W)
 
-    val shifted   = (fullSig >> shift)
-    val subSig2   = shifted(2, 1)
-    val subExp3   = 0.U(3.W)
+    val out = Wire(UInt(6.W))
+    when (mapToZero) {
+      out := 0.U(6.W)
+    } .elsewhen (mapToMax) {
+      out := outMax
+    } .elsewhen (mapToSubnorm) {
+      out := outSub
+    } .otherwise {
+      out := outNorm
+    }
 
-    // Normal mapping (no underflow)
-    val normSig2 = sig(2, 1)
-    val normExp3 = adjExp(2, 0)
-
-    val isZeroInput   = (exp === 0.U) && (sig === 0.U)
-    val useSubnormal  = underflow && !isZeroInput
-
-    val outExp3 = Mux(useSubnormal, subExp3, normExp3)
-    val outSig2 = Mux(useSubnormal, subSig2, normSig2)
-
-    Mux(overflow,
-      sign ## "b11111".U(5.W),
-      sign ## outExp3 ## outSig2
-    )
+    out
   }
 }
 
@@ -137,19 +171,52 @@ object E5M3ToFp8 {
     val exp  = in(7, 3) // 5-bit exponent (E5)
     val sig  = in(2, 0) // 3-bit fraction
 
+    val isZero = (exp === 0.U) && (sig === 0.U)
     val biasDiff = 8.U(5.W)
-    val exp_adj = Mux(exp <= biasDiff, 0.U, Mux(15.U <= (exp - biasDiff), 15.U, exp - biasDiff))
+    val isSpecial = isE5M3NaN(in) || isE5M3Inf(in)
 
-    // printf(p"exp_adj = ${Binary(exp_adj)} sign = ${sign} sig = ${Binary(sig)}, exp: ${Binary(exp)}\n")
+    val mapToZero = (exp <= 5.U) || isZero
+    val mapToSubnorm = (exp >= 6.U) && (exp <= 8.U)
+    val mapToMax = (exp > (23.U)) || isSpecial
 
-    Mux(isE5M3NaN(in),
-      sign ## "b1111111".U(7.W), // NaN
-      Mux(isE5M3Inf(in),
-        sign ## "b1111110".U(7.W), // Inf
-        sign ## exp_adj(3, 0) ## sig // Normal/Zero
-      )
-    )
-    
+    val exp_adj = (exp - biasDiff)(3, 0)
+    val outNorm = sign ## exp_adj ## sig
+
+    val outMinNorm = sign ## "b0001000".U(7.W)
+
+    val outSub = WireInit(0.U(8.W))
+
+    when (exp === 6.U) {
+      val k = Mux(sig(2), 2.U(3.W), 1.U(3.W))
+      outSub := sign ## 0.U(4.W) ## k
+    } .elsewhen (exp === 7.U) {
+      val k = MuxLookup(sig, 2.U) (Seq(
+        "b000".U -> 2.U,
+        "b001".U -> 2.U,
+        "b010".U -> 2.U,
+        "b011".U -> 3.U,
+        "b100".U -> 3.U,
+        "b101".U -> 3.U,
+        "b110".U -> 4.U,
+        "b111".U -> 4.U
+      ))
+      outSub := sign ## 0.U(4.W) ## k
+    } .elsewhen (exp === 8.U) {
+      val k = MuxLookup(sig, 4.U) (Seq(
+        "b000".U -> 4.U,
+        "b001".U -> 4.U,
+        "b010".U -> 5.U,
+        "b011".U -> 6.U,
+        "b100".U -> 6.U,
+        "b101".U -> 6.U,
+        "b110".U -> 7.U
+      ))
+      outSub := Mux(sig === "b111".U, outMinNorm, sign ## 0.U(4.W) ## k)
+    }
+
+    Mux(mapToZero, 0.U(8.W), 
+      Mux(mapToMax, sign ## FP8Max, 
+        Mux(mapToSubnorm, outSub, outNorm)))
   }
 }
 
@@ -210,9 +277,6 @@ class BF16ScaleRoundToTiny(
       scaled_exp := summed_u
     }
 
-    // printf(p"input_value=${Binary(input_value)} scale=${Binary(scale_exp_unbiased)} scaled_exp=${Binary(scaled_exp)} sig=${Binary(sig)}\n")
-    // printf(p"isNaN=${isNaN} isInf=${isInf} underflow=${underflow} overflow=${overflow}\n")
-
     val scaled_bf16 = Cat(sign, scaled_exp, sig)
     val raw_in = hardfloat.rawFloatFromFN(inputexpWidth, inputsigWidth, scaled_bf16)
     
@@ -230,11 +294,9 @@ class BF16ScaleRoundToTiny(
     roundAnyRawFNToRecFN.io.roundingMode  := consts.round_near_even
     roundAnyRawFNToRecFN.io.detectTininess:= consts.tininess_afterRounding
 
-    val rec_e4m3 = roundAnyRawFNToRecFN.io.out          // recoded E4M3
-    val ieee_e4m3 = format.ieee(rec_e4m3)
+    val rec_format = roundAnyRawFNToRecFN.io.out          // recoded format
+    val ieee_format = format.ieee(rec_format)
 
-    // printf(p"rec_e4m3=${Binary(rec_e4m3)} ieee_e4m3=${Binary(ieee_e4m3)}, scaled_bf16=${Binary(scaled_bf16)}\n")
-
-    quantized_buffer(i) := pack(ieee_e4m3)
+    quantized_buffer(i) := pack(ieee_format)
   }
 }
