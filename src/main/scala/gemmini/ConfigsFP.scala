@@ -267,7 +267,9 @@ object GemminiMxFPConfigs {
                                  Seq.fill(4) {MxFloat(8, 8, 4, true, false)},
 
                                  // 16x16 mesh with varying precisions
-
+    scaleMem_data_width = 128,
+    scaleMem_bank_entries = 256,
+    scaleSize = 32,
     mvin_scale_args = None,
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
