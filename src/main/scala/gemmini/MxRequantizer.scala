@@ -44,6 +44,11 @@ class MxRequantizerIO(
   scaleMem_addr_width: Int,
   scaleSize: Int,
   scaleMembasewrite: Int,
+  quantWdataWidth: Int,
+  sp_bank_entries: Int,
+  sp_banks: Int,
+  sp_width: Int,
+  sp_width_projected: Int,
   config: GemminiRequantizerConfig 
 ) extends Bundle {
   val inputnumLanes = config.numInputLanes
@@ -52,6 +57,9 @@ class MxRequantizerIO(
   val requnat_data_in = Flipped(Decoupled(new RequantizerInBundle(inputnumLanes, inputdataWidth)))
   val scaleMem_write = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
   val requant_data_out = Decoupled(new RequantizerOutBundle(outputnumLanes))
+  val lut_write = Flipped(Decoupled(new QuantLutWriteBundle(quantWdataWidth)))
+  val spad_projected_data = Flipped(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
+  val spad_deprojected_data = Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
   val fp8_mode = Input(Bool())  // true for 64-lane mode, false for 16-lane mode
 }
    
@@ -62,6 +70,13 @@ class MxRequantizer[T <: Data: Arithmetic](
   scaleMem_addr_width: Int,
   scaleSize: Int,
   scaleMembasewrite: Int,
+  quantWdataWidth: Int,
+  quantRdataWidth: Int,
+  quantRaddrWidth: Int,
+  sp_bank_entries: Int,
+  sp_banks: Int,
+  sp_width: Int,
+  sp_width_projected: Int,
   config: GemminiRequantizerConfig 
 )(implicit ev: Arithmetic[T]) extends Module {
   
@@ -74,6 +89,11 @@ class MxRequantizer[T <: Data: Arithmetic](
     scaleMem_addr_width,
     scaleSize, 
     scaleMembasewrite,
+    quantWdataWidth,
+    sp_bank_entries,
+    sp_banks,
+    sp_width,
+    sp_width_projected,
     config
   ))
    
@@ -229,19 +249,33 @@ class MxRequantizer[T <: Data: Arithmetic](
   val projected_data = RegInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(4.W))))
 
   val quantLut = Module(new QuantLut(
-    wdataWidth = 96,
-    raddrWidth = 4,
-    rdataWidth = 6,
-    outputnumLanes = io.outputnumLanes
+    wdataWidth = quantWdataWidth,
+    raddrWidth = quantRaddrWidth,
+    rdataWidth = quantRdataWidth,
+    outputnumLanes = io.outputnumLanes ,
+    sp_bank_entries = sp_bank_entries,
+    sp_banks = sp_banks,
+    sp_width = sp_width,
+    sp_width_projected = sp_width_projected
   ))
-
+  
+  quantLut.io.spad_projected_data <> io.spad_projected_data
+  quantLut.io.spad_deprojected_data <> io.spad_deprojected_data
+  
   quantLut.io.lut_write.valid := false.B
   quantLut.io.lut_write.bits := DontCare
   quantLut.io.quant_fp6.valid := false.B
   quantLut.io.quant_fp6.bits := DontCare
-  quantLut.io.lut_read_req.valid := false.B
-  quantLut.io.lut_read_req.bits := DontCare
-  quantLut.io.lut_read_resp.ready := false.B
+  // quantLut.io.lut_read_req.valid := false.B
+  // quantLut.io.lut_read_req.bits := DontCare
+  // quantLut.io.lut_read_resp.ready := false.B
+  
+  when(quantLut.io.lut_write.valid) {
+    quantLut.io.lut_write.ready := true.B
+    quantLut.io.lut_write.bits.data := io.lut_write.bits.data
+  }.otherwise {
+    quantLut.io.lut_write.ready := false.B
+  }
 
   when(quantize_valid && (total_bits_per_element === 6.U)) {
     quantLut.io.quant_fp6.valid := true.B

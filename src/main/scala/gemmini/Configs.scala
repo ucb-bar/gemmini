@@ -23,6 +23,10 @@ object GemminiConfigs {
     inputType = SInt(8.W),
     weightType = SInt(8.W),
     accType = SInt(32.W),
+    
+    inputTypeProjected = SInt(8.W),
+    weightTypeProjected = SInt(8.W),
+    accTypeProjected = SInt(32.W),
 
     spatialArrayInputType = SInt(8.W),
     spatialArrayWeightType = SInt(8.W),
@@ -171,6 +175,9 @@ object GemminiConfigs {
     inputType = DummySInt(8),
     weightType = DummySInt(8),
     accType = DummySInt(32),
+    inputTypeProjected = DummySInt(8),
+    weightTypeProjected = DummySInt(8),
+    accTypeProjected = DummySInt(32),
     spatialArrayInputType = DummySInt(8),
     spatialArrayWeightType = DummySInt(8),
     spatialArrayOutputType = DummySInt(20),

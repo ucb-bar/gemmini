@@ -19,7 +19,7 @@ class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
   val from_matmul_fsm = Bool()
   val from_conv_fsm = Bool()
-  val output_mx_format = UInt(2.W)
+  //val output_mx_format = UInt(2.W)
 }
 
 class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiArrayConfig[T, U, V])
@@ -172,6 +172,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   
   val mx_requantizer = Option.when(outer.config.use_mx_scaling && !outer.config.testConfig) {
   val q = outer.config.requantizer.get
+  val l = outer.config.lut.get
       Module(new MxRequantizer(
         sp_data_width = outer.config.sp_width,
         sp_addr_width = log2Ceil(outer.config.sp_bank_entries),
@@ -179,124 +180,161 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         scaleMem_addr_width = log2Ceil(outer.config.scaleMem_bank_entries),
         scaleSize = outer.config.scaleSize,
         scaleMembasewrite = 0, // TODO: add this into the instruction
-        config = q
+        quantWdataWidth = l.numBits,
+        quantRdataWidth = l.rdataWidth,
+        quantRaddrWidth = l.raddrWidth, 
+        sp_bank_entries = outer.config.sp_bank_entries,
+        sp_banks = outer.config.sp_banks,
+        sp_width = outer.config.sp_width,
+        sp_width_projected = outer.config.sp_width_projected,
+        config = q  
       ))
   }
 
   val mx_io = Option.when(outer.config.use_mx_scaling && !outer.config.testConfig) {
-  val q = outer.config.requantizer.get
-  val l = outer.config.lut.get
-  val mx_io = IO(new Bundle {
-    val scale_mem = Flipped(Decoupled(spad.module.io.scale_mem.get.bits.cloneType))
-    val requant_in = Flipped(Decoupled(new RequantizerInBundle(q.numInputLanes, q.inputBits)))
-    val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
-    val lut = Flipped(Decoupled(UInt(l.numBits.W)))
-  })
+    val q = outer.config.requantizer.get
+    val l = outer.config.lut.get
+    val mx_io = IO(new Bundle {
+      val scale_mem = Flipped(Decoupled(spad.module.io.scale_mem.get.bits.cloneType))
+      val requant_in = Flipped(Decoupled(new RequantizerInBundle(q.numInputLanes, q.inputBits)))
+      val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
+      val lut = Flipped(Decoupled(UInt(l.numBits.W)))
+    })
 
-  mx_io.scale_mem <> spad.module.io.scale_mem.get
-  
-  mx_requantizer.get.io.requnat_data_in <> mx_io.requant_in
-  mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
-  
-  mx_io.requant_in.valid := false.B
-  mx_io.requant_in.bits := DontCare
-  
-  mx_io.lut.ready := false.B
+    mx_io.scale_mem <> spad.module.io.scale_mem.get
 
-  Seq(mx_io.requant_in, mx_io.requant_out, mx_io.lut).foreach(dontTouch(_))
+    mx_requantizer.get.io.requnat_data_in <> mx_io.requant_in
+    mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
 
-  mx_io
+
+    mx_io.requant_in.valid := false.B
+    mx_io.requant_in.bits := DontCare
+
+    mx_requantizer.get.io.lut_write <> mx_io.lut 
+    mx_io.lut.ready := false.B
+    
+    Seq(mx_io.requant_in, mx_io.requant_out, mx_io.lut).foreach(dontTouch(_))
+
+    mx_io
+  }
+ 
+ val lut_deprojected_data = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
+
+// Check if any bank has valid response
+val any_resp_valid = spad.module.io.srams.read.map(_.resp.valid).reduce(_ || _)
+
+when(any_resp_valid && (ex_controller.output_mx_format === 1.U)) {
+  for (bank <- 0 until sp_banks) {
+    mx_requantizer.get.io.spad_projected_data(bank).resp <> spad.module.io.srams.read(bank).resp
+    spad.module.io.srams.read(bank).req <> DontCare
+  }
+  
+  when(mx_requantizer.get.io.spad_deprojected_data.valid) {
+    for (bank <- 0 until sp_banks) {
+      lut_deprojected_data(bank).resp.valid := mx_requantizer.get.io.spad_deprojected_data.valid
+      lut_deprojected_data(bank).resp.bits := mx_requantizer.get.io.spad_deprojected_data.bits(bank).resp.bits
+      mx_requantizer.get.io.spad_deprojected_data.ready := lut_deprojected_data(bank).resp.ready
+      lut_deprojected_data(bank).req <> DontCare
+    }
+  }.otherwise {
+    for (bank <- 0 until sp_banks) {
+      lut_deprojected_data(bank).resp.valid := false.B
+      lut_deprojected_data(bank).resp.bits := DontCare
+      mx_requantizer.get.io.spad_deprojected_data.ready := false.B
+      lut_deprojected_data(bank).req <> DontCare
+    }
+  }
+}.otherwise {
+  for (bank <- 0 until sp_banks) {
+    mx_requantizer.get.io.spad_projected_data(bank).resp.valid := false.B
+    mx_requantizer.get.io.spad_projected_data(bank).resp.ready := DontCare
+    mx_requantizer.get.io.spad_projected_data(bank).resp.bits := DontCare
+    mx_requantizer.get.io.spad_projected_data(bank).req <> DontCare
+  }
+  
+  mx_requantizer.get.io.spad_deprojected_data.ready := false.B
+  
+  for (bank <- 0 until sp_banks) {
+    lut_deprojected_data(bank) <> spad.module.io.srams.read(bank)
+  }
 }
-//enable_mxquant indicate if gemmini outputs will be quantized or not
-// val quant_to_spad_write = if ((outer.config.use_mx_scaling && !outer.config.testConfig && !ex_controller.enable_mxquant)) {
-//   val any_bank_valid = ex_controller.io.srams.write.map(_.valid).reduce(_ || _)
-//   val active_bank_id = PriorityEncoder(ex_controller.io.srams.write.map(_.valid))
-//   val active_bank_write = ex_controller.io.srams.write(active_bank_id)
-  
-//   val requantized_writes = Wire(Vec(config.sp_banks, 
-//     new ScratchpadWriteIO(config.sp_bank_entries, config.sp_width, 
-//       (config.sp_width / (config.aligned_to * 8)) max 1)))
-  
-//   for (i <- 0 until config.sp_banks) {
-//     requantized_writes(i).valid := false.B
-//     requantized_writes(i).addr := DontCare
-//     requantized_writes(i).data := DontCare
-//     requantized_writes(i).mask := VecInit(Seq.fill(requantized_writes(i).mask.length)(true.B))
-//   }
-  
-//   val any_bank_valid = ex_controller.io.srams.write.map(_.valid).reduce(_ || _)
-//   val active_bank_id = PriorityEncoder(ex_controller.io.srams.write.map(_.valid))
-//   val active_bank_write = ex_controller.io.srams.write(active_bank_id)
-  
-//   when (any_bank_valid) {
-//     mx_io.get.requant_in.valid := true.B
-//     mx_io.get.requant_in.bits.dataType := ex_controller.output_mx_format
+
+  //enable_mxquant indicate if gemmini outputs will be quantized or not
+  val quant_to_spad_write = if ((outer.config.use_mx_scaling && !outer.config.testConfig)) {
     
-//     mx_io.get.requant_in.bits.address := 
-//       Cat(active_bank_write.addr, active_bank_id(log2Ceil(config.sp_banks)-1, 0))
+    val requantized_writes = Wire(Vec(outer.config.sp_banks, 
+      new ScratchpadWriteIO(outer.config.sp_bank_entries, outer.config.sp_width_projected, 
+        (outer.config.sp_width_projected / (outer.config.aligned_to * 8)) max 1)))
     
-//     val lane_data = active_bank_write.data.asTypeOf(
-//       Vec(config.requantizer.get.numInputLanes, 
-//         UInt(config.requantizer.get.inputBits.W)))
-//     mx_io.get.requant_in.bits.data := lane_data
+    for (i <- 0 until outer.config.sp_banks) {
+      requantized_writes(i) := ex_controller.io.srams.write(i)  // Default assignment
+    }
     
-//     ex_controller.io.srams.write(active_bank_id).ready := mx_io.get.requant_in.ready
-//   }.otherwise {
-//     mx_io.get.requant_in.valid := false.B
+    val elements_per_bank = outer.config.sp_width_projected / outer.config.weightType.getWidth
     
-//     for (i <- 0 until config.sp_banks) {
-//       ex_controller.io.srams.write(i).ready := true.B
-//     }
-//   }
-  
-//   when (mx_io.get.requant_out.valid) {
-//     val data_type = mx_io.get.requant_out.bits.dataType.asUInt
-//     val num_elements = config.requantizer.get.numOutputLanes.U
-//     val out_data = mx_io.get.requant_out.bits.data
-    
-//     val bits_per_element = MuxLookup(data_type, 8.U)(Seq(
-//       0.U -> 8.U,  // FP8
-//       1.U -> 4.U,  // FP6
-//       2.U -> 4.U   // FP4
-//     ))
-    
-//     val total_bits = num_elements * bits_per_element
-//     val total_bytes = (total_bits + 7.U) >> 3.U
-    
-//     val sp_width_bytes = (config.sp_width / 8).U
-//     val rows_needed = (total_bytes + sp_width_bytes - 1.U) / sp_width_bytes
-    
-//     val base_bank_id = mx_io.get.requant_out.bits.address(log2Ceil(config.sp_banks)-1, 0)
-//     val base_row = mx_io.get.requant_out.bits.address >> log2Ceil(config.sp_banks)
-    
-//     for (row_offset <- 0 until 4) {
-//       val byte_start = row_offset.U * sp_width_bytes
-//       val byte_end = (row_offset.U + 1.U) * sp_width_bytes
+    when(ex_controller.enable_mxquant =/= 0.U) {
+      for (i <- 0 until outer.config.sp_banks) {
+        requantized_writes(i).valid := false.B
+        requantized_writes(i).addr := DontCare
+        requantized_writes(i).data := DontCare
+        requantized_writes(i).mask := VecInit(Seq.fill(requantized_writes(i).mask.length)(true.B))
+      }
       
-//       when (row_offset.U < rows_needed) {
-//         val target_bank = (base_bank_id + row_offset.U) % config.sp_banks.U
-//         val target_row = base_row + (base_bank_id + row_offset.U) / config.sp_banks.U
+      for (bank <- 0 until outer.config.sp_banks) {
+        when(ex_controller.io.srams.write(bank).valid) {
+          val start_idx = PopCount(ex_controller.io.srams.write.take(bank).map(_.valid)) * elements_per_bank.U
+          val bank_data = ex_controller.io.srams.write(bank).data.asTypeOf(Vec(elements_per_bank, UInt(outer.config.weightType.getWidth.W)))
+          for (elem_idx <- 0 until elements_per_bank) {
+            when(start_idx + elem_idx.U < outer.config.requantizer.get.numInputLanes.U) {
+              mx_io.get.requant_in.bits.data(start_idx + elem_idx.U) := bank_data(elem_idx)
+            }
+          }
+          mx_io.get.requant_in.valid := true.B 
+          mx_io.get.requant_in.bits.address := 
+            Cat(ex_controller.io.srams.write(bank).addr, bank.U(log2Ceil(outer.config.sp_banks).W))
+          
+          when(ex_controller.output_mx_format === 0.U) {
+            mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP4
+          }.elsewhen(ex_controller.output_mx_format === 1.U) {
+            mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP6
+          }.elsewhen(ex_controller.output_mx_format === 2.U) {
+            mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP8
+          }
+        }
+      }
+      
+      when(mx_io.get.requant_out.valid) {
+        val data_bits = MuxLookup(mx_io.get.requant_out.bits.dataType, 256.U)(Seq(
+          RequantizerDataType.FP4 -> 128.U,
+          RequantizerDataType.FP6 -> 128.U,
+          RequantizerDataType.FP8 -> 256.U,
+        ))
+      
+        val valid_bytes = data_bits >> 3.U 
         
-//         requantized_writes(target_bank).valid := true.B
-//         requantized_writes(target_bank).addr := target_row
+        requantized_writes(0).valid := true.B
+        requantized_writes(0).addr := mx_io.get.requant_out.bits.address >> log2Ceil(outer.config.sp_width_projected / 8)
+      
+        val extracted_data = MuxLookup(mx_io.get.requant_out.bits.dataType, 
+            mx_io.get.requant_out.bits.data(255, 0))(Seq(
+            RequantizerDataType.FP4 -> mx_io.get.requant_out.bits.data(127, 0),   
+            RequantizerDataType.FP6 -> mx_io.get.requant_out.bits.data(127, 0),   
+            RequantizerDataType.FP8 -> mx_io.get.requant_out.bits.data(255, 0)    
+        ))
         
-//         val data_slice = out_data((byte_end * 8.U).min(total_bits) - 1.U, byte_start * 8.U)
-//         requantized_writes(target_bank).data := data_slice.pad(config.sp_width)
-        
-//         requantized_writes(target_bank).mask := VecInit(Seq.fill(requantized_writes(target_bank).mask.length)(true.B))
-//       }
-//     }
+        val padding_bits = outer.config.sp_width_projected.U - data_bits
+        requantized_writes(0).data := Cat(0.U(padding_bits), extracted_data)
+        requantized_writes(0).mask := VecInit(
+          (0 until requantized_writes(0).mask.length).map(i => i.U < valid_bytes)
+        )
+        mx_io.get.requant_out.ready := true.B
+      }
+    }
     
-//     mx_io.get.requant_out.ready := true.B
-//   }.otherwise {
-//     mx_io.get.requant_out.ready := false.B
-//   }
-  
-//   requantized_writes
-  
-// } else {
-//   ex_controller.io.srams.write
-// }
+    requantized_writes
+  } else {
+    ex_controller.io.srams.write
+  }
 
 
   val tagWidth = 32
@@ -502,9 +540,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Wire up scratchpad to controllers
   spad.module.io.dma.read <> load_controller.io.dma
   spad.module.io.dma.write <> store_controller.io.dma
-  ex_controller.io.srams.read <> spad.module.io.srams.read
-  ex_controller.io.srams.write <> spad.module.io.srams.write
-  //quant_to_spad_write <> spad.module.io.srams.write
+  // ex_controller.io.srams.read.req <> spad.module.io.srams.read.req
+  // ex_controller.io.srams.read.resp <> spad.module.io.srams.read.resp
+  for (bank <- 0 until sp_banks) {
+    ex_controller.io.srams.read(bank) <> lut_deprojected_data(bank)
+  }
+  //ex_controller.io.srams.write <> spad.module.io.srams.write
+  quant_to_spad_write <> spad.module.io.srams.write
   spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
   ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
   ex_controller.io.acc.write <> spad.module.io.acc.write

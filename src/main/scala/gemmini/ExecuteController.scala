@@ -999,7 +999,7 @@ def extractHalf(data: UInt, use_high_half: Bool): UInt = {
   // Write to normal scratchpad
   for(i <- 0 until sp_banks) {
     val activated_wdata = VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map { e =>
-      val e_clipped = e.clippedToWidthOf(weightType)
+      val e_clipped = e.clippedToWidthOf(weightType) 
       val e_act = MuxCase(e_clipped, Seq(
         (activation === Activation.RELU) -> e_clipped.relu))
 

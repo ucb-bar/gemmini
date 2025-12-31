@@ -28,7 +28,9 @@ case class GemminiRequantizerConfig(
 )
 
 case class GemminiLUTConfig(
-  numBits: Int = 96
+  numBits: Int = 96,
+  rdataWidth: Int = 6,
+  raddrWidth: Int = 4, 
 )
 
 object RequantizerDataType extends ChiselEnum {
