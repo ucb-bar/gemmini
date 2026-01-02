@@ -402,8 +402,11 @@ class BF16ScaleRoundToTinyComprehensiveTest
   behavior of "BF16ScaleRoundToFP4"
 
   it should "self-check FP4 and print decimal BF16 + decimal FP4 output for every vector" in {
-    test(new BF16ScaleRoundToFP4(outputnumLanes = 8)) { dut =>
+    test(new BF16ScaleRoundToTiny(outputnumLanes = 8)) { dut =>
       val verbose = true
+
+      // FP4
+      dut.io.dataType.poke(0.U)
 
       def pokeLane(i: Int, bf16: Int): Unit =
         dut.io.in_bf16(i).poke((bf16 & 0xFFFF).U)
@@ -414,7 +417,7 @@ class BF16ScaleRoundToTinyComprehensiveTest
       def step(): Unit = dut.clock.step()
 
       def peekOutFp4(i: Int): Int =
-        (dut.io.out_fp6(i).peek().litValue.toInt) & 0xF
+        (dut.io.out(i).peek().litValue.toInt) & 0xF
 
       runSelfCheckWithPrints(
         lanes = 8,
@@ -437,8 +440,11 @@ class BF16ScaleRoundToTinyComprehensiveTest
   behavior of "BF16ScaleRoundToFP6"
 
   it should "self-check FP6 and print decimal BF16 + decimal FP6 output for every vector" in {
-    test(new BF16ScaleRoundToFP6(outputnumLanes = 8)) { dut =>
+    test(new BF16ScaleRoundToTiny(outputnumLanes = 8)) { dut =>
       val verbose = true
+
+      // FP6
+      dut.io.dataType.poke(1.U)
 
       def pokeLane(i: Int, bf16: Int): Unit =
         dut.io.in_bf16(i).poke((bf16 & 0xFFFF).U)
@@ -449,7 +455,7 @@ class BF16ScaleRoundToTinyComprehensiveTest
       def step(): Unit = dut.clock.step()
 
       def peekOutFp6(i: Int): Int =
-        (dut.io.out_fp6(i).peek().litValue.toInt) & 0x3F
+        (dut.io.out(i).peek().litValue.toInt) & 0x3F
 
       runSelfCheckWithPrints(
         lanes = 8,
@@ -473,8 +479,11 @@ class BF16ScaleRoundToTinyComprehensiveTest
   behavior of "BF16ScaleRoundToFP8"
 
   it should "self-check FP8 and print decimal BF16 + decimal FP8 output for every vector" in {
-    test(new BF16ScaleRoundToFP8(outputnumLanes = 8)) { dut =>
+    test(new BF16ScaleRoundToTiny(outputnumLanes = 8)) { dut =>
       val verbose = true
+
+      // FP8
+      dut.io.dataType.poke(2.U)
 
       def pokeLane(i: Int, bf16: Int): Unit =
         dut.io.in_bf16(i).poke((bf16 & 0xFFFF).U)
@@ -485,7 +494,7 @@ class BF16ScaleRoundToTinyComprehensiveTest
       def step(): Unit = dut.clock.step()
 
       def peekOutFp8(i: Int): Int =
-        (dut.io.out_fp6(i).peek().litValue.toInt) & 0xFF
+        (dut.io.out(i).peek().litValue.toInt) & 0xFF
 
       runSelfCheckWithPrints(
         lanes = 8,

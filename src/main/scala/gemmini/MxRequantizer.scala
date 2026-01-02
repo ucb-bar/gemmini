@@ -219,14 +219,12 @@ class MxRequantizer[T <: Data: Arithmetic](
   }
   
   val quantized_buffer = Wire(Vec(io.outputnumLanes, UInt(8.W)))
-  val BF16ScaleRoundToFP6 = Module(new BF16ScaleRoundToFP6(outputnumLanes = io.outputnumLanes))
+  val BF16ScaleRoundToTiny = Module(new BF16ScaleRoundToTiny(outputnumLanes = io.outputnumLanes))
   
-  BF16ScaleRoundToFP6.io.in_bf16 := data_buffer
-  BF16ScaleRoundToFP6.io.scale_e8m0 := scale_e8m0
-  //BF16ScaleRoundToFP6.io.dataType := 0/1/2 //Fp8/fp6/fp4 TODO
-  quantized_buffer := BF16ScaleRoundToFP6.io.out_fp6
-
-  
+  BF16ScaleRoundToTiny.io.in_bf16 := data_buffer
+  BF16ScaleRoundToTiny.io.scale_e8m0 := scale_e8m0
+  BF16ScaleRoundToTiny.io.dataType := format_reg
+  quantized_buffer := BF16ScaleRoundToTiny.io.out
 
   val total_bits_per_element = WireDefault(0.U(4.W))
   total_bits_per_element := 1.U  +&  exp_bits  +&  mant_bits 

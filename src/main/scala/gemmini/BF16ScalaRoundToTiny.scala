@@ -35,32 +35,32 @@ object fp8ToE5M3 {
   }
 }
 
-class BF16ScaleRoundToFP6(
-  outputnumLanes: Int = 6
-) extends BF16ScaleRoundToTiny(
-  tinyWidth      = 6,
-  outputnumLanes = outputnumLanes,
-  format         = MxFType.E4M2,
-  pack           = (in: UInt) => E4M2ToFp6(in)
-)
+// class BF16ScaleRoundToFP6(
+//   outputnumLanes: Int = 6
+// ) extends BF16ScaleRoundToTiny(
+//   tinyWidth      = 6,
+//   outputnumLanes = outputnumLanes,
+//   format         = MxFType.E4M2,
+//   pack           = (in: UInt) => E4M2ToFp6(in)
+// )
 
-class BF16ScaleRoundToFP4(
-  outputnumLanes: Int = 6
-) extends BF16ScaleRoundToTiny(
-  tinyWidth      = 4,
-  outputnumLanes = outputnumLanes,
-  format         = MxFType.E3M1,
-  pack           = (in: UInt) => E3M1Tofp4(in)
-)
+// class BF16ScaleRoundToFP4(
+//   outputnumLanes: Int = 6
+// ) extends BF16ScaleRoundToTiny(
+//   tinyWidth      = 4,
+//   outputnumLanes = outputnumLanes,
+//   format         = MxFType.E3M1,
+//   pack           = (in: UInt) => E3M1Tofp4(in)
+// )
 
-class BF16ScaleRoundToFP8(
-  outputnumLanes: Int = 6
-) extends BF16ScaleRoundToTiny(
-  tinyWidth      = 8,
-  outputnumLanes = outputnumLanes,
-  format         = MxFType.E5M3,
-  pack           = (in: UInt) => E5M3ToFp8(in)
-)
+// class BF16ScaleRoundToFP8(
+//   outputnumLanes: Int = 6
+// ) extends BF16ScaleRoundToTiny(
+//   tinyWidth      = 8,
+//   outputnumLanes = outputnumLanes,
+//   format         = MxFType.E5M3,
+//   pack           = (in: UInt) => E5M3ToFp8(in)
+// )
 
 object E3M1Tofp4 {
   def isE3M1NaN(in: UInt): Bool = { in(3, 1) === "b111".U(3.W) && in(0) }
@@ -220,26 +220,49 @@ object E5M3ToFp8 {
   }
 }
 
+object roundToMx {
+  def apply(scaled_bf16: UInt, inputexpWidth: Int, inputsigWidth: Int, format: FType, pack_function: UInt => UInt): UInt = {
+    val out = Wire(UInt(8.W))
+    val raw_in = hardfloat.rawFloatFromFN(inputexpWidth, inputsigWidth, scaled_bf16)
+    val roundAnyRawFNToRecFN = Module(new RoundAnyRawFNToRecFN(
+      inputexpWidth,        // inExpWidth
+      inputsigWidth,        // inSigWidth
+      format.exp,           // outExpWidth
+      format.sig,           // outSigWidth
+      0                     // options
+    ))
+
+    roundAnyRawFNToRecFN.io.invalidExc    := false.B
+    roundAnyRawFNToRecFN.io.infiniteExc   := false.B
+    roundAnyRawFNToRecFN.io.in            := raw_in
+    roundAnyRawFNToRecFN.io.roundingMode  := consts.round_near_even
+    roundAnyRawFNToRecFN.io.detectTininess:= consts.tininess_afterRounding
+
+    val rec_format = roundAnyRawFNToRecFN.io.out
+    val ieee_format = format.ieee(rec_format)
+    out := pack_function(ieee_format)
+    out
+  }
+}
+
 class BF16ScaleRoundToTiny(
-  val tinyWidth:     Int,
   val outputnumLanes: Int = 4,
   val inputexpWidth: Int = 8,  // BF16 exp
   val inputsigWidth: Int = 8,  // we treat 7 frac bits + 1 pad
-  val format:        FType,
-  val pack:          UInt => UInt // ieee(<== format.ieee) => tiny format (4/6/8 bits)
 ) extends Module {
     
   val io = IO(new Bundle {
     val in_bf16      = Input(Vec(outputnumLanes, UInt(16.W)))
     val scale_e8m0   = Input(UInt(inputexpWidth.W))
-    val out_fp6      = Output(Vec(outputnumLanes, UInt(8.W)))
+    val dataType   = Input(UInt(2.W))
+    val out      = Output(Vec(outputnumLanes, UInt(8.W)))
   })
 
   val data_buffer = RegInit(VecInit(Seq.fill(outputnumLanes)(0.U(16.W))))
   data_buffer := io.in_bf16
 
   val quantized_buffer =  WireInit(VecInit(Seq.fill(outputnumLanes)(0.U(8.W))))
-  io.out_fp6 := quantized_buffer
+  io.out := quantized_buffer
 
   val scale_exp_unbiased = io.scale_e8m0
   val maxExp             = ((1 << (inputexpWidth)) - 2).U(inputexpWidth.W) // e.g. 0xFE for BF16
@@ -277,26 +300,19 @@ class BF16ScaleRoundToTiny(
       scaled_exp := summed_u
     }
 
+    val format_fp4 = MxFType.E3M1
+    val format_fp6 = MxFType.E4M2
+    val format_fp8 = MxFType.E5M3
+
     val scaled_bf16 = Cat(sign, scaled_exp, sig)
-    val raw_in = hardfloat.rawFloatFromFN(inputexpWidth, inputsigWidth, scaled_bf16)
-    
-    val roundAnyRawFNToRecFN = Module(new RoundAnyRawFNToRecFN(
-      inputexpWidth,        // inExpWidth
-      inputsigWidth,        // inSigWidth
-      format.exp,           // outExpWidth
-      format.sig,           // outSigWidth
-      0                     // options
-    ))
+    val rounded = Mux(io.dataType === 1.U,
+                      roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp6, (in: UInt) => E4M2ToFp6(in)),
+                      Mux(io.dataType === 0.U,
+                        roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp4, (in: UInt) => E3M1Tofp4(in)),
+                        roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp8, (in: UInt) => E5M3ToFp8(in))
+                      )
+                    )
 
-    roundAnyRawFNToRecFN.io.invalidExc    := false.B
-    roundAnyRawFNToRecFN.io.infiniteExc   := false.B
-    roundAnyRawFNToRecFN.io.in            := raw_in
-    roundAnyRawFNToRecFN.io.roundingMode  := consts.round_near_even
-    roundAnyRawFNToRecFN.io.detectTininess:= consts.tininess_afterRounding
-
-    val rec_format = roundAnyRawFNToRecFN.io.out          // recoded format
-    val ieee_format = format.ieee(rec_format)
-
-    quantized_buffer(i) := pack(ieee_format)
+    quantized_buffer(i) := rounded
   }
 }
