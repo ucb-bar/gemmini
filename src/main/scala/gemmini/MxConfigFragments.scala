@@ -7,7 +7,7 @@ case class GemminiScalingFactorMemConfig(
   baseAddr: BigInt,
   sizeInBytes: BigInt = 32 << 10,
   sramLineSizeInBytes: Int = 32,
-  numBanks: Int = 4,
+  numBanks: Int = 8,
 ) {
   def depth: Int = (sizeInBytes / sramLineSizeInBytes / numBanks).toInt
   def bankWidthBits = sramLineSizeInBytes * 8
