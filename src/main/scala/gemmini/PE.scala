@@ -8,7 +8,8 @@ class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
   val dataflow = UInt(1.W) // TODO make this an Enum
   val propagate = UInt(1.W) // Which register should be propagated (and which should be accumulated)?
   val shift = UInt(log2Up(accType.getWidth).W) // TODO this isn't correct for Floats
-
+  val activation_mx_format = UInt(2.W)
+  val weight_mx_format = UInt(2.W)
 }
 
 class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFpProductPrecisionList: (Int, Int), meshFpAccPrecisionList: T) (implicit ev: Arithmetic[T]) extends Module {
@@ -17,10 +18,12 @@ class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFp
     val in_a  = Input(inputType)
     val in_b  = Input(weightType)
     val in_c  = Input(cType)
+    val activation_mx_format = Input(UInt(2.W))
+    val weight_mx_format = Input(UInt(2.W))
     val out_d = Output(dType)
   })
 
-  io.out_d := io.in_c.mac_mx(io.in_a, io.in_b, meshFpProductPrecisionList, meshFpAccPrecisionList)
+  io.out_d := io.in_c.mac_mx(io.in_a, io.in_b, meshFpProductPrecisionList, meshFpAccPrecisionList, io.activation_mx_format, io.weight_mx_format)
 }
 
 // TODO update documentation
@@ -39,7 +42,7 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
     val out_a = Output(inputType)
     val out_b = Output(outputType)
     val out_c = Output(outputType)
-
+    
     val in_control = Input(new PEControl(accType))
     val out_control = Output(new PEControl(accType))
 
@@ -51,6 +54,9 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
 
     val in_valid = Input(Bool())
     val out_valid = Output(Bool())
+  
+    val activation_mx_format = Input(UInt(2.W))
+    val weight_mx_format = Input(UInt(2.W))
 
     val bad_dataflow = Output(Bool())
   })
@@ -76,6 +82,7 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
   val last = io.in_last
   val valid = io.in_valid
 
+
   io.out_a := a
   io.out_control.dataflow := dataflow
   io.out_control.propagate := prop
@@ -84,7 +91,10 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
   io.out_last := last
   io.out_valid := valid
 
+
   mac_unit.io.in_a := a
+  mac_unit.io.activation_mx_format := io.activation_mx_format
+  mac_unit.io.weight_mx_format :=  io.weight_mx_format  
 
   val last_s = RegEnable(prop, valid)
   val flip = last_s =/= prop

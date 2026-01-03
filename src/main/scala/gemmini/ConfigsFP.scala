@@ -51,7 +51,9 @@ object GemminiFPConfigs {
     inputType = Float(8, 24),
     weightType = Float(8, 24),
     accType = Float(8, 24),
-
+    weightTypeProjected = Float(8, 24), //projected to lower precision
+    inputTypeProjected = Float(8, 24),
+    accTypeProjected = Float(8, 24),
     spatialArrayInputType = Float(8, 24),
     spatialArrayWeightType = Float(8, 24),
     spatialArrayOutputType = Float(8, 24),
@@ -248,26 +250,32 @@ object GemminiMxFPConfigs {
     use_dedicated_tl_port = false,
     use_shared_ext_mem = false,
 
-    inputType = MxFloat(3, 3, 2),
+    inputType = MxFloat(3, 3, 2), //consider worst case for total bit length, inputType maximal is 12bits? same case for projection? 
     weightType = MxFloat(3, 3, 4),
     accType = MxFloat(8, 8, 4),
+    weightTypeProjected = MxFloat(2, 2, 4), //projected to lower precision
+    inputTypeProjected = MxFloat(2, 2, 2), 
+    accTypeProjected = MxFloat(8, 8, 4),
 
-    spatialArrayInputType = MxFloat(3, 3, 2),
+    spatialArrayInputType = MxFloat(3, 3, 2), 
     spatialArrayWeightType = MxFloat(3, 3, 4),
     spatialArrayOutputType = MxFloat(8, 8, 4, true, false),
 
-    meshProdPrecisionList = Seq.fill(4) {(5, 6)} ++ 
-                                 Seq.fill(4) {(6, 6)} ++ 
-                                 Seq.fill(4) {(7, 7)} ++ 
+    meshProdPrecisionList = Seq.fill(4) {(8, 8)} ++ 
+                                 Seq.fill(4) {(8, 8)} ++ 
+                                 Seq.fill(4) {(8, 8)} ++ 
                                  Seq.fill(4) {(8, 8)}, 
 
-    meshAccPrecisionList =     Seq.fill(4) {MxFloat(7, 7, 4, true, false)} ++ 
-                                 Seq.fill(4) {MxFloat(7, 7, 4, true, false)} ++ 
+    meshAccPrecisionList =     Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
+                                 Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
                                  Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
                                  Seq.fill(4) {MxFloat(8, 8, 4, true, false)},
 
                                  // 16x16 mesh with varying precisions
-
+    scaleMem_data_width = 128,
+    scaleMem_bank_entries = 256,
+    scaleSize = 32,
+    enable_lut = true,
     mvin_scale_args = None,
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,

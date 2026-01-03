@@ -11,32 +11,37 @@ class QuantLutIO(
   wdataWidth: Int,
   raddrWidth: Int,
   rdataWidth: Int,
-  outputnumLanes: Int = 32
+  outputnumLanes: Int = 32 ,
+  sp_bank_entries: Int,
+  sp_banks: Int,
+  sp_width: Int,
+  sp_width_projected: Int,
 ) extends Bundle {
   val lutReadEnable = Output(Bool()) 
   val lut_write =  Flipped(Decoupled(new QuantLutWriteBundle(wdataWidth))) //input
-  val lut_read_req = Flipped(Decoupled(new QuantLutReadReq(raddrWidth))) //input
-  val lut_read_resp = Decoupled(new QuantLutReadResp(rdataWidth)) //output
-  val quant_fp6 = Flipped(Valid(Vec(outputnumLanes, UInt(rdataWidth.W))))
-  val projected_data = Valid(Vec(outputnumLanes, UInt(raddrWidth.W)))
+  val quant_fp6 = Flipped(Valid(Vec(outputnumLanes, UInt(rdataWidth.W)))) //input
+  val projected_data = Valid(Vec(outputnumLanes, UInt(raddrWidth.W))) //output
+  val spad_projected_data = Flipped(Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))) 
+  val spad_deprojected_data = Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
 }
 
 class QuantLut(
   wdataWidth: Int,
   raddrWidth: Int, 
   rdataWidth: Int,
-  outputnumLanes: Int = 32
+  outputnumLanes: Int = 32 ,
+  sp_bank_entries: Int,
+  sp_banks: Int,
+  sp_width: Int,
+  sp_width_projected: Int,
 ) extends Module {
   val QuantLutEnable = Input(Bool()) 
-  val io = IO(new QuantLutIO(wdataWidth, raddrWidth, rdataWidth, outputnumLanes))
+  val io = IO(new QuantLutIO(wdataWidth, raddrWidth, rdataWidth, outputnumLanes, sp_bank_entries, sp_banks, sp_width, sp_width_projected))
   val lutSize = pow(2, raddrWidth).toInt
   val lutCache = RegInit(VecInit(Seq.fill(lutSize)(0.U(rdataWidth.W))))
 
   io.lutReadEnable := false.B
   io.lut_write.ready := false.B
-  io.lut_read_req.ready := false.B
-  io.lut_read_resp.valid := false.B
-  io.lut_read_resp.bits := DontCare
 
   when(io.lut_write.valid) {
     io.lut_write.ready := true.B
@@ -74,17 +79,35 @@ class QuantLut(
   projectedDataValid := true.B
   }
   } .otherwise {
-    // for (i <- 0 until outputnumLanes) {
-    //   projectedIndices(i) := 0.U
-    // }
     projectedDataValid := false.B
   }
 
-  //TODO: read the data from shared memory by 4 bits index and use the data to do projection
   io.projected_data.valid := projectedDataValid
   io.projected_data.bits := projectedIndices
-  
-  // io.lut_read_req.valid := false.B  
-  // io.lut_read_req.bits := DontCare
-  // io.lut_read_resp.ready := false.B
+
+  when(io.spad_projected_data.valid) {
+    io.spad_projected_data.ready := io.spad_deprojected_data.ready
+    io.spad_deprojected_data.valid := io.spad_projected_data.valid
+    
+    for (i <- 0 until sp_banks) {
+      val num_4bit_chunks = sp_width_projected / 4
+      val deprojected_bits = Wire(Vec(num_4bit_chunks, UInt(6.W)))
+      
+      for (k <- 0 until num_4bit_chunks) {
+        val chunk_4bit = io.spad_projected_data.bits(i).resp.bits.data((k+1)*4-1, k*4)
+        deprojected_bits(k) := lutCache(chunk_4bit)
+      }
+      
+      io.spad_deprojected_data.bits(i).resp.bits := deprojected_bits.asUInt
+      io.spad_deprojected_data.bits(i).resp.valid := io.spad_projected_data.bits(i).resp.valid
+      io.spad_projected_data.bits(i).resp.ready := io.spad_deprojected_data.bits(i).resp.ready
+      
+      io.spad_deprojected_data.bits(i).req <> DontCare
+      io.spad_projected_data.bits(i).req <> DontCare
+    }
+  }.otherwise {
+    io.spad_projected_data.ready := false.B
+    io.spad_deprojected_data.valid := false.B
+    io.spad_deprojected_data.bits := DontCare
+  }
 }

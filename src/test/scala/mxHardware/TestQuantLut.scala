@@ -14,7 +14,11 @@ class QuantLutTest extends AnyFlatSpec with ChiselScalatestTester {
       wdataWidth = 96,  // 16 entries * 6 bits
       raddrWidth = 4,   // 2^4 = 16 entries
       rdataWidth = 6,   // FP6
-      outputnumLanes = 32
+      outputnumLanes = 32,
+      sp_bank_entries = 64,
+      sp_banks = 4,
+      sp_width = 24,
+      sp_width_projected = 16
     )).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
       
       // Initialize
@@ -66,7 +70,11 @@ class QuantLutTest extends AnyFlatSpec with ChiselScalatestTester {
       wdataWidth = 96,
       raddrWidth = 4,
       rdataWidth = 6,
-      outputnumLanes = 32
+      outputnumLanes = 32,
+      sp_bank_entries = 64,
+      sp_banks = 4,
+      sp_width = 24,
+      sp_width_projected = 16
     )).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
       
       dut.io.lut_write.valid.poke(false.B)
@@ -146,7 +154,11 @@ class QuantLutTest extends AnyFlatSpec with ChiselScalatestTester {
       wdataWidth = 96,
       raddrWidth = 4,
       rdataWidth = 6,
-      outputnumLanes = 32
+      outputnumLanes = 32,
+      sp_bank_entries = 64,
+      sp_banks = 4,
+      sp_width = 24,
+      sp_width_projected = 16
     )).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
       
       dut.io.lut_write.valid.poke(false.B)
@@ -205,7 +217,11 @@ class QuantLutTest extends AnyFlatSpec with ChiselScalatestTester {
       wdataWidth = 96,
       raddrWidth = 4,
       rdataWidth = 6,
-      outputnumLanes = 32
+      outputnumLanes = 32,
+      sp_bank_entries = 64,
+      sp_banks = 4,
+      sp_width = 24,
+      sp_width_projected = 16
     )).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
       
       dut.io.lut_write.valid.poke(false.B)
@@ -257,7 +273,11 @@ class QuantLutTest extends AnyFlatSpec with ChiselScalatestTester {
       wdataWidth = 96,
       raddrWidth = 4,
       rdataWidth = 6,
-      outputnumLanes = 32
+      outputnumLanes = 32,
+      sp_bank_entries = 64,
+      sp_banks = 4,
+      sp_width = 24,
+      sp_width_projected = 16
     )).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
       
       println("=== Test 5: Disabled State ===")

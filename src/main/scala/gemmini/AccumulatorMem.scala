@@ -12,9 +12,11 @@ class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, sca
   val igelu_qc = acc_t.cloneType
   val iexp_qln2 = acc_t.cloneType
   val iexp_qln2_inv = acc_t.cloneType
+  val activation_mx_format = UInt(2.W)
+  val weight_mx_format = UInt(2.W)
   val act = UInt(Activation.bitwidth.W) // TODO magic number
   val full = Bool() // Whether or not we return the full bitwidth output
-
+  
   val fromDMA = Bool()
 
 }

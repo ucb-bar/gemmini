@@ -1,9 +1,9 @@
-[submodule "software/gemmini-rocc-tests"]
-	path = software/gemmini-rocc-tests
-	url = https://github.com/Rakanic/gemmini-rocc-tests.git
 [submodule "software/onnxruntime-riscv"]
 	path = software/onnxruntime-riscv
 	url = https://github.com/pranav-prakash/onnxruntime-riscv.git
 [submodule "software/libgemmini"]
 	path = software/libgemmini
 	url = https://github.com/ucb-bar/libgemmini.git
+[submodule "software/gemmini-rocc-tests"]
+	path = software/gemmini-rocc-tests
+	url = https://github.com/Rakanic/gemmini-rocc-tests.git

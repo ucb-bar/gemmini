@@ -24,6 +24,8 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
   val status = new MStatus
 
+  val input_mx_format = UInt(2.W)
+  val weight_mx_format = UInt(2.W)
 }
 
 class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)
@@ -60,6 +62,7 @@ class ScratchpadMemWriteResponse extends Bundle {
 class ScratchpadMemReadResponse extends Bundle {
   val bytesRead = UInt(16.W) // TODO magic number here
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
+  
 }
 
 class ScratchpadReadMemIO[U <: Data](local_addr_t: LocalAddr, scale_t_bits: Int)(implicit p: Parameters) extends CoreBundle {
@@ -76,11 +79,16 @@ class ScratchpadWriteMemIO(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bit
 class ScratchpadReadReq(val n: Int) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
   val fromDMA = Bool()
+  val weight_mx_format = UInt(2.W)
+  val input_mx_format = UInt(2.W)
 }
 
 class ScratchpadReadResp(val w: Int) extends Bundle {
   val data = UInt(w.W)
   val fromDMA = Bool()
+  val weight_mx_format = UInt(2.W)
+  val input_mx_format = UInt(2.W)
+
 }
 
 class ScratchpadReadIO(val n: Int, val w: Int) extends Bundle {
@@ -112,6 +120,24 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
 
   val ren = io.read.req.fire
   val fromDMA = io.read.req.bits.fromDMA
+  val weight_mx_format = io.read.req.bits.weight_mx_format
+  val input_mx_format = io.read.req.bits.input_mx_format
+
+
+  val bits_per_element = MuxLookup(input_mx_format, 8.U)(Seq(
+    0.U -> 8.U,  // FP8
+    1.U -> 4.U,  // FP6
+    2.U -> 4.U   // FP4
+  ))
+  
+  val elements_per_row = (w / 8).U  
+  val total_bits_needed = elements_per_row * bits_per_element
+  val bytes_needed = (total_bits_needed + 7.U) >> 3.U
+  val addresses_needed = (bytes_needed + (w/8 - 1).U) / (w/8).U
+
+  
+
+
 
   // Make a queue which buffers the result of an SRAM read if it can't immediately be consumed
   val q = Module(new Queue(new ScratchpadReadResp(w), 1, true, true))
@@ -527,10 +553,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         when (exread) {
           bio.read.req.bits.addr := ex_read_req.bits.addr
           bio.read.req.bits.fromDMA := false.B
+          bio.read.req.bits.weight_mx_format := ex_read_req.bits.weight_mx_format
+          bio.read.req.bits.input_mx_format := ex_read_req.bits.input_mx_format
         }.elsewhen (dmawrite) {
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.sp_row()
           bio.read.req.bits.fromDMA := true.B
-
+          bio.read.req.bits.weight_mx_format := ex_read_req.bits.weight_mx_format  // Default FP8 for DMA
+          bio.read.req.bits.input_mx_format := ex_read_req.bits.input_mx_format
           when (bio.read.req.fire) {
             write_dispatch_q.ready := true.B
             write_norm_q.io.enq.valid := true.B
@@ -687,6 +716,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     }
 
     val acc_adders = Module(new AccPipeShared(acc_latency-1, acc_row_t, acc_banks))
+    val fp8_mode = io.srams.read(0).req.bits.input_mx_format === 2.U
 
     val acc_mems = {
       val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(

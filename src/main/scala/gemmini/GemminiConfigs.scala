@@ -20,6 +20,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              inputType: T,
                                                                              weightType: T,
                                                                              accType: T,
+                                                                             weightTypeProjected: T,
+                                                                             inputTypeProjected: T,
+                                                                             accTypeProjected: T,
                                                                              spatialArrayInputType: T,
                                                                              spatialArrayWeightType: T,
                                                                              spatialArrayOutputType: T,
@@ -27,7 +30,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
                                                                              meshProdPrecisionList : Seq[(Int, Int)] = Seq(), // empty seq means default precision for inputType/weightType/accType
                                                                              meshAccPrecisionList : Seq[T] = Seq(),
-
+                                                             
                                                                              tileRows: Int = 1,
                                                                              tileColumns: Int = 1,
                                                                              meshRows: Int = 16,
@@ -51,7 +54,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              acc_sub_banks: Int = -1,
                                                                              acc_capacity: GemminiMemCapacity = CapacityInKilobytes(64),
                                                                              acc_latency: Int = 2,
+                                                                             
 
+                                                                             scaleMem_data_width: Int = 128,
+                                                                             scaleMem_bank_entries: Int = 256,
+                                                                             scaleSize: Int = 32,
+                                                                             
                                                                              dma_maxbytes: Int = 64, // TODO get this from cacheblockbytes
                                                                              dma_buswidth: Int = 128, // TODO get this from SystemBusKey
 
@@ -105,15 +113,16 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              scale_mem: Option[GemminiScalingFactorMemConfig] = None,
                                                                              requantizer: Option[GemminiRequantizerConfig] = None,
                                                                              lut: Option[GemminiLUTConfig] = None,
-
+                                                                             enable_lut: Boolean = true,
                                                                              use_mx_scaling: Boolean = true,
                                                                              testConfig: Boolean = false,
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
   // require(inputType.getWidth == weightType.getWidth)
-  val sp_width = meshColumns * tileColumns * weightType.getWidth
+  val sp_width = meshColumns * tileColumns * weightType.getWidth //weightType!! TODO: double check with different precision writes!
+  val sp_width_projected = meshColumns * tileColumns * weightTypeProjected.getWidth //weightType!! TODO: double check with different precision writes!
   val sp_bank_entries = sp_capacity match {
-    case CapacityInKilobytes(kb) => kb * 1024 * 8 / (sp_banks * sp_width)
+    case CapacityInKilobytes(kb) => kb * 1024 * 8 / (sp_banks * sp_width_projected)
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / sp_banks
   }
   val acc_bank_entries = acc_capacity match {
