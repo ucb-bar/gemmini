@@ -54,7 +54,7 @@ class MxRequantizerIO(
   val inputnumLanes = config.numInputLanes
   val outputnumLanes = config.numOutputLanes
   val inputdataWidth = config.inputBits
-  val requnat_data_in = Flipped(Decoupled(new RequantizerInBundle(inputnumLanes, inputdataWidth)))
+  val requant_data_in = Flipped(Decoupled(new RequantizerInBundle(inputnumLanes, inputdataWidth)))
   val scaleMem_write = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
   val requant_data_out = Decoupled(new RequantizerOutBundle(outputnumLanes))
   val lut_write = Flipped(Decoupled(new QuantLutWriteBundle(quantWdataWidth)))
@@ -102,7 +102,7 @@ class MxRequantizer[T <: Data: Arithmetic](
 
 
   val scale_buffer = RegInit(VecInit(Seq.fill(scaleSize)(0.U(8.W))))
-  val quant_dataType = io.requnat_data_in.bits.dataType   //output data fromat
+  val quant_dataType = io.requant_data_in.bits.dataType   //output data fromat
   val format_reg = RegNext(quant_dataType.asUInt, 2.U)
   
 
@@ -142,23 +142,23 @@ class MxRequantizer[T <: Data: Arithmetic](
   val batch_counter = RegInit(0.U(1.W))
   val processing_64lane = RegInit(false.B)
   
-  val requant_data_in_valid_d = RegNext(io.requnat_data_in.valid, false.B) 
+  val requant_data_in_valid_d = RegNext(io.requant_data_in.valid, false.B)
   val should_compute = Wire(Bool())
   val quantize_valid = RegNext(should_compute, false.B)
 
   should_compute := false.B
-  io.requnat_data_in.ready := !processing_64lane
+  io.requant_data_in.ready := !processing_64lane
   
-  when(io.requnat_data_in.fire) {
+  when(io.requant_data_in.fire) {
     when(io.fp8_mode) { //16 lanes at a time
       for (i <- 0 until half_lanes) {
         val idx = Mux(data_buffer_counter === 0.U, i.U, (half_lanes + i).U)
-        input_32_buffer(idx) := io.requnat_data_in.bits.data(i) 
+        input_32_buffer(idx) := io.requant_data_in.bits.data(i)
       }
       data_buffer_counter := data_buffer_counter ^ 1.U
     }.otherwise {
       for (i <- 0 until 64) {
-        input_64_buffer(i) := io.requnat_data_in.bits.data(i)
+        input_64_buffer(i) := io.requant_data_in.bits.data(i)
       }
       data_buffer_counter := 1.U
     }
@@ -285,12 +285,12 @@ class MxRequantizer[T <: Data: Arithmetic](
   when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
     io.requant_data_out.valid := true.B
     io.requant_data_out.bits.dataType := quant_dataType
-    io.requant_data_out.bits.address := io.requnat_data_in.bits.address  +& config.baseAddr.U //todo: the address generated for only 256bits write
+    io.requant_data_out.bits.address := io.requant_data_in.bits.address  +& config.baseAddr.U //todo: the address generated for only 256bits write
     io.requant_data_out.bits.data := Cat(quantLut.io.projected_data.bits.reverse)
   }.elsewhen(quantize_valid && ((total_bits_per_element === 4.U) || (total_bits_per_element === 8.U))){
     io.requant_data_out.valid := true.B
     io.requant_data_out.bits.dataType := quant_dataType
-    io.requant_data_out.bits.address := io.requnat_data_in.bits.address +& config.baseAddr.U
+    io.requant_data_out.bits.address := io.requant_data_in.bits.address +& config.baseAddr.U
     io.requant_data_out.bits.data := extracted_data
   }.otherwise {
     io.requant_data_out.bits.data := 0.U

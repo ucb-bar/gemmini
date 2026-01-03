@@ -201,25 +201,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val lut = Flipped(Decoupled(UInt(l.numBits.W)))
     })
 
+    // scaling factor memory
     mx_io.scale_mem <> spad.module.io.scale_mem.get
-    // TODO
-    mx_io.requant_in.ready := false.B
-    mx_io.requant_out.valid := false.B
-    mx_io.requant_out.bits := DontCare
-    mx_io.lut.ready := false.B
 
-    Seq(mx_io.requant_in, mx_io.requant_out, mx_io.lut).foreach(dontTouch(_))
-
-    mx_requantizer.get.io.requnat_data_in <> mx_io.requant_in
+    // requantizer
+    // TODO:
+    mx_requantizer.get.io.requant_data_in <> mx_io.requant_in
     mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
 
+    // lut
+    mx_requantizer.get.io.lut_write <> mx_io.lut
 
-    mx_io.requant_in.valid := false.B
-    mx_io.requant_in.bits := DontCare
-
-    mx_requantizer.get.io.lut_write <> mx_io.lut 
-    mx_io.lut.ready := false.B
-    
     Seq(mx_io.requant_in, mx_io.requant_out, mx_io.lut).foreach(dontTouch(_))
 
     mx_io
