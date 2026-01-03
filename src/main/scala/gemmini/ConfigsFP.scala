@@ -319,7 +319,7 @@ object GemminiMxFPConfigs {
         baseAddr = 0x10000000L + 0x8000,
         sizeInBytes = 16 << 10,
         sramLineSizeInBytes = 256 / 8,
-        numBanks = 4,
+        numBanks = 8,
         ))
   )
 

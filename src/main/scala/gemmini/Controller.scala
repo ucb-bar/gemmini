@@ -208,23 +208,23 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val mx_io = IO(new Bundle {
       val scale_mem = Flipped(Decoupled(spad.module.io.scale_mem.get.bits.cloneType))
       val requant_in = Flipped(Decoupled(new RequantizerInBundle(q.numInputLanes, q.inputBits)))
+      val requant_in_gpu = Flipped(Decoupled(new RequantizerInBundle(q.numGPUInputLanes, q.inputBits)))
       val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
       val lut = Flipped(Decoupled(UInt(l.numBits.W)))
     })
 
     mx_io.scale_mem <> spad.module.io.scale_mem.get
-
-    mx_requantizer.get.io.requnat_data_in <> mx_io.requant_in
+  
+    //mx_requantizer.get.io.requnat_data_in <> mx_io.requant_in
     mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
 
-
-    mx_io.requant_in.valid := false.B
-    mx_io.requant_in.bits := DontCare
+    mx_io.requant_in.ready := false.B
+    mx_io.requant_in_gpu.ready := false.B
 
     mx_requantizer.get.io.lut_write <> mx_io.lut 
     mx_io.lut.ready := false.B
     
-    Seq(mx_io.requant_in, mx_io.requant_out, mx_io.lut).foreach(dontTouch(_))
+    Seq(mx_io.requant_in, mx_io.requant_in_gpu, mx_io.requant_out, mx_io.lut).foreach(dontTouch(_))
 
     mx_io
   }
@@ -286,6 +286,10 @@ if (mx_requantizer.isDefined) {
     
     val elements_per_bank = outer.config.sp_width_projected / outer.config.weightType.getWidth
     
+    mx_io.get.requant_in.valid := false.B
+    mx_io.get.requant_in.bits := DontCare
+    mx_io.get.requant_in_gpu.ready := false.B
+
     when(ex_controller.io.enable_MXQuant =/= 0.U) {
       for (i <- 0 until outer.config.sp_banks) {
         requantized_writes(i).valid := false.B
@@ -307,13 +311,22 @@ if (mx_requantizer.isDefined) {
           mx_io.get.requant_in.bits.address := 
             Cat(ex_controller.io.srams.write(bank).addr, bank.U(log2Ceil(outer.config.sp_banks).W))
           
-          when(ex_controller.io.output_MxFormat === 0.U) {
-            mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP4
-          }.elsewhen(ex_controller.io.output_MxFormat === 1.U) {
-            mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP6
-          }.elsewhen(ex_controller.io.output_MxFormat === 2.U) {
-            mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP8
-          }
+        }.elsewhen(mx_io.get.requant_in_gpu.valid){
+          val padded_data = VecInit(mx_io.get.requant_in_gpu.bits.data ++ 
+                                Seq.fill(64 - 16)(0.U(16.W)))
+          mx_io.get.requant_in.valid := true.B
+          mx_io.get.requant_in.bits.data := padded_data
+          mx_io.get.requant_in.bits.address := mx_io.get.requant_in_gpu.bits.address
+          mx_io.get.requant_in.bits.dataType := mx_io.get.requant_in_gpu.bits.dataType
+          mx_io.get.requant_in_gpu.ready := mx_io.get.requant_in.ready
+        }
+
+        when(ex_controller.io.output_MxFormat === 0.U) {
+          mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP4
+        }.elsewhen(ex_controller.io.output_MxFormat === 1.U) {
+          mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP6
+        }.elsewhen(ex_controller.io.output_MxFormat === 2.U) {
+          mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP8
         }
       }
       
@@ -335,7 +348,7 @@ if (mx_requantizer.isDefined) {
             RequantizerDataType.FP6 -> mx_io.get.requant_out.bits.data(127, 0),   
             RequantizerDataType.FP8 -> mx_io.get.requant_out.bits.data(255, 0)    
         ))
-        
+        //TODO: change the format of outputs and remove mask
         val padding_bits = outer.config.sp_width_projected.U - data_bits
         requantized_writes(0).data := Cat(0.U(padding_bits), extracted_data)
         requantized_writes(0).mask := VecInit(

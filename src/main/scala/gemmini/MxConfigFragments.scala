@@ -7,7 +7,7 @@ case class GemminiScalingFactorMemConfig(
   baseAddr: BigInt,
   sizeInBytes: BigInt = 32 << 10,
   sramLineSizeInBytes: Int = 32,
-  numBanks: Int = 4,
+  numBanks: Int = 8,
 ) {
   def depth: Int = (sizeInBytes / sramLineSizeInBytes / numBanks).toInt
   def bankWidthBits = sramLineSizeInBytes * 8
@@ -17,6 +17,7 @@ case class GemminiScalingFactorMemConfig(
 
 case class GemminiRequantizerConfig(
   baseAddr: BigInt,
+  numGPUInputLanes: Int = 16,
   numInputLanes: Int = 64, // TODO: note 16 only for fp8, 64 for fp6/fp4
   numOutputLanes: Int = 32,
   gpuMaxFactor: Int = 2, // maximum fp16->fp8 for gpus, determines address space size

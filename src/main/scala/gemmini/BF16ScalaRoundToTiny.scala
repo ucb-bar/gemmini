@@ -2,7 +2,6 @@ package gemmini
 
 import chisel3._
 import hardfloat._
-import freechips.rocketchip.util._
 import freechips.rocketchip.tile._
 import chisel3.util._
 
