@@ -716,7 +716,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     }
 
     val acc_adders = Module(new AccPipeShared(acc_latency-1, acc_row_t, acc_banks))
-    val fp8_mode = io.srams.read(0).req.bits.input_mx_format === 2.U
+    //val fp8_mode = io.srams.read(0).req.bits.input_mx_format === 2.U
 
     val acc_mems = {
       val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(
