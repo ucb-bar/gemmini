@@ -1,14 +1,8 @@
 package gemmini
 
 import chisel3._
-import chiseltest._
-import org.scalatest.flatspec.AnyFlatSpec
 import hardfloat._
-import freechips.rocketchip.util._
 import freechips.rocketchip.tile._
-import circt.stage.ChiselStage
-import org.scalatest.matchers.should.Matchers
-import scala.util.Random
 import chisel3.util._
 
 

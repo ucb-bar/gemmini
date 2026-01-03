@@ -165,11 +165,23 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
 
   val mx_io = Option.when(outer.config.use_mx_scaling && !outer.config.testConfig) {
+    val q = outer.config.requantizer.get
+    val l = outer.config.lut.get
     val mx_io = IO(new Bundle {
       val scale_mem = Flipped(Decoupled(spad.module.io.scale_mem.get.bits.cloneType))
+      val requant_in = Flipped(Decoupled(new RequantizerInBundle(q.numInputLanes, q.inputBits)))
+      val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
+      val lut = Flipped(Decoupled(UInt(l.numBits.W)))
     })
 
     mx_io.scale_mem <> spad.module.io.scale_mem.get
+    // TODO
+    mx_io.requant_in.ready := false.B
+    mx_io.requant_out.valid := false.B
+    mx_io.requant_out.bits := DontCare
+    mx_io.lut.ready := false.B
+
+    Seq(mx_io.requant_in, mx_io.requant_out, mx_io.lut).foreach(dontTouch(_))
 
     mx_io
   }
