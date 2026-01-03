@@ -253,7 +253,8 @@ object GemminiMxFPConfigs {
     inputType = MxFloat(3, 3, 2), //consider worst case for total bit length, inputType maximal is 12bits? same case for projection? 
     weightType = MxFloat(3, 3, 4),
     accType = MxFloat(8, 8, 4),
-    weightTypeProjected = MxFloat(2, 2, 4), //projected to lower precision
+    // weightTypeProjected = MxFloat(2, 2, 4), //projected to lower precision
+    weightTypeProjected = MxFloat(3, 3, 4), // should be projected, but errors if weightType != weightTypeProjected
     inputTypeProjected = MxFloat(2, 2, 2), 
     accTypeProjected = MxFloat(8, 8, 4),
 
@@ -305,7 +306,7 @@ object GemminiMxFPConfigs {
     num_counter = 8,
     requantizer = Some(GemminiRequantizerConfig( 
       baseAddr = 0x10000000L,
-      numInputLanes = 16,
+      numInputLanes = 64,
       numOutputLanes = 32,
       gpuMaxFactor = 2,
       gpuWordSize = 4,
@@ -323,6 +324,11 @@ object GemminiMxFPConfigs {
   )
 
   val testMxFPConfig = defaultMxFPConfig.copy(testConfig = true)
+  val testRequantizerLutMxFPConfig = defaultMxFPConfig.copy(
+    testConfig = true,
+    enable_lut = true,
+    lut = Some(GemminiLUTConfig())
+  )
  
 }
 
@@ -343,6 +349,16 @@ class GemminiMxFPTestConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiMxFPConfigs.testMxFPConfig))
+    }
+  )
+})
+
+class GemminiRequantizerLutMxFPTestConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiMxFPConfigs.testRequantizerLutMxFPConfig))
     }
   )
 })

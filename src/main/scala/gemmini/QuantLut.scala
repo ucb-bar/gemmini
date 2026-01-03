@@ -23,6 +23,8 @@ class QuantLutIO(
   val projected_data = Valid(Vec(outputnumLanes, UInt(raddrWidth.W))) //output
   val spad_projected_data = Flipped(Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))) 
   val spad_deprojected_data = Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
+  // val spad_projected_data   = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
+  // val spad_deprojected_data = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
 }
 
 class QuantLut(
@@ -98,7 +100,8 @@ class QuantLut(
         deprojected_bits(k) := lutCache(chunk_4bit)
       }
       
-      io.spad_deprojected_data.bits(i).resp.bits := deprojected_bits.asUInt
+      io.spad_deprojected_data.bits(i).resp.bits.data := deprojected_bits.asUInt
+      // drive mxtype too (?)
       io.spad_deprojected_data.bits(i).resp.valid := io.spad_projected_data.bits(i).resp.valid
       io.spad_projected_data.bits(i).resp.ready := io.spad_deprojected_data.bits(i).resp.ready
       

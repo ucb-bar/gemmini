@@ -29,8 +29,8 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
     val enable = Input(Bool())
     val rec_c = Input(UInt((4*(cType.exp + cType.sig + 1)).W))
     val out = Output(UInt((4*(cType.exp + cType.sig + 1)).W))
-    val input_mx_format = Input(UInt(2.W))   
-    val weight_mx_format = Input(UInt(2.W))
+    // val input_mx_format = Input(UInt(2.W)) // this inputs are not needed because mode already encodes this information
+    // val weight_mx_format = Input(UInt(2.W))
   })
 
   def normalize(prod: UInt, outBits: Int, inBits: Int): (UInt, UInt, Bool) = {
@@ -217,8 +217,8 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
   PE.io.mask_w := ~in_w_mask.asUInt
   PE.io.in_a := inA_pe
   PE.io.in_w := inW_pe
-  PE.io.activation_mx_format := io.input_mx_format
-  PE.io.weight_mx_format := io.weight_mx_format
+  // PE.io.activation_mx_format := io.input_mx_format
+  // PE.io.weight_mx_format := io.weight_mx_format
   out_pe := PE.io.output
 
   // Exp Adder Instantiation

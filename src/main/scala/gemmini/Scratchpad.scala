@@ -149,6 +149,8 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.valid := RegNext(ren)
     q.io.enq.bits.data := 0.U
     q.io.enq.bits.fromDMA := RegNext(fromDMA)
+    q.io.enq.bits.weight_mx_format := RegNext(weight_mx_format)
+    q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
     io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
   } else if (use_shared_ext_mem) { // use ready-valid interface
     val ext_mem = io.ext_mem.get
@@ -169,6 +171,8 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.valid := ext_mem.read_resp.valid
     q.io.enq.bits.data := ext_mem.read_resp.bits
     q.io.enq.bits.fromDMA := dma_q.io.deq.bits
+    q.io.enq.bits.weight_mx_format := RegNext(weight_mx_format)
+    q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
     ext_mem.read_resp.ready := q.io.enq.ready
 
     /* WRITE */
@@ -198,6 +202,8 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.valid := RegNext(ren)
     q.io.enq.bits.data := rdata
     q.io.enq.bits.fromDMA := RegNext(fromDMA)
+    q.io.enq.bits.weight_mx_format := RegNext(weight_mx_format)
+    q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
 
     io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
 
@@ -740,6 +746,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           io.scale_mem.get.ready := w.ready
         }
         bio.dataType := 0.U // TODO (nicolas): make this configurable with mxReg
+        bio.read.req.bits.activation_mx_format := 0.U // TODO (nicolas): make this configurable with mxReg
+        bio.read.req.bits.weight_mx_format := 0.U // TODO (nicolas): make this configurable with mxReg
 
         if (use_shared_ext_mem) {
           io.ext_mem.get.acc(i) <> bio.ext_mem.get

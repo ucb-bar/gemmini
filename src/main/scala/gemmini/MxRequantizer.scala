@@ -153,7 +153,7 @@ class MxRequantizer[T <: Data: Arithmetic](
     when(io.fp8_mode) { //16 lanes at a time
       for (i <- 0 until half_lanes) {
         val idx = Mux(data_buffer_counter === 0.U, i.U, (half_lanes + i).U)
-        input_32_buffer(idx) := io.requnat_data_in.bits.data(i) 
+        input_32_buffer(idx) := io.requnat_data_in.bits.asUInt.asTypeOf(Vec(half_lanes, UInt(io.inputdataWidth.W)))(i) 
       }
       data_buffer_counter := data_buffer_counter ^ 1.U
     }.otherwise {

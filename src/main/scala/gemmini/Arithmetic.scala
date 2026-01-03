@@ -633,36 +633,31 @@ object Arithmetic {
         val macc = Module(new MxFpMul(lut = false)(fpProductPrecision, fpAccPrecision))
         val result = Wire(MxFloat(macc.cType.exp, macc.cType.sig, 4, true))
 
-        val temp_expA = 4
-        val temp_sigA = 4
-
-        val temp_expB = 4
-        val temp_sigB = 4
-
-        val temp_countA = 1
-        val temp_countB = 1
-
         val typeA = Wire(new MxTypes)
-        typeA.exp := temp_expA.U
-        typeA.sig := temp_sigA.U
+        typeA.exp := Mux(activation_mx_format === 2.U, 2.U,
+                      Mux(activation_mx_format === 1.U, 3.U, 4.U))
+        typeA.sig := Mux(activation_mx_format === 2.U, 2.U,
+                      Mux(activation_mx_format === 1.U, 3.U, 4.U))
 
         val typeW = Wire(new MxTypes)
-        typeW.exp := temp_expB.U
-        typeW.sig := temp_sigB.U
+        typeW.exp := Mux(weight_mx_format === 2.U, 2.U,
+                      Mux(weight_mx_format === 1.U, 3.U, 4.U))
+        typeW.sig := Mux(weight_mx_format === 2.U, 2.U,
+                      Mux(weight_mx_format === 1.U, 3.U, 4.U))
 
         val mode = requiredPEMode(typeA, typeW)
 
         val rec_c = if (self.isRecoded) self.bits else VecInit(self.bits.asTypeOf(Vec(4, UInt((self.expWidth + self.sigWidth).W))).map(f => recFNFromFN(self.expWidth, self.sigWidth, f))).asUInt
 
-        macc.io.in_activation := m1.bits((temp_countA)*(temp_expA + temp_sigA) - 1, 0)
+        macc.io.in_activation := m1.bits
         macc.io.type_a := typeA
         macc.io.mode := mode
-        macc.io.in_weights := m2.bits((temp_countB)*(temp_expB + temp_sigB) - 1, 0)
+        macc.io.in_weights := m2.bits
         macc.io.type_w := typeW
         macc.io.enable := true.B  // TODO：do we need an enable signal here?
         macc.io.rec_c := rec_c
-        macc.io.weight_mx_format :=  weight_mx_format
-        macc.io.input_mx_format := activation_mx_format
+        // macc.io.weight_mx_format :=  weight_mx_format
+        // macc.io.input_mx_format := activation_mx_format
         result := macc.io.out.asTypeOf(self)
         result
       }

@@ -46,6 +46,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val completed = Valid(UInt(log2Up(reservation_station_entries).W))
     val busy = Output(Bool())
 
+    val output_MxFormat = Output(UInt(2.W))
+    val enable_MXQuant = Output(Bool())
+
     val counter = new CounterEventIO()
   })
 
@@ -93,8 +96,11 @@ def extractHalf(data: UInt, use_high_half: Bool): UInt = {
   val activation_mx_format = RegInit(0.U(2.W))
   val weight_mx_format = RegInit(0.U(2.W))
   val output_mx_format = RegInit(0.U(2.W))
+  io.output_MxFormat := output_mx_format
+  
   val uselut = RegInit(false.B)
   val enable_mxquant = RegInit(false.B)
+  io.enable_MXQuant := enable_mxquant
   
   val functs = cmd.bits.map(_.cmd.inst.funct)
   val rs1s = VecInit(cmd.bits.map(_.cmd.rs1))

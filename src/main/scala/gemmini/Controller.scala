@@ -166,32 +166,43 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     ch.bits  := DontCare
   }
 
+  val clock_en_reg = RegInit(true.B)
+  val gated_clock = if (clock_gate) ClockGate(clock, clock_en_reg, "gemmini_clock_gate") else clock
+  outer.spad.module.clock := gated_clock
+  //=========================================================================
+  // Controllers
+  //=========================================================================
+  val load_controller = withClock (gated_clock) { Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t)) }
+  val store_controller = withClock (gated_clock) { Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t)) }
+  val ex_controller = withClock (gated_clock) { Module(new ExecuteController(xLen, tagWidth, outer.config)) }
+
   
   //val scaleMembasewrite := config.scaleMembasewrite
 
   
-  val mx_requantizer = Option.when(outer.config.use_mx_scaling && !outer.config.testConfig) {
-  val q = outer.config.requantizer.get
-  val l = outer.config.lut.get
-      Module(new MxRequantizer(
-        sp_data_width = outer.config.sp_width,
-        sp_addr_width = log2Ceil(outer.config.sp_bank_entries),
-        scaleMem_data_width = outer.config.scaleMem_data_width,
-        scaleMem_addr_width = log2Ceil(outer.config.scaleMem_bank_entries),
-        scaleSize = outer.config.scaleSize,
-        scaleMembasewrite = 0, // TODO: add this into the instruction
-        quantWdataWidth = l.numBits,
-        quantRdataWidth = l.rdataWidth,
-        quantRaddrWidth = l.raddrWidth, 
-        sp_bank_entries = outer.config.sp_bank_entries,
-        sp_banks = outer.config.sp_banks,
-        sp_width = outer.config.sp_width,
-        sp_width_projected = outer.config.sp_width_projected,
-        config = q  
-      ))
+  val mx_requantizer = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
+    val q = outer.config.requantizer.get
+    val l = outer.config.lut.get
+
+    Module(new MxRequantizer(
+      sp_data_width = outer.config.sp_width,
+      sp_addr_width = log2Ceil(outer.config.sp_bank_entries),
+      scaleMem_data_width = outer.config.scaleMem_data_width,
+      scaleMem_addr_width = log2Ceil(outer.config.scaleMem_bank_entries),
+      scaleSize = outer.config.scaleSize,
+      scaleMembasewrite = 0, // TODO: add this into the instruction
+      quantWdataWidth = l.numBits,
+      quantRdataWidth = l.rdataWidth,
+      quantRaddrWidth = l.raddrWidth, 
+      sp_bank_entries = outer.config.sp_bank_entries,
+      sp_banks = outer.config.sp_banks,
+      sp_width = outer.config.sp_width,
+      sp_width_projected = outer.config.sp_width_projected,
+      config = q  
+    ))
   }
 
-  val mx_io = Option.when(outer.config.use_mx_scaling && !outer.config.testConfig) {
+  val mx_io = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
     val q = outer.config.requantizer.get
     val l = outer.config.lut.get
     val mx_io = IO(new Bundle {
@@ -219,48 +230,51 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
  
  val lut_deprojected_data = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
+ lut_deprojected_data := 0.U.asTypeOf(lut_deprojected_data)
 
 // Check if any bank has valid response
 val any_resp_valid = spad.module.io.srams.read.map(_.resp.valid).reduce(_ || _)
 
-when(any_resp_valid && (ex_controller.output_mx_format === 1.U)) {
-  for (bank <- 0 until sp_banks) {
-    mx_requantizer.get.io.spad_projected_data(bank).resp <> spad.module.io.srams.read(bank).resp
-    spad.module.io.srams.read(bank).req <> DontCare
-  }
-  
-  when(mx_requantizer.get.io.spad_deprojected_data.valid) {
+if (mx_requantizer.isDefined) {
+  when(any_resp_valid && (ex_controller.io.output_MxFormat === 1.U)) {
     for (bank <- 0 until sp_banks) {
-      lut_deprojected_data(bank).resp.valid := mx_requantizer.get.io.spad_deprojected_data.valid
-      lut_deprojected_data(bank).resp.bits := mx_requantizer.get.io.spad_deprojected_data.bits(bank).resp.bits
-      mx_requantizer.get.io.spad_deprojected_data.ready := lut_deprojected_data(bank).resp.ready
-      lut_deprojected_data(bank).req <> DontCare
+      mx_requantizer.get.io.spad_projected_data(bank).resp <> spad.module.io.srams.read(bank).resp
+      spad.module.io.srams.read(bank).req <> DontCare
+    }
+    
+    when(mx_requantizer.get.io.spad_deprojected_data.valid) {
+      for (bank <- 0 until sp_banks) {
+        lut_deprojected_data(bank).resp.valid := mx_requantizer.get.io.spad_deprojected_data.valid
+        lut_deprojected_data(bank).resp.bits := mx_requantizer.get.io.spad_deprojected_data.bits(bank).resp.bits
+        mx_requantizer.get.io.spad_deprojected_data.ready := lut_deprojected_data(bank).resp.ready
+        lut_deprojected_data(bank).req <> DontCare
+      }
+    }.otherwise {
+      for (bank <- 0 until sp_banks) {
+        lut_deprojected_data(bank).resp.valid := false.B
+        lut_deprojected_data(bank).resp.bits := DontCare
+        mx_requantizer.get.io.spad_deprojected_data.ready := false.B
+        lut_deprojected_data(bank).req <> DontCare
+      }
     }
   }.otherwise {
     for (bank <- 0 until sp_banks) {
-      lut_deprojected_data(bank).resp.valid := false.B
-      lut_deprojected_data(bank).resp.bits := DontCare
-      mx_requantizer.get.io.spad_deprojected_data.ready := false.B
-      lut_deprojected_data(bank).req <> DontCare
+      mx_requantizer.get.io.spad_projected_data(bank).resp.valid := false.B
+      mx_requantizer.get.io.spad_projected_data(bank).resp.ready := DontCare
+      mx_requantizer.get.io.spad_projected_data(bank).resp.bits := DontCare
+      mx_requantizer.get.io.spad_projected_data(bank).req <> DontCare
     }
-  }
-}.otherwise {
-  for (bank <- 0 until sp_banks) {
-    mx_requantizer.get.io.spad_projected_data(bank).resp.valid := false.B
-    mx_requantizer.get.io.spad_projected_data(bank).resp.ready := DontCare
-    mx_requantizer.get.io.spad_projected_data(bank).resp.bits := DontCare
-    mx_requantizer.get.io.spad_projected_data(bank).req <> DontCare
-  }
-  
-  mx_requantizer.get.io.spad_deprojected_data.ready := false.B
-  
-  for (bank <- 0 until sp_banks) {
-    lut_deprojected_data(bank) <> spad.module.io.srams.read(bank)
+    
+    mx_requantizer.get.io.spad_deprojected_data.ready := false.B
+    
+    for (bank <- 0 until sp_banks) {
+      lut_deprojected_data(bank) <> spad.module.io.srams.read(bank)
+    }
   }
 }
 
   //enable_mxquant indicate if gemmini outputs will be quantized or not
-  val quant_to_spad_write = if ((outer.config.use_mx_scaling && !outer.config.testConfig)) {
+  val quant_to_spad_write = if ((outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined)) {
     
     val requantized_writes = Wire(Vec(outer.config.sp_banks, 
       new ScratchpadWriteIO(outer.config.sp_bank_entries, outer.config.sp_width_projected, 
@@ -272,7 +286,7 @@ when(any_resp_valid && (ex_controller.output_mx_format === 1.U)) {
     
     val elements_per_bank = outer.config.sp_width_projected / outer.config.weightType.getWidth
     
-    when(ex_controller.enable_mxquant =/= 0.U) {
+    when(ex_controller.io.enable_MXQuant =/= 0.U) {
       for (i <- 0 until outer.config.sp_banks) {
         requantized_writes(i).valid := false.B
         requantized_writes(i).addr := DontCare
@@ -293,11 +307,11 @@ when(any_resp_valid && (ex_controller.output_mx_format === 1.U)) {
           mx_io.get.requant_in.bits.address := 
             Cat(ex_controller.io.srams.write(bank).addr, bank.U(log2Ceil(outer.config.sp_banks).W))
           
-          when(ex_controller.output_mx_format === 0.U) {
+          when(ex_controller.io.output_MxFormat === 0.U) {
             mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP4
-          }.elsewhen(ex_controller.output_mx_format === 1.U) {
+          }.elsewhen(ex_controller.io.output_MxFormat === 1.U) {
             mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP6
-          }.elsewhen(ex_controller.output_mx_format === 2.U) {
+          }.elsewhen(ex_controller.io.output_MxFormat === 2.U) {
             mx_io.get.requant_in.bits.dataType := RequantizerDataType.FP8
           }
         }
@@ -362,10 +376,6 @@ when(any_resp_valid && (ex_controller.output_mx_format === 1.U)) {
   counters.io.event_io.collect(tlb.io.counter)
 
   spad.module.io.flush := tlb.io.exp.map(_.flush()).reduce(_ || _)
-
-  val clock_en_reg = RegInit(true.B)
-  val gated_clock = if (clock_gate) ClockGate(clock, clock_en_reg, "gemmini_clock_gate") else clock
-  outer.spad.module.clock := gated_clock
 
   /*
   //=========================================================================
@@ -474,13 +484,6 @@ when(any_resp_valid && (ex_controller.output_mx_format === 1.U)) {
   }
   */
 
-  //=========================================================================
-  // Controllers
-  //=========================================================================
-  val load_controller = withClock (gated_clock) { Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t)) }
-  val store_controller = withClock (gated_clock) { Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t)) }
-  val ex_controller = withClock (gated_clock) { Module(new ExecuteController(xLen, tagWidth, outer.config)) }
-
   counters.io.event_io.collect(load_controller.io.counter)
   counters.io.event_io.collect(store_controller.io.counter)
   counters.io.event_io.collect(ex_controller.io.counter)
@@ -542,8 +545,10 @@ when(any_resp_valid && (ex_controller.output_mx_format === 1.U)) {
   spad.module.io.dma.write <> store_controller.io.dma
   // ex_controller.io.srams.read.req <> spad.module.io.srams.read.req
   // ex_controller.io.srams.read.resp <> spad.module.io.srams.read.resp
-  for (bank <- 0 until sp_banks) {
-    ex_controller.io.srams.read(bank) <> lut_deprojected_data(bank)
+  if (outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
+    for (bank <- 0 until sp_banks) {
+      ex_controller.io.srams.read(bank) <> lut_deprojected_data(bank)
+    }
   }
   //ex_controller.io.srams.write <> spad.module.io.srams.write
   quant_to_spad_write <> spad.module.io.srams.write
