@@ -21,10 +21,10 @@ class QuantLutIO(
   val lut_write =  Flipped(Decoupled(new QuantLutWriteBundle(wdataWidth))) //input
   val quant_fp6 = Flipped(Valid(Vec(outputnumLanes, UInt(rdataWidth.W)))) //input
   val projected_data = Valid(Vec(outputnumLanes, UInt(raddrWidth.W))) //output
-  val spad_projected_data = Flipped(Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))) 
-  val spad_deprojected_data = Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
-  // val spad_projected_data   = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
-  // val spad_deprojected_data = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
+  // val spad_projected_data = Flipped(Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))) 
+  // val spad_deprojected_data = Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
+  val spad_projected_data   = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
+  val spad_deprojected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width)))
 }
 
 class QuantLut(
@@ -87,30 +87,28 @@ class QuantLut(
   io.projected_data.valid := projectedDataValid
   io.projected_data.bits := projectedIndices
 
-  when(io.spad_projected_data.valid) {
-    io.spad_projected_data.ready := io.spad_deprojected_data.ready
-    io.spad_deprojected_data.valid := io.spad_projected_data.valid
-    
-    for (i <- 0 until sp_banks) {
+  for (i <- 0 until sp_banks) {
+    io.spad_deprojected_data(i).req <> io.spad_projected_data(i).req
+
+    io.spad_deprojected_data(i).resp.valid := false.B
+    io.spad_deprojected_data(i).resp.bits  := 0.U.asTypeOf(new ScratchpadReadResp(sp_width))
+    io.spad_projected_data(i).resp.ready   := io.spad_deprojected_data(i).resp.ready
+
+    when(io.spad_projected_data(i).resp.valid) {
       val num_4bit_chunks = sp_width_projected / 4
       val deprojected_bits = Wire(Vec(num_4bit_chunks, UInt(6.W)))
       
       for (k <- 0 until num_4bit_chunks) {
-        val chunk_4bit = io.spad_projected_data.bits(i).resp.bits.data((k+1)*4-1, k*4)
+        val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
         deprojected_bits(k) := lutCache(chunk_4bit)
       }
       
-      io.spad_deprojected_data.bits(i).resp.bits.data := deprojected_bits.asUInt
-      // drive mxtype too (?)
-      io.spad_deprojected_data.bits(i).resp.valid := io.spad_projected_data.bits(i).resp.valid
-      io.spad_projected_data.bits(i).resp.ready := io.spad_deprojected_data.bits(i).resp.ready
+      io.spad_deprojected_data(i).resp.bits.data := deprojected_bits.asUInt
+      io.spad_deprojected_data(i).resp.valid := true.B
       
-      io.spad_deprojected_data.bits(i).req <> DontCare
-      io.spad_projected_data.bits(i).req <> DontCare
+      io.spad_deprojected_data(i).resp.bits.fromDMA := io.spad_projected_data(i).resp.bits.fromDMA
+      io.spad_deprojected_data(i).resp.bits.weight_mx_format := io.spad_projected_data(i).resp.bits.weight_mx_format
+      io.spad_deprojected_data(i).resp.bits.input_mx_format := io.spad_projected_data(i).resp.bits.input_mx_format
     }
-  }.otherwise {
-    io.spad_projected_data.ready := false.B
-    io.spad_deprojected_data.valid := false.B
-    io.spad_deprojected_data.bits := DontCare
   }
 }

@@ -210,7 +210,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val requant_in = Flipped(Decoupled(new RequantizerInBundle(q.numInputLanes, q.inputBits)))
       val requant_in_gpu = Flipped(Decoupled(new RequantizerInBundle(q.numGPUInputLanes, q.inputBits)))
       val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
-      val lut = Flipped(Decoupled(UInt(l.numBits.W)))
+      // val lut = Flipped(Decoupled(UInt(l.numBits.W)))
+      val lut = Flipped(Decoupled(new QuantLutWriteBundle(l.numBits)))
     })
 
     mx_io.scale_mem <> spad.module.io.scale_mem.get
@@ -229,49 +230,100 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     mx_io
   }
  
- val lut_deprojected_data = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
- lut_deprojected_data := 0.U.asTypeOf(lut_deprojected_data)
+  val lut_deprojected_data = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
+  lut_deprojected_data := 0.U.asTypeOf(lut_deprojected_data)
 
-// Check if any bank has valid response
-val any_resp_valid = spad.module.io.srams.read.map(_.resp.valid).reduce(_ || _)
+  val read_projected = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
+  val mx_sel = RegInit(VecInit(Seq.fill(sp_banks)(false.B)))
+  val sram_read_buffer = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
 
-if (mx_requantizer.isDefined) {
-  when(any_resp_valid && (ex_controller.io.output_MxFormat === 1.U)) {
+  if (mx_requantizer.isDefined) {
     for (bank <- 0 until sp_banks) {
-      mx_requantizer.get.io.spad_projected_data(bank).resp <> spad.module.io.srams.read(bank).resp
-      spad.module.io.srams.read(bank).req <> DontCare
-    }
-    
-    when(mx_requantizer.get.io.spad_deprojected_data.valid) {
-      for (bank <- 0 until sp_banks) {
-        lut_deprojected_data(bank).resp.valid := mx_requantizer.get.io.spad_deprojected_data.valid
-        lut_deprojected_data(bank).resp.bits := mx_requantizer.get.io.spad_deprojected_data.bits(bank).resp.bits
-        mx_requantizer.get.io.spad_deprojected_data.ready := lut_deprojected_data(bank).resp.ready
-        lut_deprojected_data(bank).req <> DontCare
+      when(read_projected(bank).resp.fire) {
+        mx_sel(bank) := (ex_controller.io.output_MxFormat === 1.U)
       }
-    }.otherwise {
-      for (bank <- 0 until sp_banks) {
-        lut_deprojected_data(bank).resp.valid := false.B
-        lut_deprojected_data(bank).resp.bits := DontCare
-        mx_requantizer.get.io.spad_deprojected_data.ready := false.B
-        lut_deprojected_data(bank).req <> DontCare
-      }
-    }
-  }.otherwise {
-    for (bank <- 0 until sp_banks) {
-      mx_requantizer.get.io.spad_projected_data(bank).resp.valid := false.B
-      mx_requantizer.get.io.spad_projected_data(bank).resp.ready := DontCare
-      mx_requantizer.get.io.spad_projected_data(bank).resp.bits := DontCare
-      mx_requantizer.get.io.spad_projected_data(bank).req <> DontCare
-    }
-    
-    mx_requantizer.get.io.spad_deprojected_data.ready := false.B
-    
-    for (bank <- 0 until sp_banks) {
-      lut_deprojected_data(bank) <> spad.module.io.srams.read(bank)
     }
   }
-}
+
+  for (bank <- 0 until sp_banks) {
+    val useMxB = mx_requantizer.isDefined.B && mx_sel(bank)
+
+    // Requests
+
+    // default
+    read_projected(bank).req.valid := sram_read_buffer(bank).req.valid && !useMxB
+    read_projected(bank).req.bits := sram_read_buffer(bank).req.bits
+    sram_read_buffer(bank).req.ready := Mux(useMxB, mx_requantizer.get.io.spad_projected_data(bank).req.ready, read_projected(bank).req.ready)
+    // mx
+    mx_requantizer.get.io.spad_deprojected_data(bank).req.valid := sram_read_buffer(bank).req.valid && useMxB
+    mx_requantizer.get.io.spad_deprojected_data(bank).req.bits := sram_read_buffer(bank).req.bits
+
+    // Responses
+
+    read_projected(bank).resp.valid := Mux(useMxB, mx_requantizer.get.io.spad_projected_data(bank).resp.valid, sram_read_buffer(bank).resp.valid)
+    read_projected(bank).resp.bits := Mux(useMxB, mx_requantizer.get.io.spad_projected_data(bank).resp.bits, sram_read_buffer(bank).resp.bits)
+
+    read_projected(bank).resp.ready := sram_read_buffer(bank).resp.ready && !useMxB
+    mx_requantizer.get.io.spad_deprojected_data(bank).resp.ready := sram_read_buffer(bank).resp.ready && useMxB
+
+    mx_requantizer.get.io.spad_projected_data(bank) <> read_projected(bank)
+
+  }
+
+
+// Check if any bank has valid response
+// val any_resp_valid = spad.module.io.srams.read.map(_.resp.valid).reduce(_ || _)
+
+// if (mx_requantizer.isDefined) {
+//   val useMx = any_resp_valid && (ex_controller.io.output_MxFormat === 1.U)
+//   for (bank <- 0 until sp_banks) {
+//       spad.module.io.srams.read(bank).req <> lut_deprojected_data(bank).req
+//       lut_deprojected_data(bank).resp <> spad.module.io.srams.read(bank).resp
+
+//       when(useMx) {
+//         mx_requantizer.get.io.spad_deprojected_data(bank).req <> lut_deprojected_data(bank).req
+//         lut_deprojected_data(bank).resp <> mx_requantizer.get.io.spad_deprojected_data(bank).resp
+
+//         mx_requantizer.get.io.spad_projected_data(bank) <> spad.module.io.srams.read(bank)
+//       }
+//   }
+
+//   when(any_resp_valid && (ex_controller.io.output_MxFormat === 1.U)) {
+//     for (bank <- 0 until sp_banks) {
+//       mx_requantizer.get.io.spad_projected_data(bank).resp <> spad.module.io.srams.read(bank).resp
+//       spad.module.io.srams.read(bank).req <> DontCare
+//     }
+    
+//     when(mx_requantizer.get.io.spad_deprojected_data.valid) {
+//       for (bank <- 0 until sp_banks) {
+//         lut_deprojected_data(bank).resp.valid := mx_requantizer.get.io.spad_deprojected_data.valid
+//         lut_deprojected_data(bank).resp.bits := mx_requantizer.get.io.spad_deprojected_data.bits(bank).resp.bits
+//         mx_requantizer.get.io.spad_deprojected_data.ready := lut_deprojected_data(bank).resp.ready
+//         lut_deprojected_data(bank).req <> DontCare
+//       }
+//     }.otherwise {
+//       for (bank <- 0 until sp_banks) {
+//         lut_deprojected_data(bank).resp.valid := false.B
+//         lut_deprojected_data(bank).resp.bits := DontCare
+//         mx_requantizer.get.io.spad_deprojected_data.ready := false.B
+//         lut_deprojected_data(bank).req <> DontCare
+//       }
+//     }
+//   }.otherwise {
+//     for (bank <- 0 until sp_banks) {
+//       mx_requantizer.get.io.spad_projected_data(bank).resp.valid := false.B
+//       mx_requantizer.get.io.spad_projected_data(bank).resp.ready := DontCare
+//       mx_requantizer.get.io.spad_projected_data(bank).resp.bits := DontCare
+//       mx_requantizer.get.io.spad_projected_data(bank).req <> DontCare
+//     }
+    
+//     mx_requantizer.get.io.spad_deprojected_data.ready := false.B
+    
+//     for (bank <- 0 until sp_banks) {
+//       lut_deprojected_data(bank) <> spad.module.io.srams.read(bank)
+//     }
+//   }
+// }
 
   //enable_mxquant indicate if gemmini outputs will be quantized or not
   val quant_to_spad_write = if ((outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined)) {
@@ -286,6 +338,7 @@ if (mx_requantizer.isDefined) {
     
     val elements_per_bank = outer.config.sp_width_projected / outer.config.weightType.getWidth
     
+    // can't drive these valid and bits signals here
     mx_io.get.requant_in.valid := false.B
     mx_io.get.requant_in.bits := DontCare
     mx_io.get.requant_in_gpu.ready := false.B
@@ -579,7 +632,7 @@ if (mx_requantizer.isDefined) {
   ex_controller.io.im2col.resp <> im2col.io.resp
 
   // Wire arbiter for ExecuteController and Im2Col scratchpad reads
-  (ex_controller.io.srams.read, im2col.io.sram_reads, spad.module.io.srams.read).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
+  (ex_controller.io.srams.read, im2col.io.sram_reads, read_projected).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
     val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
 
     req_arb.io.in(0) <> ex_read.req
@@ -596,6 +649,10 @@ if (mx_requantizer.isDefined) {
     im2col_read.resp.bits := spad_read.resp.bits
 
     spad_read.resp.ready := ex_read.resp.ready || im2col_read.resp.ready
+  }
+
+  (read_projected, spad.module.io.srams.read).zipped.foreach { case (toMem, spadRead) =>
+    spadRead <> toMem
   }
 
   // Wire up controllers to ROB

@@ -58,8 +58,8 @@ class MxRequantizerIO(
   val scaleMem_write = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
   val requant_data_out = Decoupled(new RequantizerOutBundle(outputnumLanes))
   val lut_write = Flipped(Decoupled(new QuantLutWriteBundle(quantWdataWidth)))
-  val spad_projected_data = Flipped(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
-  val spad_deprojected_data = Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
+  val spad_projected_data = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
+  val spad_deprojected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width)))
   val fp8_mode = Input(Bool())  // true for 64-lane mode, false for 16-lane mode
 }
    
@@ -260,20 +260,22 @@ class MxRequantizer[T <: Data: Arithmetic](
   quantLut.io.spad_projected_data <> io.spad_projected_data
   quantLut.io.spad_deprojected_data <> io.spad_deprojected_data
   
-  quantLut.io.lut_write.valid := false.B
-  quantLut.io.lut_write.bits := DontCare
+  // quantLut.io.lut_write.valid := false.B
+  // quantLut.io.lut_write.bits := DontCare
   quantLut.io.quant_fp6.valid := false.B
   quantLut.io.quant_fp6.bits := DontCare
   // quantLut.io.lut_read_req.valid := false.B
   // quantLut.io.lut_read_req.bits := DontCare
   // quantLut.io.lut_read_resp.ready := false.B
   
-  when(quantLut.io.lut_write.valid) {
-    quantLut.io.lut_write.ready := true.B
-    quantLut.io.lut_write.bits.data := io.lut_write.bits.data
-  }.otherwise {
-    quantLut.io.lut_write.ready := false.B
-  }
+  // when(quantLut.io.lut_write.valid) {
+  //   quantLut.io.lut_write.ready := true.B
+  //   quantLut.io.lut_write.bits.data := io.lut_write.bits.data
+  // }.otherwise {
+  //   quantLut.io.lut_write.ready := false.B
+  // }
+
+  quantLut.io.lut_write <> io.lut_write
 
   when(quantize_valid && (total_bits_per_element === 6.U)) {
     quantLut.io.quant_fp6.valid := true.B
