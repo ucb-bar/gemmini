@@ -208,7 +208,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val l = outer.config.lut.get
     val mx_io = IO(new Bundle {
       val scale_mem = Flipped(Decoupled(spad.module.io.scale_mem.get.bits.cloneType))
-      val requant_in = Flipped(Decoupled(new RequantizerInBundle(q.numInputLanes, q.inputBits)))
       val requant_in_gpu = Flipped(Decoupled(new RequantizerInBundle(q.numGPUInputLanes, q.inputBits)))
       val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
       //val lut = Flipped(Decoupled(UInt(l.numBits.W)))
@@ -217,11 +216,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     mx_io.scale_mem <> spad.module.io.scale_mem.get
   
-    mx_requantizer.get.io.requant_data_in <> mx_io.requant_in
     mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
     mx_requantizer.get.io.lut_write <> mx_io.lut 
 
-    Seq(mx_io.requant_in, mx_io.requant_in_gpu, mx_io.requant_out, mx_io.lut).foreach(dontTouch(_))
+    Seq(mx_io.requant_in_gpu, mx_io.requant_out, mx_io.lut).foreach(dontTouch(_))
     //Seq( mx_io.requant_out).foreach(dontTouch(_))
     mx_io
   }

@@ -544,6 +544,8 @@ def extractHalf(data: UInt, use_high_half: Bool): UInt = {
       io.acc.read_req(i).bits.act := DontCare
       io.acc.read_req(i).bits.fromDMA := false.B
       io.acc.read_req(i).bits.addr := DontCare
+      io.acc.read_req(i).bits.activation_mx_format := DontCare
+      io.acc.read_req(i).bits.weight_mx_format := DontCare
     }
 
     io.acc.read_resp(i).ready := false.B

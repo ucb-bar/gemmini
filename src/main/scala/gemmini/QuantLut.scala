@@ -43,22 +43,18 @@ class QuantLut(
   val lutCache = RegInit(VecInit(Seq.fill(lutSize)(0.U(rdataWidth.W))))
 
   io.lutReadEnable := false.B
-  io.lut_write.ready := false.B
+  io.lut_write.ready := true.B
 
   when(io.lut_write.valid) {
-    io.lut_write.ready := true.B
-    io.lutReadEnable := false.B
     when(io.lut_write.fire) {
-    for (j <- 0 until lutSize) {
-      lutCache(j) := io.lut_write.bits.data((j+1)*rdataWidth-1, j*rdataWidth)
-      printf(p"[QuantLut] Wrote LUT index $j with value=0x${Hexadecimal(io.lut_write.bits.data((j+1)*rdataWidth-1, j*rdataWidth))}\n")
+      for (j <- 0 until lutSize) {
+        lutCache(j) := io.lut_write.bits.data((j+1)*rdataWidth-1, j*rdataWidth)
+        printf(p"[QuantLut] Wrote LUT index $j with value=0x${Hexadecimal(io.lut_write.bits.data((j+1)*rdataWidth-1, j*rdataWidth))}\n")
+      }
     }
   }
-  }.otherwise {
-    io.lut_write.ready := false.B
-    io.lutReadEnable := true.B
-  }
- 
+  io.lutReadEnable := !io.lut_write.valid
+
   val projectedIndices = RegInit(VecInit(Seq.fill(outputnumLanes)(0.U(raddrWidth.W))))
   val projectedDataValid = RegInit(false.B)
 
