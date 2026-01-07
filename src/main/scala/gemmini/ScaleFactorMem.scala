@@ -110,11 +110,19 @@ class ScalingFactorMem(
   val act_bank_data_vec = WireDefault(VecInit(Seq.fill(numScalesPerBank*4)(0.U(8.W))))
   val weight_bank_data_vec = WireDefault(VecInit(Seq.fill(numScalesPerBank*4)(0.U(8.W))))
 
-
+  val bank0_data = if (testConfig) { defaultRow } else { banks(0).read(read_row_addr, read_fire_real)}
+  val bank1_data = if (testConfig) { defaultRow } else { banks(1).read(read_row_addr, read_fire_real)}
+  val bank2_data = if (testConfig) { defaultRow } else { banks(2).read(read_row_addr, read_fire_real)}
+  val bank3_data = if (testConfig) { defaultRow } else { banks(3).read(read_row_addr, read_fire_real)}
+  val bank4_data = if (testConfig) { defaultRow } else { banks(4).read(read_row_addr, read_fire_real)}
+  val bank5_data = if (testConfig) { defaultRow } else { banks(5).read(read_row_addr, read_fire_real)}
+  val bank6_data = if (testConfig) { defaultRow } else { banks(6).read(read_row_addr, read_fire_real)}
+  val bank7_data = if (testConfig) { defaultRow } else { banks(7).read(read_row_addr, read_fire_real)}
+  
   when(fp8Mode){
     when(read_bank_sel === 0.U) {
-        val bank0_data = if (testConfig) { defaultRow } else { banks(0).read(read_row_addr, read_fire_real)}
-        val bank4_data = if (testConfig) { defaultRow } else { banks(4).read(read_row_addr, read_fire_real)}
+        // val bank0_data = if (testConfig) { defaultRow } else { banks(0).read(read_row_addr, read_fire_real)}
+        // val bank4_data = if (testConfig) { defaultRow } else { banks(4).read(read_row_addr, read_fire_real)}
       for (i <- 0 until numScalesPerBank) {
         act_bank_data_vec(i) := bank0_data(i)
         weight_bank_data_vec(i) := bank4_data(i)
@@ -122,40 +130,30 @@ class ScalingFactorMem(
         //printf(p"[ScalingFactorMem] Read bank2_data=${bank2_data(i)}\n")
       }
     }.elsewhen(read_bank_sel === 1.U) {
-      val bank1_data = if (testConfig) { defaultRow } else { banks(1).read(read_row_addr, read_fire_real)}
-      val bank5_data = if (testConfig) { defaultRow } else { banks(5).read(read_row_addr, read_fire_real)}
+      // val bank1_data = if (testConfig) { defaultRow } else { banks(1).read(read_row_addr, read_fire_real)}
+      // val bank5_data = if (testConfig) { defaultRow } else { banks(5).read(read_row_addr, read_fire_real)}
 
       for (i <- 0 until numScalesPerBank) {
         act_bank_data_vec(i) := bank1_data(i)
         weight_bank_data_vec(i) := bank5_data(i)
       }
     }.elsewhen(read_bank_sel === 2.U) {
-      val bank2_data = if (testConfig) { defaultRow } else { banks(2).read(read_row_addr, read_fire_real)}
-      val bank6_data = if (testConfig) { defaultRow } else { banks(6).read(read_row_addr, read_fire_real)}
+      // val bank2_data = if (testConfig) { defaultRow } else { banks(2).read(read_row_addr, read_fire_real)}
+      // val bank6_data = if (testConfig) { defaultRow } else { banks(6).read(read_row_addr, read_fire_real)}
 
       for (i <- 0 until numScalesPerBank) {
         act_bank_data_vec(i) := bank2_data(i)
         weight_bank_data_vec(i) := bank6_data(i)
       }
     }.elsewhen(read_bank_sel === 3.U) {
-      val bank3_data = if (testConfig) { defaultRow } else { banks(3).read(read_row_addr, read_fire_real)}
-      val bank7_data = if (testConfig) { defaultRow } else { banks(7).read(read_row_addr, read_fire_real)}
-
+      // val bank3_data = if (testConfig) { defaultRow } else { banks(3).read(read_row_addr, read_fire_real)}
+      // val bank7_data = if (testConfig) { defaultRow } else { banks(7).read(read_row_addr, read_fire_real)}
       for (i <- 0 until numScalesPerBank) {
         act_bank_data_vec(i) := bank3_data(i)
         weight_bank_data_vec(i) := bank7_data(i)
       }
     }
   }.otherwise{
-    val bank0_data = if (testConfig) { defaultRow } else { banks(0).read(read_row_addr, read_fire_real)}
-    val bank1_data = if (testConfig) { defaultRow } else { banks(1).read(read_row_addr, read_fire_real)}
-    val bank2_data = if (testConfig) { defaultRow } else { banks(2).read(read_row_addr, read_fire_real)}
-    val bank3_data = if (testConfig) { defaultRow } else { banks(3).read(read_row_addr, read_fire_real)}
-    val bank4_data = if (testConfig) { defaultRow } else { banks(4).read(read_row_addr, read_fire_real)}
-    val bank5_data = if (testConfig) { defaultRow } else { banks(5).read(read_row_addr, read_fire_real)}
-    val bank6_data = if (testConfig) { defaultRow } else { banks(6).read(read_row_addr, read_fire_real)}
-    val bank7_data = if (testConfig) { defaultRow } else { banks(7).read(read_row_addr, read_fire_real)}
-
     for (j <- 0 until numBanks/2) {
       val bank_data_act = j match {
         case 0 => bank0_data
