@@ -44,7 +44,7 @@ class MxRequantizerIO(
   scaleMem_addr_width: Int,
   scaleSize: Int,
   scaleMembasewrite: Int,
-  quantWdataWidth: Int,
+  lutConfig: GemminiLUTConfig,
   sp_bank_entries: Int,
   sp_banks: Int,
   sp_width: Int,
@@ -57,7 +57,7 @@ class MxRequantizerIO(
   val requant_data_in = Flipped(Decoupled(new RequantizerInBundle(inputnumLanes, inputdataWidth)))
   val scaleMem_write = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
   val requant_data_out = Decoupled(new RequantizerOutBundle(outputnumLanes))
-  val lut_write = Flipped(Decoupled(new QuantLutWriteBundle(quantWdataWidth)))
+  val lut_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig)))
   val spad_projected_data = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
   val spad_deprojected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width)))
   val fp8_mode = Input(Bool())  // true for 64-lane mode, false for 16-lane mode
@@ -70,9 +70,7 @@ class MxRequantizer[T <: Data: Arithmetic](
   scaleMem_addr_width: Int,
   scaleSize: Int,
   scaleMembasewrite: Int,
-  quantWdataWidth: Int,
-  quantRdataWidth: Int,
-  quantRaddrWidth: Int,
+  lutConfig: GemminiLUTConfig,
   sp_bank_entries: Int,
   sp_banks: Int,
   sp_width: Int,
@@ -89,7 +87,7 @@ class MxRequantizer[T <: Data: Arithmetic](
     scaleMem_addr_width,
     scaleSize, 
     scaleMembasewrite,
-    quantWdataWidth,
+    lutConfig,
     sp_bank_entries,
     sp_banks,
     sp_width,
@@ -247,9 +245,7 @@ class MxRequantizer[T <: Data: Arithmetic](
   val projected_data = RegInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(4.W))))
 
   val quantLut = Module(new QuantLut(
-    wdataWidth = quantWdataWidth,
-    raddrWidth = quantRaddrWidth,
-    rdataWidth = quantRdataWidth,
+    lutConfig,
     outputnumLanes = io.outputnumLanes ,
     sp_bank_entries = sp_bank_entries,
     sp_banks = sp_banks,

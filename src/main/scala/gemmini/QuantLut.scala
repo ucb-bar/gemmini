@@ -8,9 +8,7 @@ import org.chipsalliance.cde.config.Parameters
 import scala.math.{pow}
 
 class QuantLutIO(
-  wdataWidth: Int,
-  raddrWidth: Int,
-  rdataWidth: Int,
+  lutConfig: GemminiLUTConfig,
   outputnumLanes: Int = 32 ,
   sp_bank_entries: Int,
   sp_banks: Int,
@@ -18,9 +16,9 @@ class QuantLutIO(
   sp_width_projected: Int,
 ) extends Bundle {
   val lutReadEnable = Output(Bool()) 
-  val lut_write =  Flipped(Decoupled(new QuantLutWriteBundle(wdataWidth))) //input
-  val quant_fp6 = Flipped(Valid(Vec(outputnumLanes, UInt(rdataWidth.W)))) //input
-  val projected_data = Valid(Vec(outputnumLanes, UInt(raddrWidth.W))) //output
+  val lut_write =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig))) //input
+  val quant_fp6 = Flipped(Valid(Vec(outputnumLanes, UInt(lutConfig.rdataWidth.W)))) //input
+  val projected_data = Valid(Vec(outputnumLanes, UInt(lutConfig.raddrWidth.W))) //output
   // val spad_projected_data = Flipped(Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))) 
   // val spad_deprojected_data = Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
   val spad_projected_data   = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
@@ -28,9 +26,7 @@ class QuantLutIO(
 }
 
 class QuantLut(
-  wdataWidth: Int,
-  raddrWidth: Int, 
-  rdataWidth: Int,
+  lutConfig: GemminiLUTConfig,
   outputnumLanes: Int = 32 ,
   sp_bank_entries: Int,
   sp_banks: Int,
@@ -38,13 +34,17 @@ class QuantLut(
   sp_width_projected: Int,
 ) extends Module {
   val QuantLutEnable = Input(Bool()) 
-  val io = IO(new QuantLutIO(wdataWidth, raddrWidth, rdataWidth, outputnumLanes, sp_bank_entries, sp_banks, sp_width, sp_width_projected))
+  val io = IO(new QuantLutIO(lutConfig, outputnumLanes, sp_bank_entries, sp_banks, sp_width, sp_width_projected))
+  val raddrWidth = lutConfig.raddrWidth
+  val rdataWidth = lutConfig.rdataWidth
   val lutSize = pow(2, raddrWidth).toInt
   val lutCache = RegInit(VecInit(Seq.fill(lutSize)(0.U(rdataWidth.W))))
 
   io.lutReadEnable := false.B
   io.lut_write.ready := true.B
 
+  // TODO: merge
+  /*
   when(io.lut_write.valid) {
     when(io.lut_write.fire) {
       for (j <- 0 until lutSize) {
@@ -53,6 +53,7 @@ class QuantLut(
       }
     }
   }
+  */
   io.lutReadEnable := !io.lut_write.valid
 
   val projectedIndices = RegInit(VecInit(Seq.fill(outputnumLanes)(0.U(raddrWidth.W))))

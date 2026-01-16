@@ -187,9 +187,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       scaleMem_addr_width = log2Ceil(outer.config.scaleMem_bank_entries),
       scaleSize = outer.config.scaleSize,
       scaleMembasewrite = 0, // TODO: add this into the instruction
-      quantWdataWidth = l.numBits,
-      quantRdataWidth = l.rdataWidth,
-      quantRaddrWidth = l.raddrWidth, 
+      lutConfig = l,
       sp_bank_entries = outer.config.sp_bank_entries,
       sp_banks = outer.config.sp_banks,
       sp_width = outer.config.sp_width,
@@ -210,16 +208,20 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val scale_mem = Flipped(Decoupled(spad.module.io.scale_mem.get.bits.cloneType))
       val requant_in_gpu = Flipped(Decoupled(new RequantizerInBundle(q.numGPUInputLanes, q.inputBits)))
       val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
-      //val lut = Flipped(Decoupled(UInt(l.numBits.W)))
-      val lut = Flipped(Decoupled(new QuantLutWriteBundle(l.numBits)))
+      val lut0 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
+      val lut1 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
+      val lut2 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
     })
 
     mx_io.scale_mem <> spad.module.io.scale_mem.get
   
     mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
-    mx_requantizer.get.io.lut_write <> mx_io.lut 
+    // TODO TODO TODO TODO TODO TODO lut1 and lut2
+    mx_requantizer.get.io.lut_write <> mx_io.lut0
+    mx_io.lut1.ready := false.B
+    mx_io.lut2.ready := false.B
 
-    Seq(mx_io.requant_in_gpu, mx_io.requant_out, mx_io.lut).foreach(dontTouch(_))
+    Seq(mx_io.requant_in_gpu, mx_io.requant_out, mx_io.lut0, mx_io.lut1, mx_io.lut2).foreach(dontTouch(_))
     //Seq( mx_io.requant_out).foreach(dontTouch(_))
     mx_io
   }

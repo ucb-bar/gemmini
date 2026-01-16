@@ -30,6 +30,8 @@ case class GemminiRequantizerConfig(
 
 case class GemminiLUTConfig(
   numBits: Int = 96,
+  numEntries: Int = 32,
+  numTables: Int = 3,
   rdataWidth: Int = 6,
   raddrWidth: Int = 4, 
 )
@@ -63,8 +65,11 @@ class RequantizerOutBundle(numLanes: Int, dataWidth: Int = 8) extends Bundle {
   val dataType = RequantizerDataType() // data type determines response size
 }
 
-class QuantLutWriteBundle(wdataWidth: Int) extends Bundle {
-  val data = UInt(wdataWidth.W)
+class QuantLutWriteBundle(numEntries: Int, numBits: Int) extends Bundle {
+  val data = Vec(numEntries, UInt(numBits.W))
+  def this(config: GemminiLUTConfig) = {
+    this(config.numEntries, config.numBits)
+  }
 }
 
 class QuantLutReadReq(raddrWidth: Int) extends Bundle {
