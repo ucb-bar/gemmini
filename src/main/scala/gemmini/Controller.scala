@@ -216,10 +216,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     mx_io.scale_mem <> spad.module.io.scale_mem.get
   
     mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
-    // TODO TODO TODO TODO TODO TODO lut1 and lut2
-    mx_requantizer.get.io.lut_write <> mx_io.lut0
-    mx_io.lut1.ready := false.B
-    mx_io.lut2.ready := false.B
+    mx_requantizer.get.io.lut0_write <> mx_io.lut0
+    mx_requantizer.get.io.lut1_write <> mx_io.lut1
+    mx_requantizer.get.io.lut2_write <> mx_io.lut2
 
     Seq(mx_io.requant_in_gpu, mx_io.requant_out, mx_io.lut0, mx_io.lut1, mx_io.lut2).foreach(dontTouch(_))
     //Seq( mx_io.requant_out).foreach(dontTouch(_))
