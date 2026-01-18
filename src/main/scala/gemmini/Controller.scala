@@ -248,9 +248,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       }
     }
     if(outer.config.lut.isDefined){
-      mx_requantizer.get.io.lut_write_0 := DontCare
-      mx_requantizer.get.io.lut_write_1 := DontCare
-      mx_requantizer.get.io.lut_write_2 := DontCare
+      mx_requantizer.get.io.lut0_write := DontCare
+      mx_requantizer.get.io.lut1_write := DontCare
+      mx_requantizer.get.io.lut2_write := DontCare
     }
   }
 

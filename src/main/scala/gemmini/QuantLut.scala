@@ -16,20 +16,11 @@ class QuantLutIO(
   sp_width_projected: Int,
   iterator_bitwidth: Int,
 ) extends Bundle {
-<<<<<<< HEAD
-  val lutReadEnable = Output(Bool()) 
-  val lut_write =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig))) //input
-  val quant_fp6 = Flipped(Valid(Vec(outputnumLanes, UInt(lutConfig.rdataWidth.W)))) //input
-  val projected_data = Valid(Vec(outputnumLanes, UInt(lutConfig.raddrWidth.W))) //output
-  // val spad_projected_data = Flipped(Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))) 
-  // val spad_deprojected_data = Decoupled(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
-=======
   val lut_write_weight =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig))) //input
   val lut_write_act_in =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig))) //input
   val lut_write_act_out =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig))) //input
   val quant_fp6 = Flipped(Valid(Vec(outputnumLanes, UInt(lutConfig.rdataWidth.W)))) //input
   val projected_data = Valid(Vec(outputnumLanes, UInt(lutConfig.raddrWidth.W))) //output
->>>>>>> e1e04af (change the QuantLut as double buffer)
   val spad_projected_data   = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
   val spad_deprojected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width)))
   val counter_j = Input(UInt(iterator_bitwidth.W))
@@ -159,7 +150,6 @@ class QuantLut(
   val lutCache_act_out_buffer_0_read_enable = RegInit(false.B)
   val lutCache_act_out_buffer_1_read_enable = RegInit(false.B)
   val lutCache_act_out_buffer_select = RegInit(false.B)
-  val counter_k_reg = RegNext(io.counter_k)
 
   when(io.lut_write_act_out.fire){
     when(lutCache_act_out_flag === false.B){

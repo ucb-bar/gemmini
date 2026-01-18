@@ -288,18 +288,11 @@ class MxRequantizer[T <: Data: Arithmetic](
   //   quantLut.io.lut_write.ready := false.B
   // }
 
-<<<<<<< HEAD
-  quantLut.io.lut_write <> io.lut0_write
-  io.lut1_write.ready := false.B
-  io.lut2_write.ready := false.B
-
-=======
-  quantLut.io.lut_write_weight <> io.lut_write_0
-  quantLut.io.lut_write_act_in <> io.lut_write_1
-  quantLut.io.lut_write_act_out <> io.lut_write_2
+  quantLut.io.lut_write_weight <> io.lut0_write
+  quantLut.io.lut_write_act_in <> io.lut1_write
+  quantLut.io.lut_write_act_out <> io.lut2_write
   val quant_fp6_buffer = RegInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
   val quant_fp6_hang =  RegInit(false.B)
->>>>>>> e1e04af (change the QuantLut as double buffer)
   when(quantize_valid && (total_bits_per_element === 6.U)) {
     when{quantLut.io.lut_write_act_out.ready}{ //hang here when write is finished
       for (i <- 0 until io.outputnumLanes) {
