@@ -50,6 +50,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val enable_MXQuant = Output(Bool())
 
     val counter = new CounterEventIO()
+    val b_fire = Output(Bool())
+    val a_fire = Output(Bool())
   })
 
 
@@ -196,7 +198,7 @@ def extractHalf(data: UInt, use_high_half: Bool): UInt = {
   // Dependency stuff
   io.completed.valid := false.B
   io.completed.bits := DontCare
-
+  
   // val pending_completed_rob_id = Reg(UDValid(UInt(log2Up(rob_entries).W)))
   val pending_completed_rob_ids = Reg(Vec(2, UDValid(UInt(log2Up(reservation_station_entries).W))))
 
@@ -498,6 +500,10 @@ def extractHalf(data: UInt, use_high_half: Bool): UInt = {
 
     io.srams.read(i).resp.ready := false.B
   }
+
+
+  io.a_fire := a_fire
+  io.b_fire := b_fire
 
   // Accumulator read
   for (i <- 0 until acc_banks) {

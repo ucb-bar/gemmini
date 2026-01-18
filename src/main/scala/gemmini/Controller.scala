@@ -192,6 +192,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       sp_banks = outer.config.sp_banks,
       sp_width = outer.config.sp_width,
       sp_width_projected = outer.config.sp_width_projected,
+      iterator_bitwidth = 16,
       config = q  
     ))
   }
@@ -200,6 +201,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   req.io.scaleMem_write.ready := false.B
   req.io.fp8_mode := false.B
 }
+
 
   val mx_io = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
     val q = outer.config.requantizer.get
@@ -213,7 +215,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val lut2 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
     })
 
-    mx_io.scale_mem <> spad.module.io.scale_mem.get
+    //mx_io.scale_mem <> spad.module.io.scale_mem.get
   
     mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
     mx_requantizer.get.io.lut0_write <> mx_io.lut0
@@ -245,22 +247,27 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         mx_sel(bank) := (ex_controller.io.output_MxFormat === 1.U)
       }
     }
-    // if(outer.config.lut.isDefined){
-    //   mx_requantizer.get.io.lut_write := DontCare
-    // }
+    if(outer.config.lut.isDefined){
+      mx_requantizer.get.io.lut_write_0 := DontCare
+      mx_requantizer.get.io.lut_write_1 := DontCare
+      mx_requantizer.get.io.lut_write_2 := DontCare
+    }
   }
 
   for (bank <- 0 until sp_banks) {
     val useMxB = mx_requantizer.isDefined.B && mx_sel(bank)
     // Requests
     // default
+
+    
     read_projected(bank).req.valid := sram_read_buffer(bank).req.valid && !useMxB
     read_projected(bank).req.bits := sram_read_buffer(bank).req.bits
     sram_read_buffer(bank).req.ready := Mux(useMxB, mx_requantizer.get.io.spad_projected_data(bank).req.ready, read_projected(bank).req.ready)
     // mx
+
     mx_requantizer.get.io.spad_deprojected_data(bank).req.valid := sram_read_buffer(bank).req.valid && useMxB
     mx_requantizer.get.io.spad_deprojected_data(bank).req.bits := sram_read_buffer(bank).req.bits
-
+   
     // Responses
 
     read_projected(bank).resp.valid := Mux(useMxB, mx_requantizer.get.io.spad_projected_data(bank).resp.valid, sram_read_buffer(bank).resp.valid)
@@ -293,7 +300,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         requantized_writes(i).mask := VecInit(Seq.fill(requantized_writes(i).mask.length)(true.B))
       }
 
-      mx_io.get.requant_in_gpu.ready := false.B
+      //mx_io.get.requant_in_gpu.ready := false.B
       mx_requantizer.get.io.requant_data_in.valid := false.B
       mx_requantizer.get.io.requant_data_in.bits := DontCare
       mx_requantizer.get.io.scaleMem_write.ready := false.B
@@ -326,7 +333,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
        
         
       }.elsewhen(any_valid) {
-        mx_io.get.requant_in_gpu.ready := false.B
+        //mx_io.get.requant_in_gpu.ready := false.B
         
         val collected_data = Wire(Vec(outer.config.requantizer.get.numInputLanes, UInt(outer.config.weightType.getWidth.W)))
         collected_data := DontCare
@@ -363,33 +370,33 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
           mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType.FP8
         }
         
-      }.elsewhen(mx_io.get.requant_in_gpu.valid) {
-      //.elsewhen(!any_valid) {
+      }//.elsewhen(mx_io.get.requant_in_gpu.valid) {
+      .elsewhen(!any_valid) {
      
-        val padded_data = VecInit(mx_io.get.requant_in_gpu.bits.data ++ 
-                              Seq.fill(64 - 16)(0.U(16.W)))
-        mx_requantizer.get.io.requant_data_in.valid := true.B
-        mx_requantizer.get.io.requant_data_in.bits.data := padded_data
-        mx_requantizer.get.io.requant_data_in.bits.address := mx_io.get.requant_in_gpu.bits.address
-        mx_requantizer.get.io.requant_data_in.bits.dataType := mx_io.get.requant_in_gpu.bits.dataType
-        mx_io.get.requant_in_gpu.ready := true.B
-        // val padded_data = VecInit(Seq.fill(64)(0.U(16.W)))
+        // val padded_data = VecInit(mx_io.get.requant_in_gpu.bits.data ++ 
+        //                       Seq.fill(64 - 16)(0.U(16.W)))
         // mx_requantizer.get.io.requant_data_in.valid := true.B
         // mx_requantizer.get.io.requant_data_in.bits.data := padded_data
-        // mx_requantizer.get.io.requant_data_in.bits.address := 0.U
-        // mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType.FP8
+        // mx_requantizer.get.io.requant_data_in.bits.address := mx_io.get.requant_in_gpu.bits.address
+        // mx_requantizer.get.io.requant_data_in.bits.dataType := mx_io.get.requant_in_gpu.bits.dataType
+        // mx_io.get.requant_in_gpu.ready := true.B
+        val padded_data = VecInit(Seq.fill(64)(0.U(16.W)))
+        mx_requantizer.get.io.requant_data_in.valid := true.B
+        mx_requantizer.get.io.requant_data_in.bits.data := padded_data
+        mx_requantizer.get.io.requant_data_in.bits.address := 0.U
+        mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType.FP8
         
       }.otherwise {
         mx_requantizer.get.io.requant_data_in.valid := false.B
         mx_requantizer.get.io.requant_data_in.bits := DontCare
-        mx_io.get.requant_in_gpu.ready := false.B
+        //mx_io.get.requant_in_gpu.ready := false.B
       }
       
     }.otherwise {
       // enable_MXQuant == 0
       mx_requantizer.get.io.requant_data_in.valid := false.B
       mx_requantizer.get.io.requant_data_in.bits := DontCare
-      mx_io.get.requant_in_gpu.ready := false.B
+      //mx_io.get.requant_in_gpu.ready := false.B
     }
    
     requantized_writes
@@ -502,12 +509,19 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     has_training_convs, has_max_pool, has_first_layer_optimizations, has_dw_convs) }
   else (raw_cmd, false.B)
 
-  val (loop_cmd, loop_matmul_unroller_busy, loop_completed) = withClock (gated_clock) { LoopMatmul(if (has_loop_conv) conv_cmd else raw_cmd, reservation_station.io.matmul_ld_completed, reservation_station.io.matmul_st_completed, reservation_station.io.matmul_ex_completed,
+  val (loop_cmd, loop_matmul_unroller_busy, loop_completed, loop_matmul) = withClock (gated_clock) { LoopMatmul(if (has_loop_conv) conv_cmd else raw_cmd, reservation_station.io.matmul_ld_completed, reservation_station.io.matmul_st_completed, reservation_station.io.matmul_ex_completed,
     meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputType.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
+  
+  mx_requantizer.get.io.counter_i := loop_matmul.io.counter_i
+  mx_requantizer.get.io.counter_j := loop_matmul.io.counter_j  
+  mx_requantizer.get.io.counter_k := loop_matmul.io.counter_k
+  mx_requantizer.get.io.a_fire := ex_controller.io.a_fire
+  mx_requantizer.get.io.b_fire := ex_controller.io.b_fire
+
 
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B

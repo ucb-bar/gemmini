@@ -26,6 +26,9 @@ case class GemminiRequantizerConfig(
   minOutputBits: Int = 4,
   maxOutputBits: Int = 8,
   outputIdBits: Int = 3,
+  lutUpdateRegularityW : Int = 128, 
+  lutUpdateRegularityActIn : Int = 128,
+  lutUpdateRegularityActOut : Int = 128,  
 )
 
 case class GemminiLUTConfig(

@@ -49,6 +49,7 @@ class MxRequantizerIO(
   sp_banks: Int,
   sp_width: Int,
   sp_width_projected: Int,
+  iterator_bitwidth: Int,
   config: GemminiRequantizerConfig 
 ) extends Bundle {
   val inputnumLanes = config.numInputLanes
@@ -63,6 +64,11 @@ class MxRequantizerIO(
   val spad_projected_data = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
   val spad_deprojected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width)))
   val fp8_mode = Input(Bool())  // true for 64-lane mode, false for 16-lane mode
+  val a_fire = Input(Bool())  // from execute controller
+  val b_fire = Input(Bool())  // from execute controller
+  val counter_i = Input(UInt(iterator_bitwidth.W)) // from  controller
+  val counter_j = Input(UInt(iterator_bitwidth.W)) // from  controller
+  val counter_k = Input(UInt(iterator_bitwidth.W)) // from  controller
 }
    
 class MxRequantizer[T <: Data: Arithmetic](
@@ -77,6 +83,7 @@ class MxRequantizer[T <: Data: Arithmetic](
   sp_banks: Int,
   sp_width: Int,
   sp_width_projected: Int,
+  iterator_bitwidth: Int,
   config: GemminiRequantizerConfig 
 )(implicit ev: Arithmetic[T]) extends Module {
   
@@ -94,6 +101,7 @@ class MxRequantizer[T <: Data: Arithmetic](
     sp_banks,
     sp_width,
     sp_width_projected,
+    iterator_bitwidth,
     config
   ))
    
@@ -252,12 +260,19 @@ class MxRequantizer[T <: Data: Arithmetic](
     sp_bank_entries = sp_bank_entries,
     sp_banks = sp_banks,
     sp_width = sp_width,
-    sp_width_projected = sp_width_projected
+    sp_width_projected = sp_width_projected,
+    lut_update_regularity_w = config.lutUpdateRegularityW,
+    lut_update_regularity_act_in = config.lutUpdateRegularityActIn,
+    lut_update_regularity_act_out = config.lutUpdateRegularityActOut,
+    iterator_bitwidth = iterator_bitwidth
   ))
   
   quantLut.io.spad_projected_data <> io.spad_projected_data
   quantLut.io.spad_deprojected_data <> io.spad_deprojected_data
-  
+  quantLut.io.a_fire := io.a_fire
+  quantLut.io.b_fire := io.b_fire
+  quantLut.io.counter_i := io.counter_i
+  quantLut.io.counter_j := io.counter_j
   // quantLut.io.lut_write.valid := false.B
   // quantLut.io.lut_write.bits := DontCare
   quantLut.io.quant_fp6.valid := false.B
@@ -273,15 +288,37 @@ class MxRequantizer[T <: Data: Arithmetic](
   //   quantLut.io.lut_write.ready := false.B
   // }
 
+<<<<<<< HEAD
   quantLut.io.lut_write <> io.lut0_write
   io.lut1_write.ready := false.B
   io.lut2_write.ready := false.B
 
+=======
+  quantLut.io.lut_write_weight <> io.lut_write_0
+  quantLut.io.lut_write_act_in <> io.lut_write_1
+  quantLut.io.lut_write_act_out <> io.lut_write_2
+  val quant_fp6_buffer = RegInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
+  val quant_fp6_hang =  RegInit(false.B)
+>>>>>>> e1e04af (change the QuantLut as double buffer)
   when(quantize_valid && (total_bits_per_element === 6.U)) {
-    quantLut.io.quant_fp6.valid := true.B
-    quantLut.io.quant_fp6.bits := quant_fp6
+    when{quantLut.io.lut_write_act_out.ready}{ //hang here when write is finished
+      for (i <- 0 until io.outputnumLanes) {
+        quant_fp6_buffer(i) := quant_fp6(i)
+      }
+      quantLut.io.quant_fp6.valid := false.B 
+      quant_fp6_hang := true.B
+    }
+    when{!quantLut.io.lut_write_act_out.ready } {
+      when (quant_fp6_hang) {
+        quantLut.io.quant_fp6.valid := true.B 
+        quantLut.io.quant_fp6.bits := quant_fp6_buffer
+        quant_fp6_hang := false.B
+      }.otherwise {
+      quantLut.io.quant_fp6.valid := true.B 
+      quantLut.io.quant_fp6.bits := quant_fp6
+      }
+    }
   }
-  
   when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
     io.requant_data_out.valid := true.B
     io.requant_data_out.bits.dataType := quant_dataType

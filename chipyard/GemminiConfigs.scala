@@ -60,6 +60,6 @@ class TestMxGemminiRocketConfig extends Config(
 
 class TestRequantizerLutMxGemminiRocketConfig extends Config(
   new gemmini.GemminiRequantizerLutMxFPTestConfig ++                         // use FP32Gemmini systolic array GEMM accelerator
-  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
-  new chipyard.config.WithSystemBusWidth(128) ++
+  new freechips.rocketchip.rocket.WithNSmallCores(1) ++
+  new chipyard.config.WithSystemBusWidth(256) ++
   new chipyard.config.AbstractConfig)
