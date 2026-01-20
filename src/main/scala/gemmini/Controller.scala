@@ -215,8 +215,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val lut2 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
     })
 
-    //mx_io.scale_mem <> spad.module.io.scale_mem.get
-  
+    if (!outer.config.testConfig) {
+      mx_io.scale_mem <> spad.module.io.scale_mem.get
+    }
+
     mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
     mx_requantizer.get.io.lut0_write <> mx_io.lut0
     mx_requantizer.get.io.lut1_write <> mx_io.lut1
@@ -300,7 +302,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         requantized_writes(i).mask := VecInit(Seq.fill(requantized_writes(i).mask.length)(true.B))
       }
 
-      //mx_io.get.requant_in_gpu.ready := false.B
+      if (!outer.config.testConfig) {
+        mx_io.get.requant_in_gpu.ready := false.B
+      }
       mx_requantizer.get.io.requant_data_in.valid := false.B
       mx_requantizer.get.io.requant_data_in.bits := DontCare
       mx_requantizer.get.io.scaleMem_write.ready := false.B
@@ -333,8 +337,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
        
         
       }.elsewhen(any_valid) {
-        //mx_io.get.requant_in_gpu.ready := false.B
-        
+        if (!outer.config.testConfig) {
+          mx_io.get.requant_in_gpu.ready := false.B
+        }
+
         val collected_data = Wire(Vec(outer.config.requantizer.get.numInputLanes, UInt(outer.config.weightType.getWidth.W)))
         collected_data := DontCare
         
@@ -379,7 +385,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         // mx_requantizer.get.io.requant_data_in.bits.data := padded_data
         // mx_requantizer.get.io.requant_data_in.bits.address := mx_io.get.requant_in_gpu.bits.address
         // mx_requantizer.get.io.requant_data_in.bits.dataType := mx_io.get.requant_in_gpu.bits.dataType
-        // mx_io.get.requant_in_gpu.ready := true.B
+        if (!outer.config.testConfig) {
+          mx_io.get.requant_in_gpu.ready := true.B
+        }
         val padded_data = VecInit(Seq.fill(64)(0.U(16.W)))
         mx_requantizer.get.io.requant_data_in.valid := true.B
         mx_requantizer.get.io.requant_data_in.bits.data := padded_data
@@ -389,14 +397,18 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       }.otherwise {
         mx_requantizer.get.io.requant_data_in.valid := false.B
         mx_requantizer.get.io.requant_data_in.bits := DontCare
-        //mx_io.get.requant_in_gpu.ready := false.B
+        if (!outer.config.testConfig) {
+          mx_io.get.requant_in_gpu.ready := false.B
+        }
       }
       
     }.otherwise {
       // enable_MXQuant == 0
       mx_requantizer.get.io.requant_data_in.valid := false.B
       mx_requantizer.get.io.requant_data_in.bits := DontCare
-      //mx_io.get.requant_in_gpu.ready := false.B
+      if (!outer.config.testConfig) {
+        mx_io.get.requant_in_gpu.ready := false.B
+      }
     }
    
     requantized_writes
