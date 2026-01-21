@@ -8,8 +8,8 @@ import chisel3.util._
 // Lowest level compute unit with single 2x2 multiplier
 class MACU(lut: Boolean) extends Module {
   val io = IO(new Bundle {
-    val w = Input(UInt(3.W))           // 2-bit weight input
-    val act = Input(UInt(3.W))         // 2-bit activation input
+    val w = Input(UInt(3.W))           // 2 or 3-bit weight input
+    val act = Input(UInt(3.W))         // 2 or 3-bit activation input
     val enable = Input(Bool())         // Enable signal for compute unit
     val w_mode = Input(UInt(1.W))      // Weight mode: 0=M1, 1=M2
     val act_mode = Input(UInt(1.W))    // Activation mode: 0=M1, 1=M2

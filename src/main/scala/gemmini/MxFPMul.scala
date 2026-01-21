@@ -67,18 +67,20 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
   // Separate input into lanes
   val lanes2_a = io.in_activation.asTypeOf(Vec(2, UInt((inAWidth/2).W)))
   val lanes1_a = io.in_activation.asTypeOf(Vec(1, UInt((inAWidth).W))) 
-  val lanes4_w = io.in_weights.asTypeOf(Vec(4, UInt((inBWidth/4).W)))
+  val lanes2_w = io.in_weights.asTypeOf(Vec(2, UInt((inBWidth/2).W)))
   val lanes1_w = io.in_weights.asTypeOf(Vec(1, UInt((inBWidth).W)))
+
+  // printf(p"Inputs a: ${Binary(lanes2_a.asUInt)}, Inputs w: ${Binary(lanes2_w.asUInt)}\n")
 
   // Wire up elements for PE + Exp Adder
   val inA_pe   = WireDefault(0.U(peInAWidth.W))
   val inW_pe   = WireDefault(0.U(peInBWidth.W))
   val inA_exp  = WireDefault(0.U((inAWidth - peInAWidth).W))
   val inW_exp  = WireDefault(0.U((inBWidth - peInBWidth).W))
-  val inA_sign = WireDefault(0.U(4.W))
-  val inW_sign = WireDefault(0.U(4.W))
-  val in_a_mask= WireDefault("b1111".U(4.W))
-  val in_w_mask= WireDefault("b1111".U(4.W))
+  val inA_sign = WireDefault(0.U(2.W))
+  val inW_sign = WireDefault(0.U(2.W))
+  val in_a_mask= WireDefault("b11".U(2.W))
+  val in_w_mask= WireDefault("b11".U(2.W))
 
   // Classify input lanes
   // Get exps, sigs, and signs from the classified inputs in the right format for the PE and Exp Adder
@@ -88,11 +90,13 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
     val (exps_a_w2, sigs_a_w2, signs_a_w2) = in_a_w2_cl.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i*2), peInAWidth / 2, (inAWidth - peInAWidth)/2) }.unzip3
     val in_a_w2_zero = in_a_w2_cl.map(f => f.isZero)
 
+    // printf(p"in_a_w2_zero: ${Binary(in_a_w2_zero.asUInt)}\n")
+
     when (io.type_a.sig === 2.U) {
       inA_pe := VecInit(sigs_a_w2).asUInt
       inA_exp := VecInit(exps_a_w2).asUInt
-      inA_sign := VecInit.tabulate(4){ i => signs_a_w2(i/2) }.asUInt
-      in_a_mask := VecInit.tabulate(4){i => in_a_w2_zero(i/2)}.asUInt
+      inA_sign := VecInit.tabulate(2){ i => signs_a_w2(i) }.asUInt
+      in_a_mask := VecInit.tabulate(2){i => in_a_w2_zero(i)}.asUInt
     }
   }
   if (actSupportFp6_1) {
@@ -103,8 +107,8 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
     when (io.type_a.exp === 3.U && io.type_a.sig === 3.U) {
       inA_pe := VecInit(sigs_a_w3_fp6_1).asUInt
       inA_exp := VecInit(exps_a_w3_fp6_1).asUInt
-      inA_sign := VecInit.tabulate(4){ i => signs_a_w3_fp6_1(i/2) }.asUInt
-      in_a_mask := VecInit.tabulate(4){i => in_a_w3_zero_fp6(i/2)}.asUInt
+      inA_sign := VecInit.tabulate(2){ i => signs_a_w3_fp6_1(i) }.asUInt
+      in_a_mask := VecInit.tabulate(2){i => in_a_w3_zero_fp6(i)}.asUInt
     }
   }
   if (actSupportFp8_1) {
@@ -115,8 +119,8 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
     when (io.type_a.exp === 5.U && io.type_a.sig === 3.U) {
       inA_pe := VecInit(sigs_a_w3_fp8_1).asUInt
       inA_exp := VecInit(exps_a_w3_fp8_1).asUInt
-      inA_sign := VecInit.tabulate(4){ i => signs_a_w3_fp8_1(i/2) }.asUInt
-      in_a_mask := VecInit.tabulate(4){i => in_a_w3_zero_fp8(i/2)}.asUInt
+      inA_sign := VecInit.tabulate(2){ i => signs_a_w3_fp8_1(i) }.asUInt
+      in_a_mask := VecInit.tabulate(2){i => in_a_w3_zero_fp8(i)}.asUInt
     }
   }
   if (actSupportFp6_0) {
@@ -127,8 +131,8 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
     when (io.type_a.exp === 2.U && io.type_a.sig === 4.U) {
       inA_pe := VecInit(sigs_a_w4_fp6_0).asUInt
       inA_exp := VecInit(exps_a_w4_fp6_0).asUInt
-      inA_sign := VecInit.tabulate(4){ i => signs_a_w4_fp6_0(0) }.asUInt
-      in_a_mask := VecInit.tabulate(4){i => in_a_w4_zero_fp6(0)}.asUInt
+      inA_sign := VecInit.tabulate(2){ i => signs_a_w4_fp6_0(0) }.asUInt
+      in_a_mask := VecInit.tabulate(2){i => in_a_w4_zero_fp6(0)}.asUInt
     }
   }
   if (actSupportFp8_0) {
@@ -139,45 +143,48 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
     when (io.type_a.exp === 4.U && io.type_a.sig === 4.U) {
       inA_pe := VecInit(sigs_a_w4_fp8_0).asUInt
       inA_exp := VecInit(exps_a_w4_fp8_0).asUInt
-      inA_sign := VecInit.tabulate(4){ i => signs_a_w4_fp8_0(0) }.asUInt
-      in_a_mask := VecInit.tabulate(4){i => in_a_w4_zero_fp8(0)}.asUInt
+      inA_sign := VecInit.tabulate(2){ i => signs_a_w4_fp8_0(0) }.asUInt
+      in_a_mask := VecInit.tabulate(2){i => in_a_w4_zero_fp8(0)}.asUInt
     }
   }
 
   if (weiSupportFp4) {
-    val in_w_w2_cl = lanes4_w.map { f => classify(MxFormats.fp4, f(3, 0)) }
-    val (exps_w_w2, sigs_w_w2, signs_w_w2) = in_w_w2_cl.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i), peInBWidth / 4, (inBWidth - peInBWidth)/4) }.unzip3
+    val in_w_w2_cl = lanes2_w.map { f => classify(MxFormats.fp4, f(3, 0)) }
+    val (exps_w_w2, sigs_w_w2, signs_w_w2) = in_w_w2_cl.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i), peInBWidth / 2, (inBWidth - peInBWidth)/2) }.unzip3
     val in_w_w2_zero = in_w_w2_cl.map(f => f.isZero)
 
+    // printf(p"in_w_w2_zero: ${Binary(in_w_w2_zero.asUInt)}\n")
+
     when (io.type_w.sig === 2.U) {
+      // printf(p"exps_w_w2: ${Binary(exps_w_w2.asUInt)} \n")
       inW_pe := VecInit(sigs_w_w2).asUInt
       inW_exp := VecInit(exps_w_w2).asUInt
-      inW_sign := VecInit.tabulate(4){ i => signs_w_w2(i) }.asUInt
-      in_w_mask := VecInit.tabulate(4){i => in_w_w2_zero(i)}.asUInt
+      inW_sign := VecInit.tabulate(2){ i => signs_w_w2(i) }.asUInt
+      in_w_mask := VecInit.tabulate(2){i => in_w_w2_zero(i)}.asUInt
     }
   }
   if (weiSupportFp6_1) {
-    val in_w_w3_cl_fp6 = lanes4_w.map { f => classify(MxFormats.fp6_1, f(5, 0)) }
-    val (exps_w_w3_fp6_1, sigs_w_w3_fp6_1, signs_w_w3_fp6_1) = in_w_w3_cl_fp6.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i), peInBWidth / 4, (inBWidth - peInBWidth)/4) }.unzip3
+    val in_w_w3_cl_fp6 = lanes2_w.map { f => classify(MxFormats.fp6_1, f(5, 0)) }
+    val (exps_w_w3_fp6_1, sigs_w_w3_fp6_1, signs_w_w3_fp6_1) = in_w_w3_cl_fp6.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i), peInBWidth / 2, (inBWidth - peInBWidth)/2) }.unzip3
     val in_w_w3_zero_fp6 = in_w_w3_cl_fp6.map(f => f.isZero)
 
     when (io.type_w.exp === 3.U && io.type_w.sig === 3.U) {
       inW_pe := VecInit(sigs_w_w3_fp6_1).asUInt
       inW_exp := VecInit(exps_w_w3_fp6_1).asUInt
-      inW_sign := VecInit.tabulate(4){ i => signs_w_w3_fp6_1(i) }.asUInt
-      in_w_mask := VecInit.tabulate(4){i => in_w_w3_zero_fp6(i)}.asUInt
+      inW_sign := VecInit.tabulate(2){ i => signs_w_w3_fp6_1(i) }.asUInt
+      in_w_mask := VecInit.tabulate(2){i => in_w_w3_zero_fp6(i)}.asUInt
     }
   }
   if (weiSupportFp8_1) {
-    val in_w_w3_cl_fp8 = lanes4_w.map { f => classify(MxFormats.fp8_1, f(7, 0)) }
-    val (exps_w_w3_fp8_1, sigs_w_w3_fp8_1, signs_w_w3_fp8_1) = in_w_w3_cl_fp8.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i), peInBWidth / 4, (inBWidth - peInBWidth)/4) }.unzip3
+    val in_w_w3_cl_fp8 = lanes2_w.map { f => classify(MxFormats.fp8_1, f(7, 0)) }
+    val (exps_w_w3_fp8_1, sigs_w_w3_fp8_1, signs_w_w3_fp8_1) = in_w_w3_cl_fp8.zipWithIndex.map { case (f, i) => pack(f, expAdderWidths(i), peInBWidth / 2, (inBWidth - peInBWidth)/2) }.unzip3
     val in_w_w3_zero_fp8 = in_w_w3_cl_fp8.map(f => f.isZero)
 
     when (io.type_w.exp === 5.U && io.type_w.sig === 3.U) {
       inW_pe := VecInit(sigs_w_w3_fp8_1).asUInt
       inW_exp := VecInit(exps_w_w3_fp8_1).asUInt
-      inW_sign := VecInit.tabulate(4){ i => signs_w_w3_fp8_1(i) }.asUInt
-      in_w_mask := VecInit.tabulate(4){i => in_w_w3_zero_fp8(i)}.asUInt
+      inW_sign := VecInit.tabulate(2){ i => signs_w_w3_fp8_1(i) }.asUInt
+      in_w_mask := VecInit.tabulate(2){i => in_w_w3_zero_fp8(i)}.asUInt
     }
   }
   if (weiSupportFp6_0) {
@@ -188,8 +195,8 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
     when (io.type_w.exp === 2.U && io.type_w.sig === 4.U) {
       inW_pe := VecInit(sigs_w_w4_fp6_0).asUInt
       inW_exp := VecInit(exps_w_w4_fp6_0).asUInt
-      inW_sign := VecInit.tabulate(4){ i => signs_w_w4_fp6_0(0) }.asUInt
-      in_w_mask := VecInit.tabulate(4){i => in_w_w4_zero_fp6(0)}.asUInt
+      inW_sign := VecInit.tabulate(2){ i => signs_w_w4_fp6_0(0) }.asUInt
+      in_w_mask := VecInit.tabulate(2){i => in_w_w4_zero_fp6(0)}.asUInt
     }
   }
   if (weiSupportFp8_0) {
@@ -200,13 +207,13 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
     when (io.type_w.exp === 4.U && io.type_w.sig === 4.U) {
       inW_pe := VecInit(sigs_w_w4_fp8_0).asUInt
       inW_exp := VecInit(exps_w_w4_fp8_0).asUInt
-      inW_sign := VecInit.tabulate(4){ i => signs_w_w4_fp8_0(0) }.asUInt
-      in_w_mask := VecInit.tabulate(4){i => in_w_w4_zero_fp8(0)}.asUInt
+      inW_sign := VecInit.tabulate(2){ i => signs_w_w4_fp8_0(0) }.asUInt
+      in_w_mask := VecInit.tabulate(2){i => in_w_w4_zero_fp8(0)}.asUInt
     }
   }
 
   // Compute the sign of the outputs
-  val out_signs = inA_sign ^ inW_sign
+  val out_signs = Cat(inA_sign(0) ^ inW_sign(0), inA_sign(0) ^ inW_sign(1), inA_sign(1) ^ inW_sign(0), inA_sign(1) ^ inW_sign(1))
 
   // PE Instantiation
   val out_pe = Wire(UInt(peOutWidth.W))
@@ -221,6 +228,8 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
   // PE.io.weight_mx_format := io.weight_mx_format
   out_pe := PE.io.output
 
+  // printf(p"PE Output: ${Binary(out_pe)}\n")
+
   // Exp Adder Instantiation
   val out_e = Wire(UInt(totalAdderWidth.W))
   val expAdder = Module(new MxExp(inA_exp_width = inAWidth - peInAWidth, inW_exp_width = inBWidth - peInBWidth, outWidth = totalAdderWidth, elemW = expAdderWidths, outTypes = Seq(outType1, outType4, outType1, outType4)))
@@ -231,6 +240,8 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
   expAdder.io.in_a := inA_exp
   expAdder.io.in_w := inW_exp
   out_e := expAdder.io.out_exp
+
+  // printf(p"InA Exp: ${Binary(inA_exp)}, InW Exp: ${Binary(inW_exp)}, Out Exp: ${Binary(out_e)}\n")
 
 
   val out4_toRec = VecInit.tabulate(4) { i =>

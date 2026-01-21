@@ -1,446 +1,397 @@
-// package mxHardware
+package gemmini
 
-// import chisel3._
-// import chiseltest._
-// import org.scalatest.flatspec.AnyFlatSpec
-// import hardfloat._
-// import freechips.rocketchip.util._
-// import freechips.rocketchip.tile._
-// import circt.stage.ChiselStage
-// import org.scalatest.matchers.should.Matchers
-// import scala.util.Random
-// import chisel3.util._
-// import gemmini.MxFpMul
+import chisel3._
+import chisel3.util._
+import chiseltest._
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
+import scala.util.Random
+import hardfloat._
 
-// class MxFpMulHarness(ts: TypeSupport, lut: Boolean) extends Module {
-//   val dut = Module(new MxFpMul(ts, lut))
+import gemmini.MxFpMul
 
-//   // Mirror DUT IO; change C to raw E8M7 (16b) and expose OUT as packed raw E8M7x4 (64b)
-//   val io = IO(new Bundle {
-//     val in_activation = Input(UInt(dut.io.in_activation.getWidth.W))
-//     val in_a_type     = Input(UInt(2.W))
-//     val a_altfmt      = Input(Bool())
-//     val in_weights    = Input(UInt(dut.io.in_weights.getWidth.W))
-//     val in_w_type     = Input(UInt(2.W))
-//     val w_altfmt      = Input(Bool())
-//     val enable        = Input(Bool())
+/** Harness that mirrors *new* MxFpMul IO exactly, but:
+  *  - Accepts BF16 raw C (E8M7, 16b) and recodes to recFN(8,8) to drive dut.io.rec_c
+  *  - Exposes dut.io.out as 4×BF16 raw packed (64b) for easy checking/printing
+  */
+class MxFpMulHarnessBf16Out_NewIO(lut: Boolean, fpProductPrecision: (Int, Int), fpAccPrecision: gemmini.MxFloat)
+    extends Module {
 
-//     // Raw (non-recoded) E8M7: 1|8|7 = 16 bits
-//     val c_raw         = Input(UInt(16.W))
+  val dut = Module(new MxFpMul(lut)(fpProductPrecision, fpAccPrecision))
 
-//     // 4 lanes of raw E8M7 packed LSB..MSB (lane0 lowest 16b)
-//     val out           = Output(UInt((4*16).W))
+  val io = IO(new Bundle {
+    val in_activation = Input(UInt(dut.io.in_activation.getWidth.W))
+    val type_a        = Input(chiselTypeOf(dut.io.type_a))
+    val in_weights    = Input(UInt(dut.io.in_weights.getWidth.W))
+    val type_w        = Input(chiselTypeOf(dut.io.type_w))
+    val mode          = Input(chiselTypeOf(dut.io.mode))
+    val enable        = Input(Bool())
 
-//     // Observe the recoded C actually driven into DUT
-//     val rec_c_applied = Output(UInt(dut.io.rec_c.getWidth.W))
-//   })
+    // BF16 raw C (E8M7): 1|8|7 = 16b
+    val c_raw         = Input(UInt(16.W))
 
-//   // Pass-through
-//   dut.io.in_activation := io.in_activation
-//   dut.io.in_a_type     := io.in_a_type
-//   dut.io.a_altfmt      := io.a_altfmt
-//   dut.io.in_weights    := io.in_weights
-//   dut.io.in_w_type     := io.in_w_type
-//   dut.io.w_altfmt      := io.w_altfmt
-//   dut.io.enable        := io.enable
+    // 4 × BF16 packed LSB-first (lane0 in [15:0])
+    val out_bf16      = Output(UInt(64.W))
 
-//   // ---- Recode raw E8M7 -> recFN (exp=8, sig=8 (7 frac + hidden 1)) ----
-//   // recFull width = 1 + exp + sig = 1 + 8 + 8 = 17
-//   private val recFull = hardfloat.recFNFromFN(8, 8, io.c_raw) // UInt(17.W)
+    // Observe what rec_c actually got applied
+    val rec_c_applied = Output(UInt(dut.io.rec_c.getWidth.W))
+  })
 
-//   // Size-match to DUT's rec_c width
-//   private val wantW = dut.io.rec_c.getWidth
-//   private val haveW = recFull.getWidth
-//   private val recSized =
-//     if (haveW == wantW) recFull
-//     else if (haveW > wantW) recFull(wantW-1, 0)
-//     else Cat(0.U((wantW - haveW).W), recFull)
+  // printf(p"type_a: ${io.type_a}, type_w: ${io.type_w}, mode\n")
+  val computedMode = requiredPEMode(io.type_a, io.type_w)
+  dut.io.mode := computedMode
 
-//   dut.io.rec_c := recSized
-//   io.rec_c_applied := dut.io.rec_c
+  // Pass-through
+  dut.io.in_activation := io.in_activation
+  dut.io.type_a        := io.type_a
+  dut.io.in_weights    := io.in_weights
+  dut.io.type_w        := io.type_w
+//   dut.io.mode          := io.mode
+  dut.io.enable        := io.enable
 
-//   // ---- Convert DUT recFN lanes to raw E8M7 (16b) and pack into io.out ----
-//   // Assume dut.io.out packs 4 equal-width recFN lanes (commonly 17b each).
-//   private val recOutW   = dut.io.out.getWidth
-//   private val lanes     = 4
-//   require(recOutW % lanes == 0, s"DUT out width ($recOutW) not divisible by $lanes")
-//   private val recLaneW  = recOutW / lanes
+  // BF16 -> recFN(8,8) (17b)
+  private val recC = hardfloat.recFNFromFN(8, 8, io.c_raw)
 
-//   // Extract recFN lanes
-//   private val recLanes  = Wire(Vec(lanes, UInt(recLaneW.W)))
-//   for (i <- 0 until lanes) {
-//     val hi = (i+1)*recLaneW - 1
-//     val lo = i*recLaneW
-//     recLanes(i) := dut.io.out(hi, lo)
-//   }
+  // Size-match to dut.io.rec_c width
+  private val wantW = dut.io.rec_c.getWidth
+  private val haveW = recC.getWidth
+  private val recSized =
+    if (haveW == wantW) recC
+    else if (haveW > wantW) recC(wantW - 1, 0)
+    else Cat(recC, recC, recC, recC)
 
-//   // Convert each recFN lane to raw E8M7 (16b)
-//   private val rawLanes16 = Wire(Vec(lanes, UInt(16.W)))
-//   for (i <- 0 until lanes) {
-//     rawLanes16(i) := hardfloat.fNFromRecFN(8, 8, recLanes(i)) // 16-bit IEEE: 1|8|7
-//   }
+  dut.io.rec_c := recSized
+  io.rec_c_applied := dut.io.rec_c
 
-//   // Pack LSB-first: lane0 in [15:0], lane1 in [31:16], ...
-//   io.out := Cat(rawLanes16.reverse)
-// }
+  // Convert dut.io.out lanes to BF16 raw
+  private val dutW = dut.io.out.getWidth
+  require(dutW % 4 == 0, s"DUT out width ($dutW) must be divisible by 4")
+  private val laneW = dutW / 4
 
-// class MxFpMulHarnessBf16Out(ts: TypeSupport, lut: Boolean) extends Module {
-//   val dut = Module(new MxFpMul(ts, lut))
+  val lanes = Wire(Vec(4, UInt(laneW.W)))
+  for (i <- 0 until 4) {
+    val hi = (i + 1) * laneW - 1
+    val lo = i * laneW
+    lanes(i) := dut.io.out(hi, lo)
+  }
 
-//   val io = IO(new Bundle {
-//     val in_activation = Input(UInt(dut.io.in_activation.getWidth.W))
-//     val in_a_type     = Input(UInt(2.W))
-//     val a_altfmt      = Input(Bool())
-//     val in_weights    = Input(UInt(dut.io.in_weights.getWidth.W))
-//     val in_w_type     = Input(UInt(2.W))
-//     val w_altfmt      = Input(Bool())
-//     val enable        = Input(Bool())
-//     val c_raw         = Input(UInt(16.W))      // BF16 (E8M7) 1|8|7
+  val lanesBF16 = Wire(Vec(4, UInt(16.W)))
+  if (laneW == 17) {
+    for (i <- 0 until 4) lanesBF16(i) := hardfloat.fNFromRecFN(8, 8, lanes(i))
+  } else {
+    require(laneW == 16, s"Expected lane width 16 (BF16) or 17 (recFN), got $laneW")
+    for (i <- 0 until 4) lanesBF16(i) := lanes(i)(15,0)
+  }
 
-//     val out_bf16      = Output(UInt(64.W))     // 4 × BF16 packed LSB-first
-//     val rec_c_applied = Output(UInt(dut.io.rec_c.getWidth.W))
-//   })
+  io.out_bf16 := Cat(lanesBF16.reverse) // lane0 at [15:0]
+}
 
-//   // Pass-through
-//   dut.io.in_activation := io.in_activation
-//   dut.io.in_a_type     := io.in_a_type
-//   dut.io.a_altfmt      := io.a_altfmt
-//   dut.io.in_weights    := io.in_weights
-//   dut.io.in_w_type     := io.in_w_type
-//   dut.io.w_altfmt      := io.w_altfmt
-//   dut.io.enable        := io.enable
+class MxFpMul_AllATypes_BF16Out_SelfChecking_NewIO_Spec
+  extends AnyFlatSpec
+    with ChiselScalatestTester
+    with Matchers {
 
-//   // BF16 → recFN(8,8)
-//   private val recC = hardfloat.recFNFromFN(8, 8, io.c_raw) // 17b
-//   // Size-match to DUT width (some designs keep 16 here)
-//   private val wantW = dut.io.rec_c.getWidth
-//   private val haveW = recC.getWidth
-//   private val recSized =
-//     if (haveW == wantW) recC
-//     else if (haveW > wantW) recC(wantW-1, 0)
-//     else Cat(0.U((wantW - haveW).W), recC)
+  behavior of "MxFpMul — NEW IO; BF16 IEEE output; FP4/FP6=2x2->4 lanes; FP8=1x1->lane0; self-checking"
 
-//   dut.io.rec_c := recSized
-//   io.rec_c_applied := dut.io.rec_c
+  it should "run randomized combos and self-check lanes (verbose pre/post prints)" in {
 
-//   // DUT out → always 4×BF16
-//   private val dutW = dut.io.out.getWidth
-//   require(dutW % 4 == 0, s"DUT out width ($dutW) must be divisible by 4")
-//   private val laneW = dutW / 4
+    // NOTE: You must instantiate with your desired precisions.
+    // If you already have these in your project test params, plug them in here.
+    val fpProductPrecision = (8, 8) // (expWidth, sigWidth) for product format via MxFormats(...)
+    val fpAccPrecision     = gemmini.MxFloat(8, 8, 4, true, false) // adjust to your actual MxFloat ctor
 
-//   val lanes = Wire(Vec(4, UInt(laneW.W)))
-//   for (i <- 0 until 4) {
-//     val hi = (i + 1) * laneW - 1
-//     val lo = i * laneW
-//     lanes(i) := dut.io.out(hi, lo)
-//   }
+    test(new MxFpMulHarnessBf16Out_NewIO(lut = false, fpProductPrecision, fpAccPrecision))
+      .withAnnotations(Seq(WriteVcdAnnotation)) { h =>
 
-//   // If DUT lanes are recFN(17), convert to BF16; if already BF16(16), pass-through
-//   val lanesBF16 = Wire(Vec(4, UInt(16.W)))
-//   if (laneW == 17) {
-//     for (i <- 0 until 4) lanesBF16(i) := hardfloat.fNFromRecFN(8, 8, lanes(i)) // 16b
-//   } else {
-//     require(laneW == 16, s"Expected lane width 16 (BF16) or 17 (recFN), got $laneW")
-//     lanesBF16 := lanes.map(_.pad(16)) // ensure 16b width even if laneW=16
-//   }
+        // ---------- small-format helpers (positive-only) ----------
+        case class MiniFmt(eBits: Int, mBits: Int, bias: Int) {
+          val expMask = (1 << eBits) - 1
+          val mantMask= (1 << mBits) - 1
+          def enc(e: Int, m: Int): Int = ((e & expMask) << mBits) | (m & mantMask) // sign=0
+        }
+        val FP4_E2M1 = MiniFmt(2,1, bias=1)
+        val FP6_E2M3 = MiniFmt(2,3, bias=1)   // altfmt = 0
+        val FP6_E3M2 = MiniFmt(3,2, bias=3)   // altfmt = 1
+        val FP8_E4M3 = MiniFmt(4,3, bias=7)   // altfmt = 0
+        val FP8_E5M2 = MiniFmt(5,2, bias=15)  // altfmt = 1
 
-//   io.out_bf16 := Cat(lanesBF16.reverse) // lane0 at [15:0]
-// }
+        def decodeSmall(fmt: MiniFmt, raw: Int): scala.Float = {
+          val e = (raw >> fmt.mBits) & fmt.expMask
+          val m = raw & fmt.mantMask
+          if (e == 0) {
+            if (m == 0) 0.0f
+            else (m.toFloat / (1 << fmt.mBits).toFloat) * math.pow(2.0, 1 - fmt.bias).toFloat
+          } else {
+            val frac = 1.0f + m.toFloat / (1 << fmt.mBits).toFloat
+            (frac * math.pow(2.0, e - fmt.bias)).toFloat
+          }
+        }
 
-// class MxFpMul_AllATypes_BF16Out_SelfChecking_Spec
-//   extends AnyFlatSpec
-//   with ChiselScalatestTester
-//   with Matchers {
+        // ---------- BF16 helpers ----------
+        def bf16ToFloat(raw16: Int): scala.Float = java.lang.Float.intBitsToFloat(raw16 << 16)
+        def floatToBf16Raw(f: scala.Float): Int = {
+          val bits = java.lang.Float.floatToRawIntBits(f)
+          val lsb  = (bits >>> 16) & 1
+          val rnd  = bits + (0x7FFF + lsb)     // RNE to 16 MSBs
+          (rnd >>> 16) & 0xFFFF
+        }
 
-//   behavior of "MxFpMul — BF16 IEEE output; all activation types; altfmt=1 -> E3M2/E5M2; randomized + subnormals; self-checking; verbose I/O prints"
+        // Pretty printers
+        def binStr(x: BigInt, w: Int): String = {
+          val s = x.toString(2); "b" + ("0" * (w - s.length)) + s
+        }
+        def lane(bits: BigInt, idx: Int, laneW: Int): Int =
+          ((bits >> (idx * laneW)) & ((BigInt(1) << laneW) - 1)).toInt
+        def showBF16(tag: String, v: Int): Unit = {
+          val s = (v >>> 15) & 1
+          val e = (v >>> 7)  & 0xFF
+          val f = v & 0x7F
+          println(f"$tag: 0x$v%04X  s=$s e=0x$e%02X f=0x$f%02X  (~=${bf16ToFloat(v)}%g)")
+        }
 
-//   it should "print inputs/expectations before, actual outputs before asserts, and PASS after" in {
-//     val ts = TypeSupport(
-//       actSupportFp4 = true, actSupportFp6 = true, actSupportFp8 = true,
-//       weiSupportFp4 = true, weiSupportFp6 = true, weiSupportFp8 = true
-//     )
+        val rng = new Random(0xBEEFBABE)
+        def genSmall(fmt: MiniFmt): Int = {
+          val r = rng.nextFloat()
+          if (r < 0.10f) fmt.enc(0, 0)                                  // +0
+          else if (r < 0.30f) fmt.enc(0, 1 + rng.nextInt(fmt.mantMask))  // subnormal
+          else fmt.enc(1 + rng.nextInt((fmt.expMask - 1) max 1),         // normal
+                       rng.nextInt(fmt.mantMask + 1))
+        }
+        def genBF16(): Int = {
+          val r = rng.nextFloat()
+          if (r < 0.10f) 0x0000
+          else if (r < 0.20f) (0x0001 + rng.nextInt(0x7F))
+          else {
+            val mag = math.pow(2.0, rng.nextInt(8) - 4).toFloat
+            val base= rng.nextFloat() * mag
+            floatToBf16Raw(base)
+          }
+        }
 
-//     test(new MxFpMulHarnessBf16Out(ts, lut = false)).withAnnotations(Seq(WriteVcdAnnotation)) { h =>
-//       // ---------- small-format helpers (positive-only) ----------
-//       case class MiniFmt(eBits: Int, mBits: Int, bias: Int) {
-//         val expMask = (1 << eBits) - 1
-//         val mantMask= (1 << mBits) - 1
-//         def enc(e: Int, m: Int): Int = ((e & expMask) << mBits) | (m & mantMask) // sign=0
-//       }
-//       val FP4_E2M1 = MiniFmt(2,1, bias=1)
-//       val FP6_E2M3 = MiniFmt(2,3, bias=1)   // altfmt = 0
-//       val FP6_E3M2 = MiniFmt(3,2, bias=3)   // altfmt = 1
-//       val FP8_E4M3 = MiniFmt(4,3, bias=7)   // altfmt = 0
-//       val FP8_E5M2 = MiniFmt(5,2, bias=15)  // altfmt = 1
+        val aW = h.io.in_activation.getWidth
+        val wW = h.io.in_weights.getWidth
+        val laneW = 16 // BF16 lanes on the harness output
 
-//       def decodeSmall(fmt: MiniFmt, raw: Int): Float = {
-//         val e = (raw >> fmt.mBits) & fmt.expMask
-//         val m = raw & fmt.mantMask
-//         if (e == 0) {
-//           if (m == 0) 0.0f
-//           else (m.toFloat / (1 << fmt.mBits).toFloat) * math.pow(2.0, 1 - fmt.bias).toFloat
-//         } else {
-//           val frac = 1.0f + m.toFloat / (1 << fmt.mBits).toFloat
-//           (frac * math.pow(2.0, e - fmt.bias)).toFloat
-//         }
-//       }
+        def pack2IntoHalves(raw0: Int, raw1: Int, elemBits: Int, totalW: Int): BigInt = {
+            val half = totalW / 2
+            require(totalW % 2 == 0, s"totalW=$totalW must be even")
+            require(elemBits <= half, s"elemBits=$elemBits must fit in half=$half")
+            val m = (1 << elemBits) - 1
+            (BigInt(raw0 & m)) | (BigInt(raw1 & m) << half)
+        }
 
-//       // ---------- BF16 helpers (IEEE) ----------
-//       def bf16ToFloat(raw16: Int): Float = java.lang.Float.intBitsToFloat(raw16 << 16)
-//       def floatToBf16Raw(f: Float): Int = {
-//         val bits = java.lang.Float.floatToRawIntBits(f)
-//         val lsb  = (bits >>> 16) & 1
-//         val rnd  = bits + (0x7FFF + lsb)     // RNE to 16 MSBs
-//         (rnd >>> 16) & 0xFFFF
-//       }
+        // ------------------------------------------------------------------
+        // NEW PACK RULES:
+        //   FP4: 2 acts (fp4) and 2 weights (fp4) => 4 outputs
+        //   FP6: 2 acts (fp6) and 2 weights (fp6) => 4 outputs
+        //   FP8: 1 act (fp8) and 1 weight (fp8) => only lane0 defined
+        //
+        // NOTE: We keep (aType,wType,alt) in the test like before.
+        // ------------------------------------------------------------------
 
-//       // Pretty printers
-//       def binStr(x: BigInt, w: Int): String = {
-//         val s = x.toString(2); "b" + ("0" * (w - s.length)) + s
-//       }
-//       def lane(bits: BigInt, idx: Int, laneW: Int): Int =
-//         ((bits >> (idx * laneW)) & ((BigInt(1) << laneW) - 1)).toInt
-//       def showBF16(tag: String, v: Int): Unit = {
-//         val s = (v >>> 15) & 1
-//         val e = (v >>> 7)  & 0xFF
-//         val f = v & 0x7F
-//         println(f"$tag: 0x$v%04X  s=$s e=0x$e%02X f=0x$f%02X  (~=${bf16ToFloat(v)}%g)")
-//       }
+        def packActs(aType: Int, aAlt: Boolean, raws: Seq[Int]): (BigInt, Seq[scala.Float], String) = {
+            val totalW = aW   // h.io.in_activation.getWidth
+            aType match {
+                case 0 => // fp4: still 2 values, each placed in its half-slot
+                require(raws.length == 2)
+                val packed = pack2IntoHalves(raws(0), raws(1), elemBits = 4, totalW)
+                val vals   = raws.map(r => decodeSmall(FP4_E2M1, r & 0xF))
+                (packed, vals, f"fp4 acts: ${raws.map(r => f"0x${r & 0xF}%X").mkString(", ")} -> ${vals.mkString(", ")}")
 
-//       val rng = new Random(0xBEEFBABE)
-//       def genSmall(fmt: MiniFmt): Int = {
-//         val r = rng.nextFloat()
-//         if (r < 0.10f) fmt.enc(0, 0)                                  // +0
-//         else if (r < 0.30f) fmt.enc(0, 1 + rng.nextInt(fmt.mantMask))  // subnormal
-//         else fmt.enc(1 + rng.nextInt((fmt.expMask - 1) max 1),         // normal
-//                      rng.nextInt(fmt.mantMask + 1))
-//       }
-//       def genBF16(): Int = {
-//         val r = rng.nextFloat()
-//         if (r < 0.10f) 0x0000                                   // +0
-//         else if (r < 0.20f) (0x0001 + rng.nextInt(0x7F))        // subnormal
-//         else {
-//           val mag = math.pow(2.0, rng.nextInt(8) - 4).toFloat
-//           val base= rng.nextFloat() * mag
-//           floatToBf16Raw(base)
-//         }
-//       }
+                case 1 => // fp6: 2 values, each in its half-slot (6 bits each)
+                require(raws.length == 2)
+                val packed = pack2IntoHalves(raws(0), raws(1), elemBits = 6, totalW)
+                val fmt    = if (aAlt) FP6_E3M2 else FP6_E2M3
+                val vals   = raws.map(r => decodeSmall(fmt, r & 0x3F))
+                val nm     = if (aAlt) "fp6 E3M2" else "fp6 E2M3"
+                (packed, vals, s"$nm acts: ${raws.map(r => f"0x${r & 0x3F}%02X").mkString(", ")} -> ${vals.mkString(", ")}")
 
-//       val aW = h.io.in_activation.getWidth
-//       val wW = h.io.in_weights.getWidth
-//       val laneW = 16 // BF16 lanes on the harness output
+                case 2 => // fp8: 1 value goes at bit 0, rest padding
+                require(raws.length == 1)
+                val a0     = raws.head & 0xFF
+                val packed = BigInt(a0) // stays at [7:0], upper bits are padding
+                val fmt    = if (aAlt) FP8_E5M2 else FP8_E4M3
+                val vals   = Seq(decodeSmall(fmt, a0))
+                val nm     = if (aAlt) "fp8 E5M2" else "fp8 E4M3"
+                (packed, vals, f"$nm act: 0x$a0%02X -> ${vals.head}")
+            }
+        }
 
-//       // ---- Activation pack/desc ----
-//       def packActs(aType: Int, aAlt: Boolean, raws: Seq[Int]): (BigInt, Int, Seq[Float], String) = aType match {
-//         case 0 => // two fp4
-//           require(raws.length == 2)
-//           val a0 = raws(0) & 0xF; val a1 = raws(1) & 0xF
-//           val packed = (BigInt(a1) << 8) | BigInt(a0)
-//           val vals = raws.map(r => decodeSmall(FP4_E2M1, r))
-//           (packed, 2, vals, f"fp4 lanes: ${raws.map(r => f"0x$r%X").mkString(", ")}  -> ${vals.mkString(", ")}")
-//         case 1 =>
-//           if (aAlt) { // two fp6 E3M2
-//             require(raws.length == 2)
-//             val a0 = raws(0) & 0x3F; val a1 = raws(1) & 0x3F
-//             val packed = (BigInt(a1) << 8) | BigInt(a0)
-//             val vals = raws.map(r => decodeSmall(FP6_E3M2, r))
-//             (packed, 2, vals, f"fp6 E3M2 lanes: ${raws.map(r => f"0x$r%02X").mkString(", ")}  -> ${vals.mkString(", ")}")
-//           } else {    // one fp6 E2M3
-//             require(raws.length == 1)
-//             val a0 = raws.head & 0x3F
-//             val vals = raws.map(r => decodeSmall(FP6_E2M3, r))
-//             (BigInt(a0), 1, vals, f"fp6 E2M3 lane: 0x$a0%02X  -> ${vals.head}")
-//           }
-//         case 2 =>
-//           if (aAlt) { // two fp8 E5M2
-//             require(raws.length == 2)
-//             val a0 = raws(0) & 0xFF; val a1 = raws(1) & 0xFF
-//             val packed = (BigInt(a1) << 8) | BigInt(a0)
-//             val vals = raws.map(r => decodeSmall(FP8_E5M2, r))
-//             (packed, 2, vals, f"fp8 E5M2 lanes: ${raws.map(r => f"0x$r%02X").mkString(", ")}  -> ${vals.mkString(", ")}")
-//           } else {    // one fp8 E4M3
-//             require(raws.length == 1)
-//             val a0 = raws.head & 0xFF
-//             val vals = raws.map(r => decodeSmall(FP8_E4M3, r))
-//             (BigInt(a0), 1, vals, f"fp8 E4M3 lane: 0x$a0%02X  -> ${vals.head}")
-//           }
-//       }
+        def packWeis(wType: Int, wAlt: Boolean, raws: Seq[Int]): (BigInt, Seq[scala.Float], String) = {
+            val totalW = wW // h.io.in_weights.getWidth
+            wType match {
+                case 0 => // fp4 weights: 2 values in half-slots
+                require(raws.length == 2)
+                val packed = pack2IntoHalves(raws(0), raws(1), elemBits = 4, totalW)
+                val vals   = raws.map(r => decodeSmall(FP4_E2M1, r & 0xF))
+                (packed, vals, f"fp4 weis: ${raws.map(r => f"0x${r & 0xF}%X").mkString(", ")} -> ${vals.mkString(", ")}")
 
-//       // ---- Weight pack/desc ----
-//       def packWeis(wType: Int, wAlt: Boolean, raws: Seq[Int]): (BigInt, Int, Seq[Float], String) = wType match {
-//         case 0 => // fp4×4
-//           require(raws.length == 4)
-//           val packed = (0 until 4).map(i => BigInt(raws(i) & 0xF) << (8*i)).reduce(_|_)
-//           val vals = raws.map(r => decodeSmall(FP4_E2M1, r))
-//           (packed, 4, vals, f"fp4x4: ${raws.map(r => f"0x$r%X").mkString(" ")} -> ${vals.mkString(", ")}")
-//         case 1 =>
-//           if (wAlt) { // E3M2×4
-//             require(raws.length == 4)
-//             val packed = (0 until 4).map(i => BigInt(raws(i) & 0x3F) << (8*i)).reduce(_|_)
-//             val vals = raws.map(r => decodeSmall(FP6_E3M2, r))
-//             (packed, 4, vals, f"fp6 E3M2 x4: ${raws.map(r => f"0x$r%02X").mkString(" ")} -> ${vals.mkString(", ")}")
-//           } else {    // E2M3×1
-//             require(raws.length == 1)
-//             val w0 = raws.head & 0x3F
-//             val vals = raws.map(r => decodeSmall(FP6_E2M3, r))
-//             (BigInt(w0), 1, vals, f"fp6 E2M3 x1: 0x$w0%02X -> ${vals.head}")
-//           }
-//         case 2 =>
-//           if (wAlt) { // E5M2×4
-//             require(raws.length == 4)
-//             val packed = (0 until 4).map(i => BigInt(raws(i) & 0xFF) << (8*i)).reduce(_|_)
-//             val vals = raws.map(r => decodeSmall(FP8_E5M2, r))
-//             (packed, 4, vals, f"fp8 E5M2 x4: ${raws.map(r => f"0x$r%02X").mkString(" ")} -> ${vals.mkString(", ")}")
-//           } else {    // E4M3×1
-//             require(raws.length == 1)
-//             val w0 = raws.head & 0xFF
-//             val vals = raws.map(r => decodeSmall(FP8_E4M3, r))
-//             (BigInt(w0), 1, vals, f"fp8 E4M3 x1: 0x$w0%02X -> ${vals.head}")
-//           }
-//       }
+                case 1 => // fp6 weights: 2 values in half-slots (6b)
+                require(raws.length == 2)
+                val packed = pack2IntoHalves(raws(0), raws(1), elemBits = 6, totalW)
+                val fmt    = if (wAlt) FP6_E3M2 else FP6_E2M3
+                val vals   = raws.map(r => decodeSmall(fmt, r & 0x3F))
+                val nm     = if (wAlt) "fp6 E3M2" else "fp6 E2M3"
+                (packed, vals, s"$nm weis: ${raws.map(r => f"0x${r & 0x3F}%02X").mkString(", ")} -> ${vals.mkString(", ")}")
 
-//       // Lane mapping rules (your spec)
-//       def expectedBF16Lane(
-//         aVals: Seq[Float], wVals: Seq[Float], c: Float, lane: Int,
-//         aType: Int, aAlt: Boolean, wType: Int, wAlt: Boolean
-//       ): Option[Int] = {
-//         def toBF16(x: Float) = floatToBf16Raw(x)
+                case 2 => // fp8 weights: 1 value at bit0
+                require(raws.length == 1)
+                val w0     = raws.head & 0xFF
+                val packed = BigInt(w0)
+                val fmt    = if (wAlt) FP8_E5M2 else FP8_E4M3
+                val vals   = Seq(decodeSmall(fmt, w0))
+                val nm     = if (wAlt) "fp8 E5M2" else "fp8 E4M3"
+                (packed, vals, f"$nm wei: 0x$w0%02X -> ${vals.head}")
+            }
+        }
 
-//         // E2M3 (fp6 alt=0) or E4M3 (fp8 alt=0) → single-lane w/ 3-bit mantissa
-//         val actIs3Mant = (aType == 1 && !aAlt) || (aType == 2 && !aAlt)
-//         // 4-lane weights: fp4, fp6(E3M2 alt=1), fp8(E5M2 alt=1)
-//         val wIs4       = (wType == 0) || (wType == 1 && wAlt) || (wType == 2 && wAlt)
+        // Expected lane mapping under NEW rules
+        //  - For 2 acts × 2 weis: lane0=a0*w0, lane1=a0*w1, lane2=a1*w0, lane3=a1*w1
+        //  - For 1×1: lane0 only
+        def expectedBF16Lane(aVals: Seq[scala.Float], wVals: Seq[scala.Float], c: scala.Float, lane: Int): Option[Int] = {
+          def toBF16(x: scala.Float) = floatToBf16Raw(x)
+          (aVals.length, wVals.length) match {
+            case (2,2) =>
+              val pairs = Array((0,0), (0,1), (1,0), (1,1))
+              val (ai, wi) = pairs(lane)
+              Some(toBF16(aVals(ai) * wVals(wi) + c))
 
-//         (aVals.length, wVals.length) match {
-//           case (2,4) =>
-//             val pairs = Array((0,0), (0,1), (1,2), (1,3))
-//             val (ai, wi) = pairs(lane)
-//             Some(toBF16(aVals(ai) * wVals(wi) + c))
+            case (1,1) =>
+              if (lane == 0) Some(toBF16(aVals(0) * wVals(0) + c)) else None
 
-//           case (2,1) =>
-//             lane match {
-//               case 0 => Some(toBF16(aVals(0) * wVals(0) + c))
-//               case 2 => Some(toBF16(aVals(1) * wVals(0) + c))
-//               case _ => None
-//             }
+            case _ =>
+              None
+          }
+        }
 
-//           case (1,4) if actIs3Mant && wIs4 =>
-//             lane match {
-//               case 0 => Some(toBF16(aVals(0) * wVals(0) + c)) // use weight slot 0
-//               case 2 => Some(toBF16(aVals(0) * wVals(2) + c)) // use weight slot 2  ✅
-//               case _ => None
-//             }
+        // Variants: keep same semantic knobs (type + altfmt), but NEW lane counts
+        val aVariants = Seq(
+          ("A: 2×fp4",             0, false, () => Seq(genSmall(FP4_E2M1), genSmall(FP4_E2M1))),
+          // ("A: 2×fp6 (E2M3 alt0)", 1, false, () => Seq(genSmall(FP6_E2M3), genSmall(FP6_E2M3))),
+          ("A: 2×fp6 (E3M2 alt1)", 1, true,  () => Seq(genSmall(FP6_E3M2), genSmall(FP6_E3M2))),
+          ("A: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3))),
+          // ("A: 1×fp8 (E5M2 alt1)", 2, true,  () => Seq(genSmall(FP8_E5M2)))
+        )
+        val wVariants = Seq(
+          ("W: 2×fp4",             0, false, () => Seq(genSmall(FP4_E2M1), genSmall(FP4_E2M1))),
+          // ("W: 2×fp6 (E2M3 alt0)", 1, false, () => Seq(genSmall(FP6_E2M3), genSmall(FP6_E2M3))),
+          ("W: 2×fp6 (E3M2 alt1)", 1, true,  () => Seq(genSmall(FP6_E3M2), genSmall(FP6_E3M2))),
+          ("W: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3))),
+          // ("W: 1×fp8 (E5M2 alt1)", 2, true,  () => Seq(genSmall(FP8_E5M2)))
+        )
 
-//           case (1,4) =>
-//             // Generic one-activation × 4-weights fanout (not used for E2M3/E4M3, but safe fallback)
-//             Some(toBF16(aVals(0) * wVals(lane) + c))
+        val trialsPerCombo = 20
+        h.io.enable.poke(true.B)
 
-//           case (1,1) =>
-//             if (lane == 0) Some(toBF16(aVals(0) * wVals(0) + c)) else None
+        // ------------------------------------------------------------------
+        // TODO: map (aType,aAlt,wType,wAlt) into YOUR actual Bundle fields:
+        //   - h.io.type_a : MxTypes()
+        //   - h.io.type_w : MxTypes()
+        //   - h.io.mode   : mxMode()
+        //
+        // Replace the bodies below with your real field pokes.
+        // ------------------------------------------------------------------
+        def pokeTypesAndMode(aType: Int, aAlt: Boolean, wType: Int, wAlt: Boolean): Unit = {
+            // aType/wType are the mx_format encodings used in your RTL:
+            //   0 -> FP4
+            //   1 -> FP6
+            //   2 -> FP8
+            //
+            // aAlt/wAlt are NOT used by the current RTL hookup (typeA/typeW only depend on mx_format),
+            // but we keep them in the signature so the rest of the test stays the same.
 
-//           case _ =>
-//             None
-//         }
-//     }
+            def expSigFromMxFormat(fmt: Int): (Int, Int) = fmt match {
+                case 0 => (2, 2) // FP8? (as in your snippet)
+                case 1 => (3, 3) // FP6
+                case 2 => (4, 4) // FP4
+                case other => throw new IllegalArgumentException(s"bad mx_format=$other")
+            }
 
-//       // ---------- Variants ----------
-//       val aVariants = Seq(
-//         ("A: 2×fp4",             0, false,  () => Seq(genSmall(FP4_E2M1), genSmall(FP4_E2M1))), // alt ignored for fp4
-//         ("A: 1×fp6 (E2M3 alt0)", 1, false, () => Seq(genSmall(FP6_E2M3))),
-//         ("A: 2×fp6 (E3M2 alt1)", 1, true,  () => Seq(genSmall(FP6_E3M2), genSmall(FP6_E3M2))),
-//         ("A: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3))),
-//         ("A: 2×fp8 (E5M2 alt1)", 2, true,  () => Seq(genSmall(FP8_E5M2), genSmall(FP8_E5M2)))
-//       )
-//       val wVariants = Seq(
-//         ("W: 4×fp4",             0, false, () => Seq.fill(4)(genSmall(FP4_E2M1))),
-//         ("W: 4×fp6 (E3M2 alt1)", 1, true,  () => Seq.fill(4)(genSmall(FP6_E3M2))),
-//         ("W: 1×fp6 (E2M3 alt0)", 1, false, () => Seq(genSmall(FP6_E2M3))),
-//         ("W: 4×fp8 (E5M2 alt1)", 2, true,  () => Seq.fill(4)(genSmall(FP8_E5M2))),
-//         ("W: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3)))
-//       )
+            val (aExp, aSig) = expSigFromMxFormat(aType)
+            val (wExp, wSig) = expSigFromMxFormat(wType)
 
-//       val trialsPerCombo = 10
-//       h.io.enable.poke(true.B)
+            // Poke type_a/type_w (MxTypes has fields exp/sig per your snippet)
+            h.io.type_a.exp.poke(aExp.U)
+            h.io.type_a.sig.poke(aSig.U)
 
-//       for ((aName, aType, aAlt, aGen) <- aVariants) {
-//         for ((wName, wType, wAlt, wGen) <- wVariants) {
-//           println(s"\n==== Combo: $aName  vs  $wName  (a_type=$aType alt=${if(aAlt)1 else 0}; w_type=$wType alt=${if(wAlt)1 else 0}) ====")
+            h.io.type_w.exp.poke(wExp.U)
+            h.io.type_w.sig.poke(wSig.U)
 
-//           for (t <- 0 until trialsPerCombo) {
-//             // --------------------- Generate stimuli ---------------------
-//             val aRaws = aGen()
-//             val (aPacked, aLanes, aVals, aDesc) = packActs(aType, aAlt, aRaws)
 
-//             val wRaws = wGen()
-//             val (wPacked, wLanes, wVals, wDesc) = packWeis(wType, wAlt, wRaws)
+        }
 
-//             val cRaw  = genBF16()
-//             val cVal  = bf16ToFloat(cRaw)
+        for ((aName, aType, aAlt, aGen) <- aVariants) {
+          for ((wName, wType, wAlt, wGen) <- wVariants) {
+            println(s"\n==== Combo: $aName  vs  $wName  (a_type=$aType alt=${if(aAlt)1 else 0}; w_type=$wType alt=${if(wAlt)1 else 0}) ====")
+            if (aType == wType) {
+              for (t <- 0 until trialsPerCombo) {
+                // --------------------- Generate stimuli ---------------------
+                val aRaws = aGen()
+                val (aPacked, aVals, aDesc) = packActs(aType, aAlt, aRaws)
 
-//             // --------------------- PRE-TEST PRINTS ----------------------
-//             println(f"-- trial #$t%02d  PRE")
-//             println(s"  in_activation  (${aW}b) = ${binStr(aPacked, aW)}   $aDesc")
-//             println(s"  in_weights     (${wW}b) = ${binStr(wPacked, wW)}   $wDesc")
-//             showBF16("  c_raw (BF16)           ", cRaw)
+                val wRaws = wGen()
+                val (wPacked, wVals, wDesc) = packWeis(wType, wAlt, wRaws)
 
-//             // Pre-compute expected lanes and print them
-//             val expOpt = Array.tabulate(4)(i =>
-//               expectedBF16Lane(aVals, wVals, cVal, i, aType = aType, aAlt = aAlt, wType = wType, wAlt = wAlt)
-//             )
-//             (0 until 4).foreach { i =>
-//               expOpt(i) match {
-//                 case Some(e) => showBF16(f"  exp lane[$i]", e)
-//                 case None    => println(f"  exp lane[$i]: (n/a)")
-//               }
-//             }
+                // Under your new throughput rules, mixed fp8 with fp4/fp6 is probably invalid.
+                // We still run combos, but expectations only apply when lane rules match.
+                val cRaw  = genBF16()
+                val cVal  = bf16ToFloat(cRaw)
 
-//             // --------------------- Drive DUT ----------------------------
-//             h.io.in_a_type.poke(aType.U)
-//             h.io.a_altfmt.poke(aAlt.B)
-//             h.io.in_activation.poke(aPacked.U(aW.W))
-//             h.io.in_w_type.poke(wType.U)
-//             h.io.w_altfmt.poke(wAlt.B)
-//             h.io.in_weights.poke(wPacked.U(wW.W))
-//             h.io.c_raw.poke(cRaw.U(16.W))
+                // --------------------- PRE-TEST PRINTS ----------------------
+                println(f"-- trial #$t%02d  PRE")
+                println(s"  in_activation  (${aW}b) = ${binStr(aPacked, aW)}   $aDesc")
+                println(s"  in_weights     (${wW}b) = ${binStr(wPacked, wW)}   $wDesc")
+                showBF16("  c_raw (BF16)           ", cRaw)
 
-//             // latency cushion
-//             h.clock.step(2)
+                val expOpt = Array.tabulate(4)(i => expectedBF16Lane(aVals, wVals, cVal, i))
+                (0 until 4).foreach { i =>
+                  expOpt(i) match {
+                    case Some(e) => showBF16(f"  exp lane[$i]", e)
+                    case None    => println(f"  exp lane[$i]: (n/a)")
+                  }
+                }
 
-//             // --------------------- POST-STEP PRINTS (before asserts) ----
-//             val outBits = h.io.out_bf16.peek().litValue
-//             println(s"  out_bf16 (${4*laneW}b)      = ${binStr(outBits, 4*laneW)}")
-//             val got = Array.tabulate(4)(i => lane(outBits, i, laneW))
-//             (0 until 4).foreach(i => showBF16(f"  got lane[$i]", got(i)))
+                // --------------------- Drive DUT ----------------------------
+                pokeTypesAndMode(aType, aAlt, wType, wAlt)
+                h.io.in_activation.poke(aPacked.U(aW.W))
+                h.io.in_weights.poke(wPacked.U(wW.W))
+                h.io.c_raw.poke(cRaw.U(16.W))
 
-//             // --------------------- ASSERTIONS ---------------------------
-//             // Build full packed expect — fill don't-care lanes with DUT 'got' so we can still
-//             // do a single packed expect when not all lanes are defined.
-//             val filledExp = Array.tabulate(4) { i => expOpt(i).getOrElse(got(i)) }
-//             val packedExp =
-//               (BigInt(filledExp(3) & 0xFFFF) << 48) |
-//               (BigInt(filledExp(2) & 0xFFFF) << 32) |
-//               (BigInt(filledExp(1) & 0xFFFF) << 16) |
-//                BigInt(filledExp(0) & 0xFFFF)
+                // latency cushion
+                h.clock.step(2)
 
-//             // If a lane is defined, also check it individually for clearer failure msgs.
-//             expOpt.zipWithIndex.foreach {
-//               case (Some(e), i) =>
-//                 assert(got(i) == e, f"lane[$i] mismatch: got 0x${got(i)}%04X exp 0x$e%04X")
-//               case _ => // don't-care
-//             }
-//             h.io.out_bf16.expect(packedExp.U, s"trial $t packed expect mismatch")
+                // --------------------- POST-STEP PRINTS (before asserts) ----
+                val outBits = h.io.out_bf16.peek().litValue
+                println(s"  out_bf16 (${4*laneW}b)      = ${binStr(outBits, 4*laneW)}")
+                val got = Array.tabulate(4)(i => lane(outBits, i, laneW))
+                (0 until 4).foreach(i => showBF16(f"  got lane[$i]", got(i)))
 
-//             // --------------------- PASS PRINT ---------------------------
-//             println(s"  RESULT: PASS (trial $t)")
-//           }
-//         }
-//       }
+                // --------------------- ASSERTIONS ---------------------------
+                val filledExp = Array.tabulate(4) { i => expOpt(i).getOrElse(got(i)) }
+                val packedExp =
+                  (BigInt(filledExp(3) & 0xFFFF) << 48) |
+                  (BigInt(filledExp(2) & 0xFFFF) << 32) |
+                  (BigInt(filledExp(1) & 0xFFFF) << 16) |
+                  BigInt(filledExp(0) & 0xFFFF)
 
-//       h.io.enable.poke(false.B)
-//       h.clock.step(1)
-//     }
-//   }
-// }
+                expOpt.zipWithIndex.foreach {
+                  case (Some(e), i) =>
+                    assert(got(i) == e, f"lane[$i] mismatch: got 0x${got(i)}%04X exp 0x$e%04X")
+                  case _ => // don't-care
+                }
+
+                h.io.out_bf16.expect(packedExp.U, s"trial $t packed expect mismatch")
+                println(s"  RESULT: PASS (trial $t)")
+              }
+            }
+          }
+        }
+
+        h.io.enable.poke(false.B)
+        h.clock.step(1)
+      }
+  }
+}
 
 // // ----------------------------- Test -----------------------------
 // class MxFpMul_Fp4_WithRecC_Spec extends AnyFlatSpec with ChiselScalatestTester with Matchers {

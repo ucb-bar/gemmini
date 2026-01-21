@@ -47,10 +47,10 @@ case class TypeSupport (
 ) {
   // input parameters
   val inAWidth = 12
-  val inBWidth = 24
+  val inBWidth = 12
 
   // exp adder width
-  val expAdderWidths = Seq(4, 3, 4, 3)
+  val expAdderWidths = Seq(4, 3, 3, 3)
 
   val modes = (
     (if (actSupportFp4 && weiSupportFp4) List(PE_MxMode.mode0) else List()) ++
@@ -84,7 +84,9 @@ case class TypeSupport (
     (if (actSupportFp8_0 && weiSupportFp8_0) List(PE_MxMode.mode8) else List())
   ).distinct
 
-  val mxparameters = MxParams(modes)
+  val mxGemminiModes = PE_MxMode.mxGemminiConfig
+
+  val mxparameters = MxParams(mxGemminiModes)
   val peInAWidth = mxparameters.inPE_act_totalWidth
   val peInBWidth = mxparameters.inPE_wei_totalWidth
   val peOutWidth = mxparameters.outPE_width 
@@ -163,8 +165,8 @@ case class PE_MxMode(
   actWidth: Int = 2,
   weiWidth: Int = 2,
   actTotalWidth: Int = 4,
-  weiTotalWidth: Int = 8,
-  weiInputs: Int = 4,
+  weiTotalWidth: Int = 4,
+  weiInputs: Int = 2,
   actInputs: Int = 2,
   shift: Seq[Seq[Int]] = Seq.fill(2,2){0},
   outTotalWidth: Int = 16,
@@ -194,7 +196,7 @@ object PE_MxMode {
   )
   def mode4 = PE_MxMode().copy(
     actTotalWidth = 6,
-    weiTotalWidth = 12,
+    weiTotalWidth = 6,
     actWidth = 3,
     weiWidth = 3,
     outTotalWidth = 24 
@@ -241,7 +243,8 @@ object PE_MxMode {
     outTotalWidth = 8,
     numOutputs = 1
   )
-  val allModes: Vector[PE_MxMode] = Vector(mode0, mode1, mode2, mode3, mode4, mode5, mode6, mode7, mode8)
+  val allModes: List[PE_MxMode] = List(mode0, mode1, mode2, mode3, mode4, mode5, mode6, mode7, mode8)
+  val mxGemminiConfig: List[PE_MxMode] = List(mode0, mode4, mode8)
 }
 
 case class MxParams (

@@ -107,18 +107,22 @@ import chisel3._
 import chisel3.util._
 
 class MxPE(mxparameters: MxParams, lut: Boolean) extends Module {
+  require(mxparameters.inPE_wei_totalWidth == mxparameters.inPE_act_totalWidth, "inPE_wei_totalWidth must equal inPE_act_totalWidth for this MxPE implementation")
   val io = IO(new Bundle {
     val modeDecoded = Input(new mxMode())
     val in_a = Input(UInt(mxparameters.inPE_act_totalWidth.W))
     val in_w = Input(UInt(mxparameters.inPE_wei_totalWidth.W))
-    val mask_a = Input(UInt(4.W))
-    val mask_w = Input(UInt(4.W))
+    val mask_a = Input(UInt(2.W))
+    val mask_w = Input(UInt(2.W))
     val enable = Input(Bool())
     val output = Output(UInt(mxparameters.outPE_width.W))
   })
 
   val flexMults = Seq.fill(2,2){ Module(new MACU(lut)) }
   val outFM = Wire(Vec(4, UInt(mxparameters.multOutWidth.W)))
+
+  printf(p"enable: ${io.enable}, mask_a: ${Binary(io.mask_a)}, mask_w: ${Binary(io.mask_w)}\n")  // --- IGNORE ---
+  printf(p"in_a: ${Binary(io.in_a)}, in_w: ${Binary(io.in_w)}\n")  // --- IGNORE ---
 
   for (i <- 0 until 2) {
     for (j <- 0 until 2) {
@@ -133,11 +137,11 @@ class MxPE(mxparameters: MxParams, lut: Boolean) extends Module {
             a_en := io.mask_a(0)
           } .otherwise {
             a := io.in_a(mxparameters.actflexMulInWidth*(i+1) - 1, mxparameters.actflexMulInWidth*i)
-            a_en := io.mask_a(i*2)
+            a_en := io.mask_a(i)
           }
       } else {
         a := io.in_a(mxparameters.actflexMulInWidth*(i+1) - 1, mxparameters.actflexMulInWidth*i)
-        a_en := io.mask_a(i*2)
+        a_en := io.mask_a(i)
       }
 
       val w = Wire(UInt(mxparameters.weiflexMulInWidth.W))
@@ -149,11 +153,11 @@ class MxPE(mxparameters: MxParams, lut: Boolean) extends Module {
             w_en := io.mask_w(0)
           } .otherwise {
             w := io.in_w(mxparameters.weiflexMulInWidth*(j+1) - 1, mxparameters.weiflexMulInWidth*j)
-            w_en := io.mask_w(j*2)
+            w_en := io.mask_w(j)
           }
         } else {
           w := io.in_w(mxparameters.weiflexMulInWidth*(j+1) - 1, mxparameters.weiflexMulInWidth*j)
-          w_en := io.mask_w(j*2)
+          w_en := io.mask_w(j)
         }
       } else {
         when (io.modeDecoded.weiInputs === 1.U) {
@@ -161,10 +165,10 @@ class MxPE(mxparameters: MxParams, lut: Boolean) extends Module {
             w_en := io.mask_w(0)
           } .elsewhen (io.modeDecoded.weiInputs < 3.U) {
             w := io.in_w(mxparameters.weiflexMulInWidth*(j*2+1) - 1, mxparameters.weiflexMulInWidth*j*2)
-            w_en := io.mask_w(j*2)
+            w_en := io.mask_w(j)
           }.otherwise {
             w := io.in_w(mxparameters.weiflexMulInWidth*(i*2+j + 1) - 1, mxparameters.weiflexMulInWidth*((i*2+j)))
-            w_en := io.mask_w(i*2+j)
+            w_en := io.mask_w(j)
           }
       }
 
