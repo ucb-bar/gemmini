@@ -4,8 +4,7 @@ import chisel3._
 import chisel3.util._
 
 case class GemminiScalingFactorMemConfig(
-  baseAddr: BigInt,
-  sizeInBytes: BigInt = 32 << 10,
+  sizeInBytes: BigInt = 16 << 10,
   sramLineSizeInBytes: Int = 32,
   numBanks: Int = 8,
 ) {
@@ -16,7 +15,6 @@ case class GemminiScalingFactorMemConfig(
 }
 
 case class GemminiRequantizerConfig(
-  baseAddr: BigInt,
   numGPUInputLanes: Int = 16,
   numInputLanes: Int = 64, // TODO: note 16 only for fp8, 64 for fp6/fp4
   numOutputLanes: Int = 32,
@@ -54,6 +52,15 @@ class ScalingFactorWriteReq(addrWidth: Int, dataWidth: Int) extends Bundle {
     // writes two interleaved banks at once
     this(config.addrBits, config.bankWidthBits * 2)
   }
+}
+
+class ScalingFactorCnlt(max_block: Int) extends Bundle {
+  val counter_a = UInt(log2Up(max_block).W)
+  val counter_b = UInt(log2Up(max_block).W)
+  val fire_a = Bool()
+  val fire_b = Bool()
+  val baseAddress_act = UInt(33.W)
+  val baseAddress_w = UInt(33.W)
 }
 
 class RequantizerInBundle(numLanes: Int, dataWidth: Int = 16) extends Bundle {

@@ -2,7 +2,7 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-
+import org.chipsalliance.cde.config.Parameters
 import Util._
 
 class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, scale_t: U) extends Bundle {
@@ -47,7 +47,7 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
 
 
 class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U,
-  acc_sub_banks: Int, use_shared_ext_mem: Boolean, use_mx_scaling: Boolean
+  acc_sub_banks: Int, use_shared_ext_mem: Boolean, use_mx_scaling: Boolean, meshRows: Int, tileRows: Int, sramLineSizeInBytes: Int
 ) extends Bundle {
   val read = Flipped(new AccumulatorReadIO(n, t, scale_t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
@@ -60,9 +60,19 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
     val op2 = Output(t.cloneType)
     val sum = Input(t.cloneType)
   }
+  val counter_i = Input(UInt(16.W)) //for scaling factor memory control
+  val counter_j = Input(UInt(16.W)) //for scaling factor memory control
+  val counter_k = Input(UInt(16.W)) //for scaling factor memory control
+
   val dataType = Input(UInt(2.W)) //this is the input mxformat datatype
-  val scale_mem_write = if (use_mx_scaling) {
+  val scale_mem_write_act = if (use_mx_scaling) {
     Some(Flipped(Decoupled(new ScalingFactorWriteReq(9, 256))))
+  } else None
+  val scale_mem_write_w = if (use_mx_scaling) {
+    Some(Flipped(Decoupled(new ScalingFactorWriteReq(9, 256))))
+  } else None
+  val scaleMemCnlt = if (use_mx_scaling) {
+    Some(Input(new ScalingFactorCnlt(meshRows * tileRows)))
   } else None
 }
 
@@ -102,7 +112,9 @@ class AccumulatorMem[T <: Data, U <: Data](
   use_shared_ext_mem: Boolean, use_tl_ext_ram: Boolean,
   acc_latency: Int, acc_type: T, is_dummy: Boolean, use_mx_scaling: Boolean,
   testConfig: Boolean,
-  scale_mem: Option[GemminiScalingFactorMemConfig]
+  scale_mem: Option[GemminiScalingFactorMemConfig],
+  meshRows: Int,
+  tileRows: Int,
 )
   (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
@@ -113,9 +125,9 @@ class AccumulatorMem[T <: Data, U <: Data](
   // accType.getWidth/8 aligned, because it won't make sense to do matrix additions directly in the DMA otherwise.
   
   import ev._
-
+  
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling))
+  val io = IO(new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows, scale_mem.get.sramLineSizeInBytes))
   
   val scaleFactorMem = scale_mem.map { conf =>
     Module(new ScalingFactorMem(
@@ -123,10 +135,12 @@ class AccumulatorMem[T <: Data, U <: Data](
       bankWidth = conf.bankWidthBits,
       actOutputScalingWidth = 8,
       numBanks = conf.numBanks,
-      testConfig = testConfig
+      testConfig = testConfig,
+      meshRows = meshRows,
+      tileRows = tileRows,
     ))
   }
-  
+ 
   def calculateScaleAddr(write_addr: UInt): UInt = {
     write_addr  // TODO: Using the accmulator write addr to caculate the scaling memory read addr, for simplification 
   }
@@ -225,12 +239,18 @@ class AccumulatorMem[T <: Data, U <: Data](
     val scale_mem = scaleFactorMem.get
     scale_mem.io.dataType := io.dataType
     //wirte scale_mem
-    scale_mem.io.write <> io.scale_mem_write.get
+    scale_mem.io.scale_mem_write_w <> io.scale_mem_write_w.get
+    scale_mem.io.scale_mem_write_act <> io.scale_mem_write_act.get
     // scale_mem.io.write.valid := false.B
     // scale_mem.io.write.bits := DontCare
     
     //val waiting_for_scale = RegInit(true.B)
     //read_scale_mem
+    scale_mem.io.counter_i := io.counter_i
+    scale_mem.io.counter_j := io.counter_j
+    scale_mem.io.counter_k := io.counter_k
+    
+    scale_mem.io.scaleMemCnlt <> io.scaleMemCnlt.get
     scale_mem.io.read_req.valid := false.B
     scale_mem.io.read_req.bits.addr := DontCare
     scale_mem.io.read_req.bits.scaling_enable := false.B

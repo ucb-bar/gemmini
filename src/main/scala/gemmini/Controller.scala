@@ -175,11 +175,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   
   //val scaleMembasewrite := config.scaleMembasewrite
 
+
   
   val mx_requantizer = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
     val q = outer.config.requantizer.get
     val l = outer.config.lut.get
-
+   
     Module(new MxRequantizer(
       sp_data_width = outer.config.sp_width,
       sp_addr_width = log2Ceil(outer.config.sp_bank_entries),
@@ -196,7 +197,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       config = q  
     ))
   }
-  
+
   mx_requantizer.foreach { req =>
   req.io.scaleMem_write.ready := false.B
   req.io.fp8_mode := false.B
@@ -207,7 +208,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val q = outer.config.requantizer.get
     val l = outer.config.lut.get
     val mx_io = IO(new Bundle {
-      val scale_mem = Flipped(Decoupled(spad.module.io.scale_mem.get.bits.cloneType))
+      val scale_mem_write_w = Flipped(Decoupled(spad.module.io.scale_mem_write_w.get.bits.cloneType))
+      val scale_mem_write_act = Flipped(Decoupled(spad.module.io.scale_mem_write_act.get.bits.cloneType))
       val requant_in_gpu = Flipped(Decoupled(new RequantizerInBundle(q.numGPUInputLanes, q.inputBits)))
       val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
       val lut0 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
@@ -223,14 +225,18 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     mx_requantizer.get.io.lut0_write <> mx_io.lut0
     mx_requantizer.get.io.lut1_write <> mx_io.lut1
     mx_requantizer.get.io.lut2_write <> mx_io.lut2
-
+    
     Seq(mx_io.requant_in_gpu, mx_io.requant_out, mx_io.lut0, mx_io.lut1, mx_io.lut2).foreach(dontTouch(_))
     //Seq( mx_io.requant_out).foreach(dontTouch(_))
     mx_io
   }
   
   
-  spad.module.io.scale_mem.foreach { ch =>
+  spad.module.io.scale_mem_write_act.foreach { ch =>
+    ch.valid := false.B
+    ch.bits  := DontCare
+  }
+  spad.module.io.scale_mem_write_w.foreach { ch =>
     ch.valid := false.B
     ch.bits  := DontCare
   }
@@ -302,9 +308,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         requantized_writes(i).mask := VecInit(Seq.fill(requantized_writes(i).mask.length)(true.B))
       }
 
+<<<<<<< HEAD
       if (!outer.config.testConfig) {
         mx_io.get.requant_in_gpu.ready := false.B
       }
+=======
+      // mx_io.get.requant_in_gpu.ready := false.B
+>>>>>>> 0df4355 (change scale Mem as double RF buffer)
       mx_requantizer.get.io.requant_data_in.valid := false.B
       mx_requantizer.get.io.requant_data_in.bits := DontCare
       mx_requantizer.get.io.scaleMem_write.ready := false.B
@@ -528,12 +538,19 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
   
+
+
   mx_requantizer.get.io.counter_i := loop_matmul.io.counter_i
   mx_requantizer.get.io.counter_j := loop_matmul.io.counter_j  
   mx_requantizer.get.io.counter_k := loop_matmul.io.counter_k
   mx_requantizer.get.io.a_fire := ex_controller.io.a_fire
   mx_requantizer.get.io.b_fire := ex_controller.io.b_fire
-
+  spad.module.io.scaleMemCnlt.foreach { spadCnlt =>
+  spadCnlt <> ex_controller.io.scaleMemCnlt
+  }
+  spad.module.io.counter_i := loop_matmul.io.counter_i
+  spad.module.io.counter_j := loop_matmul.io.counter_j
+  spad.module.io.counter_k := loop_matmul.io.counter_k
 
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B

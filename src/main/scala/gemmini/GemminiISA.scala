@@ -37,7 +37,9 @@ object GemminiISA {
   val STORE_SPAD_CMD = 23.U
   val LOOP_WS_CONFIG_SPAD_AB = 24.U
   val LOOP_WS_CONFIG_SPAD_C = 25.U
-
+  val CONFIG_SCALE_MEM = 26.U   
+ 
+  
   // rs1[2:0] values
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U
@@ -63,6 +65,15 @@ object GemminiISA {
   // dataflow configuration
   //==========================================================================
   val GARBAGE_ADDR      = "hffffffff".U(32.W)
+  
+  val CONFIG_SCALE_MEM_RS1_ADDR_WIDTH = 33
+  val CONFIG_SCALE_MEM_SPACER_WIDTH = 64 - 1 - CONFIG_SCALE_MEM_RS1_ADDR_WIDTH 
+
+  class ConfigScaleMemRs1 extends Bundle {
+    val _spacer0 = UInt(CONFIG_SCALE_MEM_SPACER_WIDTH.W)
+    val mem_direction = UInt(1.W) // 0 for mvin, 1 for mvout
+    val mem_address = UInt(CONFIG_SCALE_MEM_RS1_ADDR_WIDTH.W)
+  }
 
   val MVIN_RS2_ADDR_WIDTH = 32
   val MVIN_RS2_COLS_WIDTH = 16

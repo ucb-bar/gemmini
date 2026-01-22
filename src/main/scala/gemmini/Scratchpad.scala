@@ -122,7 +122,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   val fromDMA = io.read.req.bits.fromDMA
   val weight_mx_format = io.read.req.bits.weight_mx_format
   val input_mx_format = io.read.req.bits.input_mx_format
-
+ 
 
   val bits_per_element = MuxLookup(input_mx_format, 8.U)(Seq(
     0.U -> 8.U,  // FP8
@@ -228,7 +228,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
   val maxBytes = dma_maxbytes
   val dataBits = dma_buswidth
-
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
   val spad_w = (weightType.getWidth *  block_cols)
@@ -290,9 +289,16 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       } else {
         None
       }
-
-      val scale_mem = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
-
+      val scaleMemCnlt = if (config.scale_mem.isDefined) {Some(Input(new ScalingFactorCnlt(meshRows*tileRows)))
+      } else {
+        None
+      }
+      val counter_i = Input(UInt(16.W))
+      val counter_j = Input(UInt(16.W))
+      val counter_k = Input(UInt(16.W))
+     
+      val scale_mem_write_w = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
+      val scale_mem_write_act = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
       // TLB ports
       val tlb = Vec(2 + spad_writer.map(_ => 1).getOrElse(0), new FrontendTLBIO)
 
@@ -731,7 +737,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         use_shared_ext_mem, use_tl_ext_mem,
         acc_latency, accType, is_dummy, config.use_mx_scaling,
         config.testConfig,
-        config.scale_mem,
+        config.scale_mem, 
+        meshRows, 
+        tileRows,
       )) }
       val bank_ios = VecInit(banks.map(_.io))
       
@@ -741,10 +749,25 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       // Reading from the Accumulator banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
-        bio.scale_mem_write.foreach { w =>
-          w.valid := io.scale_mem.get.valid
-          w.bits := io.scale_mem.get.bits
-          io.scale_mem.get.ready := w.ready
+        bio.scale_mem_write_w.foreach { w =>
+          w.valid := io.scale_mem_write_w.get.valid
+          w.bits := io.scale_mem_write_w.get.bits
+          io.scale_mem_write_w.get.ready := w.ready
+        }
+        
+        bio.scale_mem_write_act.foreach { w =>
+          w.valid := io.scale_mem_write_act.get.valid
+          w.bits := io.scale_mem_write_act.get.bits
+          io.scale_mem_write_act.get.ready := w.ready
+        }
+        bio.counter_i := io.counter_i
+        bio.counter_j := io.counter_j
+        bio.counter_k := io.counter_k
+        // bio.scaleMemCnlt <> io.scaleMemCnlt.get 
+        bio.scaleMemCnlt.foreach { bioCnlt =>
+          io.scaleMemCnlt.foreach { ioCnlt =>
+            bioCnlt <> ioCnlt
+          }
         }
         bio.dataType := 0.U // TODO (nicolas): make this configurable with mxReg
         bio.read.req.bits.activation_mx_format := 0.U // TODO (nicolas): make this configurable with mxReg

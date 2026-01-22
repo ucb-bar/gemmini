@@ -52,6 +52,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val counter = new CounterEventIO()
     val b_fire = Output(Bool())
     val a_fire = Output(Bool())
+    val scale_mem_mvout_base_addr_act = Output(UInt(33.W))
+    val scaleMemCnlt = Output(new ScalingFactorCnlt(meshRows*tileRows))
   })
 
 
@@ -95,6 +97,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Instruction-related variables
   val current_dataflow = if (dataflow == Dataflow.BOTH) Reg(UInt(1.W)) else dataflow.id.U
   
+  // val scale_mem_act_read_base_addr = RegInit(0.U(xLen.W))      // act mvin
+  // val scale_mem_act_write_base_addr = RegInit(0.U(xLen.W))     // act mvout
+  // val scale_mem_weight_read_base_addr = RegInit(0.U(xLen.W))   // weight mvin
+  // val scale_mem_weight_write_base_addr = RegInit(0.U(xLen.W))  // weight mvout
+
   val activation_mx_format = RegInit(0.U(2.W))
   val weight_mx_format = RegInit(0.U(2.W))
   val output_mx_format = RegInit(0.U(2.W))
@@ -111,10 +118,26 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val DoConfig = functs(0) === CONFIG_CMD
   val DoComputes = functs.map(f => f === COMPUTE_AND_FLIP_CMD || f === COMPUTE_AND_STAY_CMD)
   val DoPreloads = functs.map(_ === PRELOAD_CMD)
-
+  
   val preload_cmd_place = Mux(DoPreloads(0), 0.U, 1.U)
   // val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
+  
+  val scale_mem_mvin_base_addr_act = RegInit(0.U(33.W))
+  val scale_mem_mvin_base_addr_w = RegInit(0.U(33.W))
+  val scale_mem_mvout_base_addr_act = RegInit(0.U(33.W))
 
+  when(functs(0) === CONFIG_SCALE_MEM) {
+    val addr = rs1s(0).asTypeOf(new ConfigScaleMemRs1)
+    val addr_direction = addr.mem_direction
+    when(addr_direction === 0.U) { // mvin
+      val act_scale_address_rs1 = addr.mem_address
+      scale_mem_mvin_base_addr_act := act_scale_address_rs1
+      scale_mem_mvin_base_addr_w := act_scale_address_rs1 + (config.scale_mem.get.sizeInBytes >> 1).U
+    }.elsewhen(addr_direction === 1.U) { // mvout
+      scale_mem_mvout_base_addr_act := addr.mem_address
+    }
+  } 
+  io.scale_mem_mvout_base_addr_act := scale_mem_mvout_base_addr_act
   val in_prop = functs(0) === COMPUTE_AND_FLIP_CMD
 
   val in_prop_flush = Reg(Bool())
@@ -305,6 +328,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val b_garbage = b_address_rs2.is_garbage() || !start_inputting_b
   val d_garbage = d_address_rs1.is_garbage() || !start_inputting_d
 
+  io.scaleMemCnlt.counter_a := a_fire_counter
+  io.scaleMemCnlt.counter_b := b_fire_counter
+  io.scaleMemCnlt.fire_a := a_fire 
+  io.scaleMemCnlt.fire_b := b_fire
+  io.scaleMemCnlt.baseAddress_act := scale_mem_mvin_base_addr_act
+  io.scaleMemCnlt.baseAddress_w := scale_mem_mvin_base_addr_w
+
   //MX format related
   //val b_data_buffer = Reg(UInt(sp_width.W))
   // val d_data_buffer = Reg(UInt(sp_width.W))
@@ -372,7 +402,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val a_ready = WireInit(true.B)
   val b_ready = WireInit(true.B)
   val d_ready = WireInit(true.B)
-
+  
   case class Operand(addr: LocalAddr, is_garbage: Bool, start_inputting: Bool, counter: UInt, started: Bool, can_be_im2colled: Boolean, priority: Int) {
     val done = counter === 0.U && started
   }

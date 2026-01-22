@@ -66,6 +66,7 @@ class MxRequantizerIO(
   val fp8_mode = Input(Bool())  // true for 64-lane mode, false for 16-lane mode
   val a_fire = Input(Bool())  // from execute controller
   val b_fire = Input(Bool())  // from execute controller
+  val scale_mem_mvout_base_addr_act = Input(UInt(33.W)) // from execute controller
   val counter_i = Input(UInt(iterator_bitwidth.W)) // from  controller
   val counter_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val counter_k = Input(UInt(iterator_bitwidth.W)) // from  controller
@@ -104,7 +105,8 @@ class MxRequantizer[T <: Data: Arithmetic](
     iterator_bitwidth,
     config
   ))
-   
+  val scale_mem_mvout_base_addr_act = io.scale_mem_mvout_base_addr_act
+
   val scales_per_write = scaleMem_data_width / 8
   val scale_write_addr_counter = RegInit(0.U(log2Ceil(scaleMem_addr_width).W))
 
@@ -315,12 +317,12 @@ class MxRequantizer[T <: Data: Arithmetic](
   when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
     io.requant_data_out.valid := true.B
     io.requant_data_out.bits.dataType := quant_dataType
-    io.requant_data_out.bits.address := io.requant_data_in.bits.address  +& config.baseAddr.U //todo: the address generated for only 256bits write
+    io.requant_data_out.bits.address := io.requant_data_in.bits.address //todo: the address generated for only 256bits write
     io.requant_data_out.bits.data := Cat(quantLut.io.projected_data.bits.reverse)
   }.elsewhen(quantize_valid && ((total_bits_per_element === 4.U) || (total_bits_per_element === 8.U))){
     io.requant_data_out.valid := true.B
     io.requant_data_out.bits.dataType := quant_dataType
-    io.requant_data_out.bits.address := io.requant_data_in.bits.address +& config.baseAddr.U
+    io.requant_data_out.bits.address := io.requant_data_in.bits.address 
     io.requant_data_out.bits.data := extracted_data
   }.otherwise {
     io.requant_data_out.bits.data := 0.U
@@ -346,7 +348,7 @@ class MxRequantizer[T <: Data: Arithmetic](
   
   when(scale_buffer_full) {
     io.scaleMem_write.valid := true.B
-    io.scaleMem_write.bits.addr := (scaleMembasewrite.U +& scale_write_addr_counter) << 1.U
+    io.scaleMem_write.bits.addr := scale_mem_mvout_base_addr_act +& (scale_write_addr_counter << 5.U) //byte address, scale 32B per write
     io.scaleMem_write.bits.data := Cat(scale_buffer.reverse)
     
     when(io.scaleMem_write.fire) {

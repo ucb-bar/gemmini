@@ -7,185 +7,258 @@ import org.scalatest.flatspec.AnyFlatSpec
 
 class ScalingFactorMemSpec extends AnyFlatSpec with ChiselScalatestTester {
   
-  behavior of "ScalingFactorMem"
+  behavior of "ScalingFactorMem Double Buffer"
   
-  it should "work correctly in FP8 mode" in {
+  it should "test concurrent read and write in FP8 mode" in {
     test(new ScalingFactorMem(
-      depth = 256,
+      depth = 128,
       bankWidth = 128,
       actOutputScalingWidth = 8,
       numBanks = 8,
-      testConfig = false
+      testConfig = false,
+      meshRows = 16,
+      tileRows = 1
     )).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
+      
+      val meshRows = 16
+      val tileRows = 1
+      val depth = 128
+      val max_block_fp8 = meshRows * tileRows  // 16
+      
+      println("=" * 80)
+      println(s"Testing FP8 Mode Concurrent Read/Write (depth=$depth, max_block_fp8=$max_block_fp8)")
+      println("=" * 80)
+      
+      // Set FP8 mode
       dut.io.dataType.poke(2.U)
+      
+      // Initialize control signals
+      dut.io.scaleMemCnlt.counter_a.poke(0.U)
+      dut.io.scaleMemCnlt.counter_b.poke(0.U)
+      dut.io.scaleMemCnlt.fire_a.poke(false.B)
+      dut.io.scaleMemCnlt.fire_b.poke(false.B)
+      dut.io.scaleMemCnlt.baseAddress_act.poke(0.U)
+      dut.io.scaleMemCnlt.baseAddress_w.poke(0.U)
+      
+      // Initialize counters
+      dut.io.counter_i.poke(0.U)
+      dut.io.counter_j.poke(0.U)
+      dut.io.counter_k.poke(0.U)
+      
+      // Initialize write signals
+      dut.io.scale_mem_write_act.valid.poke(false.B)
+      dut.io.scale_mem_write_w.valid.poke(false.B)
+      
+      // Initialize read request
       dut.io.read_req.valid.poke(false.B)
+      dut.io.read_req.bits.addr.poke(0.U)
       dut.io.read_req.bits.scaling_enable.poke(false.B)
-      dut.io.write.valid.poke(false.B)
       dut.io.read_resp.ready.poke(true.B)
+      
       dut.clock.step(5)
       
-      // Write activation scales to bank 0 (addr[9:8] = 0)
-      dut.io.write.valid.poke(true.B)
-      dut.io.write.bits.addr.poke(0x000.U) // bank_sel = 0, row_addr = 0
-      val actScales = (0 until 16).map(i => BigInt((0x7E + i) & 0xFF))
-      val actData = actScales.zipWithIndex.foldLeft(BigInt(0)) { case (acc, (scale, i)) =>
-        acc | (scale << (i * 8))
+      // Helper function to create test data with pattern
+      def createTestData(baseValue: Int): BigInt = {
+        val pattern = baseValue & 0xFF
+        var lowData = BigInt(0)
+        var highData = BigInt(0)
+        
+        for (i <- 0 until 16) {
+          lowData = lowData | (BigInt(pattern) << (i * 8))
+        }
+        for (i <- 0 until 16) {
+          highData = highData | (BigInt((pattern + 0x80) & 0xFF) << (i * 8))
+        }
+        
+        (highData << 128) | lowData
       }
-      dut.io.write.bits.data.poke(actData.U)
-      dut.clock.step(1)
       
-      // Write weight scales to bank 2 (addr[9:8] = 2)
-      dut.io.write.bits.addr.poke(0x200.U) // bank_sel = 2, row_addr = 0
-      val weightScales = (0 until 16).map(i => BigInt((0x70 + i) & 0xFF))
-      val weightData = weightScales.zipWithIndex.foldLeft(BigInt(0)) { case (acc, (scale, i)) =>
-        acc | (scale << (i * 8))
+      // ========================================================================
+      // Phase 1: Write initial data to Buffer 0
+      // ========================================================================
+      println("\n--- Phase 1: Writing initial data to Buffer 0 (Act & Weight) ---")
+      
+      // Write activation buffer 0
+      for (addr <- 0 until depth) {
+        val fullData = createTestData(addr)
+        dut.io.scale_mem_write_act.valid.poke(true.B)
+        dut.io.scale_mem_write_act.bits.addr.poke(addr.U)
+        dut.io.scale_mem_write_act.bits.data.poke(fullData.U)
+        dut.clock.step(1)
+        while (!dut.io.scale_mem_write_act.ready.peek().litToBoolean) {
+          dut.clock.step(1)
+        }
       }
-      dut.io.write.bits.data.poke(weightData.U)
-      dut.clock.step(1)
+      dut.io.scale_mem_write_act.valid.poke(false.B)
+      println(s"  Activation buffer 0 initialized ($depth entries)")
       
-      dut.io.write.valid.poke(false.B)
-      dut.clock.step(2)
+      // Write weight buffer 0
+      for (addr <- 0 until depth) {
+        val fullData = createTestData(addr + 100)
+        dut.io.scale_mem_write_w.valid.poke(true.B)
+        dut.io.scale_mem_write_w.bits.addr.poke(addr.U)
+        dut.io.scale_mem_write_w.bits.data.poke(fullData.U)
+        dut.clock.step(1)
+        while (!dut.io.scale_mem_write_w.ready.peek().litToBoolean) {
+          dut.clock.step(1)
+        }
+      }
+      dut.io.scale_mem_write_w.valid.poke(false.B)
+      println(s"  Weight buffer 0 initialized ($depth entries)")
       
-      // Read request
+      dut.clock.step(10)
+      
+      // ========================================================================
+      // Phase 2: Concurrent Read from Buffer 0 and Write to Buffer 1
+      // ========================================================================
+      println("\n--- Phase 2: Concurrent Read (Buffer 0) and Write (Buffer 1) ---")
+      
+      // State variables for reading
+      var counter_i = 0
+      var counter_j = 0
+      var counter_k = 0
+      var i_cycle_count = 0
+      var read_cycle_count = 0
+      
+      // State variables for writing
+      var act_write_addr = 0
+      var weight_write_addr = 0
+      var act_writes_completed = 0
+      var weight_writes_completed = 0
+      
+      // Track read responses
+      var read_responses = 0
+      var expected_scale_sum = 0
+      var correct_reads = 0
+      var incorrect_reads = 0
+      
+      // Enable reading
       dut.io.read_req.valid.poke(true.B)
       dut.io.read_req.bits.scaling_enable.poke(true.B)
-      dut.io.read_req.bits.addr.poke(0x000.U) // read from bank 0
-      dut.clock.step(1)
       
-      dut.io.read_req.valid.poke(false.B)
+      // Run concurrent read/write test
+      val max_cycles = 5000
+      var cycle = 0
       
-      // Wait for response
-      var cycleCount = 0
-      var validCount = 0
-      while (cycleCount < 30 && validCount < 16) {
-        if (dut.io.read_resp.valid.peek().litToBoolean) {
-          println(s"Cycle $cycleCount - FP8 Mode Response $validCount:")
-          for (i <- 0 until 16) {
-            val scale = dut.io.read_resp.bits.combined_scales(i).peek().litValue
-            println(f"  combined_scales($i) = 0x$scale%X")
+      while (cycle < max_cycles && (counter_k < depth || act_writes_completed < depth || weight_writes_completed < depth)) {
+        
+        // ==================== WRITE SIDE ====================
+        // Write activation data to buffer 1 whenever ready
+        if (act_writes_completed < depth && dut.io.scale_mem_write_act.ready.peek().litToBoolean) {
+          val fullData = createTestData(act_write_addr + 200)  // Different pattern
+          dut.io.scale_mem_write_act.valid.poke(true.B)
+          dut.io.scale_mem_write_act.bits.addr.poke(act_write_addr.U)
+          dut.io.scale_mem_write_act.bits.data.poke(fullData.U)
+          act_write_addr += 1
+          act_writes_completed += 1
+          
+          if (act_writes_completed % 32 == 0) {
+            println(s"  [Write] Activation: $act_writes_completed/$depth entries written to buffer 1")
           }
-          validCount += 1
+        } else {
+          dut.io.scale_mem_write_act.valid.poke(false.B)
         }
-        dut.clock.step(1)
-        cycleCount += 1
-      }
-      
-      println(s"FP8 Mode: Received $validCount valid responses")
-    }
-  }
-  
-  it should "work correctly in non-FP8 mode (FP4/FP6)" in {
-    test(new ScalingFactorMem(
-      depth = 256,
-      bankWidth = 128,
-      actOutputScalingWidth = 8,
-      numBanks = 8,
-      testConfig = false
-    )).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
-      dut.io.dataType.poke(0.U) // non-FP8 mode
-      dut.io.read_req.valid.poke(false.B)
-      dut.io.read_req.bits.scaling_enable.poke(false.B)
-      dut.io.write.valid.poke(false.B)
-      dut.io.read_resp.ready.poke(true.B)
-      dut.clock.step(5)
-      
-      // Write activation scales to banks 0,1,2,3
-      for (bankSel <- 0 until 4) {
-        dut.io.write.valid.poke(true.B)
-        dut.io.write.bits.addr.poke((bankSel << 8).U)
-        val scales = (0 until 16).map(i => BigInt((0x60 + bankSel * 16 + i) & 0xFF))
-        val data = scales.zipWithIndex.foldLeft(BigInt(0)) { case (acc, (scale, i)) =>
-          acc | (scale << (i * 8))
-        }
-        dut.io.write.bits.data.poke(data.U)
-        dut.clock.step(1)
-      }
-      
-      // Write weight scales to banks 4,5,6,7
-      for (bankSel <- 0 until 4) {
-        dut.io.write.bits.addr.poke(((bankSel + 2) << 8).U) // bank_sel 2,3,4,5 maps to banks 4,5,6,7
-        val scales = (0 until 16).map(i => BigInt((0x50 + bankSel * 16 + i) & 0xFF))
-        val data = scales.zipWithIndex.foldLeft(BigInt(0)) { case (acc, (scale, i)) =>
-          acc | (scale << (i * 8))
-        }
-        dut.io.write.bits.data.poke(data.U)
-        dut.clock.step(1)
-      }
-      
-      dut.io.write.valid.poke(false.B)
-      dut.clock.step(2)
-      
-      // Read request
-      dut.io.read_req.valid.poke(true.B)
-      dut.io.read_req.bits.scaling_enable.poke(true.B)
-      dut.io.read_req.bits.addr.poke(0x000.U)
-      dut.clock.step(1)
-      
-      dut.io.read_req.valid.poke(false.B)
-      
-      // Wait for response (should get 64 responses in non-FP8 mode)
-      var cycleCount = 0
-      var validCount = 0
-      while (cycleCount < 80 && validCount < 64) {
-        if (dut.io.read_resp.valid.peek().litToBoolean) {
-          println(s"Cycle $cycleCount - Non-FP8 Mode Response $validCount:")
-          for (i <- 0 until 64) {
-            val scale = dut.io.read_resp.bits.combined_scales(i).peek().litValue
-            print(f"0x$scale%03X ")
-            if ((i + 1) % 8 == 0) println()
+        
+        // Write weight data to buffer 1 whenever ready
+        if (weight_writes_completed < depth && dut.io.scale_mem_write_w.ready.peek().litToBoolean) {
+          val fullData = createTestData(weight_write_addr + 250)  // Different pattern
+          dut.io.scale_mem_write_w.valid.poke(true.B)
+          dut.io.scale_mem_write_w.bits.addr.poke(weight_write_addr.U)
+          dut.io.scale_mem_write_w.bits.data.poke(fullData.U)
+          weight_write_addr += 1
+          weight_writes_completed += 1
+          
+          if (weight_writes_completed % 32 == 0) {
+            println(s"  [Write] Weight: $weight_writes_completed/$depth entries written to buffer 1")
           }
-          validCount += 1
+        } else {
+          dut.io.scale_mem_write_w.valid.poke(false.B)
         }
+        
+        // ==================== READ SIDE ====================
+        if (counter_k < depth) {
+          // Update counter_i: increment by 16 every 4 cycles, reset at max_block_fp8
+          if (i_cycle_count == 4) {
+            counter_i = counter_i + 16
+            i_cycle_count = 0
+            
+            if (counter_i >= max_block_fp8) {
+              counter_i = 0
+              counter_j = counter_j + 16
+              
+              if (counter_j >= max_block_fp8) {
+                counter_j = 0
+                counter_k = counter_k + 1
+                
+                if (counter_k % 16 == 0 && counter_k < depth) {
+                  println(f"  [Read] counter_k = $counter_k%3d (i=$counter_i%2d, j=$counter_j%2d)")
+                }
+              }
+            }
+          }
+          
+          // Poke counters
+          dut.io.counter_i.poke(counter_i.U)
+          dut.io.counter_j.poke(counter_j.U)
+          dut.io.counter_k.poke(counter_k.U)
+          dut.io.read_req.bits.addr.poke(counter_k.U)
+          
+          // Check read response
+          if (dut.io.read_resp.valid.peek().litToBoolean) {
+            read_responses += 1
+            
+            // Verify scale values (act_scale[0] + weight_scale[0])
+            val received_scale = dut.io.read_resp.bits.combined_scales(0).peek().litValue.toInt
+            
+            // Expected: act_pattern = counter_k, weight_pattern = counter_k + 100
+            // E8M0 format: just add the exponents
+            val expected_act = counter_k & 0xFF
+            val expected_weight = (counter_k + 100) & 0xFF
+            expected_scale_sum = (expected_act + expected_weight) & 0x1FF
+            
+            if (received_scale == expected_scale_sum) {
+              correct_reads += 1
+            } else {
+              incorrect_reads += 1
+              if (incorrect_reads <= 5) {  // Print first 5 errors
+                println(f"  [ERROR] k=$counter_k: Expected scale=$expected_scale_sum%03d, Got=$received_scale%03d")
+              }
+            }
+            
+            if (read_responses % 50 == 0) {
+              println(f"  [Read] Responses: $read_responses, Correct: $correct_reads, Incorrect: $incorrect_reads")
+            }
+          }
+          
+          i_cycle_count += 1
+        } else {
+          dut.io.read_req.valid.poke(false.B)
+        }
+        
         dut.clock.step(1)
-        cycleCount += 1
+        cycle += 1
       }
       
-      println(s"Non-FP8 Mode: Received $validCount valid responses (expected 64)")
-    }
-  }
-  
-  it should "handle write and read back correctly" in {
-    test(new ScalingFactorMem(
-      depth = 256,
-      bankWidth = 128,
-      actOutputScalingWidth = 8,
-      numBanks = 8,
-      testConfig = false
-    )).withAnnotations(Seq(WriteVcdAnnotation)) { dut =>
-      dut.io.dataType.poke(2.U) 
-      dut.io.read_req.valid.poke(false.B)
-      dut.io.read_req.bits.scaling_enable.poke(false.B)
-      dut.io.write.valid.poke(false.B)
-      dut.io.read_resp.ready.poke(true.B)
-      dut.clock.step(3)
+      // Final statistics
+      println("\n" + "=" * 80)
+      println("Test Results:")
+      println("=" * 80)
+      println(f"Total cycles: $cycle")
+      println(f"Activation writes completed: $act_writes_completed/$depth")
+      println(f"Weight writes completed: $weight_writes_completed/$depth")
+      println(f"Read responses received: $read_responses")
+      println(f"Correct reads: $correct_reads")
+      println(f"Incorrect reads: $incorrect_reads")
       
-      // Write known pattern
-      dut.io.write.valid.poke(true.B)
-      dut.io.write.bits.addr.poke(0x000.U)
-      dut.io.write.bits.data.poke(BigInt("0F0E0D0C0B0A09080706050403020100", 16).U)
-      dut.clock.step(1)
-      
-      dut.io.write.bits.addr.poke(0x200.U)
-      dut.io.write.bits.data.poke(BigInt("1F1E1D1C1B1A19181716151413121110", 16).U)
-      dut.clock.step(1)
-      
-      dut.io.write.valid.poke(false.B)
-      dut.clock.step(3)
-      
-      // Read back
-      dut.io.read_req.valid.poke(true.B)
-      dut.io.read_req.bits.scaling_enable.poke(true.B)
-      dut.io.read_req.bits.addr.poke(0x000.U)
-      dut.clock.step(1)
-      dut.io.read_req.valid.poke(false.B)
-      
-      // Check responses
-      for (cycle <- 0 until 30) {
-        if (dut.io.read_resp.valid.peek().litToBoolean) {
-          println(s"Read response at cycle $cycle")
-        }
-        dut.clock.step(1)
+      if (incorrect_reads == 0 && read_responses > 0) {
+        println("\n✓ All read values matched expected values!")
+      } else if (incorrect_reads > 0) {
+        println(s"\n✗ Found $incorrect_reads incorrect read values")
       }
+      
+      println("=" * 80)
+      
+      dut.clock.step(10)
     }
   }
 }

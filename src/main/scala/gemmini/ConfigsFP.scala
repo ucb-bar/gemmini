@@ -305,7 +305,6 @@ object GemminiMxFPConfigs {
 
     num_counter = 8,
     requantizer = Some(GemminiRequantizerConfig( 
-      baseAddr = 0x10000000L,
       numInputLanes = 64,
       numOutputLanes = 32,
       gpuMaxFactor = 2,
@@ -316,7 +315,6 @@ object GemminiMxFPConfigs {
       outputIdBits = 3
     )),
     scale_mem = Some(GemminiScalingFactorMemConfig(
-        baseAddr = 0x10000000L + 0x8000,
         sizeInBytes = 16 << 10,
         sramLineSizeInBytes = 256 / 8,
         numBanks = 8,
