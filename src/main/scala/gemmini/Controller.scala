@@ -218,7 +218,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     })
 
     if (!outer.config.testConfig) {
-      mx_io.scale_mem <> spad.module.io.scale_mem.get
+      mx_io.scale_mem_write_w <> spad.module.io.scale_mem_write_w.get
+      mx_io.scale_mem_write_act <> spad.module.io.scale_mem_write_act.get
     }
 
     mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
@@ -308,13 +309,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         requantized_writes(i).mask := VecInit(Seq.fill(requantized_writes(i).mask.length)(true.B))
       }
 
-<<<<<<< HEAD
       if (!outer.config.testConfig) {
         mx_io.get.requant_in_gpu.ready := false.B
       }
-=======
-      // mx_io.get.requant_in_gpu.ready := false.B
->>>>>>> 0df4355 (change scale Mem as double RF buffer)
       mx_requantizer.get.io.requant_data_in.valid := false.B
       mx_requantizer.get.io.requant_data_in.bits := DontCare
       mx_requantizer.get.io.scaleMem_write.ready := false.B

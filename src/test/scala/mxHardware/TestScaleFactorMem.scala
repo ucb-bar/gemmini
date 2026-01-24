@@ -22,7 +22,7 @@ class ScalingFactorMemSpec extends AnyFlatSpec with ChiselScalatestTester {
       
       val meshRows = 16
       val tileRows = 1
-      val depth = 128
+      val depth = 4
       val max_block_fp8 = meshRows * tileRows  // 16
       
       println("=" * 80)
@@ -73,40 +73,40 @@ class ScalingFactorMemSpec extends AnyFlatSpec with ChiselScalatestTester {
         (highData << 128) | lowData
       }
       
-      // ========================================================================
-      // Phase 1: Write initial data to Buffer 0
-      // ========================================================================
-      println("\n--- Phase 1: Writing initial data to Buffer 0 (Act & Weight) ---")
+      // // ========================================================================
+      // // Phase 1: Write initial data to Buffer 0
+      // // ========================================================================
+      // println("\n--- Phase 1: Writing initial data to Buffer 0 (Act & Weight) ---")
       
-      // Write activation buffer 0
-      for (addr <- 0 until depth) {
-        val fullData = createTestData(addr)
-        dut.io.scale_mem_write_act.valid.poke(true.B)
-        dut.io.scale_mem_write_act.bits.addr.poke(addr.U)
-        dut.io.scale_mem_write_act.bits.data.poke(fullData.U)
-        dut.clock.step(1)
-        while (!dut.io.scale_mem_write_act.ready.peek().litToBoolean) {
-          dut.clock.step(1)
-        }
-      }
-      dut.io.scale_mem_write_act.valid.poke(false.B)
-      println(s"  Activation buffer 0 initialized ($depth entries)")
+      // // Write activation buffer 0
+      // for (addr <- 0 until depth) {
+      //   val fullData = createTestData(addr)
+      //   dut.io.scale_mem_write_act.valid.poke(true.B)
+      //   dut.io.scale_mem_write_act.bits.addr.poke(addr.U)
+      //   dut.io.scale_mem_write_act.bits.data.poke(fullData.U)
+      //   dut.clock.step(1)
+      //   while (!dut.io.scale_mem_write_act.ready.peek().litToBoolean) {
+      //     dut.clock.step(1)
+      //   }
+      // }
+      // dut.io.scale_mem_write_act.valid.poke(false.B)
+      // println(s"  Activation buffer 0 initialized ($depth entries)")
       
-      // Write weight buffer 0
-      for (addr <- 0 until depth) {
-        val fullData = createTestData(addr + 100)
-        dut.io.scale_mem_write_w.valid.poke(true.B)
-        dut.io.scale_mem_write_w.bits.addr.poke(addr.U)
-        dut.io.scale_mem_write_w.bits.data.poke(fullData.U)
-        dut.clock.step(1)
-        while (!dut.io.scale_mem_write_w.ready.peek().litToBoolean) {
-          dut.clock.step(1)
-        }
-      }
-      dut.io.scale_mem_write_w.valid.poke(false.B)
-      println(s"  Weight buffer 0 initialized ($depth entries)")
+      // // Write weight buffer 0
+      // for (addr <- 0 until depth) {
+      //   val fullData = createTestData(addr + 100)
+      //   dut.io.scale_mem_write_w.valid.poke(true.B)
+      //   dut.io.scale_mem_write_w.bits.addr.poke(addr.U)
+      //   dut.io.scale_mem_write_w.bits.data.poke(fullData.U)
+      //   dut.clock.step(1)
+      //   while (!dut.io.scale_mem_write_w.ready.peek().litToBoolean) {
+      //     dut.clock.step(1)
+      //   }
+      // }
+      // dut.io.scale_mem_write_w.valid.poke(false.B)
+      // println(s"  Weight buffer 0 initialized ($depth entries)")
       
-      dut.clock.step(10)
+      // dut.clock.step(10)
       
       // ========================================================================
       // Phase 2: Concurrent Read from Buffer 0 and Write to Buffer 1
@@ -119,10 +119,13 @@ class ScalingFactorMemSpec extends AnyFlatSpec with ChiselScalatestTester {
       var counter_k = 0
       var i_cycle_count = 0
       var read_cycle_count = 0
-      
+      val actBuffer0 = Array.fill(10)(BigInt(0))
+      val weightBuffer0 = Array.fill(10)(BigInt(0))
       // State variables for writing
       var act_write_addr = 0
+      var act_write_addr_1 = 0
       var weight_write_addr = 0
+      var weight_write_addr_1 = 0
       var act_writes_completed = 0
       var weight_writes_completed = 0
       
@@ -133,7 +136,7 @@ class ScalingFactorMemSpec extends AnyFlatSpec with ChiselScalatestTester {
       var incorrect_reads = 0
       
       // Enable reading
-      dut.io.read_req.valid.poke(true.B)
+      dut.io.read_req.valid.poke(false.B)
       dut.io.read_req.bits.scaling_enable.poke(true.B)
       
       // Run concurrent read/write test
@@ -144,14 +147,18 @@ class ScalingFactorMemSpec extends AnyFlatSpec with ChiselScalatestTester {
         
         // ==================== WRITE SIDE ====================
         // Write activation data to buffer 1 whenever ready
-        if (act_writes_completed < depth && dut.io.scale_mem_write_act.ready.peek().litToBoolean) {
+        if (act_writes_completed < 10 && dut.io.scale_mem_write_act.ready.peek().litToBoolean) {
           val fullData = createTestData(act_write_addr + 200)  // Different pattern
+          actBuffer0(act_writes_completed) = fullData
           dut.io.scale_mem_write_act.valid.poke(true.B)
-          dut.io.scale_mem_write_act.bits.addr.poke(act_write_addr.U)
+          dut.io.scale_mem_write_act.bits.addr.poke(act_write_addr_1.U)
           dut.io.scale_mem_write_act.bits.data.poke(fullData.U)
           act_write_addr += 1
+          if(act_write_addr % 2 == 1){
+            act_write_addr_1 += 1
+          }
           act_writes_completed += 1
-          
+          println(s"  [Write] act_write_addr: $act_write_addr")
           if (act_writes_completed % 32 == 0) {
             println(s"  [Write] Activation: $act_writes_completed/$depth entries written to buffer 1")
           }
@@ -160,14 +167,19 @@ class ScalingFactorMemSpec extends AnyFlatSpec with ChiselScalatestTester {
         }
         
         // Write weight data to buffer 1 whenever ready
-        if (weight_writes_completed < depth && dut.io.scale_mem_write_w.ready.peek().litToBoolean) {
+        if (weight_writes_completed < 10 && dut.io.scale_mem_write_w.ready.peek().litToBoolean) {
           val fullData = createTestData(weight_write_addr + 250)  // Different pattern
+          weightBuffer0(weight_write_addr) = fullData
           dut.io.scale_mem_write_w.valid.poke(true.B)
-          dut.io.scale_mem_write_w.bits.addr.poke(weight_write_addr.U)
+          dut.io.scale_mem_write_w.bits.addr.poke(weight_write_addr_1.U)
           dut.io.scale_mem_write_w.bits.data.poke(fullData.U)
           weight_write_addr += 1
+          if(weight_write_addr % 2 == 0){
+            weight_write_addr_1 += 1
+          }
+
           weight_writes_completed += 1
-          
+          println(s"  [Write] w_write_addr: $act_write_addr")
           if (weight_writes_completed % 32 == 0) {
             println(s"  [Write] Weight: $weight_writes_completed/$depth entries written to buffer 1")
           }
@@ -175,29 +187,31 @@ class ScalingFactorMemSpec extends AnyFlatSpec with ChiselScalatestTester {
           dut.io.scale_mem_write_w.valid.poke(false.B)
         }
         
+        dut.io.read_req.valid.poke(true.B)
         // ==================== READ SIDE ====================
         if (counter_k < depth) {
           // Update counter_i: increment by 16 every 4 cycles, reset at max_block_fp8
-          if (i_cycle_count == 4) {
+          if (i_cycle_count ==16) {
             counter_i = counter_i + 16
             i_cycle_count = 0
-            
-            if (counter_i >= max_block_fp8) {
+            println(f"  [Read] counter_i = $counter_i%2d")
+            if (counter_i == 64) {
               counter_i = 0
               counter_j = counter_j + 16
-              
-              if (counter_j >= max_block_fp8) {
+              println(f"  [Read] counter_j = $counter_j%2d")
+              if (counter_j == 64) {
                 counter_j = 0
                 counter_k = counter_k + 1
-                
-                if (counter_k % 16 == 0 && counter_k < depth) {
-                  println(f"  [Read] counter_k = $counter_k%3d (i=$counter_i%2d, j=$counter_j%2d)")
-                }
+                println(f"  [Read] counter_k = $counter_k%3d")
+                // if (counter_k % 16 == 0 && counter_k < depth) {
+                //   println(f"  [Read] counter_k = $counter_k%3d (i=$counter_i%2d, j=$counter_j%2d)")
+                // }
               }
             }
           }
-          
+          //println("\n--- set input counters ---")
           // Poke counters
+          dut.clock.step(1)
           dut.io.counter_i.poke(counter_i.U)
           dut.io.counter_j.poke(counter_j.U)
           dut.io.counter_k.poke(counter_k.U)
@@ -212,10 +226,14 @@ class ScalingFactorMemSpec extends AnyFlatSpec with ChiselScalatestTester {
             
             // Expected: act_pattern = counter_k, weight_pattern = counter_k + 100
             // E8M0 format: just add the exponents
+            // val expected_act = (actBuffer0(counter_k) & 0xFF).toInt
+            // val expected_weight = (weightBuffer0(counter_k) & 0xFF).toInt
+            // expected_scale_sum = (expected_act + expected_weight) & 0x1FF
+            
             val expected_act = counter_k & 0xFF
             val expected_weight = (counter_k + 100) & 0xFF
             expected_scale_sum = (expected_act + expected_weight) & 0x1FF
-            
+            println(f"k=$counter_k: Expected scale=$expected_scale_sum%03d, Got=$received_scale%03d")
             if (received_scale == expected_scale_sum) {
               correct_reads += 1
             } else {
@@ -237,7 +255,11 @@ class ScalingFactorMemSpec extends AnyFlatSpec with ChiselScalatestTester {
         
         dut.clock.step(1)
         cycle += 1
+        if (counter_k == 4) {
+          fail("Force stop at counter_k = 4") 
+        }
       }
+      
       
       // Final statistics
       println("\n" + "=" * 80)
