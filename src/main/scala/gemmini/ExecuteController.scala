@@ -53,7 +53,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val b_fire = Output(Bool())
     val a_fire = Output(Bool())
     val scale_mem_mvout_base_addr_act = Output(UInt(33.W))
-    val scaleMemCnlt = Output(new ScalingFactorCnlt(meshRows*tileRows))
+    val scaleMemCntl = Output(new ScalingFactorCntl(meshRows*tileRows))
   })
 
 
@@ -328,12 +328,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val b_garbage = b_address_rs2.is_garbage() || !start_inputting_b
   val d_garbage = d_address_rs1.is_garbage() || !start_inputting_d
 
-  io.scaleMemCnlt.counter_a := a_fire_counter
-  io.scaleMemCnlt.counter_b := b_fire_counter
-  io.scaleMemCnlt.fire_a := a_fire 
-  io.scaleMemCnlt.fire_b := b_fire
-  io.scaleMemCnlt.baseAddress_act := scale_mem_mvin_base_addr_act
-  io.scaleMemCnlt.baseAddress_w := scale_mem_mvin_base_addr_w
 
   //MX format related
   //val b_data_buffer = Reg(UInt(sp_width.W))
@@ -434,6 +428,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val d_fire = d_valid && d_ready
 
   val firing = start_inputting_a || start_inputting_b || start_inputting_d
+
+  io.scaleMemCntl.counter_a := a_fire_counter
+  io.scaleMemCntl.counter_b := b_fire_counter
+  io.scaleMemCntl.fire_a := a_fire 
+  io.scaleMemCntl.fire_b := b_fire
+  io.scaleMemCntl.baseAddress_act := scale_mem_mvin_base_addr_act
+  io.scaleMemCntl.baseAddress_w := scale_mem_mvin_base_addr_w
 
   when (!firing) {
     a_fire_counter := 0.U

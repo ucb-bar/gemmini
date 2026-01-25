@@ -20,7 +20,7 @@ class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: 
   val read_req = Flipped(Decoupled(new ScalingFactorReadReq(addrWidth)))
   val read_resp = Decoupled(new ScalingFactorReadResp(numRows, numCols))
   val dataType = Input(UInt(2.W))
-  val scaleMemCnlt = Input(new ScalingFactorCnlt(meshRows*tileRows)) // dummy output to match interface
+  val scaleMemCntl = Input(new ScalingFactorCntl(meshRows*tileRows)) // dummy output to match interface
   val counter_i = Input(UInt(16.W))
   val counter_j = Input(UInt(16.W))  
   val counter_k = Input(UInt(16.W))
@@ -52,12 +52,12 @@ class ScalingFactorMem(
     tileRows,
   ))
 
-  val counter_a_fire = io.scaleMemCnlt.counter_a
-  val counter_b_fire = io.scaleMemCnlt.counter_b
-  val fire_a = io.scaleMemCnlt.fire_a
-  val fire_b = io.scaleMemCnlt.fire_b
-  val write_baseAddr_act = io.scaleMemCnlt.baseAddress_act
-  val write_baseAddr_w = io.scaleMemCnlt.baseAddress_w
+  val counter_a_fire = io.scaleMemCntl.counter_a
+  val counter_b_fire = io.scaleMemCntl.counter_b
+  val fire_a = io.scaleMemCntl.fire_a
+  val fire_b = io.scaleMemCntl.fire_b
+  val write_baseAddr_act = io.scaleMemCntl.baseAddress_act
+  val write_baseAddr_w = io.scaleMemCntl.baseAddress_w
   val initByte = 0x7e.U(8.W)
   val defaultRow = VecInit(Seq.fill(bytesPerBank)(initByte)) 
   val counter_i = io.counter_i

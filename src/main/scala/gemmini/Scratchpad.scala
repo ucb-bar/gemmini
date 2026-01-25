@@ -289,7 +289,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       } else {
         None
       }
-      val scaleMemCnlt = if (config.scale_mem.isDefined) {Some(Input(new ScalingFactorCnlt(meshRows*tileRows)))
+      val scaleMemCntl = if (config.scale_mem.isDefined) {Some(Input(new ScalingFactorCntl(meshRows*tileRows)))
       } else {
         None
       }
@@ -763,9 +763,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.counter_i := io.counter_i
         bio.counter_j := io.counter_j
         bio.counter_k := io.counter_k
-        // bio.scaleMemCnlt <> io.scaleMemCnlt.get 
-        bio.scaleMemCnlt.foreach { bioCnlt =>
-          io.scaleMemCnlt.foreach { ioCnlt =>
+        // bio.scaleMemCntl <> io.scaleMemCntl.get 
+        bio.scaleMemCntl.foreach { bioCnlt =>
+          io.scaleMemCntl.foreach { ioCnlt =>
             bioCnlt <> ioCnlt
           }
         }

@@ -71,8 +71,8 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   val scale_mem_write_w = if (use_mx_scaling) {
     Some(Flipped(Decoupled(new ScalingFactorWriteReq(9, 256))))
   } else None
-  val scaleMemCnlt = if (use_mx_scaling) {
-    Some(Input(new ScalingFactorCnlt(meshRows * tileRows)))
+  val scaleMemCntl = if (use_mx_scaling) {
+    Some(Input(new ScalingFactorCntl(meshRows * tileRows)))
   } else None
 }
 
@@ -250,7 +250,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     scale_mem.io.counter_j := io.counter_j
     scale_mem.io.counter_k := io.counter_k
     
-    scale_mem.io.scaleMemCnlt <> io.scaleMemCnlt.get
+    scale_mem.io.scaleMemCntl <> io.scaleMemCntl.get
     scale_mem.io.read_req.valid := false.B
     scale_mem.io.read_req.bits.addr := DontCare
     scale_mem.io.read_req.bits.scaling_enable := false.B

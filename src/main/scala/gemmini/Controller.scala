@@ -199,9 +199,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
 
   mx_requantizer.foreach { req =>
-  req.io.scaleMem_write.ready := false.B
-  req.io.fp8_mode := false.B
-}
+    req.io.scaleMem_write.ready := false.B
+    req.io.fp8_mode := false.B
+    req.io.scale_mem_mvout_base_addr_act := ex_controller.io.scale_mem_mvout_base_addr_act
+  }
 
 
   val mx_io = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
@@ -542,8 +543,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   mx_requantizer.get.io.counter_k := loop_matmul.io.counter_k
   mx_requantizer.get.io.a_fire := ex_controller.io.a_fire
   mx_requantizer.get.io.b_fire := ex_controller.io.b_fire
-  spad.module.io.scaleMemCnlt.foreach { spadCnlt =>
-  spadCnlt <> ex_controller.io.scaleMemCnlt
+  spad.module.io.scaleMemCntl.foreach { spadCnlt =>
+  spadCnlt <> ex_controller.io.scaleMemCntl
   }
   spad.module.io.counter_i := loop_matmul.io.counter_i
   spad.module.io.counter_j := loop_matmul.io.counter_j

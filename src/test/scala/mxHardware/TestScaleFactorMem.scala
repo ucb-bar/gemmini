@@ -33,12 +33,12 @@ class ScalingFactorMemSpec extends AnyFlatSpec with ChiselScalatestTester {
       dut.io.dataType.poke(2.U)
       
       // Initialize control signals
-      dut.io.scaleMemCnlt.counter_a.poke(0.U)
-      dut.io.scaleMemCnlt.counter_b.poke(0.U)
-      dut.io.scaleMemCnlt.fire_a.poke(false.B)
-      dut.io.scaleMemCnlt.fire_b.poke(false.B)
-      dut.io.scaleMemCnlt.baseAddress_act.poke(0.U)
-      dut.io.scaleMemCnlt.baseAddress_w.poke(0.U)
+      dut.io.scaleMemCntl.counter_a.poke(0.U)
+      dut.io.scaleMemCntl.counter_b.poke(0.U)
+      dut.io.scaleMemCntl.fire_a.poke(false.B)
+      dut.io.scaleMemCntl.fire_b.poke(false.B)
+      dut.io.scaleMemCntl.baseAddress_act.poke(0.U)
+      dut.io.scaleMemCntl.baseAddress_w.poke(0.U)
       
       // Initialize counters
       dut.io.counter_i.poke(0.U)
