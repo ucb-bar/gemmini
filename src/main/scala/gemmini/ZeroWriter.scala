@@ -27,7 +27,7 @@ class ZeroWriter[T <: Data, U <: Data, V <: Data, Tag <: Data](config: GemminiAr
   import config._
 
   val block_cols = meshColumns * tileColumns
-  val max_cols = (dma_maxbytes / (inputType.getWidth / 8)) max block_cols
+  val max_cols = (dma_maxbytes / (inputTypeProjected.getWidth / 8)) max block_cols
 
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new ZeroWriterReq(local_addr_t, max_cols, tag_t)))

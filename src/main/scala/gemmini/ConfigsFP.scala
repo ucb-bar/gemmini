@@ -251,15 +251,15 @@ object GemminiMxFPConfigs {
     use_shared_ext_mem = false,
 
     inputType = MxFloat(3, 3, 2), //consider worst case for total bit length, inputType maximal is 12bits? same case for projection? 
-    weightType = MxFloat(3, 3, 4),
+    weightType = MxFloat(3, 3, 2),
     accType = MxFloat(8, 8, 4),
     // weightTypeProjected = MxFloat(2, 2, 4), //projected to lower precision
-    weightTypeProjected = MxFloat(3, 3, 4), // should be projected, but errors if weightType != weightTypeProjected
+    weightTypeProjected = MxFloat(2, 2, 2), // should be projected, but errors if weightType != weightTypeProjected
     inputTypeProjected = MxFloat(2, 2, 2), 
     accTypeProjected = MxFloat(8, 8, 4),
 
     spatialArrayInputType = MxFloat(3, 3, 2), 
-    spatialArrayWeightType = MxFloat(3, 3, 4),
+    spatialArrayWeightType = MxFloat(3, 3, 2),
     spatialArrayOutputType = MxFloat(8, 8, 4, true, false),
 
     meshProdPrecisionList = Seq.fill(4) {(8, 8)} ++ 
