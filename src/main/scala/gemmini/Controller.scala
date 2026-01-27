@@ -65,7 +65,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(
       name = s"spad_read_node_$i",
       sourceId = IdRange(0, num_ids),
-      visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
+      // visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
       supportsProbe = TransferSizes(mem_width, mem_width),
       supportsGet = TransferSizes(mem_width, mem_width)
     )))
@@ -75,7 +75,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(
       name = s"spad_write_node_$i",
       sourceId = IdRange(0, num_ids),
-      visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
+      // visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
       supportsProbe = TransferSizes(mem_width, mem_width),
       supportsPutFull = TransferSizes(mem_width, mem_width),
       supportsPutPartial = TransferSizes(mem_width, mem_width)
@@ -208,9 +208,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val mx_io = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
     val q = outer.config.requantizer.get
     val l = outer.config.lut.get
+    val s = outer.config.scale_mem.get
     val mx_io = IO(new Bundle {
-      val scale_mem_write_w = Flipped(Decoupled(spad.module.io.scale_mem_write_w.get.bits.cloneType))
-      val scale_mem_write_act = Flipped(Decoupled(spad.module.io.scale_mem_write_act.get.bits.cloneType))
+      val scale_mem_write_w = Flipped(Decoupled(new ScalingFactorWriteReq(s)))
+      val scale_mem_write_act = Flipped(Decoupled(new ScalingFactorWriteReq(s)))
       val requant_in_gpu = Flipped(Decoupled(new RequantizerInBundle(q.numGPUInputLanes, q.inputBits)))
       val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
       val lut0 = Flipped(Decoupled(new QuantLutWriteBundle(l)))

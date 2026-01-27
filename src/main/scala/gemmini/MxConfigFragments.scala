@@ -83,11 +83,3 @@ class QuantLutWriteBundle(numEntries: Int, numBits: Int) extends Bundle {
     this(config.numEntries, config.numBits)
   }
 }
-
-class QuantLutReadReq(raddrWidth: Int) extends Bundle {
-  val lutaddr = UInt(raddrWidth.W)
-}
-
-class QuantLutReadResp(rdataWidth: Int) extends Bundle {
-  val lutdata = UInt(rdataWidth.W)
-}
