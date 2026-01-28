@@ -381,7 +381,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
     // Datatype of the systolic array
     val limits = limitsOfDataType(weightType)
-    header ++= s"typedef ${c_type(inputType)} elem_t;\n"
+    header ++= s"typedef ${c_type(inputTypeProjected)} elem_t;\n"
     if (inputType.isInstanceOf[MxFloat] || inputType.isInstanceOf[Float] && !((inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (8, 24) || (inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (11, 53)))
     {
       header ++= "#define ELEM_T_IS_LOWPREC_FLOAT\n"
