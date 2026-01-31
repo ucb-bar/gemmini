@@ -925,7 +925,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.bits.mask :=
             Mux(from_mvin_scale,
               {
-                val n = accType.getWidth / weightType.getWidth
+                val n = accType.getWidth / weightTypeProjected.getWidth
                 // val mask = mvin_scale_out.bits.tag.mask take ((spad_w / (aligned_to * 8)) max 1)
                 val mask = mvin_scale_pixel_repeater.io.resp.bits.mask take ((spad_w_deprojected / (aligned_to * 8)) max 1)
                 val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))

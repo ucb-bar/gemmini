@@ -25,8 +25,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
 
     val srams = new Bundle {
-      val read = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
-      val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width_projected, (sp_width_projected / (aligned_to * 8)) max 1))
+      val read = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
+      val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1))
     }
 
     val acc = new Bundle {
