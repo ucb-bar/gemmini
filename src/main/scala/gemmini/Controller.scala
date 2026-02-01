@@ -229,7 +229,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     mx_requantizer.get.io.lut1_write <> mx_io.lut1
     mx_requantizer.get.io.lut2_write <> mx_io.lut2
     
-    Seq(mx_io.requant_in_gpu, mx_io.requant_out, mx_io.lut0, mx_io.lut1, mx_io.lut2).foreach(dontTouch(_))
+    // Seq(mx_io.requant_in_gpu, mx_io.requant_out, mx_io.lut0, mx_io.lut1, mx_io.lut2).foreach(dontTouch(_))
     //Seq( mx_io.requant_out).foreach(dontTouch(_))
     mx_io
   }
@@ -247,6 +247,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // mxrequantizer <> sram
   mx_requantizer.get.io.spad_projected_data <> spad.module.io.srams.write
   mx_requantizer.get.io.spad_deprojected_data <> spad.module.io.srams.read
+
+  // dontTouch(mx_requantizer.get.io.spad_projected_data)
+  // dontTouch(mx_requantizer.get.io.requant_data_in)
   
   
   spad.module.io.scale_mem_write_act.foreach { ch =>
@@ -685,7 +688,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ex_controller.io.im2col.resp <> im2col.io.resp
 
   // Wire arbiter for ExecuteController and Im2Col scratchpad reads
-  (ex_controller.io.srams.read, im2col.io.sram_reads, spad.module.io.srams.read).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
+  (ex_controller.io.srams.read, im2col.io.sram_reads, mx_requantizer.get.io.requant_data_in).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
     val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
 
     req_arb.io.in(0) <> ex_read.req
@@ -695,10 +698,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     // TODO if necessary, change how the responses are handled when fromIm2Col is added to spad read interface
 
-    ex_read.resp.valid := spad_read.resp.valid
+    // ex_read.resp.valid := spad_read.resp.valid
     im2col_read.resp.valid := spad_read.resp.valid
 
-    ex_read.resp.bits := spad_read.resp.bits
+    // ex_read.resp.bits := spad_read.resp.bits
     im2col_read.resp.bits := spad_read.resp.bits
 
     spad_read.resp.ready := ex_read.resp.ready || im2col_read.resp.ready
