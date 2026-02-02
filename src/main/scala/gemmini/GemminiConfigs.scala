@@ -181,9 +181,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   }
   assert(acc_scale_latency > 0)
 
-  val mvin_cols_bits = log2Up(((dma_maxbytes / (weightTypeProjected.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvin_cols_bits = log2Up(((dma_maxbytes / (weightType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvin_rows_bits = log2Up(meshRows * tileRows + 1)
-  val mvout_cols_bits = log2Up(((dma_maxbytes / (weightTypeProjected.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvout_cols_bits = log2Up(((dma_maxbytes / (weightType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvout_rows_bits = log2Up(meshRows * tileRows + 1)
 
   val load_states = 3
@@ -400,7 +400,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       header ++= s"#define ELEM_T_SIG_BITS ${inputType.asInstanceOf[MxFloat].sigWidth}\n"
       header ++= s"#define ACC_T_EXP_BITS ${accType.asInstanceOf[MxFloat].expWidth}\n"
       header ++= s"#define ACC_T_SIG_BITS ${accType.asInstanceOf[MxFloat].sigWidth}\n"
-      header ++= s"typedef ${c_type(UInt(inputType.getWidth.W))} elem_t_bits;\n"
+      header ++= s"typedef ${c_type(UInt(inputTypeProjected.getWidth.W))} elem_t_bits;\n"
       header ++= s"typedef ${c_type(UInt(accType.getWidth.W))} acc_t_bits;\n\n"
     }
 
