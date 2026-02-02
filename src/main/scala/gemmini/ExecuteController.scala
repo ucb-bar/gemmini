@@ -127,14 +127,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val scale_mem_mvout_base_addr_act = RegInit(0.U(33.W))
 
   when(functs(0) === CONFIG_SCALE_MEM) {
-    val addr = rs1s(0).asTypeOf(new ConfigScaleMemRs1)
-    val addr_direction = addr.mem_direction
-    when(addr_direction === 0.U) { // mvin
-      val act_scale_address_rs1 = addr.mem_address
-      scale_mem_mvin_base_addr_act := act_scale_address_rs1
-      scale_mem_mvin_base_addr_w := act_scale_address_rs1 + (config.scale_mem.get.sizeInBytes >> 1).U
-    }.elsewhen(addr_direction === 1.U) { // mvout
-      scale_mem_mvout_base_addr_act := addr.mem_address
+    val direction = rs2s(0)(63) 
+    when(direction === 1.U) { // mvin
+      scale_mem_mvin_base_addr_act := rs1s(0)
+      scale_mem_mvin_base_addr_w := rs1s(0) + (config.scale_mem.get.sizeInBytes >> 1).U
+    }.elsewhen(direction === 0.U) { // mvout
+      scale_mem_mvout_base_addr_act := rs1s(0)
     }
   } 
   io.scale_mem_mvout_base_addr_act := scale_mem_mvout_base_addr_act

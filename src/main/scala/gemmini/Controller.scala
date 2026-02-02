@@ -217,32 +217,34 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val lut0 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
       val lut1 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
       val lut2 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
+      //val scaleFactorOut = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
     })
 
-    if (!outer.config.testConfig) {
-      mx_io.scale_mem_write_w <> spad.module.io.scale_mem_write_w.get
-      mx_io.scale_mem_write_act <> spad.module.io.scale_mem_write_act.get
-    }
-
+    
+    spad.module.io.scale_mem_write_w.get <> mx_io.scale_mem_write_w
+    spad.module.io.scale_mem_write_act.get <> mx_io.scale_mem_write_act 
+    
+   
+    //mx_io.scaleFactorOut <> mx_requantizer.get.io.scaleMem_write
     mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
     mx_requantizer.get.io.lut0_write <> mx_io.lut0
     mx_requantizer.get.io.lut1_write <> mx_io.lut1
     mx_requantizer.get.io.lut2_write <> mx_io.lut2
     
-    Seq(mx_io.requant_in_gpu, mx_io.requant_out, mx_io.lut0, mx_io.lut1, mx_io.lut2).foreach(dontTouch(_))
+    Seq(mx_io.requant_in_gpu, mx_io.requant_out, mx_io.lut0, mx_io.lut1, mx_io.lut2, mx_io.scale_mem_write_w,  mx_io.scale_mem_write_act).foreach(dontTouch(_))
     //Seq( mx_io.requant_out).foreach(dontTouch(_))
     mx_io
   }
   
   
-  spad.module.io.scale_mem_write_act.foreach { ch =>
-    ch.valid := false.B
-    ch.bits  := DontCare
-  }
-  spad.module.io.scale_mem_write_w.foreach { ch =>
-    ch.valid := false.B
-    ch.bits  := DontCare
-  }
+  // spad.module.io.scale_mem_write_act.foreach { ch =>
+  //   ch.valid := false.B
+  //   ch.bits  := DontCare
+  // }
+  // spad.module.io.scale_mem_write_w.foreach { ch =>
+  //   ch.valid := false.B
+  //   ch.bits  := DontCare
+  // }
 
   val lut_deprojected_data = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
   lut_deprojected_data := 0.U.asTypeOf(lut_deprojected_data)

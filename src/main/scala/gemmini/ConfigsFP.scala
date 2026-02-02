@@ -274,7 +274,7 @@ object GemminiMxFPConfigs {
 
                                  // 16x16 mesh with varying precisions
     scaleMem_data_width = 128,
-    scaleMem_bank_entries = 256,
+    scaleMem_bank_entries = 8192,
     scaleSize = 32,
     enable_lut = true,
     mvin_scale_args = None,
@@ -305,6 +305,7 @@ object GemminiMxFPConfigs {
 
     num_counter = 8,
     requantizer = Some(GemminiRequantizerConfig( 
+      baseAddr = 0x10000000L,
       numInputLanes = 64,
       numOutputLanes = 32,
       gpuMaxFactor = 2,
@@ -315,8 +316,10 @@ object GemminiMxFPConfigs {
       outputIdBits = 3
     )),
     scale_mem = Some(GemminiScalingFactorMemConfig(
+        baseAddr = 0x10000000L + 0x8000,
         sizeInBytes = 16 << 10,
-        sramLineSizeInBytes = 256 / 8,
+        subbankLineSizeInBytes = 16,
+        subbanksPerBank = 2,
         numBanks = 8,
         ))
   )
