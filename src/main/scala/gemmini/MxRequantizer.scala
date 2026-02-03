@@ -61,8 +61,8 @@ class MxRequantizerIO(
   val lut0_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig)))
   val lut1_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig)))
   val lut2_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig)))
-  val spad_projected_data = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
-  val spad_deprojected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width)))
+  val spad_projected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
+  val spad_deprojected_data = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
   val fp8_mode = Input(Bool())  // true for 64-lane mode, false for 16-lane mode
   val a_fire = Input(Bool())  // from execute controller
   val b_fire = Input(Bool())  // from execute controller
@@ -120,6 +120,9 @@ class MxRequantizer[T <: Data: Arithmetic](
   io.scaleMem_write.bits := DontCare
   io.requant_data_out.valid := false.B
   io.requant_data_out.bits := DontCare
+
+  io.spad_deprojected_data <> DontCare
+  io.spad_projected_data <> DontCare // TODO (nicolas): FIX This assignment
   
 
   def abs(x: UInt): UInt = {  
@@ -269,8 +272,10 @@ class MxRequantizer[T <: Data: Arithmetic](
     iterator_bitwidth = iterator_bitwidth
   ))
   
-  quantLut.io.spad_projected_data <> io.spad_projected_data
-  quantLut.io.spad_deprojected_data <> io.spad_deprojected_data
+  // quantLut.io.spad_projected_data <> io.spad_projected_data
+  // quantLut.io.spad_deprojected_data <> io.spad_deprojected_data
+  quantLut.io.spad_projected_data <> DontCare
+  quantLut.io.spad_deprojected_data <> DontCare
   quantLut.io.a_fire := io.a_fire
   quantLut.io.b_fire := io.b_fire
   quantLut.io.counter_i := io.counter_i
