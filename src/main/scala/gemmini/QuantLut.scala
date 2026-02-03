@@ -62,7 +62,8 @@ class QuantLut(
     when(lutCache_act_in_flag === false.B){
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          lutCache_act_in_0(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_act_in_0(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          lutCache_act_in_0(lane)(entry) := io.lut_write_act_in.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
       }
       lutCache_act_in_flag := ~lutCache_act_in_flag
       lutCache_act_in_buffer_0_read_enable := true.B
@@ -70,7 +71,8 @@ class QuantLut(
     }.otherwise {
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          lutCache_act_in_1(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_act_in_1(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          lutCache_act_in_1(lane)(entry) := io.lut_write_act_in.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
       }
       lutCache_act_in_flag := ~lutCache_act_in_flag
       lutCache_act_in_buffer_1_read_enable := true.B
@@ -109,7 +111,8 @@ class QuantLut(
     when(lutCache_weight_flag === false.B){
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          lutCache_weight_0(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_weight_0(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          lutCache_weight_0(lane)(entry) := io.lut_write_weight.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
         }
       }
       lutCache_weight_flag := ~lutCache_weight_flag
@@ -117,7 +120,8 @@ class QuantLut(
     }.otherwise {
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          lutCache_weight_1(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_weight_1(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          lutCache_weight_1(lane)(entry) := io.lut_write_weight.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
         }
       }
       lutCache_weight_flag := ~lutCache_weight_flag
@@ -155,7 +159,8 @@ class QuantLut(
     when(lutCache_act_out_flag === false.B){
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          lutCache_act_out_0(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_act_out_0(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          lutCache_act_out_0(lane)(entry) := io.lut_write_act_out.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
         }
       }
       lutCache_act_out_flag := ~lutCache_act_out_flag
@@ -163,7 +168,8 @@ class QuantLut(
     }.otherwise {
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          lutCache_act_out_1(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_act_out_1(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          lutCache_act_out_1(lane)(entry) := io.lut_write_act_out.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
         }
       }
       lutCache_act_out_flag := ~lutCache_act_out_flag

@@ -29,14 +29,14 @@ case class GemminiRequantizerConfig(
   minOutputBits: Int = 4,
   maxOutputBits: Int = 8,
   outputIdBits: Int = 3,
-  lutUpdateRegularityW : Int = 128, 
+  lutUpdateRegularityW : Int = 128,  // means how many elements update once the lut
   lutUpdateRegularityActIn : Int = 128,
   lutUpdateRegularityActOut : Int = 128,  
 )
 
 case class GemminiLUTConfig(
   numBits: Int = 96,
-  numEntries: Int = 32,
+  numEntries: Int = 1,
   numTables: Int = 3,
   rdataWidth: Int = 6,
   raddrWidth: Int = 4, 

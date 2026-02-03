@@ -257,11 +257,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         mx_sel(bank) := (ex_controller.io.output_MxFormat === 1.U)
       }
     }
-    if(outer.config.lut.isDefined){
-      mx_requantizer.get.io.lut0_write := DontCare
-      mx_requantizer.get.io.lut1_write := DontCare
-      mx_requantizer.get.io.lut2_write := DontCare
-    }
+    // if(outer.config.lut.isDefined){
+    //   mx_requantizer.get.io.lut0_write := DontCare
+    //   mx_requantizer.get.io.lut1_write := DontCare
+    //   mx_requantizer.get.io.lut2_write := DontCare
+    // }
   }
 
   /* 
