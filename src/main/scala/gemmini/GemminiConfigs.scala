@@ -57,7 +57,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              
 
                                                                              scaleMem_data_width: Int = 128,
-                                                                             scaleMem_bank_entries: Int = 256,
+                                                                             scaleMem_bank_entries: Int = 8192,
                                                                              scaleSize: Int = 32,
                                                                              
                                                                              dma_maxbytes: Int = 64, // TODO get this from cacheblockbytes

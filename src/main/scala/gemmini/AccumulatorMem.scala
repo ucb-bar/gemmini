@@ -47,7 +47,7 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
 
 
 class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U,
-  acc_sub_banks: Int, use_shared_ext_mem: Boolean, use_mx_scaling: Boolean, meshRows: Int, tileRows: Int, sramLineSizeInBytes: Int
+  acc_sub_banks: Int, use_shared_ext_mem: Boolean, use_mx_scaling: Boolean, meshRows: Int, tileRows: Int, bankWidthBits: Int
 ) extends Bundle {
   val read = Flipped(new AccumulatorReadIO(n, t, scale_t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
@@ -66,10 +66,10 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
 
   val dataType = Input(UInt(2.W)) //this is the input mxformat datatype
   val scale_mem_write_act = if (use_mx_scaling) {
-    Some(Flipped(Decoupled(new ScalingFactorWriteReq(9, 256))))
+    Some(Flipped(Decoupled(new ScalingFactorWriteReq(13, 64))))
   } else None
   val scale_mem_write_w = if (use_mx_scaling) {
-    Some(Flipped(Decoupled(new ScalingFactorWriteReq(9, 256))))
+    Some(Flipped(Decoupled(new ScalingFactorWriteReq(13, 64))))
   } else None
   val scaleMemCntl = if (use_mx_scaling) {
     Some(Input(new ScalingFactorCntl(meshRows * tileRows)))
@@ -127,17 +127,22 @@ class AccumulatorMem[T <: Data, U <: Data](
   import ev._
   
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows, scale_mem.get.sramLineSizeInBytes))
+  val io = IO(new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows, scale_mem.get.bankWidthBits))
   
   val scaleFactorMem = scale_mem.map { conf =>
+    // println(s"[ScalingFactorMem Config]")
+    // println(s"  depth = ${conf.depth}")
+    // println(s"  subbankLineSizeInBytes = ${conf.subbankLineSizeInBytes}")
+    // println(s"  bankWidthBits = ${conf.bankWidthBits}")
+    // println(s"  numBanks = ${conf.numBanks}")
     Module(new ScalingFactorMem(
       depth = conf.depth,
-      bankWidth = conf.bankWidthBits,
+      sramWidth = conf.subbankLineSizeInBytes*8,
       actOutputScalingWidth = 8,
       numBanks = conf.numBanks,
       testConfig = testConfig,
       meshRows = meshRows,
-      tileRows = tileRows,
+      tileRows = tileRows
     ))
   }
  

@@ -294,7 +294,7 @@ class MxRequantizer[T <: Data: Arithmetic](
   // }.otherwise {
   //   quantLut.io.lut_write.ready := false.B
   // }
-
+  
   quantLut.io.lut_write_weight <> io.lut0_write
   quantLut.io.lut_write_act_in <> io.lut1_write
   quantLut.io.lut_write_act_out <> io.lut2_write
@@ -335,7 +335,6 @@ class MxRequantizer[T <: Data: Arithmetic](
 
   val scale_write_counter = RegInit(0.U(log2Ceil(scaleSize).W))
   val scale_buffer_full = RegInit(false.B)
-
   when(should_compute) {
     for (i <- 0 until scaleSize) {
       when(i.U === scale_write_counter) {
@@ -347,8 +346,12 @@ class MxRequantizer[T <: Data: Arithmetic](
       scale_buffer_full := true.B
     }.otherwise {
       scale_write_counter := scale_write_counter + 1.U
-      scale_buffer_full := false.B
+      when(io.scaleMem_write.ready){
+        scale_buffer_full := false.B
+      }
     }
+  }.elsewhen(io.scaleMem_write.ready){
+      scale_buffer_full := false.B
   }
   
   when(scale_buffer_full) {

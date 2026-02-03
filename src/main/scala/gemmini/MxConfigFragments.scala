@@ -6,13 +6,16 @@ import chisel3.util._
 case class GemminiScalingFactorMemConfig(
   baseAddr: BigInt = 0x10000000L,
   sizeInBytes: BigInt = 16 << 10,
-  sramLineSizeInBytes: Int = 32,
+  subbankLineSizeInBytes: Int = 16,
+  subbanksPerBank: Int = 2,
+  gpuInputWidthBytes: Int = 8,
   numBanks: Int = 8,
 ) {
-  def depth: Int = (sizeInBytes / sramLineSizeInBytes / numBanks).toInt
-  def bankWidthBits = sramLineSizeInBytes * 8
+  def depth: Int = (sizeInBytes / (subbankLineSizeInBytes) / numBanks).toInt
+  def bankWidthBytes = subbankLineSizeInBytes * subbanksPerBank
+  def bankWidthBits = bankWidthBytes * 8
   def addrBits = log2Ceil(sizeInBytes)
-  def lineOffsetBits = log2Ceil(sramLineSizeInBytes)
+  def lineOffsetBits = log2Ceil(bankWidthBytes) 
 }
 
 case class GemminiRequantizerConfig(
@@ -47,14 +50,16 @@ object RequantizerDataType extends ChiselEnum {
   }
 }
 
+
 class ScalingFactorWriteReq(addrWidth: Int, dataWidth: Int) extends Bundle {
   val addr = UInt(addrWidth.W)
   val data = UInt(dataWidth.W)
   def this(config: GemminiScalingFactorMemConfig) = {
     // writes two interleaved banks at once
-    this(config.addrBits, config.bankWidthBits * 2)
+    this(config.addrBits, 8*config.gpuInputWidthBytes*8)
   }
 }
+
 
 class ScalingFactorCntl(max_block: Int) extends Bundle {
   val counter_a = UInt(log2Up(max_block).W)

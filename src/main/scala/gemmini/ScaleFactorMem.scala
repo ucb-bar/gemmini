@@ -17,7 +17,7 @@ class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: 
   // writes happen to all interleaved banks for a line
   val scale_mem_write_w = Flipped(Decoupled(new ScalingFactorWriteReq(addrWidth, dataWidth)))
   val scale_mem_write_act = Flipped(Decoupled(new ScalingFactorWriteReq(addrWidth, dataWidth)))
-  val read_req = Flipped(Decoupled(new ScalingFactorReadReq(addrWidth)))
+  val read_req = Flipped(Decoupled(new ScalingFactorReadReq(7)))
   val read_resp = Decoupled(new ScalingFactorReadResp(numRows, numCols))
   val dataType = Input(UInt(2.W))
   val scaleMemCntl = Input(new ScalingFactorCntl(meshRows*tileRows)) // dummy output to match interface
@@ -28,24 +28,24 @@ class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: 
 
 class ScalingFactorMem(
   depth: Int = 128,                     
-  bankWidth: Int = 128,                 
+  sramWidth: Int = 128,                 
   actOutputScalingWidth: Int = 8,       
   numBanks: Int = 8,
   testConfig: Boolean = false ,
   meshRows: Int,
   tileRows: Int,
 ) extends Module {
-
+  val totalSizeBytes = depth*sramWidth*numBanks/8
   val rowAddrWidth = log2Ceil(depth)  
-  val bytesPerBank = bankWidth / 8        
-  val AddrWidth = rowAddrWidth  + log2Ceil(numBanks)     
+  val bytesPerBank = sramWidth / 8        
+  val AddrWidth = log2Ceil(totalSizeBytes) - 1     
   val bankaddressWidth = log2Ceil(numBanks) 
   val totalScales = 32
   val counterWidth = log2Ceil(totalScales)  
-  val writeDataWidth = bankWidth * 2
+  val writeDataWidth = sramWidth * 2
   val io = IO(new ScalingFactorMemIO(
     AddrWidth, 
-    writeDataWidth, 
+    64, 
     2*meshRows*tileRows,  // 32 rows (activation scales)
     2*meshRows*tileRows,   // 32 columns (weight scales)
     meshRows,
@@ -76,64 +76,116 @@ class ScalingFactorMem(
   val weight_write_buffer_sel = RegInit(false.B) 
   val weight_buffer_0_read_enable = RegInit(false.B)
   val weight_buffer_1_read_enable = RegInit(false.B)
-  val weight_write_counter = RegInit(0.U(8.W))
-  val write_row_addr_w = io.scale_mem_write_w.bits.addr + (write_baseAddr_w >> (log2Ceil(2*meshRows*tileRows)))
- 
-  val weight_buffer_write_full = RegInit(false.B)
-  when(io.scale_mem_write_w.fire) {
-    val write_bytes_low = io.scale_mem_write_w.bits.data(bytesPerBank * 8 - 1, 0).asTypeOf(bankDataT)
-    val write_bytes_high = io.scale_mem_write_w.bits.data(bytesPerBank * 2 * 8 - 1, bytesPerBank * 8).asTypeOf(bankDataT)
+  val weight_write_counter = RegInit(0.U(16.W))
+  val write_addr_w = io.scale_mem_write_w.bits.addr 
+  val write_weight_counter  = RegInit(0.U(2.W))
+  val write_weight_full_row = RegInit(0.U(256.W))
+  val write_weight_real = RegInit(false.B) 
+  val write_row_addr_w = WireInit(write_addr_w(log2Ceil(bytesPerBank) + 8 ,log2Ceil(bytesPerBank) + 1))
+  val write_row_addr_w_reg = RegNext(write_row_addr_w)
+
+   when(write_weight_counter === 3.U && io.scale_mem_write_w.fire){
+      write_weight_real := true.B
+  }.elsewhen(write_weight_counter =/= 3.U) {
+      write_weight_real := false.B 
+  }
+
+  
+  when(write_weight_counter === 3.U && io.scale_mem_write_w.fire){
+      write_weight_counter := 0.U
+      val byte_offset = write_addr_w(log2Ceil(bytesPerBank),0)
+      switch(byte_offset) {
+        is(0.U) { write_weight_full_row := Cat(write_weight_full_row(255, 64), io.scale_mem_write_w.bits.data) }
+        is(8.U) { write_weight_full_row := Cat(write_weight_full_row(255, 128), io.scale_mem_write_w.bits.data, write_weight_full_row(63, 0)) }
+        is(16.U) { write_weight_full_row := Cat(write_weight_full_row(255, 192), io.scale_mem_write_w.bits.data, write_weight_full_row(127, 0)) }
+        is(24.U) { write_weight_full_row := Cat(io.scale_mem_write_w.bits.data, write_weight_full_row(191, 0)) }
+      }
+  }.elsewhen(io.scale_mem_write_w.fire) {
+      write_weight_counter := write_weight_counter + 1.U
+      val byte_offset = write_addr_w(log2Ceil(bytesPerBank),0)
+      switch(byte_offset) {
+        is(0.U) { write_weight_full_row := Cat(write_weight_full_row(255, 64), io.scale_mem_write_w.bits.data) }
+        is(8.U) { write_weight_full_row := Cat(write_weight_full_row(255, 128), io.scale_mem_write_w.bits.data, write_weight_full_row(63, 0)) }
+        is(16.U) { write_weight_full_row := Cat(write_weight_full_row(255, 192), io.scale_mem_write_w.bits.data, write_weight_full_row(127, 0)) }
+        is(24.U) { write_weight_full_row := Cat(io.scale_mem_write_w.bits.data, write_weight_full_row(191, 0)) }
+      }
+  }
+  
+  when(write_weight_real) {
+    val write_bytes_low = write_weight_full_row(bytesPerBank * 8 - 1, 0).asTypeOf(bankDataT)
+    val write_bytes_high = write_weight_full_row(bytesPerBank * 2 * 8 - 1, bytesPerBank * 8).asTypeOf(bankDataT)
     when(weight_write_buffer_sel === false.B) { 
-      weight_write_counter := weight_write_counter + 1.U
-      banks(4).write(write_row_addr_w, write_bytes_low)
-      banks(5).write(write_row_addr_w, write_bytes_high)
+      //weight_write_counter := weight_write_counter + 1.U
+      banks(4).write(write_row_addr_w_reg, write_bytes_low)
+      banks(5).write(write_row_addr_w_reg, write_bytes_high)
       weight_buffer_0_read_enable := true.B
     }.otherwise{
       weight_write_counter := weight_write_counter + 1.U
-      banks(6).write(write_row_addr_w, write_bytes_low)
-      banks(7).write(write_row_addr_w, write_bytes_high)
+      banks(6).write(write_row_addr_w_reg, write_bytes_low)
+      banks(7).write(write_row_addr_w_reg, write_bytes_high)
       weight_buffer_1_read_enable := true.B
     }
     weight_write_buffer_sel := ~weight_write_buffer_sel
-    when((weight_write_counter === (depth - 1).U)){
-      weight_write_counter := 0.U
-      
-      // when(weight_write_buffer_sel === false.B){
-      //   weight_buffer_0_read_enable := true.B
-      // }.otherwise{
-      //   weight_buffer_1_read_enable := true.B
-      // }
-    }
   }
   
   val act_write_buffer_sel = RegInit(false.B) 
   val act_buffer_0_read_enable = RegInit(false.B)
   val act_buffer_1_read_enable = RegInit(false.B)
-  val act_write_counter = RegInit(0.U(8.W))
-  val write_row_addr_act = io.scale_mem_write_act.bits.addr  + (write_baseAddr_act >> (log2Ceil(2*meshRows*tileRows)))
-  when(io.scale_mem_write_act.fire) {
-    val write_bytes_low = io.scale_mem_write_act.bits.data(bytesPerBank * 8 - 1, 0).asTypeOf(bankDataT)
-    val write_bytes_high = io.scale_mem_write_act.bits.data(bytesPerBank * 2 * 8 - 1, bytesPerBank * 8).asTypeOf(bankDataT)
+  val act_write_counter = RegInit(0.U(16.W))
+  val write_addr_a = io.scale_mem_write_act.bits.addr 
+  val write_act_counter  = RegInit(0.U(2.W))
+  val write_act_full_row = RegInit(0.U(256.W))
+  val write_act_real = RegInit(false.B) 
+  val write_row_addr_act = WireInit(write_addr_a(log2Ceil(bytesPerBank) + 8 ,log2Ceil(bytesPerBank) + 1))
+  val write_row_addr_act_reg = RegNext(write_row_addr_act)
+  when(write_act_counter === 3.U && io.scale_mem_write_act.fire) {
+      write_act_real := true.B
+  }.elsewhen(write_act_counter =/= 3.U ) {
+      write_act_real := false.B 
+  }
+
+  when(write_act_counter === 3.U && io.scale_mem_write_act.fire) {
+      write_act_counter := 0.U
+      val byte_offset = write_addr_a(log2Ceil(bytesPerBank), 0)
+      switch(byte_offset) {
+        is(0.U)  { write_act_full_row := Cat(write_act_full_row(255, 64), io.scale_mem_write_act.bits.data) }
+        is(8.U)  { write_act_full_row := Cat(write_act_full_row(255, 128), io.scale_mem_write_act.bits.data, write_act_full_row(63, 0)) }
+        is(16.U) { write_act_full_row := Cat(write_act_full_row(255, 192), io.scale_mem_write_act.bits.data, write_act_full_row(127, 0)) }
+        is(24.U) { write_act_full_row := Cat(io.scale_mem_write_act.bits.data, write_act_full_row(191, 0)) }
+      }
+  }.elsewhen(io.scale_mem_write_act.fire) {
+      write_act_counter := write_act_counter + 1.U
+      val byte_offset = write_addr_a(log2Ceil(bytesPerBank), 0)
+      switch(byte_offset) {
+        is(0.U)  { write_act_full_row := Cat(write_act_full_row(255, 64), io.scale_mem_write_act.bits.data) }
+        is(8.U)  { write_act_full_row := Cat(write_act_full_row(255, 128), io.scale_mem_write_act.bits.data, write_act_full_row(63, 0)) }
+        is(16.U) { write_act_full_row := Cat(write_act_full_row(255, 192), io.scale_mem_write_act.bits.data, write_act_full_row(127, 0)) }
+        is(24.U) { write_act_full_row := Cat(io.scale_mem_write_act.bits.data, write_act_full_row(191, 0)) }
+      }
+  }
+  
+  when(write_act_real) {
+    val write_bytes_low = write_act_full_row(bytesPerBank * 8 - 1, 0).asTypeOf(bankDataT)
+    val write_bytes_high = write_act_full_row(bytesPerBank * 2 * 8 - 1, bytesPerBank * 8).asTypeOf(bankDataT)
     when(act_write_buffer_sel === false.B) {  // ✓
-      banks(0).write(write_row_addr_act, write_bytes_low)
-      banks(1).write(write_row_addr_act, write_bytes_high)
+      banks(0).write(write_row_addr_act_reg, write_bytes_low)
+      banks(1).write(write_row_addr_act_reg, write_bytes_high)
       act_buffer_0_read_enable := true.B
     }.otherwise{
       act_write_counter := act_write_counter + 1.U
-      banks(2).write(write_row_addr_act, write_bytes_low)
-      banks(3).write(write_row_addr_act, write_bytes_high)
+      banks(2).write(write_row_addr_act_reg, write_bytes_low)
+      banks(3).write(write_row_addr_act_reg, write_bytes_high)
       act_buffer_1_read_enable := true.B
     }
     act_write_buffer_sel := ~act_write_buffer_sel
-    when((act_write_counter === (depth - 1).U)){
-      act_write_counter := 0.U
-    }
   }
+
+
   val max_block_fp8 = meshRows * tileRows
   val max_block_non_fp8 = 2*meshRows * tileRows
   val read_row_addr = WireDefault(counter_k >> log2Ceil(max_block_non_fp8))
-  io.scale_mem_write_w.ready := ((!weight_buffer_0_read_enable) || (!weight_buffer_1_read_enable)) || (weight_write_counter ===0.U || (weight_write_counter > read_row_addr)) 
-  io.scale_mem_write_act.ready := (!act_buffer_0_read_enable) || (!act_buffer_1_read_enable) || (act_write_counter ===0.U || ((act_write_counter === read_row_addr)))
+  io.scale_mem_write_w.ready :=  (weight_write_counter ===0.U || (weight_write_counter(log2Ceil(depth)-1,0) =/= read_row_addr)) || (!weight_buffer_0_read_enable) || (!weight_buffer_1_read_enable)
+  io.scale_mem_write_act.ready := (act_write_counter ===0.U || ((act_write_counter(log2Ceil(depth)-1,0) =/= read_row_addr))) || (!act_buffer_0_read_enable) || (!act_buffer_1_read_enable)
   val act_read_buffer_select = RegInit(false.B)
   val weight_read_buffer_select = RegInit(false.B)
   val act_read_counter = RegInit(0.U(8.W))
@@ -142,17 +194,17 @@ class ScalingFactorMem(
   when(io.read_req.fire && io.read_req.bits.scaling_enable){
     act_read_buffer_select := ~act_read_buffer_select
     weight_read_buffer_select := ~weight_read_buffer_select
-    when(act_buffer_0_read_enable && ((act_write_counter === read_row_addr))){
+    when(act_buffer_0_read_enable && ((act_write_counter(log2Ceil(depth)-1,0)  === read_row_addr))){
         act_buffer_0_read_enable := false.B
     }
-    when(act_buffer_1_read_enable && ((act_write_counter === read_row_addr))){
+    when(act_buffer_1_read_enable && ((act_write_counter(log2Ceil(depth)-1,0) === read_row_addr))){
         act_buffer_1_read_enable := false.B
     }
  
-    when(weight_buffer_0_read_enable && ((weight_write_counter === read_row_addr))){
+    when(weight_buffer_0_read_enable && ((weight_write_counter(log2Ceil(depth)-1,0) === read_row_addr))){
       weight_buffer_0_read_enable := false.B
     }
-    when(weight_buffer_1_read_enable && ((weight_write_counter === read_row_addr))){
+    when(weight_buffer_1_read_enable && ((weight_write_counter(log2Ceil(depth)-1,0) === read_row_addr))){
       weight_buffer_1_read_enable := false.B
     }
   }
@@ -188,8 +240,8 @@ class ScalingFactorMem(
     read_fire_real && act_buffer_1_read_enable && weight_buffer_1_read_enable && (act_bank_sel === 3.U),     // bank 3
     read_fire_real && weight_buffer_0_read_enable && act_buffer_0_read_enable && (weight_bank_sel === 0.U),  // bank 4
     read_fire_real && weight_buffer_0_read_enable && act_buffer_0_read_enable && (weight_bank_sel === 1.U),  // bank 5
-    read_fire_real && weight_buffer_1_read_enable && act_buffer_0_read_enable && (weight_bank_sel === 2.U),  // bank 6
-    read_fire_real && weight_buffer_1_read_enable && act_buffer_0_read_enable && (weight_bank_sel === 3.U)  // bank 7
+    read_fire_real && weight_buffer_1_read_enable && weight_buffer_1_read_enable && (weight_bank_sel === 2.U),  // bank 6
+    read_fire_real && weight_buffer_1_read_enable && weight_buffer_1_read_enable && (weight_bank_sel === 3.U)  // bank 7
   ))
   
     
