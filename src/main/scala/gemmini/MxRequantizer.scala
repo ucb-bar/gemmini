@@ -346,11 +346,11 @@ class MxRequantizer[T <: Data: Arithmetic](
       scale_buffer_full := true.B
     }.otherwise {
       scale_write_counter := scale_write_counter + 1.U
-      when(io.scaleMem_write.ready){
+      when(io.scaleMem_write.fire){
         scale_buffer_full := false.B
       }
     }
-  }.elsewhen(io.scaleMem_write.ready){
+  }.elsewhen(io.scaleMem_write.fire){
       scale_buffer_full := false.B
   }
   

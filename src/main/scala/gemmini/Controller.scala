@@ -180,12 +180,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val mx_requantizer = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
     val q = outer.config.requantizer.get
     val l = outer.config.lut.get
-   
+    
     Module(new MxRequantizer(
       sp_data_width = outer.config.sp_width,
       sp_addr_width = log2Ceil(outer.config.sp_bank_entries),
-      scaleMem_data_width = outer.config.scaleMem_data_width,
-      scaleMem_addr_width = log2Ceil(outer.config.scaleMem_bank_entries),
+      scaleMem_data_width = outer.config.scale_mem.get.ScaleMemWriteDataWidth,
+      scaleMem_addr_width = outer.config.scale_mem.get.ScaleMemWriteAddrWidth,
       scaleSize = outer.config.scaleSize,
       scaleMembasewrite = 0, // TODO: add this into the instruction
       lutConfig = l,
@@ -217,7 +217,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val lut0 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
       val lut1 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
       val lut2 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
-      //val scaleFactorOut = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
+      //val scaleFactorOut = Decoupled(new ScalingFactorWriteReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteAddrWidth)) 
     })
 
     
