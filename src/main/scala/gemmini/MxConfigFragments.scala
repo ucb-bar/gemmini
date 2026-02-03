@@ -8,6 +8,7 @@ case class GemminiScalingFactorMemConfig(
   sizeInBytes: BigInt = 16 << 10,
   subbankLineSizeInBytes: Int = 16,
   subbanksPerBank: Int = 2,
+  gpuInputWidthBytes: Int = 8,
   numBanks: Int = 8,
 ) {
   def depth: Int = (sizeInBytes / (subbankLineSizeInBytes) / numBanks).toInt
@@ -55,9 +56,10 @@ class ScalingFactorWriteReq(addrWidth: Int, dataWidth: Int) extends Bundle {
   val data = UInt(dataWidth.W)
   def this(config: GemminiScalingFactorMemConfig) = {
     // writes two interleaved banks at once
-    this(config.addrBits, config.bankWidthBits)
+    this(config.addrBits, 8*config.gpuInputWidthBytes*8)
   }
 }
+
 
 class ScalingFactorCntl(max_block: Int) extends Bundle {
   val counter_a = UInt(log2Up(max_block).W)

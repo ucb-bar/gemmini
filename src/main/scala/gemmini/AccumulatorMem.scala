@@ -66,10 +66,10 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
 
   val dataType = Input(UInt(2.W)) //this is the input mxformat datatype
   val scale_mem_write_act = if (use_mx_scaling) {
-    Some(Flipped(Decoupled(new ScalingFactorWriteReq(9, bankWidthBits))))
+    Some(Flipped(Decoupled(new ScalingFactorWriteReq(13, 64))))
   } else None
   val scale_mem_write_w = if (use_mx_scaling) {
-    Some(Flipped(Decoupled(new ScalingFactorWriteReq(9, bankWidthBits))))
+    Some(Flipped(Decoupled(new ScalingFactorWriteReq(13, 64))))
   } else None
   val scaleMemCntl = if (use_mx_scaling) {
     Some(Input(new ScalingFactorCntl(meshRows * tileRows)))
@@ -142,7 +142,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       numBanks = conf.numBanks,
       testConfig = testConfig,
       meshRows = meshRows,
-      tileRows = tileRows,
+      tileRows = tileRows
     ))
   }
  
