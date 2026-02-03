@@ -25,8 +25,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
 
     val srams = new Bundle {
-      val read = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
-      val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width_projected, (sp_width_projected / (aligned_to * 8)) max 1))
+      val read = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
+      val write = Vec(sp_banks, new ScratchpadWriteIO(sp_bank_entries, sp_width, (sp_width / (aligned_to * 8)) max 1))
     }
 
     val acc = new Bundle {
@@ -657,6 +657,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
             }
 
             a_addr_stride := config_ex_rs1.a_stride // TODO this needs to be kept in sync with ROB.scala
+            // a_addr_stride := 1.U
             c_addr_stride := config_ex_rs2.c_stride // TODO this needs to be kept in sync with ROB.scala
             config_initialized := true.B
           }.otherwise { // config_cmd_type === CONFIG_IM2COL

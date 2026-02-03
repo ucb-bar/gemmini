@@ -400,7 +400,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       header ++= s"#define ELEM_T_SIG_BITS ${inputType.asInstanceOf[MxFloat].sigWidth}\n"
       header ++= s"#define ACC_T_EXP_BITS ${accType.asInstanceOf[MxFloat].expWidth}\n"
       header ++= s"#define ACC_T_SIG_BITS ${accType.asInstanceOf[MxFloat].sigWidth}\n"
-      header ++= s"typedef ${c_type(UInt(inputType.getWidth.W))} elem_t_bits;\n"
+      header ++= s"typedef ${c_type(UInt(inputTypeProjected.getWidth.W))} elem_t_bits;\n"
       header ++= s"typedef ${c_type(UInt(accType.getWidth.W))} acc_t_bits;\n\n"
     }
 

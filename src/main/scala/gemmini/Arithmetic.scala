@@ -853,7 +853,7 @@ object Arithmetic {
       }
 
       override def withWidthOf(t: MxFloat): MxFloat = {
-        val result = Wire(MxFloat(t.expWidth, t.sigWidth, self.count, t.isRecoded))
+        val result = Wire(MxFloat(t.expWidth, t.sigWidth, self.count, t.isRecoded, self.pad))
         val elems = Wire(Vec(self.count, UInt((t.expWidth + t.sigWidth + (if (t.isRecoded) 1 else 0)).W)))
         val input = self.bits.asTypeOf(Vec(self.count, UInt((self.expWidth + self.sigWidth + (if (self.isRecoded) 1 else 0)).W)))
 
