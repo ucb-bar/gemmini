@@ -121,8 +121,8 @@ class MxPE(mxparameters: MxParams, lut: Boolean) extends Module {
   val flexMults = Seq.fill(2,2){ Module(new MACU(lut)) }
   val outFM = Wire(Vec(4, UInt(mxparameters.multOutWidth.W)))
 
-  printf(p"enable: ${io.enable}, mask_a: ${Binary(io.mask_a)}, mask_w: ${Binary(io.mask_w)}\n")  // --- IGNORE ---
-  printf(p"in_a: ${Binary(io.in_a)}, in_w: ${Binary(io.in_w)}\n")  // --- IGNORE ---
+  // printf(p"enable: ${io.enable}, mask_a: ${Binary(io.mask_a)}, mask_w: ${Binary(io.mask_w)}\n")  // --- IGNORE ---
+  // printf(p"in_a: ${Binary(io.in_a)}, in_w: ${Binary(io.in_w)}\n")  // --- IGNORE ---
 
   for (i <- 0 until 2) {
     for (j <- 0 until 2) {

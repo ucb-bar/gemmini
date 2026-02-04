@@ -217,7 +217,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val lut0 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
       val lut1 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
       val lut2 = Flipped(Decoupled(new QuantLutWriteBundle(l)))
-      //val scaleFactorOut = Decoupled(new ScalingFactorWriteReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteAddrWidth)) 
+      val scale_factor_out = Decoupled(new ScalingFactorWriteReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteAddrWidth))
     })
 
     
@@ -225,7 +225,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     spad.module.io.scale_mem_write_act.get <> mx_io.scale_mem_write_act 
     
    
-    //mx_io.scaleFactorOut <> mx_requantizer.get.io.scaleMem_write
+    mx_io.scale_factor_out <> mx_requantizer.get.io.scaleMem_write
     mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
     mx_requantizer.get.io.lut0_write <> mx_io.lut0
     mx_requantizer.get.io.lut1_write <> mx_io.lut1
