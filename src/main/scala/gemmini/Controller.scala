@@ -224,7 +224,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     spad.module.io.scale_mem_write_w.get <> mx_io.scale_mem_write_w
     spad.module.io.scale_mem_write_act.get <> mx_io.scale_mem_write_act 
     
-   
+    mx_requantizer.get.io.requant_data_in_gpu <> mx_io.requant_in_gpu
     mx_io.scale_factor_out <> mx_requantizer.get.io.scaleMem_write
     mx_io.requant_out <> mx_requantizer.get.io.requant_data_out
     mx_requantizer.get.io.lut0_write <> mx_io.lut0
@@ -234,15 +234,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     mx_io
   }
   
-  
-  // spad.module.io.scale_mem_write_act.foreach { ch =>
-  //   ch.valid := false.B
-  //   ch.bits  := DontCare
-  // }
-  // spad.module.io.scale_mem_write_w.foreach { ch =>
-  //   ch.valid := false.B
-  //   ch.bits  := DontCare
-  // }
 
   val lut_deprojected_data = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
   lut_deprojected_data := 0.U.asTypeOf(lut_deprojected_data)
@@ -257,11 +248,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         mx_sel(bank) := (ex_controller.io.output_MxFormat === 1.U)
       }
     }
-    // if(outer.config.lut.isDefined){
-    //   mx_requantizer.get.io.lut0_write := DontCare
-    //   mx_requantizer.get.io.lut1_write := DontCare
-    //   mx_requantizer.get.io.lut2_write := DontCare
-    // }
   }
 
   /* 
@@ -321,6 +307,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         (outer.config.sp_width_projected / (outer.config.aligned_to * 8)) max 1)))
     
     val elements_per_bank = outer.config.sp_width_projected / outer.config.weightType.getWidth
+
     when(ex_controller.io.enable_MXQuant =/= 0.U) {
       for (i <- 0 until outer.config.sp_banks) {
         requantized_writes(i).valid := false.B
@@ -329,13 +316,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         requantized_writes(i).mask := VecInit(Seq.fill(requantized_writes(i).mask.length)(true.B))
       }
 
-      if (!outer.config.testConfig) {
-        mx_io.get.requant_in_gpu.ready := false.B
-      }
+     
       mx_requantizer.get.io.requant_data_in.valid := false.B
       mx_requantizer.get.io.requant_data_in.bits := DontCare
-      mx_requantizer.get.io.scaleMem_write.ready := false.B
-     
+  
       when(ex_controller.io.output_MxFormat === 2.U){
          mx_requantizer.get.io.fp8_mode := true.B
       }.otherwise{
@@ -364,11 +348,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
        
         
       }.elsewhen(any_valid) {
-        if (!outer.config.testConfig) {
-          mx_io.get.requant_in_gpu.ready := false.B
-        }
-
-        val collected_data = Wire(Vec(outer.config.requantizer.get.numInputLanes, UInt(outer.config.weightType.getWidth.W)))
+        val collected_data = Wire(Vec(outer.config.requantizer.get.numOutputLanes, UInt(outer.config.weightType.getWidth.W)))
         collected_data := DontCare
         
         var data_offset = 0
@@ -378,7 +358,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
           
           when(ex_controller.io.srams.write(bank).valid) {
             for (elem_idx <- 0 until elements_per_bank) {
-              if (data_offset + elem_idx < outer.config.requantizer.get.numInputLanes) {
+              if (data_offset + elem_idx < outer.config.requantizer.get.numOutputLanes) {
                 collected_data(data_offset + elem_idx) := bank_data(elem_idx)
               }
             }
@@ -403,19 +383,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
           mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType.FP8
         }
         
-      }//.elsewhen(mx_io.get.requant_in_gpu.valid) {
+      }
       .elsewhen(!any_valid) {
-     
-        // val padded_data = VecInit(mx_io.get.requant_in_gpu.bits.data ++ 
-        //                       Seq.fill(64 - 16)(0.U(16.W)))
-        // mx_requantizer.get.io.requant_data_in.valid := true.B
-        // mx_requantizer.get.io.requant_data_in.bits.data := padded_data
-        // mx_requantizer.get.io.requant_data_in.bits.address := mx_io.get.requant_in_gpu.bits.address
-        // mx_requantizer.get.io.requant_data_in.bits.dataType := mx_io.get.requant_in_gpu.bits.dataType
-        if (!outer.config.testConfig) {
-          mx_io.get.requant_in_gpu.ready := true.B
-        }
-        val padded_data = VecInit(Seq.fill(64)(0.U(16.W)))
+        val padded_data = VecInit(Seq.fill(32)(0.U(16.W)))
         mx_requantizer.get.io.requant_data_in.valid := true.B
         mx_requantizer.get.io.requant_data_in.bits.data := padded_data
         mx_requantizer.get.io.requant_data_in.bits.address := 0.U
@@ -424,18 +394,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       }.otherwise {
         mx_requantizer.get.io.requant_data_in.valid := false.B
         mx_requantizer.get.io.requant_data_in.bits := DontCare
-        if (!outer.config.testConfig) {
-          mx_io.get.requant_in_gpu.ready := false.B
-        }
+       
       }
       
     }.otherwise {
       // enable_MXQuant == 0
       mx_requantizer.get.io.requant_data_in.valid := false.B
       mx_requantizer.get.io.requant_data_in.bits := DontCare
-      if (!outer.config.testConfig) {
-        mx_io.get.requant_in_gpu.ready := false.B
-      }
     }
    
     requantized_writes

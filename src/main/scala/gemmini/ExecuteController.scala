@@ -122,9 +122,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val preload_cmd_place = Mux(DoPreloads(0), 0.U, 1.U)
   // val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
   
-  val scale_mem_mvin_base_addr_act = RegInit(0.U(33.W))
-  val scale_mem_mvin_base_addr_w = RegInit(0.U(33.W))
-  val scale_mem_mvout_base_addr_act = RegInit(0.U(33.W))
+  val scale_mem_mvin_base_addr_act = RegInit(0.U(32.W))
+  val scale_mem_mvin_base_addr_w = RegInit(0.U(32.W))
+  val scale_mem_mvout_base_addr_act = RegInit(0.U(32.W))
 
   when(functs(0) === CONFIG_SCALE_MEM) {
     val direction = rs2s(0)(63) 

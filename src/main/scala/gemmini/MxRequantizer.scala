@@ -55,7 +55,8 @@ class MxRequantizerIO(
   val inputnumLanes = config.numInputLanes
   val outputnumLanes = config.numOutputLanes
   val inputdataWidth = config.inputBits
-  val requant_data_in = Flipped(Decoupled(new RequantizerInBundle(inputnumLanes, inputdataWidth)))
+  val requant_data_in = Flipped(Decoupled(new RequantizerInBundle(outputnumLanes, inputdataWidth)))
+  val requant_data_in_gpu = Flipped(Decoupled(new RequantizerInBundle(config.numGPUInputLanes, inputdataWidth)))
   val scaleMem_write = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
   val requant_data_out = Decoupled(new RequantizerOutBundle(outputnumLanes))
   val lut0_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig)))
@@ -66,7 +67,7 @@ class MxRequantizerIO(
   val fp8_mode = Input(Bool())  // true for 64-lane mode, false for 16-lane mode
   val a_fire = Input(Bool())  // from execute controller
   val b_fire = Input(Bool())  // from execute controller
-  val scale_mem_mvout_base_addr_act = Input(UInt(33.W)) // from execute controller
+  val scale_mem_mvout_base_addr_act = Input(UInt(32.W)) // from execute controller
   val counter_i = Input(UInt(iterator_bitwidth.W)) // from  controller
   val counter_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val counter_k = Input(UInt(iterator_bitwidth.W)) // from  controller
@@ -105,6 +106,7 @@ class MxRequantizer[T <: Data: Arithmetic](
     iterator_bitwidth,
     config
   ))
+  dontTouch(io)
   val scale_mem_mvout_base_addr_act = io.scale_mem_mvout_base_addr_act
 
   val scales_per_write = scaleMem_data_width / 8
@@ -143,61 +145,41 @@ class MxRequantizer[T <: Data: Arithmetic](
   }
 
   val (exp_bits, mant_bits, pmax, log2_pmax_floor) = MxFloatFormat(format_reg)
-
-  val data_buffer = WireInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(io.inputdataWidth.W))))
   val data_buffer_counter = RegInit(0.U(1.W))
-
   //buffer twice for 16-lane mode
   val half_lanes = 16
   val input_32_buffer = RegInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(io.inputdataWidth.W))))
-  
-  val input_64_buffer = RegInit(VecInit(Seq.fill(io.inputnumLanes)(0.U(io.inputdataWidth.W))))
-  val batch_counter = RegInit(0.U(1.W))
-  val processing_64lane = RegInit(false.B)
-  
-  val requant_data_in_valid_d = RegNext(io.requant_data_in.valid, false.B)
+  val requant_data_in_valid_d = RegNext(io.requant_data_in.fire)
+  val requant_data_in_gpu_valid_d = RegNext(io.requant_data_in_gpu.fire)
   val should_compute = Wire(Bool())
-  val quantize_valid = RegNext(should_compute, false.B)
+  val quantize_valid = RegNext(should_compute)
 
+  io.requant_data_in.ready := true.B
   should_compute := false.B
-  io.requant_data_in.ready := !processing_64lane
-  
-  when(io.requant_data_in.fire) {
-    when(io.fp8_mode) { //16 lanes at a time
-      for (i <- 0 until half_lanes) {
-        val idx = Mux(data_buffer_counter === 0.U, i.U, (half_lanes + i).U)
-        input_32_buffer(idx) := io.requant_data_in.bits.asUInt.asTypeOf(Vec(half_lanes, UInt(io.inputdataWidth.W)))(i) 
-      }
-      data_buffer_counter := data_buffer_counter ^ 1.U
-    }.otherwise {
-      for (i <- 0 until 64) {
-        input_64_buffer(i) := io.requant_data_in.bits.data(i)
+  io.requant_data_in_gpu.ready := true.B
+
+
+  when(io.requant_data_in.fire) {{
+      io.requant_data_in_gpu.ready := false.B
+      for (i <- 0 until 32) {
+        input_32_buffer(i) := io.requant_data_in.bits.data(i)
       }
       data_buffer_counter := 1.U
     }
-  }
-  
-  when(io.fp8_mode) { //16 lanes at a time
-      should_compute := data_buffer_counter === 0.U && requant_data_in_valid_d
-      for (i <- 0 until io.outputnumLanes) {
-        data_buffer(i) := input_32_buffer(i) 
-      }
-  }.otherwise {
-      processing_64lane := true.B
-      should_compute := processing_64lane
-      for (i <- 0 until io.outputnumLanes) {
-        val idx = Mux(batch_counter === 0.U, i.U, (io.outputnumLanes + i).U)
-        data_buffer(i) := input_64_buffer(i) 
-      }
-      when(quantize_valid){
-        batch_counter := 1.U
-      }.otherwise {
-        processing_64lane := false.B
-        data_buffer_counter := 0.U
-        batch_counter := 0.U 
+  }.elsewhen(io.requant_data_in_gpu.fire) {
+    for (i <- 0 until half_lanes) {
+      val idx = Mux(data_buffer_counter === 0.U, i.U, (half_lanes + i).U)
+      input_32_buffer(idx) := io.requant_data_in_gpu.bits.data(i) 
     }
+    data_buffer_counter := ~data_buffer_counter
   }
   
+  val data_buffer = WireInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(io.inputdataWidth.W))))
+  data_buffer := input_32_buffer
+
+  // when(requant_data_in_valid_d || (requant_data_in_gpu_valid_d && (data_buffer_counter === 0.U))) {
+  //     should_compute := true.B
+  // }
   
   val block_max = Wire(UInt(io.inputdataWidth.W))
   block_max := 0.U 
@@ -356,14 +338,14 @@ class MxRequantizer[T <: Data: Arithmetic](
   
   when(scale_buffer_full) {
     io.scaleMem_write.valid := true.B
-    io.scaleMem_write.bits.addr := scale_mem_mvout_base_addr_act +& (scale_write_addr_counter << 5.U) //byte address, scale 32B per write
+    io.scaleMem_write.bits.addr := scale_mem_mvout_base_addr_act + (scale_write_addr_counter << 5) //byte address, scale 32B per write
     io.scaleMem_write.bits.data := Cat(scale_buffer.reverse)
     
     when(io.scaleMem_write.fire) {
       val scale_buffer_packed = Cat(scale_buffer.reverse)
       printf(p"[MxScaleGen]: addr=${scale_write_addr_counter}, data=0x${Hexadecimal(scale_buffer_packed)}\n")
       
-      when(scale_write_addr_counter === ((1 << scaleMem_addr_width) - 1).U) {
+      when(scale_write_addr_counter === ((1 << 10) - 1).U) {
         scale_write_addr_counter := 0.U
       }.otherwise {
         scale_write_addr_counter := scale_write_addr_counter + 1.U
