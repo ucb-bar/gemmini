@@ -5,9 +5,9 @@ import chisel3.util._
 
 object MxFloatFormat {
   // Format encoding
-  val FP4 = 0.U(2.W)
+  val FP8 = 0.U(2.W)
   val FP6 = 1.U(2.W)
-  val FP8 = 2.U(2.W)
+  val FP4 = 2.U(2.W)
   
   def apply(bits: UInt): (UInt, UInt, UInt, UInt) = {
     val exp_bits = MuxLookup(bits, 4.U)(Seq(
@@ -336,20 +336,17 @@ class MxRequantizer[T <: Data: Arithmetic](
       scale_buffer_full := false.B
   }
   
-  when(scale_buffer_full) {
-    io.scaleMem_write.valid := true.B
-    io.scaleMem_write.bits.addr := scale_mem_mvout_base_addr_act + (scale_write_addr_counter << 5) //byte address, scale 32B per write
-    io.scaleMem_write.bits.data := Cat(scale_buffer.reverse)
-    
-    when(io.scaleMem_write.fire) {
-      val scale_buffer_packed = Cat(scale_buffer.reverse)
-      printf(p"[MxScaleGen]: addr=${scale_write_addr_counter}, data=0x${Hexadecimal(scale_buffer_packed)}\n")
-      
+  when(io.scaleMem_write.fire) {
       when(scale_write_addr_counter === ((1 << 10) - 1).U) {
         scale_write_addr_counter := 0.U
       }.otherwise {
         scale_write_addr_counter := scale_write_addr_counter + 1.U
       }
-    }
+  }
+
+  when(scale_buffer_full) {
+    io.scaleMem_write.valid := true.B
+    io.scaleMem_write.bits.addr := scale_mem_mvout_base_addr_act + (scale_write_addr_counter << 5) //byte address, scale 32B per write
+    io.scaleMem_write.bits.data := Cat(scale_buffer.reverse)
   }
 }

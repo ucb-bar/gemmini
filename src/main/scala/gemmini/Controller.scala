@@ -320,7 +320,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_requantizer.get.io.requant_data_in.valid := false.B
       mx_requantizer.get.io.requant_data_in.bits := DontCare
   
-      when(ex_controller.io.output_MxFormat === 2.U){
+      when(ex_controller.io.output_MxFormat === 0.U){
          mx_requantizer.get.io.fp8_mode := true.B
       }.otherwise{
         mx_requantizer.get.io.fp8_mode := false.B}
@@ -375,11 +375,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         mx_requantizer.get.io.requant_data_in.bits.address := 
           Cat(first_valid_addr, 0.U(log2Ceil(outer.config.sp_banks).W))
         
-        when(ex_controller.io.output_MxFormat === 0.U) {
+        when(ex_controller.io.output_MxFormat === 2.U) {
           mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType.FP4
         }.elsewhen(ex_controller.io.output_MxFormat === 1.U) {
           mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType.FP6
-        }.elsewhen(ex_controller.io.output_MxFormat === 2.U) {
+        }.elsewhen(ex_controller.io.output_MxFormat === 0.U) {
           mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType.FP8
         }
         

@@ -45,7 +45,7 @@ case class GemminiLUTConfig(
 )
 
 object RequantizerDataType extends ChiselEnum {
-  val FP4, FP6, FP8 = Value
+  val FP8, FP6, FP4 = Value
 
   def widthBits(x: Type): UInt = {
     Mux(x === FP4, 4.U(4.W), 8.U(4.W))

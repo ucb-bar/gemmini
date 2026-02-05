@@ -52,7 +52,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val counter = new CounterEventIO()
     val b_fire = Output(Bool())
     val a_fire = Output(Bool())
-    val scale_mem_mvout_base_addr_act = Output(UInt(33.W))
+    val scale_mem_mvout_base_addr_act = Output(UInt(32.W))
     val scaleMemCntl = Output(new ScalingFactorCntl(meshRows*tileRows))
   })
 

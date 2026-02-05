@@ -124,21 +124,6 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   val input_mx_format = io.read.req.bits.input_mx_format
  
 
-  val bits_per_element = MuxLookup(input_mx_format, 8.U)(Seq(
-    0.U -> 8.U,  // FP8
-    1.U -> 4.U,  // FP6
-    2.U -> 4.U   // FP4
-  ))
-  
-  val elements_per_row = (w / 8).U  
-  val total_bits_needed = elements_per_row * bits_per_element
-  val bytes_needed = (total_bits_needed + 7.U) >> 3.U
-  val addresses_needed = (bytes_needed + (w/8 - 1).U) / (w/8).U
-
-  
-
-
-
   // Make a queue which buffers the result of an SRAM read if it can't immediately be consumed
   val q = Module(new Queue(new ScratchpadReadResp(w), 1, true, true))
   val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U

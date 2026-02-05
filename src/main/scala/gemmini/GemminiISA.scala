@@ -226,7 +226,7 @@ object GemminiISA {
     val b_transpose = UInt(CONFIG_EX_RS1_B_TRANSPOSE_WIDTH.W)
     val a_transpose = UInt(CONFIG_EX_RS1_A_TRANSPOSE_WIDTH.W)
     val set_only_strides = UInt(CONFIG_EX_RS1_SET_ONLY_STRIDES_WIDTH.W)
-    //val enable_mxquant = UInt(CONFIG_EX_RS1_ENABLE_MXQUANT_WIDTH.W)
+    val _spacer0 = UInt(1.W)
     val uselut = UInt(CONFIG_EX_RS1_LUT_ENABLE_WIDTH.W)
     val activation = UInt(CONFIG_EX_RS1_ACTIVATION_WIDTH.W)
     val dataflow = UInt(CONFIG_EX_RS1_DATAFLOW_WIDTH.W)
