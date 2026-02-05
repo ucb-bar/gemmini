@@ -178,19 +178,19 @@ class ScalingFactorMem(
 
 
   val max_block_fp8 = meshRows * tileRows
-  val max_block_non_fp8 = 2*meshRows * tileRows
-  val read_row_addr_act = WireDefault(io.i * (counter_k >> log2Ceil(max_block_non_fp8)) + (counter_i >> (log2Ceil(bytesPerBank*numBanks/2))))
-  val read_row_addr_w = WireDefault(io.j * (counter_k >> log2Ceil(max_block_non_fp8)) + (counter_j >> (log2Ceil(bytesPerBank*numBanks/2))))
+  val max_block_non_fp8 = 2 * meshRows * tileRows
+  // Scales per SRAM row = bytesPerBank * numBanks / 2 = 64
+  // FP8: 64 / 16 = 4 tiles per row -> shift 2; FP6: 64 / 32 = 2 tiles per row -> shift 1
+  // k: MX block = 32 elements, k-tile = 16 -> 2 k-tiles per scale group -> shift 1
+  val ij_shift = Mux(fp8Mode, 2.U, 1.U)
+  val read_row_addr_act = WireDefault((io.i >> ij_shift) * (counter_k >> 1.U) + (counter_i >> ij_shift))
+  val read_row_addr_w = WireDefault((io.j >> ij_shift) * (counter_k >> 1.U) + (counter_j >> ij_shift))
   io.scale_mem_write_w.ready :=  (weight_write_counter ===0.U || (weight_write_counter(log2Ceil(depth)-1,0) =/= read_row_addr_w)) || (!weight_buffer_0_read_enable) || (!weight_buffer_1_read_enable)
   io.scale_mem_write_act.ready := (act_write_counter ===0.U || ((act_write_counter(log2Ceil(depth)-1,0) =/= read_row_addr_act))) || (!act_buffer_0_read_enable) || (!act_buffer_1_read_enable)
-  val act_read_buffer_select = RegInit(false.B)
-  val weight_read_buffer_select = RegInit(false.B)
-  val act_read_counter = RegInit(0.U(8.W))
-  val weight_read_counter = RegInit(0.U(8.W))
+
+
 
   when(io.read_req.fire && io.read_req.bits.scaling_enable){
-    act_read_buffer_select := ~act_read_buffer_select
-    weight_read_buffer_select := ~weight_read_buffer_select
     when(act_buffer_0_read_enable && ((act_write_counter(log2Ceil(depth)-1,0)  === read_row_addr_act))){
         act_buffer_0_read_enable := false.B
     }
@@ -230,23 +230,35 @@ class ScalingFactorMem(
   act_bank_sel := 0.U
   weight_bank_sel := 0.U
 
-  val read_fire_banks = VecInit(Seq(
+  val read_fire_banks_fp8 = VecInit(Seq(
     read_fire_real && act_buffer_0_read_enable && (act_bank_sel === 0.U) ,     // bank 0
     read_fire_real && act_buffer_0_read_enable && (act_bank_sel === 1.U),     // bank 1
     read_fire_real && act_buffer_1_read_enable && (act_bank_sel === 2.U),     // bank 2
     read_fire_real && act_buffer_1_read_enable && (act_bank_sel === 3.U),     // bank 3
-    read_fire_real  && act_buffer_0_read_enable && (weight_bank_sel === 0.U),  // bank 4
-    read_fire_real  && act_buffer_0_read_enable && (weight_bank_sel === 1.U),  // bank 5
+    read_fire_real  && weight_buffer_0_read_enable && (weight_bank_sel === 0.U),  // bank 4
+    read_fire_real  && weight_buffer_0_read_enable && (weight_bank_sel === 1.U),  // bank 5
     read_fire_real  && weight_buffer_1_read_enable && (weight_bank_sel === 2.U),  // bank 6
     read_fire_real  && weight_buffer_1_read_enable && (weight_bank_sel === 3.U)  // bank 7
   ))
   
-    
+  val read_fire_banks_non_fp8 = VecInit(Seq(
+    read_fire_real && act_buffer_0_read_enable && (act_bank_sel === 0.U) ,     // bank 0
+    read_fire_real && act_buffer_0_read_enable && (act_bank_sel === 0.U),     // bank 1
+    read_fire_real && act_buffer_1_read_enable && (act_bank_sel === 1.U),     // bank 2
+    read_fire_real && act_buffer_1_read_enable && (act_bank_sel === 1.U),     // bank 3
+    read_fire_real  && weight_buffer_0_read_enable && (weight_bank_sel === 0.U),  // bank 4
+    read_fire_real  && weight_buffer_0_read_enable && (weight_bank_sel === 0.U),  // bank 5
+    read_fire_real  && weight_buffer_1_read_enable && (weight_bank_sel === 1.U),  // bank 6
+    read_fire_real  && weight_buffer_1_read_enable && (weight_bank_sel === 1.U)  // bank 7
+  ))
+  
+  val read_fire_banks = Mux(fp8Mode, read_fire_banks_fp8, read_fire_banks_non_fp8)
+
   val bank_data_0 = VecInit((0 until 4).map { i => if (testConfig) defaultRow  else banks(i).read(read_row_addr_act, read_fire_banks(i))})
   val bank_data_1 = VecInit((0 until 4).map { i => if (testConfig) defaultRow  else banks(i+4).read(read_row_addr_w, read_fire_banks(i+4))})
   when(fp8Mode){
-    act_bank_sel := counter_i(1+log2Ceil(max_block_fp8), log2Ceil(max_block_fp8))
-    weight_bank_sel := counter_j(1+log2Ceil(max_block_fp8), log2Ceil(max_block_fp8))
+    act_bank_sel := counter_i(1, 0)
+    weight_bank_sel := counter_j(1, 0)
     when(act_bank_sel === 0.U && (act_buffer_0_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
         act_bank_data_vec(i) := bank_data_0(0)(i)
@@ -282,14 +294,14 @@ class ScalingFactorMem(
       }
     }
   }.otherwise{
-    act_bank_sel := Cat(0.U(1.W), counter_i(log2Ceil(max_block_non_fp8))) 
-    weight_bank_sel := Cat(0.U(1.W),counter_j(log2Ceil(max_block_non_fp8)))
+    act_bank_sel := Cat(0.U(1.W), counter_i(0)) 
+    weight_bank_sel := Cat(0.U(1.W),counter_j(0))
     when(act_bank_sel(0) === 0.U && (act_buffer_0_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
         act_bank_data_vec(i) := bank_data_0(0)(i)
         act_bank_data_vec(meshRows*tileRows+i) := bank_data_0(1)(i)
       }
-    }.elsewhen(act_bank_sel(0) === 1.U && (act_buffer_0_read_enable) ) {
+    }.elsewhen(act_bank_sel(0) === 1.U && (act_buffer_1_read_enable) ) {
       for (i <- 0 until meshRows*tileRows) {
         act_bank_data_vec(i) := bank_data_0(2)(i)
         act_bank_data_vec(meshRows*tileRows+i) := bank_data_0(3)(i)
@@ -329,10 +341,6 @@ class ScalingFactorMem(
   }
   
 
-  //when(read_fire_real_d1 && (scale_counter === 0.U) ) {
-  val  combined_scales_buffer_r = combined_scales_buffer
-  
-
   when(read_fire_d1) {
     for(i <- 0 until 2*meshRows*tileRows) {
       act_scales(i) := act_bank_data_vec(i)
@@ -342,39 +350,12 @@ class ScalingFactorMem(
     }
     //printf(p"[ScalingFactorMem] Read scales from row=${read_addr_reg}\n")
     io.read_resp.valid := combined_scales_valid
+    io.read_resp.bits.combined_scales(j) := combined_scales_buffer(scale_counter)(j)
     when (((scale_counter === ((meshRows*tileRows-1).U) && fp8Mode) || (scale_counter === ((2*meshRows*tileRows-1).U) && !fp8Mode))) {
       scale_counter := 0.U
     }.otherwise{
       scale_counter := scale_counter +& 1.U
-      when(fp8Mode){
-        for(j <- 0 until meshRows*tileRows){
-          when(scale_counter === 0.U){
-          io.read_resp.bits.combined_scales(j) := combined_scales_buffer(0)(j)
-          // printf(p"[ScalingFactorMem] Read scale from row=${scale_counter}, and get the scale=${io.read_resp.bits.combined_scales(j)}\n")
-          }.otherwise{
-            io.read_resp.bits.combined_scales(j) := combined_scales_buffer_r(scale_counter)(j)
-            // printf(p"[ScalingFactorMem] Read scale from row=${scale_counter}, and get the scale=${io.read_resp.bits.combined_scales(j)}\n")
-          }
-        }
-      }.otherwise{
-        for(j <- 0 until 2*meshRows*tileRows){
-          when(scale_counter === 0.U){
-          io.read_resp.bits.combined_scales(j) := combined_scales_buffer(0)(j)
-          //printf(p"[ScalingFactorMem] Read scale from row=${scale_counter}, weight_row=${weight_row_counter}, and get the scale=${io.read_resp.bits.combined_scales(j)}\n")
-          }.otherwise{
-            io.read_resp.bits.combined_scales(j) := combined_scales_buffer_r(scale_counter)(j)
-          }
-        }
-      }
     }
   }
-  
- 
-  
 
-  
-  // when(reset.asBool || !io.read_req.bits.scaling_enable) {
-  //   //current_row := 0.U
-  //   combined_scales_valid := false.B
-  // }
 }

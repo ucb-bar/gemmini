@@ -83,7 +83,12 @@ class QuantLut(
     }
   }
   
-  when((io.counter_i(log2Ceil(lut_update_regularity_act_in)-1, 0) === 0.U) && (counter_i_reg(log2Ceil(lut_update_regularity_act_in)-2, 0) === 32.U)){ //32 is the maxblock under fp6
+  
+  val lutCache_update_enable_act_in = WireInit(0.U(1.W))
+  // FP6 only: tile = 32 elements, period = regularity/32 tiles
+  lutCache_update_enable_act_in := (counter_i(log2Ceil(lut_update_regularity_act_in/32)-1, 0) === 0.U) && (counter_i_reg(log2Ceil(lut_update_regularity_act_in/32)-1, 0) === (lut_update_regularity_act_in/32-1).U)
+
+  when(lutCache_update_enable_act_in){ //32 is the maxblock under fp6
     when(lutCache_act_in_buffer_0_read_enable && (lutCache_act_in_buffer_select === false.B)){
       lutCache_act_in_buffer_0_read_enable := false.B
     }
@@ -131,8 +136,12 @@ class QuantLut(
       lutCache_weight_buffer_1_read_enable := true.B
     }
   }
+  
+  val lutCache_update_enable_w_in = WireInit(0.U(1.W))
+  // FP6 only: tile = 32 elements, period = regularity_w/32 tiles
+  lutCache_update_enable_w_in := (counter_j(log2Ceil(lut_update_regularity_w/32)-1, 0) === 0.U) && (counter_j_reg(log2Ceil(lut_update_regularity_w/32)-1, 0) === (lut_update_regularity_w/32-1).U)
 
-  when((io.counter_j(log2Ceil(lut_update_regularity_w)-1, 0) === 0.U) && (counter_j_reg(log2Ceil(lut_update_regularity_w)-2, 0) === 32.U)){
+  when(lutCache_update_enable_w_in){
     when(lutCache_weight_buffer_0_read_enable && (lutCache_weight_buffer_select === false.B)){
       lutCache_weight_buffer_0_read_enable := false.B
     }
@@ -179,8 +188,12 @@ class QuantLut(
       lutCache_act_out_buffer_1_read_enable := true.B
     }
   }
+  
+  val lutCache_update_enable_act_out = WireInit(0.U(1.W))
+  // FP6 only: tile = 32 elements, period = regularity_act_out/32 tiles
+  lutCache_update_enable_act_out := (counter_i(log2Ceil(lut_update_regularity_act_out/32)-1, 0) === 0.U) && (counter_i_reg(log2Ceil(lut_update_regularity_act_out/32)-1, 0) === (lut_update_regularity_act_out/32-1).U)
 
-  when((io.counter_i(log2Ceil(lut_update_regularity_act_out)-1, 0) === 0.U) && (counter_i_reg(log2Ceil(lut_update_regularity_act_out)-2, 0) === 32.U)){
+  when(lutCache_update_enable_act_out){
     when(lutCache_act_out_buffer_0_read_enable && (lutCache_act_out_buffer_select === false.B)){
       lutCache_act_out_buffer_0_read_enable := false.B
     }
