@@ -63,7 +63,9 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   val counter_i = Input(UInt(16.W)) //for scaling factor memory control
   val counter_j = Input(UInt(16.W)) //for scaling factor memory control
   val counter_k = Input(UInt(16.W)) //for scaling factor memory control
-
+  val i = Input(UInt(16.W)) //for scaling factor memory control
+  val j = Input(UInt(16.W)) //for scaling factor memory control
+  val k = Input(UInt(16.W)) //for scaling factor memory control
   val dataType = Input(UInt(2.W)) //this is the input mxformat datatype
   val scale_mem_write_act = if (use_mx_scaling) {
     Some(Flipped(Decoupled(new ScalingFactorWriteReq(13, 64))))
@@ -254,7 +256,10 @@ class AccumulatorMem[T <: Data, U <: Data](
     scale_mem.io.counter_i := io.counter_i
     scale_mem.io.counter_j := io.counter_j
     scale_mem.io.counter_k := io.counter_k
-    
+    scale_mem.io.i := io.i
+    scale_mem.io.j := io.j
+    scale_mem.io.k := io.k
+   
     scale_mem.io.scaleMemCntl <> io.scaleMemCntl.get
     scale_mem.io.read_req.valid := false.B
     scale_mem.io.read_req.bits.addr := DontCare

@@ -58,25 +58,28 @@ class QuantLut(
   val lutCache_act_in_buffer_1_read_enable = RegInit(false.B)
   val lutCache_act_in_buffer_select = RegInit(false.B)
   val counter_i_reg = RegNext(io.counter_i)
+  val counter_w = RegInit(0.U(5.W))
+  val counter_act = RegInit(0.U(5.W))
+
   when(io.lut_write_act_in.fire){
     when(lutCache_act_in_flag === false.B){
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          //lutCache_act_in_0(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
-          lutCache_act_in_0(lane)(entry) := io.lut_write_act_in.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
-      }
+          lutCache_act_in_0(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_act_in_0(lane)(entry) := io.lut_write_act_in.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
+        }
+      }  
       lutCache_act_in_flag := ~lutCache_act_in_flag
       lutCache_act_in_buffer_0_read_enable := true.B
-    }
     }.otherwise {
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          //lutCache_act_in_1(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
-          lutCache_act_in_1(lane)(entry) := io.lut_write_act_in.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          lutCache_act_in_1(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_act_in_1(lane)(entry) := io.lut_write_act_in.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
       }
+    }  
       lutCache_act_in_flag := ~lutCache_act_in_flag
       lutCache_act_in_buffer_1_read_enable := true.B
-      }
     }
   }
   
@@ -111,8 +114,8 @@ class QuantLut(
     when(lutCache_weight_flag === false.B){
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          //lutCache_weight_0(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
-          lutCache_weight_0(lane)(entry) := io.lut_write_weight.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          lutCache_weight_0(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_weight_0(lane)(entry) := io.lut_write_weight.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
         }
       }
       lutCache_weight_flag := ~lutCache_weight_flag
@@ -120,8 +123,8 @@ class QuantLut(
     }.otherwise {
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          //lutCache_weight_1(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
-          lutCache_weight_1(lane)(entry) := io.lut_write_weight.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          lutCache_weight_1(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_weight_1(lane)(entry) := io.lut_write_weight.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
         }
       }
       lutCache_weight_flag := ~lutCache_weight_flag
@@ -159,8 +162,8 @@ class QuantLut(
     when(lutCache_act_out_flag === false.B){
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          //lutCache_act_out_0(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
-          lutCache_act_out_0(lane)(entry) := io.lut_write_act_out.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          lutCache_act_out_0(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_act_out_0(lane)(entry) := io.lut_write_act_out.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
         }
       }
       lutCache_act_out_flag := ~lutCache_act_out_flag
@@ -168,8 +171,8 @@ class QuantLut(
     }.otherwise {
       for (lane <- 0 until 32) {
         for (entry <- 0 until 16) {
-          //lutCache_act_out_1(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
-          lutCache_act_out_1(lane)(entry) := io.lut_write_act_out.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          lutCache_act_out_1(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+          //lutCache_act_out_1(lane)(entry) := io.lut_write_act_out.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
         }
       }
       lutCache_act_out_flag := ~lutCache_act_out_flag
@@ -212,7 +215,7 @@ class QuantLut(
       })
       
       val minIdx = distances.zipWithIndex.map { case (dist, idx) =>
-        (dist, idx.U(5.W))
+        (dist, idx.U(raddrWidth.W))
       }.reduce { (a, b) =>
         val selectA = a._1 <= b._1
         (Mux(selectA, a._1, b._1), Mux(selectA, a._2, b._2))
@@ -243,12 +246,22 @@ class QuantLut(
     when(io.a_fire && (lutCache_act_in_buffer_0_read_enable || lutCache_act_in_buffer_1_read_enable)) {
       for (k <- 0 until 32) {
         val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-        deprojected_bits(k) := lutCache_act_in(k)(chunk_4bit)  
+        deprojected_bits(k) := lutCache_act_in(counter_act)(chunk_4bit)  
+      }
+      when(counter_act === 31.U){
+        counter_act := 0.U
+      }.otherwise{
+        counter_act := counter_act + 1.U
       }
     }.elsewhen(io.b_fire && (lutCache_weight_buffer_0_read_enable || lutCache_weight_buffer_1_read_enable)) {
       for (k <- 0 until 32) {
         val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-        deprojected_bits(k) := lutCache_weight(k)(chunk_4bit)  
+        deprojected_bits(k) := lutCache_weight(counter_w)(chunk_4bit)  
+      }
+      when(counter_w === 31.U){
+        counter_w := 0.U
+      }.otherwise{
+        counter_w := counter_w + 1.U
       }
     }
       

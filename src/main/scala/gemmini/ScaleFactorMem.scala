@@ -24,6 +24,9 @@ class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: 
   val counter_i = Input(UInt(16.W))
   val counter_j = Input(UInt(16.W))  
   val counter_k = Input(UInt(16.W))
+  val i = Input(UInt(16.W))
+  val j = Input(UInt(16.W))  
+  val k = Input(UInt(16.W))
 }
 
 class ScalingFactorMem(
@@ -52,12 +55,6 @@ class ScalingFactorMem(
     tileRows,
   ))
 
-  val counter_a_fire = io.scaleMemCntl.counter_a
-  val counter_b_fire = io.scaleMemCntl.counter_b
-  val fire_a = io.scaleMemCntl.fire_a
-  val fire_b = io.scaleMemCntl.fire_b
-  val write_baseAddr_act = io.scaleMemCntl.baseAddress_act
-  val write_baseAddr_w = io.scaleMemCntl.baseAddress_w
   val initByte = 0x7e.U(8.W)
   val defaultRow = VecInit(Seq.fill(bytesPerBank)(initByte)) 
   val counter_i = io.counter_i
@@ -115,7 +112,6 @@ class ScalingFactorMem(
     val write_bytes_low = write_weight_full_row(bytesPerBank * 8 - 1, 0).asTypeOf(bankDataT)
     val write_bytes_high = write_weight_full_row(bytesPerBank * 2 * 8 - 1, bytesPerBank * 8).asTypeOf(bankDataT)
     when(weight_write_buffer_sel === false.B) { 
-      //weight_write_counter := weight_write_counter + 1.U
       banks(4).write(write_row_addr_w_reg, write_bytes_low)
       banks(5).write(write_row_addr_w_reg, write_bytes_high)
       weight_buffer_0_read_enable := true.B
@@ -183,9 +179,10 @@ class ScalingFactorMem(
 
   val max_block_fp8 = meshRows * tileRows
   val max_block_non_fp8 = 2*meshRows * tileRows
-  val read_row_addr = WireDefault(counter_k >> log2Ceil(max_block_non_fp8))
-  io.scale_mem_write_w.ready :=  (weight_write_counter ===0.U || (weight_write_counter(log2Ceil(depth)-1,0) =/= read_row_addr)) || (!weight_buffer_0_read_enable) || (!weight_buffer_1_read_enable)
-  io.scale_mem_write_act.ready := (act_write_counter ===0.U || ((act_write_counter(log2Ceil(depth)-1,0) =/= read_row_addr))) || (!act_buffer_0_read_enable) || (!act_buffer_1_read_enable)
+  val read_row_addr_act = WireDefault(io.i * (counter_k >> log2Ceil(max_block_non_fp8)) + (counter_i >> (log2Ceil(bytesPerBank*numBanks/2))))
+  val read_row_addr_w = WireDefault(io.j * (counter_k >> log2Ceil(max_block_non_fp8)) + (counter_j >> (log2Ceil(bytesPerBank*numBanks/2))))
+  io.scale_mem_write_w.ready :=  (weight_write_counter ===0.U || (weight_write_counter(log2Ceil(depth)-1,0) =/= read_row_addr_w)) || (!weight_buffer_0_read_enable) || (!weight_buffer_1_read_enable)
+  io.scale_mem_write_act.ready := (act_write_counter ===0.U || ((act_write_counter(log2Ceil(depth)-1,0) =/= read_row_addr_act))) || (!act_buffer_0_read_enable) || (!act_buffer_1_read_enable)
   val act_read_buffer_select = RegInit(false.B)
   val weight_read_buffer_select = RegInit(false.B)
   val act_read_counter = RegInit(0.U(8.W))
@@ -194,17 +191,17 @@ class ScalingFactorMem(
   when(io.read_req.fire && io.read_req.bits.scaling_enable){
     act_read_buffer_select := ~act_read_buffer_select
     weight_read_buffer_select := ~weight_read_buffer_select
-    when(act_buffer_0_read_enable && ((act_write_counter(log2Ceil(depth)-1,0)  === read_row_addr))){
+    when(act_buffer_0_read_enable && ((act_write_counter(log2Ceil(depth)-1,0)  === read_row_addr_act))){
         act_buffer_0_read_enable := false.B
     }
-    when(act_buffer_1_read_enable && ((act_write_counter(log2Ceil(depth)-1,0) === read_row_addr))){
+    when(act_buffer_1_read_enable && ((act_write_counter(log2Ceil(depth)-1,0) === read_row_addr_act))){
         act_buffer_1_read_enable := false.B
     }
  
-    when(weight_buffer_0_read_enable && ((weight_write_counter(log2Ceil(depth)-1,0) === read_row_addr))){
+    when(weight_buffer_0_read_enable && ((weight_write_counter(log2Ceil(depth)-1,0) === read_row_addr_w))){
       weight_buffer_0_read_enable := false.B
     }
-    when(weight_buffer_1_read_enable && ((weight_write_counter(log2Ceil(depth)-1,0) === read_row_addr))){
+    when(weight_buffer_1_read_enable && ((weight_write_counter(log2Ceil(depth)-1,0) === read_row_addr_w))){
       weight_buffer_1_read_enable := false.B
     }
   }
@@ -234,79 +231,79 @@ class ScalingFactorMem(
   weight_bank_sel := 0.U
 
   val read_fire_banks = VecInit(Seq(
-    read_fire_real && act_buffer_0_read_enable && weight_buffer_0_read_enable && (act_bank_sel === 0.U) ,     // bank 0
-    read_fire_real && act_buffer_0_read_enable && weight_buffer_0_read_enable && (act_bank_sel === 1.U),     // bank 1
-    read_fire_real && act_buffer_1_read_enable && weight_buffer_1_read_enable && (act_bank_sel === 2.U),     // bank 2
-    read_fire_real && act_buffer_1_read_enable && weight_buffer_1_read_enable && (act_bank_sel === 3.U),     // bank 3
-    read_fire_real && weight_buffer_0_read_enable && act_buffer_0_read_enable && (weight_bank_sel === 0.U),  // bank 4
-    read_fire_real && weight_buffer_0_read_enable && act_buffer_0_read_enable && (weight_bank_sel === 1.U),  // bank 5
-    read_fire_real && weight_buffer_1_read_enable && weight_buffer_1_read_enable && (weight_bank_sel === 2.U),  // bank 6
-    read_fire_real && weight_buffer_1_read_enable && weight_buffer_1_read_enable && (weight_bank_sel === 3.U)  // bank 7
+    read_fire_real && act_buffer_0_read_enable && (act_bank_sel === 0.U) ,     // bank 0
+    read_fire_real && act_buffer_0_read_enable && (act_bank_sel === 1.U),     // bank 1
+    read_fire_real && act_buffer_1_read_enable && (act_bank_sel === 2.U),     // bank 2
+    read_fire_real && act_buffer_1_read_enable && (act_bank_sel === 3.U),     // bank 3
+    read_fire_real  && act_buffer_0_read_enable && (weight_bank_sel === 0.U),  // bank 4
+    read_fire_real  && act_buffer_0_read_enable && (weight_bank_sel === 1.U),  // bank 5
+    read_fire_real  && weight_buffer_1_read_enable && (weight_bank_sel === 2.U),  // bank 6
+    read_fire_real  && weight_buffer_1_read_enable && (weight_bank_sel === 3.U)  // bank 7
   ))
   
     
-  val bank_data = VecInit((0 until 8).map { i => if (testConfig) defaultRow  else banks(i).read(read_row_addr, read_fire_banks(i))})
-
+  val bank_data_0 = VecInit((0 until 4).map { i => if (testConfig) defaultRow  else banks(i).read(read_row_addr_act, read_fire_banks(i))})
+  val bank_data_1 = VecInit((0 until 4).map { i => if (testConfig) defaultRow  else banks(i+4).read(read_row_addr_w, read_fire_banks(i+4))})
   when(fp8Mode){
     act_bank_sel := counter_i(1+log2Ceil(max_block_fp8), log2Ceil(max_block_fp8))
     weight_bank_sel := counter_j(1+log2Ceil(max_block_fp8), log2Ceil(max_block_fp8))
     when(act_bank_sel === 0.U && (act_buffer_0_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
-        act_bank_data_vec(i) := bank_data(0)(i)
+        act_bank_data_vec(i) := bank_data_0(0)(i)
       }
     }.elsewhen( act_bank_sel === 1.U && (act_buffer_0_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
-        act_bank_data_vec(i) := bank_data(1)(i)
+        act_bank_data_vec(i) := bank_data_0(1)(i)
       }
     }.elsewhen( act_bank_sel === 2.U && (act_buffer_1_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
-        act_bank_data_vec(i) := bank_data(2)(i)
+        act_bank_data_vec(i) := bank_data_0(2)(i)
       }
     }.elsewhen( act_bank_sel === 3.U && (act_buffer_1_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
-        act_bank_data_vec(i) := bank_data(3)(i)
+        act_bank_data_vec(i) := bank_data_0(3)(i)
       }
     }   
     when(weight_bank_sel === 0.U && (weight_buffer_0_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
-        weight_bank_data_vec(i) := bank_data(4)(i)
+        weight_bank_data_vec(i) := bank_data_1(0)(i)
       }
     }.elsewhen( weight_bank_sel === 1.U && (weight_buffer_0_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
-        weight_bank_data_vec(i) := bank_data(5)(i)
+        weight_bank_data_vec(i) := bank_data_1(1)(i)
       }
     }.elsewhen( weight_bank_sel === 2.U && (weight_buffer_1_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
-        weight_bank_data_vec(i) := bank_data(6)(i)
+        weight_bank_data_vec(i) := bank_data_1(2)(i)
       }
     }.elsewhen( weight_bank_sel === 3.U && (weight_buffer_1_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
-        weight_bank_data_vec(i) := bank_data(7)(i)
+        weight_bank_data_vec(i) := bank_data_1(3)(i)
       }
     }
   }.otherwise{
     act_bank_sel := Cat(0.U(1.W), counter_i(log2Ceil(max_block_non_fp8))) 
     weight_bank_sel := Cat(0.U(1.W),counter_j(log2Ceil(max_block_non_fp8)))
-    when(act_bank_sel(0) === 0.U && (act_buffer_0_read_enable) && (weight_buffer_0_read_enable)) {
+    when(act_bank_sel(0) === 0.U && (act_buffer_0_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
-        act_bank_data_vec(i) := bank_data(0)(i)
-        act_bank_data_vec(meshRows*tileRows+i) := bank_data(1)(i)
+        act_bank_data_vec(i) := bank_data_0(0)(i)
+        act_bank_data_vec(meshRows*tileRows+i) := bank_data_0(1)(i)
       }
-    }.elsewhen(act_bank_sel(0) === 1.U && (act_buffer_0_read_enable) && (weight_buffer_0_read_enable)) {
+    }.elsewhen(act_bank_sel(0) === 1.U && (act_buffer_0_read_enable) ) {
       for (i <- 0 until meshRows*tileRows) {
-        act_bank_data_vec(i) := bank_data(2)(i)
-        act_bank_data_vec(meshRows*tileRows+i) := bank_data(3)(i)
+        act_bank_data_vec(i) := bank_data_0(2)(i)
+        act_bank_data_vec(meshRows*tileRows+i) := bank_data_0(3)(i)
       }
     }
-    when(counter_j(1+log2Ceil(max_block_non_fp8), log2Ceil(max_block_non_fp8)) === 1.U && (weight_buffer_0_read_enable)) {
+    when(weight_bank_sel === 0.U && (weight_buffer_0_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
-        weight_bank_data_vec(i) := bank_data(4)(i)
-        weight_bank_data_vec(meshRows*tileRows+i) := bank_data(5)(i)
+        weight_bank_data_vec(i) := bank_data_1(0)(i)
+        weight_bank_data_vec(meshRows*tileRows+i) := bank_data_1(1)(i)
       }
-    }.elsewhen( counter_j(1+log2Ceil(max_block_non_fp8), log2Ceil(max_block_non_fp8)) === 1.U && (weight_buffer_1_read_enable)) {
+    }.elsewhen( weight_bank_sel === 1.U && (weight_buffer_1_read_enable)) {
       for (i <- 0 until meshRows*tileRows) {
-        weight_bank_data_vec(i) := bank_data(6)(i)
-        weight_bank_data_vec(meshRows*tileRows+i) := bank_data(7)(i)
+        weight_bank_data_vec(i) := bank_data_1(2)(i)
+        weight_bank_data_vec(meshRows*tileRows+i) := bank_data_1(3)(i)
       }
     }
   }

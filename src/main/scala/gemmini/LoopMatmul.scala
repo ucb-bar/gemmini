@@ -909,6 +909,9 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     val counter_i = Output(UInt(16.W))
     val counter_j = Output(UInt(16.W))
     val counter_k = Output(UInt(16.W))
+    val i = Output(UInt(16.W))
+    val j = Output(UInt(16.W))
+    val k = Output(UInt(16.W))
   })
 
   // Create states
@@ -940,7 +943,9 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   io.counter_i := ex.io.i
   io.counter_j := ex.io.j
   io.counter_k := ex.io.k
-
+  io.i := loop_being_configured.max_i
+  io.j := loop_being_configured.max_j
+  io.k := loop_being_configured.max_k
   io.busy := cmd.valid || loop_configured
 
   io.completed := 0.U.asTypeOf(io.completed.cloneType)

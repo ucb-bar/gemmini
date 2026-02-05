@@ -297,7 +297,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val counter_i = Input(UInt(16.W))
       val counter_j = Input(UInt(16.W))
       val counter_k = Input(UInt(16.W))
-     
+      val i = Input(UInt(16.W))
+      val j = Input(UInt(16.W))
+      val k = Input(UInt(16.W))
       val scale_mem_write_w = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
       val scale_mem_write_act = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
       // TLB ports
@@ -761,6 +763,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           w.bits := io.scale_mem_write_act.get.bits
           io.scale_mem_write_act.get.ready := w.ready
         }
+        bio.i := io.i
+        bio.j := io.j
+        bio.k := io.k
         bio.counter_i := io.counter_i
         bio.counter_j := io.counter_j
         bio.counter_k := io.counter_k

@@ -544,7 +544,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   spad.module.io.counter_i := loop_matmul.io.counter_i
   spad.module.io.counter_j := loop_matmul.io.counter_j
   spad.module.io.counter_k := loop_matmul.io.counter_k
-
+  spad.module.io.i := loop_matmul.io.i
+  spad.module.io.j := loop_matmul.io.j
+  spad.module.io.k := loop_matmul.io.k
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
   counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)

@@ -31,14 +31,14 @@ case class GemminiRequantizerConfig(
   minOutputBits: Int = 4,
   maxOutputBits: Int = 8,
   outputIdBits: Int = 3,
-  lutUpdateRegularityW : Int = 128,  // means how many elements update once the lut
+  lutUpdateRegularityW : Int = 128,  // means how many elements updatScalingFactorCntle once the lut
   lutUpdateRegularityActIn : Int = 128,
   lutUpdateRegularityActOut : Int = 128,  
 )
 
 case class GemminiLUTConfig(
   numBits: Int = 96,
-  numEntries: Int = 1,
+  numEntries: Int = 32,
   numTables: Int = 3,
   rdataWidth: Int = 6,
   raddrWidth: Int = 4, 
@@ -68,8 +68,8 @@ class ScalingFactorCntl(max_block: Int) extends Bundle {
   val counter_b = UInt(log2Up(max_block).W)
   val fire_a = Bool()
   val fire_b = Bool()
-  val baseAddress_act = UInt(33.W)
-  val baseAddress_w = UInt(33.W)
+  val baseAddress_act = UInt(32.W)
+  val baseAddress_w = UInt(32.W)
 }
 
 class RequantizerInBundle(numLanes: Int, dataWidth: Int = 16) extends Bundle {
