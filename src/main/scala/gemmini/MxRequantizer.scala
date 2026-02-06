@@ -67,7 +67,7 @@ class MxRequantizerIO(
   val fp8_mode = Input(Bool())  // true for 64-lane mode, false for 16-lane mode
   val a_fire = Input(Bool())  // from execute controller
   val b_fire = Input(Bool())  // from execute controller
-  val scale_mem_mvout_base_addr_act = Input(UInt(32.W)) // from execute controller
+  val scale_mem_mvout_base_addr_act = Input(UInt(scaleMem_addr_width.W)) // from execute controller
   val counter_i = Input(UInt(iterator_bitwidth.W)) // from  controller
   val counter_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val counter_k = Input(UInt(iterator_bitwidth.W)) // from  controller
@@ -346,7 +346,7 @@ class MxRequantizer[T <: Data: Arithmetic](
 
   when(scale_buffer_full) {
     io.scaleMem_write.valid := true.B
-    io.scaleMem_write.bits.addr := scale_mem_mvout_base_addr_act + (scale_write_addr_counter << 5) //byte address, scale 32B per write
+    io.scaleMem_write.bits.addr := scale_mem_mvout_base_addr_act + (scale_write_addr_counter << (log2Ceil(scaleMem_data_width/8))) //byte address, scale 32B per write
     io.scaleMem_write.bits.data := Cat(scale_buffer.reverse)
   }
 }

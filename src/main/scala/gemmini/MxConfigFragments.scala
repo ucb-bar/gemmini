@@ -11,7 +11,7 @@ case class GemminiScalingFactorMemConfig(
   gpuInputWidthBytes: Int = 8,
   numBanks: Int = 8,
   ScaleMemWriteDataWidth: Int = 256,
-  ScaleMemWriteAddrWidth: Int = 32,
+  ScaleMemWriteAddrWidth: Int = 33,
 ) {
   def depth: Int = (sizeInBytes / (subbankLineSizeInBytes) / numBanks).toInt
   def bankWidthBytes = subbankLineSizeInBytes * subbanksPerBank
