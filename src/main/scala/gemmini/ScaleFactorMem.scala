@@ -347,15 +347,15 @@ class ScalingFactorMem(
       weight_scales(i) := weight_bank_data_vec(i)
       // printf(p"[ScalingFactorMem] Read act_scales=${act_scales(i) }\n")
       // printf(p"[ScalingFactorMem] Read weight_scales=${weight_scales(i) }\n")
+      io.read_resp.valid := combined_scales_valid
+      io.read_resp.bits.combined_scales(i) := combined_scales_buffer(scale_counter)(i)
     }
     //printf(p"[ScalingFactorMem] Read scales from row=${read_addr_reg}\n")
-    io.read_resp.valid := combined_scales_valid
-    io.read_resp.bits.combined_scales(j) := combined_scales_buffer(scale_counter)(j)
+   
     when (((scale_counter === ((meshRows*tileRows-1).U) && fp8Mode) || (scale_counter === ((2*meshRows*tileRows-1).U) && !fp8Mode))) {
       scale_counter := 0.U
     }.otherwise{
       scale_counter := scale_counter +& 1.U
     }
   }
-
 }

@@ -44,15 +44,15 @@ class QuantLut(
   val io = IO(new QuantLutIO(lutConfig, outputnumLanes, sp_bank_entries, sp_banks, sp_width, sp_width_projected, iterator_bitwidth))
   val rdataWidth = lutConfig.rdataWidth
   val raddrWidth = lutConfig.raddrWidth
-  val lutCache_weight_0 = Seq.fill(32)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
-  val lutCache_weight_1 = Seq.fill(32)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
-  val lutCache_act_in_0 = Seq.fill(32)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
-  val lutCache_act_in_1 = Seq.fill(32)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
-  val lutCache_act_out_0 = Seq.fill(32)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
-  val lutCache_act_out_1 = Seq.fill(32)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_weight_0 = Seq.fill(lutConfig.numEntries)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_weight_1 = Seq.fill(lutConfig.numEntries)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_act_in_0 = Seq.fill(lutConfig.numEntries)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_act_in_1 = Seq.fill(lutConfig.numEntries)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_act_out_0 = Seq.fill(outputnumLanes)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_act_out_1 = Seq.fill(outputnumLanes)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
   //io.lut_write.ready := !io.lutReadEnable
   
-  val lutCache_act_in = WireInit(VecInit.fill(32)(VecInit.fill(16)(0.U(rdataWidth.W))))
+  val lutCache_act_in = WireInit(VecInit.fill(lutConfig.numEntries)(VecInit.fill(16)(0.U(rdataWidth.W))))
   val lutCache_act_in_flag = RegInit(false.B)
   val lutCache_act_in_buffer_0_read_enable = RegInit(false.B)
   val lutCache_act_in_buffer_1_read_enable = RegInit(false.B)
@@ -63,7 +63,7 @@ class QuantLut(
 
   when(io.lut_write_act_in.fire){
     when(lutCache_act_in_flag === false.B){
-      for (lane <- 0 until 32) {
+      for (lane <- 0 until lutConfig.numEntries) {
         for (entry <- 0 until 16) {
           lutCache_act_in_0(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_act_in_0(lane)(entry) := io.lut_write_act_in.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -72,7 +72,7 @@ class QuantLut(
       lutCache_act_in_flag := ~lutCache_act_in_flag
       lutCache_act_in_buffer_0_read_enable := true.B
     }.otherwise {
-      for (lane <- 0 until 32) {
+      for (lane <- 0 until lutConfig.numEntries) {
         for (entry <- 0 until 16) {
           lutCache_act_in_1(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_act_in_1(lane)(entry) := io.lut_write_act_in.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -86,9 +86,9 @@ class QuantLut(
   
   val lutCache_update_enable_act_in = WireInit(0.U(1.W))
   // FP6 only: tile = 32 elements, period = regularity/32 tiles
-  lutCache_update_enable_act_in := (counter_i(log2Ceil(lut_update_regularity_act_in/32)-1, 0) === 0.U) && (counter_i_reg(log2Ceil(lut_update_regularity_act_in/32)-1, 0) === (lut_update_regularity_act_in/32-1).U)
+  lutCache_update_enable_act_in := (io.counter_i(log2Ceil(lut_update_regularity_act_in/32)-1, 0) === 0.U) && (counter_i_reg(log2Ceil(lut_update_regularity_act_in/32)-1, 0) === (lut_update_regularity_act_in/32-1).U)
 
-  when(lutCache_update_enable_act_in){ //32 is the maxblock under fp6
+  when(lutCache_update_enable_act_in === 1.U){ //32 is the maxblock under fp6
     when(lutCache_act_in_buffer_0_read_enable && (lutCache_act_in_buffer_select === false.B)){
       lutCache_act_in_buffer_0_read_enable := false.B
     }
@@ -108,7 +108,7 @@ class QuantLut(
 
   io.lut_write_act_in.ready := !lutCache_act_in_buffer_0_read_enable || !lutCache_act_in_buffer_1_read_enable
 
-  val lutCache_weight = WireInit(VecInit.fill(32)(VecInit.fill(16)(0.U(rdataWidth.W))))
+  val lutCache_weight = WireInit(VecInit.fill(lutConfig.numEntries)(VecInit.fill(16)(0.U(rdataWidth.W))))
   val lutCache_weight_flag = RegInit(false.B)
   val lutCache_weight_buffer_0_read_enable = RegInit(false.B)
   val lutCache_weight_buffer_1_read_enable = RegInit(false.B)
@@ -117,7 +117,7 @@ class QuantLut(
 
   when(io.lut_write_weight.fire){
     when(lutCache_weight_flag === false.B){
-      for (lane <- 0 until 32) {
+      for (lane <- 0 until lutConfig.numEntries) {
         for (entry <- 0 until 16) {
           lutCache_weight_0(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_weight_0(lane)(entry) := io.lut_write_weight.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -126,7 +126,7 @@ class QuantLut(
       lutCache_weight_flag := ~lutCache_weight_flag
       lutCache_weight_buffer_0_read_enable := true.B
     }.otherwise {
-      for (lane <- 0 until 32) {
+      for (lane <- 0 until lutConfig.numEntries) {
         for (entry <- 0 until 16) {
           lutCache_weight_1(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_weight_1(lane)(entry) := io.lut_write_weight.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -139,9 +139,9 @@ class QuantLut(
   
   val lutCache_update_enable_w_in = WireInit(0.U(1.W))
   // FP6 only: tile = 32 elements, period = regularity_w/32 tiles
-  lutCache_update_enable_w_in := (counter_j(log2Ceil(lut_update_regularity_w/32)-1, 0) === 0.U) && (counter_j_reg(log2Ceil(lut_update_regularity_w/32)-1, 0) === (lut_update_regularity_w/32-1).U)
+  lutCache_update_enable_w_in := (io.counter_j(log2Ceil(lut_update_regularity_w/32)-1, 0) === 0.U) && (counter_j_reg(log2Ceil(lut_update_regularity_w/32)-1, 0) === (lut_update_regularity_w/32-1).U)
 
-  when(lutCache_update_enable_w_in){
+  when(lutCache_update_enable_w_in === 1.U){
     when(lutCache_weight_buffer_0_read_enable && (lutCache_weight_buffer_select === false.B)){
       lutCache_weight_buffer_0_read_enable := false.B
     }
@@ -161,7 +161,7 @@ class QuantLut(
 
   io.lut_write_weight.ready := !lutCache_weight_buffer_0_read_enable || !lutCache_weight_buffer_1_read_enable
 
-  val lutCache_act_out = WireInit(VecInit.fill(32)(VecInit.fill(16)(0.U(rdataWidth.W))))
+  val lutCache_act_out = WireInit(VecInit.fill(outputnumLanes)(VecInit.fill(16)(0.U(rdataWidth.W))))
   val lutCache_act_out_flag = RegInit(false.B)
   val lutCache_act_out_buffer_0_read_enable = RegInit(false.B)
   val lutCache_act_out_buffer_1_read_enable = RegInit(false.B)
@@ -169,7 +169,7 @@ class QuantLut(
 
   when(io.lut_write_act_out.fire){
     when(lutCache_act_out_flag === false.B){
-      for (lane <- 0 until 32) {
+      for (lane <- 0 until lutConfig.numEntries) {
         for (entry <- 0 until 16) {
           lutCache_act_out_0(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_act_out_0(lane)(entry) := io.lut_write_act_out.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -178,7 +178,7 @@ class QuantLut(
       lutCache_act_out_flag := ~lutCache_act_out_flag
       lutCache_act_out_buffer_0_read_enable := true.B
     }.otherwise {
-      for (lane <- 0 until 32) {
+      for (lane <- 0 until lutConfig.numEntries) {
         for (entry <- 0 until 16) {
           lutCache_act_out_1(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_act_out_1(lane)(entry) := io.lut_write_act_out.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -191,9 +191,9 @@ class QuantLut(
   
   val lutCache_update_enable_act_out = WireInit(0.U(1.W))
   // FP6 only: tile = 32 elements, period = regularity_act_out/32 tiles
-  lutCache_update_enable_act_out := (counter_i(log2Ceil(lut_update_regularity_act_out/32)-1, 0) === 0.U) && (counter_i_reg(log2Ceil(lut_update_regularity_act_out/32)-1, 0) === (lut_update_regularity_act_out/32-1).U)
+  lutCache_update_enable_act_out := (io.counter_i(log2Ceil(lut_update_regularity_act_out/32)-1, 0) === 0.U) && (counter_i_reg(log2Ceil(lut_update_regularity_act_out/32)-1, 0) === (lut_update_regularity_act_out/32-1).U)
 
-  when(lutCache_update_enable_act_out){
+  when(lutCache_update_enable_act_out === 1.U){
     when(lutCache_act_out_buffer_0_read_enable && (lutCache_act_out_buffer_select === false.B)){
       lutCache_act_out_buffer_0_read_enable := false.B
     }
@@ -261,7 +261,7 @@ class QuantLut(
         val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
         deprojected_bits(k) := lutCache_act_in(counter_act)(chunk_4bit)  
       }
-      when(counter_act === 31.U){
+      when(counter_act === (lutConfig.numEntries -1).U){
         counter_act := 0.U
       }.otherwise{
         counter_act := counter_act + 1.U
@@ -271,7 +271,7 @@ class QuantLut(
         val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
         deprojected_bits(k) := lutCache_weight(counter_w)(chunk_4bit)  
       }
-      when(counter_w === 31.U){
+      when(counter_w === (lutConfig.numEntries -1).U){
         counter_w := 0.U
       }.otherwise{
         counter_w := counter_w + 1.U

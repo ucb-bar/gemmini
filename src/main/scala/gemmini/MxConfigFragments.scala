@@ -38,7 +38,7 @@ case class GemminiRequantizerConfig(
 
 case class GemminiLUTConfig(
   numBits: Int = 96,
-  numEntries: Int = 32,
+  numEntries: Int = 16,
   numTables: Int = 3,
   rdataWidth: Int = 6,
   raddrWidth: Int = 4, 
