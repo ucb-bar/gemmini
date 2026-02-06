@@ -52,7 +52,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val counter = new CounterEventIO()
     val b_fire = Output(Bool())
     val a_fire = Output(Bool())
-    val scale_mem_mvout_base_addr_act = Output(UInt(32.W))
+    val scale_mem_mvout_base_addr_act = Output(UInt(scale_mem.get.ScaleMemWriteAddrWidth.W))
     val scaleMemCntl = Output(new ScalingFactorCntl(meshRows*tileRows))
   })
 
@@ -124,13 +124,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   
   val scale_mem_mvin_base_addr_act = RegInit(0.U(32.W))
   val scale_mem_mvin_base_addr_w = RegInit(0.U(32.W))
-  val scale_mem_mvout_base_addr_act = RegInit(0.U(32.W))
+  val scale_mem_mvout_base_addr_act = RegInit(0.U(scale_mem.get.ScaleMemWriteAddrWidth.W))
 
   when(functs(0) === CONFIG_SCALE_MEM) {
     val direction = rs2s(0)(63) 
     when(direction === 1.U) { // mvin
       scale_mem_mvin_base_addr_act := rs1s(0)
-      scale_mem_mvin_base_addr_w := rs1s(0) + (config.scale_mem.get.sizeInBytes >> 1).U
+      scale_mem_mvin_base_addr_w := rs1s(0) + (scale_mem.get.sizeInBytes >> 1).U
     }.elsewhen(direction === 0.U) { // mvout
       scale_mem_mvout_base_addr_act := rs1s(0)
     }

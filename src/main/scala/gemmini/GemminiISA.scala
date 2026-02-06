@@ -66,7 +66,7 @@ object GemminiISA {
   //==========================================================================
   val GARBAGE_ADDR      = "hffffffff".U(32.W)
   
-  val CONFIG_SCALE_MEM_RS1_ADDR_WIDTH = 32
+  val CONFIG_SCALE_MEM_RS1_ADDR_WIDTH = 33
   val CONFIG_SCALE_MEM_SPACER_WIDTH = 64 - 1 - CONFIG_SCALE_MEM_RS1_ADDR_WIDTH 
 
   class ConfigScaleMemRs1 extends Bundle {
