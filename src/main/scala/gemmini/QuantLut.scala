@@ -44,15 +44,15 @@ class QuantLut(
   val io = IO(new QuantLutIO(lutConfig, outputnumLanes, sp_bank_entries, sp_banks, sp_width, sp_width_projected, iterator_bitwidth))
   val rdataWidth = lutConfig.rdataWidth
   val raddrWidth = lutConfig.raddrWidth
-  val lutCache_weight_0 = Seq.fill(lutConfig.numEntries)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
-  val lutCache_weight_1 = Seq.fill(lutConfig.numEntries)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
-  val lutCache_act_in_0 = Seq.fill(lutConfig.numEntries)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
-  val lutCache_act_in_1 = Seq.fill(lutConfig.numEntries)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
-  val lutCache_act_out_0 = Seq.fill(outputnumLanes)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
-  val lutCache_act_out_1 = Seq.fill(outputnumLanes)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_weight_0 = Seq.fill(lutConfig(0)._1)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_weight_1 = Seq.fill(lutConfig(0)._1)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_act_in_0 = Seq.fill(lutConfig(1)._1)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_act_in_1 = Seq.fill(lutConfig(1)._1)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_act_out_0 = Seq.fill(lutConfig(2)._1)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
+  val lutCache_act_out_1 = Seq.fill(lutConfig(2)._1)(RegInit(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))))
   //io.lut_write.ready := !io.lutReadEnable
   
-  val lutCache_act_in = WireInit(VecInit.fill(lutConfig.numEntries)(VecInit.fill(16)(0.U(rdataWidth.W))))
+  val lutCache_act_in = WireInit(VecInit.fill(lutConfig(0)._1)(VecInit.fill(16)(0.U(rdataWidth.W))))
   val lutCache_act_in_flag = RegInit(false.B)
   val lutCache_act_in_buffer_0_read_enable = RegInit(false.B)
   val lutCache_act_in_buffer_1_read_enable = RegInit(false.B)
@@ -63,7 +63,7 @@ class QuantLut(
 
   when(io.lut_write_act_in.fire){
     when(lutCache_act_in_flag === false.B){
-      for (lane <- 0 until lutConfig.numEntries) {
+      for (lane <- 0 until lutConfig(0)._1) {
         for (entry <- 0 until 16) {
           lutCache_act_in_0(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_act_in_0(lane)(entry) := io.lut_write_act_in.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -72,7 +72,7 @@ class QuantLut(
       lutCache_act_in_flag := ~lutCache_act_in_flag
       lutCache_act_in_buffer_0_read_enable := true.B
     }.otherwise {
-      for (lane <- 0 until lutConfig.numEntries) {
+      for (lane <- 0 until lutConfig(0)._1) {
         for (entry <- 0 until 16) {
           lutCache_act_in_1(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_act_in_1(lane)(entry) := io.lut_write_act_in.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -108,7 +108,7 @@ class QuantLut(
 
   io.lut_write_act_in.ready := !lutCache_act_in_buffer_0_read_enable || !lutCache_act_in_buffer_1_read_enable
 
-  val lutCache_weight = WireInit(VecInit.fill(lutConfig.numEntries)(VecInit.fill(16)(0.U(rdataWidth.W))))
+  val lutCache_weight = WireInit(VecInit.fill(lutConfig(1)._1)(VecInit.fill(16)(0.U(rdataWidth.W))))
   val lutCache_weight_flag = RegInit(false.B)
   val lutCache_weight_buffer_0_read_enable = RegInit(false.B)
   val lutCache_weight_buffer_1_read_enable = RegInit(false.B)
@@ -117,7 +117,7 @@ class QuantLut(
 
   when(io.lut_write_weight.fire){
     when(lutCache_weight_flag === false.B){
-      for (lane <- 0 until lutConfig.numEntries) {
+      for (lane <- 0 until lutConfig(1)._1) {
         for (entry <- 0 until 16) {
           lutCache_weight_0(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_weight_0(lane)(entry) := io.lut_write_weight.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -126,7 +126,7 @@ class QuantLut(
       lutCache_weight_flag := ~lutCache_weight_flag
       lutCache_weight_buffer_0_read_enable := true.B
     }.otherwise {
-      for (lane <- 0 until lutConfig.numEntries) {
+      for (lane <- 0 until lutConfig(1)._1) {
         for (entry <- 0 until 16) {
           lutCache_weight_1(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_weight_1(lane)(entry) := io.lut_write_weight.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -169,7 +169,7 @@ class QuantLut(
 
   when(io.lut_write_act_out.fire){
     when(lutCache_act_out_flag === false.B){
-      for (lane <- 0 until lutConfig.numEntries) {
+      for (lane <- 0 until lutConfig(2)._1) {
         for (entry <- 0 until 16) {
           lutCache_act_out_0(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_act_out_0(lane)(entry) := io.lut_write_act_out.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -178,7 +178,7 @@ class QuantLut(
       lutCache_act_out_flag := ~lutCache_act_out_flag
       lutCache_act_out_buffer_0_read_enable := true.B
     }.otherwise {
-      for (lane <- 0 until lutConfig.numEntries) {
+      for (lane <- 0 until lutConfig(2)._1) {
         for (entry <- 0 until 16) {
           lutCache_act_out_1(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
           //lutCache_act_out_1(lane)(entry) := io.lut_write_act_out.bits.data(0)((entry+1)*rdataWidth-1, entry*rdataWidth)
@@ -213,17 +213,18 @@ class QuantLut(
 
   io.lut_write_act_out.ready := !lutCache_act_out_buffer_0_read_enable || !lutCache_act_out_buffer_1_read_enable
 
-  val projectedIndices = RegInit(VecInit(Seq.fill(outputnumLanes)(0.U(raddrWidth.W))))
+  val projectedIndices = RegInit(VecInit(Seq.fill(lutConfig(2)._1)(0.U(raddrWidth.W))))
   val projectedDataValid = RegInit(false.B)
-
+  val counter_act_out = RegInit(0.U(log2Ceil(lutConfig(2)._1).W))
   //TODO: double check if this is the correct way to do nearest neighbor search, aligning with the algorithm implementation
   when((lutCache_act_out_buffer_0_read_enable || lutCache_act_out_buffer_1_read_enable) && io.quant_fp6.valid) {
-    for (i <- 0 until outputnumLanes) {
+    
+    for (i <- 0 until lutConfig(2)._1) {
       val inputFp6 = io.quant_fp6.bits(i)
       val distances = VecInit((0 until 16).map { j =>
-        val diff = Mux(inputFp6 > lutCache_act_out(i)(j), 
-                      inputFp6 - lutCache_act_out(i)(j), 
-                      lutCache_act_out(i)(j) - inputFp6)
+        val diff = Mux(inputFp6 > lutCache_act_out(counter_act_out)(j), 
+                      inputFp6 - lutCache_act_out(counter_act_out)(j), 
+                      lutCache_act_out(counter_act_out)(j) - inputFp6)
         diff
       })
       
@@ -237,8 +238,14 @@ class QuantLut(
       projectedIndices(i) := minIdx
     }
     projectedDataValid := true.B
+    when (counter_act_out === (outputnumLanes - 1).U){
+      counter_act_out := 0.U
+    }.otherwise{
+      counter_act_out := counter_act_out + 1.U
+    }
   }.otherwise {
     projectedDataValid := false.B
+    
   }
 
   io.projected_data.valid := projectedDataValid
@@ -252,7 +259,7 @@ class QuantLut(
     io.spad_projected_data(i).resp.ready   := io.spad_deprojected_data(i).resp.ready
 
     when(io.spad_projected_data(i).resp.valid) {
-      val deprojected_bits = Wire(Vec(32, UInt(6.W)))
+      val deprojected_bits = Wire(Vec(outputnumLanes, UInt(6.W)))
       for (k <- 0 until 32) {
       deprojected_bits(k) := 0.U
     }
@@ -261,7 +268,7 @@ class QuantLut(
         val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
         deprojected_bits(k) := lutCache_act_in(counter_act)(chunk_4bit)  
       }
-      when(counter_act === (lutConfig.numEntries -1).U){
+      when(counter_act === (lutConfig(0)._1 -1).U){
         counter_act := 0.U
       }.otherwise{
         counter_act := counter_act + 1.U
@@ -271,7 +278,7 @@ class QuantLut(
         val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
         deprojected_bits(k) := lutCache_weight(counter_w)(chunk_4bit)  
       }
-      when(counter_w === (lutConfig.numEntries -1).U){
+      when(counter_w === (lutConfig(1)._1 -1).U){
         counter_w := 0.U
       }.otherwise{
         counter_w := counter_w + 1.U
