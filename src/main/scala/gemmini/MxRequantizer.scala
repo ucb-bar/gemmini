@@ -59,9 +59,9 @@ class MxRequantizerIO(
   val requant_data_in_gpu = Flipped(Decoupled(new RequantizerInBundle(config.numGPUInputLanes, inputdataWidth)))
   val scaleMem_write = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
   val requant_data_out = Decoupled(new RequantizerOutBundle(outputnumLanes))
-  val lut0_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig)))
-  val lut1_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig)))
-  val lut2_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig)))
+  val lut0_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(0))))
+  val lut1_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(1))))
+  val lut2_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(2))))
   val spad_projected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
   val spad_deprojected_data = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
   val fp8_mode = Input(Bool())  // true for 64-lane mode, false for 16-lane mode

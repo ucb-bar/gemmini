@@ -37,12 +37,17 @@ case class GemminiRequantizerConfig(
 )
 
 case class GemminiLUTConfig(
-  numBits: Int = 96,
-  numEntries: Int = 16,
-  numTables: Int = 3,
+  numBits: Seq[Int] = Seq(96, 96, 96),
+  numEntries: Seq[Int] = Seq(16, 16, 32),
   rdataWidth: Int = 6,
   raddrWidth: Int = 4, 
-)
+) {
+  def apply(table: Int) = {
+    (numEntries(table), numBits(table))
+  }
+
+  def numTables = numBits.length
+}
 
 object RequantizerDataType extends ChiselEnum {
   val FP8, FP6, FP4 = Value
@@ -86,7 +91,7 @@ class RequantizerOutBundle(numLanes: Int, dataWidth: Int = 8) extends Bundle {
 
 class QuantLutWriteBundle(numEntries: Int, numBits: Int) extends Bundle {
   val data = Vec(numEntries, UInt(numBits.W))
-  def this(config: GemminiLUTConfig) = {
-    this(config.numEntries, config.numBits)
+  def this(config: (Int, Int)) = {
+    this(config._1, config._2)
   }
 }

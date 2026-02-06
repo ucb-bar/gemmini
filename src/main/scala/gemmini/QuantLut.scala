@@ -16,9 +16,9 @@ class QuantLutIO(
   sp_width_projected: Int,
   iterator_bitwidth: Int,
 ) extends Bundle {
-  val lut_write_weight =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig))) //input
-  val lut_write_act_in =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig))) //input
-  val lut_write_act_out =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig))) //input
+  val lut_write_weight =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(0)))) //input
+  val lut_write_act_in =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(1)))) //input
+  val lut_write_act_out =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(2)))) //input
   val quant_fp6 = Flipped(Valid(Vec(outputnumLanes, UInt(lutConfig.rdataWidth.W)))) //input
   val projected_data = Valid(Vec(outputnumLanes, UInt(lutConfig.raddrWidth.W))) //output
   val spad_projected_data   = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
