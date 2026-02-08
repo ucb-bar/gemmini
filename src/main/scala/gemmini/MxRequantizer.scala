@@ -304,12 +304,10 @@ class MxRequantizer[T <: Data: Arithmetic](
   when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
     io.requant_data_out.valid := true.B
     io.requant_data_out.bits.dataType := quant_dataType
-    io.requant_data_out.bits.address := io.requant_data_in.bits.address //todo: the address generated for only 256bits write
     io.requant_data_out.bits.data := Cat(quantLut.io.projected_data.bits.reverse)
   }.elsewhen(quantize_valid && ((total_bits_per_element === 4.U) || (total_bits_per_element === 8.U))){
     io.requant_data_out.valid := true.B
     io.requant_data_out.bits.dataType := quant_dataType
-    io.requant_data_out.bits.address := io.requant_data_in.bits.address 
     io.requant_data_out.bits.data := extracted_data
   }.otherwise {
     io.requant_data_out.bits.data := 0.U

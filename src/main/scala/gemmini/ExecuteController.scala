@@ -654,8 +654,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               }
             }
 
-            a_addr_stride := config_ex_rs1.a_stride // TODO this needs to be kept in sync with ROB.scala
-            // a_addr_stride := 1.U // TODO (nicolas) : FIX This Assignemt
+//            a_addr_stride := config_ex_rs1.a_stride // TODO this needs to be kept in sync with ROB.scala
+            a_addr_stride := 1.U // TODO (nicolas) : FIX This Assignemt
             c_addr_stride := config_ex_rs2.c_stride // TODO this needs to be kept in sync with ROB.scala
             config_initialized := true.B
           }.otherwise { // config_cmd_type === CONFIG_IM2COL
