@@ -280,7 +280,8 @@ class AccumulatorMem[T <: Data, U <: Data](
         //val scaleValues_0 = scale_mem.io.read_resp.bits.combined_scales.slice(0, 16)
         //printf(p"[AccumulatorMem] combined_scales=${scale_mem.io.read_resp.bits.combined_scales}\n")
         for (i <- 0 until 16) {
-          scaled_data(i)(0) := applyE9M0Scale(pipelined_writes(0).bits.data(i)(0), scale_mem.io.read_resp.bits.combined_scales(i),  8, 7)
+//          scaled_data(i)(0) := applyE9M0Scale(pipelined_writes(0).bits.data(i)(0), scale_mem.io.read_resp.bits.combined_scales(i),  8, 7)
+            scaled_data(i)(0) := pipelined_writes(0).bits.data(i)(0) // TODO(nicolas): remove this, this is only temporary for debugging
           //printf(p"[AccumulatorMem] combined_scales=${scale_mem.io.read_resp.bits.combined_scales(i)}, before scale=${pipelined_writes(0).bits.data(i)(0)}, after scale=${scaled_data(i)(0)}\n")
         } 
         //waiting_for_scale := false.B
@@ -305,20 +306,18 @@ class AccumulatorMem[T <: Data, U <: Data](
     // }
  }
   for (i <- 1 until acc_latency) {
-    when ((i==1).B){
-      if(use_mx_scaling){
-        when(dataType === 0.U){
-          pipelined_writes(i) := pipelined_writes(i-1)
-          pipelined_writes(i).bits.data := scaled_data}
-        }
-      else {
-        pipelined_writes(i) := pipelined_writes(i-1)
-        }
-    }.otherwise{
-      pipelined_writes(i) := pipelined_writes(i-1)
+    // always shift
+    pipelined_writes(i) := pipelined_writes(i-1)
+
+    // optional override
+    if (use_mx_scaling) {
+      when (i.U === 1.U && dataType === 0.U) {
+        pipelined_writes(i).bits.data := scaled_data
+      }
     }
   }
-  
+
+
   val rdata_for_adder = Wire(t)
   rdata_for_adder := DontCare
   val rdata_for_read_resp = Wire(t)

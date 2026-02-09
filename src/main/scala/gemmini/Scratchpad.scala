@@ -696,12 +696,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     val acc_waiting_to_be_scaled = write_scale_q.io.deq.valid &&
       !write_scale_q.io.deq.bits.laddr.is_garbage() &&
-      write_scale_q.io.deq.bits.laddr.is_acc_addr &&
-      write_issue_q.io.enq.ready
+      write_scale_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.enq.ready
 
-    acc_norm_unit_out.ready := acc_scale_unit.io.in.ready && acc_waiting_to_be_scaled
-    acc_scale_unit.io.in.valid := acc_norm_unit_out.valid && acc_waiting_to_be_scaled
-    acc_scale_unit.io.in.bits  := acc_norm_unit_out.bits
 
     acc_scale_unit.io.out.ready := io.mx_req_io.mx_data_in.ready
     io.mx_req_io.mx_data_in.valid := acc_scale_unit.io.out.valid
@@ -711,7 +707,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       write_issue_q.io.enq <> write_scale_q.io.deq
     }
 
-    acc_scale_unit.io.out.ready := false.B
+    acc_norm_unit_out.ready := acc_scale_unit.io.in.ready && acc_waiting_to_be_scaled
+    acc_scale_unit.io.in.valid := acc_norm_unit_out.valid && acc_waiting_to_be_scaled
+    acc_scale_unit.io.in.bits  := acc_norm_unit_out.bits
 
     val dma_resp_ready =
       (writer.module.io.req.ready && spad_writer.map(_.module.io.req.ready).getOrElse(true.B)) &&
