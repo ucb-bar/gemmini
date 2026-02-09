@@ -301,6 +301,7 @@ class MxRequantizer[T <: Data: Arithmetic](
       }
     }
   }
+  io.requant_data_out.valid := RegNext(io.requant_data_in.valid) // TODO (nicolas): check that this is correct
   when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
     io.requant_data_out.valid := true.B
     io.requant_data_out.bits.dataType := quant_dataType

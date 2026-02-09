@@ -699,7 +699,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       write_scale_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.enq.ready
 
 
-    acc_scale_unit.io.out.ready := io.mx_req_io.mx_data_in.ready
     io.mx_req_io.mx_data_in.valid := acc_scale_unit.io.out.valid
     io.mx_req_io.mx_data_in.bits  := acc_scale_unit.io.out.bits
 
@@ -716,6 +715,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         write_issue_q.io.deq.bits.laddr.is_acc_addr &&
         !write_issue_q.io.deq.bits.laddr.is_garbage()
 
+    val toMx = acc_scale_unit.io.out.bits.fromDMA
+
     when (io.mx_req_io.mx_data_out.bits.fromDMA && dma_resp_ready) {
       // Send the acc-scale result into the DMA
       io.mx_req_io.mx_data_out.ready := true.B
@@ -723,15 +724,17 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       writeData.bits  := io.mx_req_io.mx_data_out.bits.data.asUInt
       fullAccWriteData := io.mx_req_io.mx_data_out.bits.full_data.asUInt
     }
+
+    val nonDmaReady = WireDefault(false.B)
     for (i <- 0 until acc_banks) {
       // Send the acc-sccale result to the ExController
-      io.acc.read_resp(i).valid := false.B
+      io.acc.read_resp(i).valid := (!toMx) && acc_scale_unit.io.out.valid && (acc_scale_unit.io.out.bits.acc_bank_id === i.U)
       io.acc.read_resp(i).bits  := acc_scale_unit.io.out.bits
-      when (!acc_scale_unit.io.out.bits.fromDMA && acc_scale_unit.io.out.bits.acc_bank_id === i.U) {
-        acc_scale_unit.io.out.ready := io.acc.read_resp(i).ready
-        io.acc.read_resp(i).valid := acc_scale_unit.io.out.valid
+      when (acc_scale_unit.io.out.bits.acc_bank_id === i.U) {
+        nonDmaReady := io.acc.read_resp(i).ready
       }
     }
+    acc_scale_unit.io.out.ready := Mux(toMx, io.mx_req_io.mx_data_in.ready, nonDmaReady) // either DMA or mxReq
 
     val acc_adders = Module(new AccPipeShared(acc_latency-1, acc_row_t, acc_banks))
     //val fp8_mode = io.srams.read(0).req.bits.input_mx_format === 2.U
