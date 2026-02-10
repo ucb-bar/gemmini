@@ -47,12 +47,15 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val busy = Output(Bool())
 
     val output_MxFormat = Output(UInt(2.W))
+    val activation_mx_format_out = Output(UInt(2.W))
+    val weight_mx_format_out = Output(UInt(2.W))
     val enable_MXQuant = Output(Bool())
 
     val counter = new CounterEventIO()
-    val b_fire = Output(Bool())
-    val a_fire = Output(Bool())
+    val a_fire_counter = Output(UInt(log2Up(block_size).W))
+    val b_fire_counter = Output(UInt(log2Up(block_size).W))
     val scale_mem_mvout_base_addr_act = Output(UInt(scale_mem.get.ScaleMemWriteAddrWidth.W))
+    val quant_lut_update_granularity = Output(UInt(16.W))
     val scaleMemCntl = Output(new ScalingFactorCntl(meshRows*tileRows))
   })
 
@@ -73,8 +76,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val mesh_tag = new Bundle with TagQueueTag {
     val rob_id = UDValid(UInt(log2Up(reservation_station_entries).W))
     val addr = local_addr_t.cloneType
-    val rows = UInt(log2Up(block_size + 1).W)
-    val cols = UInt(log2Up(block_size + 1).W)
+    val rows = UInt(log2Up(2*block_size + 1).W)
+    val cols = UInt(log2Up(2*block_size + 1).W)
 
     override def make_this_garbage(dummy: Int = 0): Unit = {
       rob_id.valid := false.B
@@ -106,6 +109,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val weight_mx_format = RegInit(0.U(2.W))
   val output_mx_format = RegInit(0.U(2.W))
   io.output_MxFormat := output_mx_format
+  io.activation_mx_format_out := activation_mx_format
+  io.weight_mx_format_out := weight_mx_format
   
   val uselut = RegInit(false.B)
   val enable_mxquant = RegInit(false.B)
@@ -125,17 +130,22 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val scale_mem_mvin_base_addr_act = RegInit(0.U(32.W))
   val scale_mem_mvin_base_addr_w = RegInit(0.U(32.W))
   val scale_mem_mvout_base_addr_act = RegInit(0.U(scale_mem.get.ScaleMemWriteAddrWidth.W))
-
+  val quant_lut_update_granularity = RegInit(0.U(16.W))
+  
   when(functs(0) === CONFIG_SCALE_MEM) {
     val direction = rs2s(0)(63) 
     when(direction === 1.U) { // mvin
       scale_mem_mvin_base_addr_act := rs1s(0)
       scale_mem_mvin_base_addr_w := rs1s(0) + (scale_mem.get.sizeInBytes >> 1).U
     }.elsewhen(direction === 0.U) { // mvout
-      scale_mem_mvout_base_addr_act := rs1s(0)
+      scale_mem_mvout_base_addr_act := rs1s(0)(32,0)
+      quant_lut_update_granularity := rs1s(0)(48,33)
     }
   } 
   io.scale_mem_mvout_base_addr_act := scale_mem_mvout_base_addr_act
+  io.quant_lut_update_granularity := quant_lut_update_granularity
+
+
   val in_prop = functs(0) === COMPUTE_AND_FLIP_CMD
 
   val in_prop_flush = Reg(Bool())
@@ -234,7 +244,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Instantiate the actual mesh
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecisionList, meshAccPrecisionList))
-  
+ 
+  dontTouch(mesh.io)
   mesh.io.activation_mx_format := activation_mx_format  
   mesh.io.weight_mx_format := weight_mx_format
   
@@ -531,8 +542,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
 
 
-  io.a_fire := a_fire
-  io.b_fire := b_fire
+  io.a_fire_counter := a_fire_counter
+  io.b_fire_counter := d_fire_counter
 
   // Accumulator read
   for (i <- 0 until acc_banks) {
@@ -674,6 +685,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
           cmd.pop := 1.U
         }
+        
+        .elsewhen(functs(0) === CONFIG_SCALE_MEM && !matmul_in_progress &&
+                    !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) {
+            // Registers are already updated at lines 135-144
+            // Just signal completion and pop the command
+            io.completed := cmd.bits(0).rob_id
+            cmd.pop := 1.U
+          }
 
         // Preload
         .elsewhen(DoPreloads(0) && cmd.valid(1) && (raw_hazards_are_impossible.B || !raw_hazard_pre)) {
@@ -817,18 +836,18 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val b_fire = Bool()
     val d_fire = Bool()
 
-    val a_unpadded_cols = UInt(log2Up(block_size + 1).W)
-    val b_unpadded_cols = UInt(log2Up(block_size + 1).W)
-    val d_unpadded_cols = UInt(log2Up(block_size + 1).W)
+    val a_unpadded_cols = UInt(log2Up(2*block_size + 1).W)
+    val b_unpadded_cols = UInt(log2Up(2*block_size + 1).W)
+    val d_unpadded_cols = UInt(log2Up(2*block_size + 1).W)
 
     val c_addr = local_addr_t.cloneType
-    val c_rows = UInt(log2Up(block_size + 1).W)
-    val c_cols = UInt(log2Up(block_size + 1).W)
+    val c_rows = UInt(log2Up(2*block_size + 1).W)
+    val c_cols = UInt(log2Up(2*block_size + 1).W)
 
     val a_transpose = Bool()
     val bd_transpose = Bool()
 
-    val total_rows = UInt(log2Up(block_size + 1).W)
+    val total_rows = UInt(log2Up(2*block_size + 1).W)
 
     val rob_id = UDValid(UInt(log2Up(reservation_station_entries).W))
 

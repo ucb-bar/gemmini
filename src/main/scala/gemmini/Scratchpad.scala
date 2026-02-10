@@ -307,6 +307,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         fullDataType = acc_row_t,
         rDataType = spad_row_t,
       )
+      val output_mx_format = Input(UInt(2.W))
     })
 
     val write_dispatch_q = Queue(io.dma.write.req)
@@ -673,7 +674,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     io.mx_req_io.mx_data_out.ready := false.B
     io.mx_req_io.mx_data_in.valid := false.B
     io.mx_req_io.mx_data_in.bits := DontCare
-    io.mx_req_io.mx_mode := 2.U
+    io.mx_req_io.mx_mode := io.output_mx_format
 
     acc_norm_unit_in.valid := false.B
     acc_norm_unit_in.bits.len := write_norm_q.io.deq.bits.len

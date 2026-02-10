@@ -67,11 +67,13 @@ object GemminiISA {
   val GARBAGE_ADDR      = "hffffffff".U(32.W)
   
   val CONFIG_SCALE_MEM_RS1_ADDR_WIDTH = 33
-  val CONFIG_SCALE_MEM_SPACER_WIDTH = 64 - 1 - CONFIG_SCALE_MEM_RS1_ADDR_WIDTH 
+  val CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH = 16
+  val CONFIG_SCALE_MEM_SPACER_WIDTH = 64 - 1 - CONFIG_SCALE_MEM_RS1_ADDR_WIDTH - CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH
 
-  class ConfigScaleMemRs1 extends Bundle {
+  class ConfigMxQuantRs1 extends Bundle {
     val _spacer0 = UInt(CONFIG_SCALE_MEM_SPACER_WIDTH.W)
     val mem_direction = UInt(1.W) // 0 for mvin, 1 for mvout
+    val quant_lut_update_granularity = UInt(CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH.W)
     val mem_address = UInt(CONFIG_SCALE_MEM_RS1_ADDR_WIDTH.W)
   }
 

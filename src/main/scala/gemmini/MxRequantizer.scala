@@ -62,12 +62,13 @@ class MxRequantizerIO(
   val lut0_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(0))))
   val lut1_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(1))))
   val lut2_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(2))))
-  val spad_projected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
-  val spad_deprojected_data = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width))
+  val spad_projected_data   = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
+  val spad_deprojected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width)))
   val fp8_mode = Input(Bool())  // true for 64-lane mode, false for 16-lane mode
-  val a_fire = Input(Bool())  // from execute controller
-  val b_fire = Input(Bool())  // from execute controller
+  val a_fire_counter = Input(UInt(log2Up(16).W))
+  val b_fire_counter = Input(UInt(log2Up(16).W))
   val scale_mem_mvout_base_addr_act = Input(UInt(scaleMem_addr_width.W)) // from execute controller
+  val quant_lut_update_granularity = Input(UInt(lutConfig.lutUpdateRegularityWidth.W))
   val counter_i = Input(UInt(iterator_bitwidth.W)) // from  controller
   val counter_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val counter_k = Input(UInt(iterator_bitwidth.W)) // from  controller
@@ -123,8 +124,8 @@ class MxRequantizer[T <: Data: Arithmetic](
   io.requant_data_out.valid := false.B
   io.requant_data_out.bits := DontCare
 
-  io.spad_deprojected_data <> DontCare
-  io.spad_projected_data <> DontCare // TODO (nicolas): FIX This assignment
+  //io.spad_deprojected_data <> DontCare
+  //io.spad_projected_data <> DontCare // TODO (nicolas): FIX This assignment
   
 
   def abs(x: UInt): UInt = {  
@@ -153,7 +154,8 @@ class MxRequantizer[T <: Data: Arithmetic](
   val requant_data_in_gpu_valid_d = RegNext(io.requant_data_in_gpu.fire)
   val should_compute = Wire(Bool())
   val quantize_valid = RegNext(should_compute)
-
+  dontTouch(requant_data_in_valid_d)
+  dontTouch( should_compute)
   io.requant_data_in.ready := true.B
   should_compute := false.B
   io.requant_data_in_gpu.ready := true.B
@@ -177,9 +179,9 @@ class MxRequantizer[T <: Data: Arithmetic](
   val data_buffer = WireInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(io.inputdataWidth.W))))
   data_buffer := input_32_buffer
 
-  // when(requant_data_in_valid_d || (requant_data_in_gpu_valid_d && (data_buffer_counter === 0.U))) {
-  //     should_compute := true.B
-  // }
+  when(requant_data_in_valid_d || (requant_data_in_gpu_valid_d && (data_buffer_counter === 0.U))) {
+      should_compute := true.B
+  }
   
   val block_max = Wire(UInt(io.inputdataWidth.W))
   block_max := 0.U 
@@ -256,8 +258,9 @@ class MxRequantizer[T <: Data: Arithmetic](
   
   // quantLut.io.spad_projected_data <> io.spad_projected_data
   // quantLut.io.spad_deprojected_data <> io.spad_deprojected_data
-  quantLut.io.spad_projected_data <> DontCare
-  quantLut.io.spad_deprojected_data <> DontCare
+  quantLut.io.spad_projected_data <> io.spad_projected_data
+  quantLut.io.spad_deprojected_data <> io.spad_deprojected_data
+  quantLut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
   quantLut.io.a_fire := io.a_fire
   quantLut.io.b_fire := io.b_fire
   quantLut.io.counter_i := io.counter_i
@@ -301,7 +304,7 @@ class MxRequantizer[T <: Data: Arithmetic](
       }
     }
   }
-  io.requant_data_out.valid := RegNext(io.requant_data_in.valid) // TODO (nicolas): check that this is correct
+  io.requant_data_out.valid := false.B // TODO (nicolas): check that this is correct
   when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
     io.requant_data_out.valid := true.B
     io.requant_data_out.bits.dataType := quant_dataType

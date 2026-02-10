@@ -180,11 +180,16 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val b_shifter_in = WireInit(Mux(b_is_from_transposer, transposer_out.asTypeOf(B_TYPE), b_buf))
   val d_shifter_in = WireInit(Mux(d_is_from_transposer,
     VecInit(transposer_out.flatten.reverse.grouped(tileRows).map(VecInit(_)).toSeq).asTypeOf(D_TYPE), d_buf))
+  
   mesh.io.weight_mx_format := io.weight_mx_format
   mesh.io.activation_mx_format := io.activation_mx_format
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_b := shifted(b_shifter_in, upBanks)
   mesh.io.in_d := shifted(d_shifter_in, upBanks)
+  
+  dontTouch(mesh.io.in_a)
+  dontTouch(mesh.io.in_b)
+  dontTouch(mesh.io.in_d)
 
   mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_.dataflow := ShiftRegister(req.bits.pe_control.dataflow, i * (tile_latency + 1)))

@@ -41,6 +41,7 @@ case class GemminiLUTConfig(
   numEntries: Seq[Int] = Seq(16, 16, 32),
   rdataWidth: Int = 6,
   raddrWidth: Int = 4, 
+  lutUpdateRegularityWidth: Int = 16,
 ) {
   def apply(table: Int) = {
     (numEntries(table), numBits(table))
@@ -63,7 +64,7 @@ class ScalingFactorWriteReq(addrWidth: Int, dataWidth: Int) extends Bundle {
   val data = UInt(dataWidth.W)
   def this(config: GemminiScalingFactorMemConfig) = {
     // writes two interleaved banks at once
-    this(config.addrBits, 8*config.gpuInputWidthBytes*8)
+    this(config.addrBits, config.ScaleMemWriteDataWidth)
   }
 }
 

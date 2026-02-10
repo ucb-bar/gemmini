@@ -202,6 +202,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     req.io.scaleMem_write.ready := false.B
     req.io.fp8_mode := false.B
     req.io.scale_mem_mvout_base_addr_act := ex_controller.io.scale_mem_mvout_base_addr_act
+    req.io.quant_lut_update_granularity := ex_controller.io.quant_lut_update_granularity
   }
 
 
@@ -241,13 +242,15 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   lut_deprojected_data := 0.U.asTypeOf(lut_deprojected_data)
 
   val read_projected = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
+  dontTouch(read_projected)
   val mx_sel = RegInit(VecInit(Seq.fill(sp_banks)(false.B)))
   val sram_read_buffer = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
+  dontTouch(sram_read_buffer)
 
   if (mx_requantizer.isDefined) {
     for (bank <- 0 until sp_banks) {
       when(read_projected(bank).resp.fire) {
-        mx_sel(bank) := (ex_controller.io.output_MxFormat === 1.U)
+        mx_sel(bank) := (ex_controller.io.weight_mx_format_out === 1.U)
       }
     }
   }
@@ -266,7 +269,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // read assignments
   for (b <- 0 until sp_banks) {
-    mx_requantizer.get.io.spad_projected_data(b).resp <> DontCare
+    
+       // req to srams 
+    // read_projected(b).req <> ex_controller.io.srams.read(b).req
+    read_projected(b).req <> sram_read_buffer(b).req
+    spad.module.io.srams.read(b).req <> read_projected(b).req
 
     // resp from srams fp4/8
     read_projected(b).resp.bits.fromDMA := spad.module.io.srams.read(b).resp.bits.fromDMA
@@ -279,26 +286,27 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val spad_data_vec = proj.bits.data.asTypeOf(Vec(16, UInt(8.W)))
     read_projected(b).resp.bits.data := VecInit(spad_data_vec.map(_.pad(12))).asUInt
 
-    // req to srams 
-    // read_projected(b).req <> ex_controller.io.srams.read(b).req
-    read_projected(b).req <> sram_read_buffer(b).req
-    spad.module.io.srams.read(b).req <> read_projected(b).req
-
     // resp from srams fp6 
-    mx_requantizer.get.io.spad_deprojected_data(b).resp <> DontCare // TODO (nicolas): FIX This assignment
-    mx_requantizer.get.io.spad_deprojected_data(b).req <> DontCare
-    mx_requantizer.get.io.spad_projected_data(b).req <> DontCare
-
+    mx_requantizer.get.io.spad_deprojected_data(b).req <> DontCare                                                                 
+    mx_requantizer.get.io.spad_projected_data(b).req <> DontCare     
+    mx_requantizer.get.io.spad_deprojected_data(b).resp.ready := false.B
     // resp to ex
     val useMxB = mx_requantizer.isDefined.B && !mx_sel(b)
 
     when (useMxB) {
+      // FP8 mode: bypass requantizer
       sram_read_buffer(b).resp <> read_projected(b).resp
+      mx_requantizer.get.io.spad_projected_data(b).resp.valid := false.B
+      mx_requantizer.get.io.spad_projected_data(b).resp.bits := DontCare
     }.otherwise {
-      read_projected(b).resp.ready := DontCare
-      sram_read_buffer(b).resp <> mx_requantizer.get.io.spad_projected_data(b).resp
-    }
+      mx_requantizer.get.io.spad_projected_data(b).resp.valid := read_projected(b).resp.valid
+      mx_requantizer.get.io.spad_projected_data(b).resp.bits := read_projected(b).resp.bits
+      read_projected(b).resp.ready := mx_requantizer.get.io.spad_projected_data(b).resp.ready
 
+      sram_read_buffer(b).resp.valid := mx_requantizer.get.io.spad_deprojected_data(b).resp.valid
+      sram_read_buffer(b).resp.bits := mx_requantizer.get.io.spad_deprojected_data(b).resp.bits
+      mx_requantizer.get.io.spad_deprojected_data(b).resp.ready := sram_read_buffer(b).resp.ready
+    }
   }
 
   // Connect accumulator memory to mxrequantizer
@@ -321,7 +329,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType(spad.module.io.mx_req_io.mx_mode)
   mx_requantizer.get.io.requant_data_in.valid := spad.module.io.mx_req_io.mx_data_in.valid
   spad.module.io.mx_req_io.mx_data_in.ready := mx_requantizer.get.io.requant_data_in.ready
-  mx_requantizer.get.io.fp8_mode := spad.module.io.mx_req_io.mx_mode === 2.U
+  mx_requantizer.get.io.fp8_mode := spad.module.io.mx_req_io.mx_mode === 0.U
 
   // mxreq to acc
   spad.module.io.mx_req_io.mx_data_out.bits.data := mx_io.get.requant_out.bits.data(127, 0).asTypeOf(spad.module.io.mx_req_io.mx_data_out.bits.data) // TODO (nicolas): fix this properly
@@ -523,7 +531,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val max_lds = reservation_station_entries_ld
   val max_exs = reservation_station_entries_ex
   val max_sts = reservation_station_entries_st
-
   val (conv_cmd, loop_conv_unroller_busy) = if (has_loop_conv) withClock (gated_clock) { LoopConv(raw_cmd, reservation_station.io.conv_ld_completed, reservation_station.io.conv_st_completed, reservation_station.io.conv_ex_completed,
     meshRows*tileRows, coreMaxAddrBits, reservation_station_entries, max_lds, max_exs, max_sts, sp_banks * sp_bank_entries, acc_banks * acc_bank_entries,
     inputTypeProjected.getWidth, accType.getWidth, dma_maxbytes,
@@ -543,12 +550,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
   
 
-
+  loop_matmul.io.activation_mx_format := ex_controller.io.activation_mx_format_out
+  loop_matmul.io.weight_mx_format := ex_controller.io.weight_mx_format_out
   mx_requantizer.get.io.counter_i := loop_matmul.io.counter_i
   mx_requantizer.get.io.counter_j := loop_matmul.io.counter_j  
   mx_requantizer.get.io.counter_k := loop_matmul.io.counter_k
-  mx_requantizer.get.io.a_fire := ex_controller.io.a_fire
-  mx_requantizer.get.io.b_fire := ex_controller.io.b_fire
+  mx_requantizer.get.io.a_fire_counter := ex_controller.io.a_fire_counter
+  mx_requantizer.get.io.a_fire_counter := ex_controller.io.a_fire_counter
   spad.module.io.scaleMemCntl.foreach { spadCnlt =>
   spadCnlt <> ex_controller.io.scaleMemCntl
   }
@@ -558,6 +566,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   spad.module.io.i := loop_matmul.io.i
   spad.module.io.j := loop_matmul.io.j
   spad.module.io.k := loop_matmul.io.k
+  spad.module.io.output_mx_format := ex_controller.io.output_MxFormat
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
   counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)

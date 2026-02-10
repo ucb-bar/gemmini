@@ -20,13 +20,14 @@ class QuantLutIO(
   val lut_write_act_in =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(1)))) //input
   val lut_write_act_out =  Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(2)))) //input
   val quant_fp6 = Flipped(Valid(Vec(outputnumLanes, UInt(lutConfig.rdataWidth.W)))) //input
-  val projected_data = Valid(Vec(outputnumLanes, UInt(lutConfig.raddrWidth.W))) //output
+  val projected_data = Valid(Vec(outputnumLanes, UInt(lutConfig.raddrWidth.W))) 
   val spad_projected_data   = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
   val spad_deprojected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width)))
   val counter_j = Input(UInt(iterator_bitwidth.W))
   val counter_i = Input(UInt(iterator_bitwidth.W))
-  val a_fire = Input(Bool())
-  val b_fire = Input(Bool())
+  val a_fire_counter = Input(UInt(log2Up(16).W))
+  val b_fire_counter = Input(UInt(log2Up(16).W))
+  val quant_lut_update_granularity = Input(UInt(lutConfig.lutUpdateRegularityWidth.W))
 }
 
 class QuantLut(
@@ -58,9 +59,10 @@ class QuantLut(
   val lutCache_act_in_buffer_1_read_enable = RegInit(false.B)
   val lutCache_act_in_buffer_select = RegInit(false.B)
   val counter_i_reg = RegNext(io.counter_i)
-  val counter_w = RegInit(0.U(5.W))
-  val counter_act = RegInit(0.U(5.W))
-
+  // val counter_w = RegInit(0.U(5.W))
+  // val counter_act = RegInit(0.U(5.W))
+  // dontTouch(counter_act)
+  // dontTouch(counter_w)
   when(io.lut_write_act_in.fire){
     when(lutCache_act_in_flag === false.B){
       for (lane <- 0 until lutConfig(0)._1) {
@@ -83,10 +85,12 @@ class QuantLut(
     }
   }
   
-  
+  val quant_lut_update_granularity = io.quant_lut_update_granularity
+  val gran_div_32 = quant_lut_update_granularity >> 5.U
   val lutCache_update_enable_act_in = WireInit(0.U(1.W))
+  val counter_mask = (1.U << Log2(gran_div_32)) - 1.U
   // FP6 only: tile = 32 elements, period = regularity/32 tiles
-  lutCache_update_enable_act_in := (io.counter_i(log2Ceil(lut_update_regularity_act_in/32)-1, 0) === 0.U) && (counter_i_reg(log2Ceil(lut_update_regularity_act_in/32)-1, 0) === (lut_update_regularity_act_in/32-1).U)
+  lutCache_update_enable_act_in := ((io.counter_i& counter_mask) === 0.U) && ((counter_i_reg& counter_mask) === (gran_div_32 -1.U))
 
   when(lutCache_update_enable_act_in === 1.U){ //32 is the maxblock under fp6
     when(lutCache_act_in_buffer_0_read_enable && (lutCache_act_in_buffer_select === false.B)){
@@ -139,7 +143,7 @@ class QuantLut(
   
   val lutCache_update_enable_w_in = WireInit(0.U(1.W))
   // FP6 only: tile = 32 elements, period = regularity_w/32 tiles
-  lutCache_update_enable_w_in := (io.counter_j(log2Ceil(lut_update_regularity_w/32)-1, 0) === 0.U) && (counter_j_reg(log2Ceil(lut_update_regularity_w/32)-1, 0) === (lut_update_regularity_w/32-1).U)
+  lutCache_update_enable_w_in := ((io.counter_j& counter_mask) === 0.U) && ((counter_j_reg& counter_mask) === (gran_div_32 -1.U))
 
   when(lutCache_update_enable_w_in === 1.U){
     when(lutCache_weight_buffer_0_read_enable && (lutCache_weight_buffer_select === false.B)){
@@ -191,7 +195,7 @@ class QuantLut(
   
   val lutCache_update_enable_act_out = WireInit(0.U(1.W))
   // FP6 only: tile = 32 elements, period = regularity_act_out/32 tiles
-  lutCache_update_enable_act_out := (io.counter_i(log2Ceil(lut_update_regularity_act_out/32)-1, 0) === 0.U) && (counter_i_reg(log2Ceil(lut_update_regularity_act_out/32)-1, 0) === (lut_update_regularity_act_out/32-1).U)
+  lutCache_update_enable_act_out := ((io.counter_i& counter_mask) === 0.U) && ((counter_i_reg& counter_mask) === (gran_div_32 -1.U))
 
   when(lutCache_update_enable_act_out === 1.U){
     when(lutCache_act_out_buffer_0_read_enable && (lutCache_act_out_buffer_select === false.B)){
@@ -245,19 +249,24 @@ class QuantLut(
     }
   }.otherwise {
     projectedDataValid := false.B
-    
   }
 
   io.projected_data.valid := projectedDataValid
   io.projected_data.bits := projectedIndices
-
+  
+  
   for (i <- 0 until sp_banks) {
-    io.spad_deprojected_data(i).req <> io.spad_projected_data(i).req
-
+    // Initialize unused spad_projected_data outputs (QuantLut doesn't send requests)
+    io.spad_projected_data(i).req.valid := false.B
+    io.spad_projected_data(i).req.bits := DontCare
+    io.spad_projected_data(i).resp.ready := true.B  
+    io.spad_deprojected_data(i).req.ready := false.B
     io.spad_deprojected_data(i).resp.valid := false.B
-    io.spad_deprojected_data(i).resp.bits  := 0.U.asTypeOf(new ScratchpadReadResp(sp_width))
-    io.spad_projected_data(i).resp.ready   := io.spad_deprojected_data(i).resp.ready
-
+    io.spad_deprojected_data(i).resp.bits.data := 0.U
+    io.spad_deprojected_data(i).resp.bits.fromDMA := false.B
+    io.spad_deprojected_data(i).resp.bits.weight_mx_format := 1.U                                  
+    io.spad_deprojected_data(i).resp.bits.input_mx_format := 1.U  
+  
     when(io.spad_projected_data(i).resp.valid) {
       val deprojected_bits = Wire(Vec(outputnumLanes, UInt(6.W)))
       for (k <- 0 until 32) {
@@ -266,28 +275,18 @@ class QuantLut(
     when(io.a_fire && (lutCache_act_in_buffer_0_read_enable || lutCache_act_in_buffer_1_read_enable)) {
       for (k <- 0 until 32) {
         val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-        deprojected_bits(k) := lutCache_act_in(counter_act)(chunk_4bit)  
+        deprojected_bits(k) := lutCache_act_in(a_fire_counter)(chunk_4bit)  
       }
-      when(counter_act === (lutConfig(0)._1 -1).U){
-        counter_act := 0.U
-      }.otherwise{
-        counter_act := counter_act + 1.U
-      }
-    }.elsewhen(io.b_fire && (lutCache_weight_buffer_0_read_enable || lutCache_weight_buffer_1_read_enable)) {
+    }
+    when (io.b_fire && (lutCache_weight_buffer_0_read_enable || lutCache_weight_buffer_1_read_enable)) {
       for (k <- 0 until 32) {
         val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-        deprojected_bits(k) := lutCache_weight(counter_w)(chunk_4bit)  
-      }
-      when(counter_w === (lutConfig(1)._1 -1).U){
-        counter_w := 0.U
-      }.otherwise{
-        counter_w := counter_w + 1.U
+        deprojected_bits(k) := lutCache_weight(b_fire_counter)(chunk_4bit)  
       }
     }
       
     io.spad_deprojected_data(i).resp.bits.data := deprojected_bits.asUInt
     io.spad_deprojected_data(i).resp.valid := true.B
-      
     io.spad_deprojected_data(i).resp.bits.fromDMA := io.spad_projected_data(i).resp.bits.fromDMA
     io.spad_deprojected_data(i).resp.bits.weight_mx_format := io.spad_projected_data(i).resp.bits.weight_mx_format
     io.spad_deprojected_data(i).resp.bits.input_mx_format := io.spad_projected_data(i).resp.bits.input_mx_format
