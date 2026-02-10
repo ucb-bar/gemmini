@@ -556,7 +556,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   mx_requantizer.get.io.counter_j := loop_matmul.io.counter_j  
   mx_requantizer.get.io.counter_k := loop_matmul.io.counter_k
   mx_requantizer.get.io.a_fire_counter := ex_controller.io.a_fire_counter
-  mx_requantizer.get.io.a_fire_counter := ex_controller.io.a_fire_counter
+  mx_requantizer.get.io.b_fire_counter := ex_controller.io.b_fire_counter
   spad.module.io.scaleMemCntl.foreach { spadCnlt =>
   spadCnlt <> ex_controller.io.scaleMemCntl
   }

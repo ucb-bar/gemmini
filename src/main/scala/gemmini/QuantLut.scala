@@ -272,16 +272,16 @@ class QuantLut(
       for (k <- 0 until 32) {
       deprojected_bits(k) := 0.U
     }
-    when(io.a_fire && (lutCache_act_in_buffer_0_read_enable || lutCache_act_in_buffer_1_read_enable)) {
+    when((lutCache_act_in_buffer_0_read_enable || lutCache_act_in_buffer_1_read_enable)) {
       for (k <- 0 until 32) {
         val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-        deprojected_bits(k) := lutCache_act_in(a_fire_counter)(chunk_4bit)  
+        deprojected_bits(k) := lutCache_act_in(io.a_fire_counter(3, 0))(chunk_4bit)  
       }
     }
-    when (io.b_fire && (lutCache_weight_buffer_0_read_enable || lutCache_weight_buffer_1_read_enable)) {
+    when ((lutCache_weight_buffer_0_read_enable || lutCache_weight_buffer_1_read_enable)) {
       for (k <- 0 until 32) {
         val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-        deprojected_bits(k) := lutCache_weight(b_fire_counter)(chunk_4bit)  
+        deprojected_bits(k) := lutCache_weight(io.b_fire_counter(3, 0))(chunk_4bit)  
       }
     }
       

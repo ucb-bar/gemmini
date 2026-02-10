@@ -261,8 +261,8 @@ class MxRequantizer[T <: Data: Arithmetic](
   quantLut.io.spad_projected_data <> io.spad_projected_data
   quantLut.io.spad_deprojected_data <> io.spad_deprojected_data
   quantLut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
-  quantLut.io.a_fire := io.a_fire
-  quantLut.io.b_fire := io.b_fire
+  quantLut.io.a_fire_counter := io.a_fire_counter
+  quantLut.io.b_fire_counter := io.b_fire_counter
   quantLut.io.counter_i := io.counter_i
   quantLut.io.counter_j := io.counter_j
   // quantLut.io.lut_write.valid := false.B
