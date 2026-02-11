@@ -218,10 +218,6 @@ class AccumulatorMem[T <: Data, U <: Data](
     require (acc_latency >= 2)
     val dataType = io.dataType
     val scaled_data = WireInit(0.U.asTypeOf(t)) //fee
-    val outerSize = t.length
-    val innerSize = t(0).length
-    val scales_w = WireInit(VecInit(Seq.fill(outerSize)(VecInit(Seq.fill(innerSize)(0.U(8.W))))))
-    val scales_r = RegInit(VecInit(Seq.fill(outerSize)(VecInit(Seq.fill(innerSize)(0.U(8.W))))))
     val scalecounter = RegInit(0.U(1.W))
     val pipelined_writes = Reg(Vec(acc_latency, Valid(new AccumulatorWriteReq(n, t))))
     val oldest_pipelined_write = Wire(Valid(new AccumulatorWriteReq(n, t)))
@@ -275,36 +271,29 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
    
     when(scale_mem.io.read_resp.valid) {
-       
       when(dataType === 0.U) {
-        //val scaleValues_0 = scale_mem.io.read_resp.bits.combined_scales.slice(0, 16)
-        //printf(p"[AccumulatorMem] combined_scales=${scale_mem.io.read_resp.bits.combined_scales}\n")
         for (i <- 0 until 16) {
-//          scaled_data(i)(0) := applyE9M0Scale(pipelined_writes(0).bits.data(i)(0), scale_mem.io.read_resp.bits.combined_scales(i),  8, 7)
-            scaled_data(i)(0) := pipelined_writes(0).bits.data(i)(0) // TODO(nicolas): remove this, this is only temporary for debugging
-          //printf(p"[AccumulatorMem] combined_scales=${scale_mem.io.read_resp.bits.combined_scales(i)}, before scale=${pipelined_writes(0).bits.data(i)(0)}, after scale=${scaled_data(i)(0)}\n")
-        } 
-        //waiting_for_scale := false.B
-      }.otherwise {
-        when(scalecounter === 1.U) {
-          //waiting_for_scale := false.B
-          scalecounter := 0.U
-          for (i <- 0 until outerSize/2) {
-            scaled_data(i)(0) := applyE9M0Scale(pipelined_writes(1).bits.data(i)(0), scales_r(i)(0), 8, 7)}
-          for (i <- 0 until outerSize/2) {
-            scaled_data(i + outerSize/2)(0) := applyE9M0Scale(pipelined_writes(1).bits.data(i + outerSize/2)(0), scale_mem.io.read_resp.bits.combined_scales(i)(0), 8, 7)}
-        }.otherwise {
-          for (i <- 0 until outerSize/2) {
-            scales_r(i)(0) := scale_mem.io.read_resp.bits.combined_scales(i)(0)
+          val dataElement = pipelined_writes(0).bits.data(i).asUInt  // 64-bit
+          val dataBits = dataElement(15, 0)  // Extract lowest 16 bits
+          val scaled_result = applyE9M0Scale(dataBits, scale_mem.io.read_resp.bits.combined_scales(i), 8, 7)
+          val fullResult = Cat(0.U(48.W), scaled_result)
+          scaled_data(i) := fullResult.asTypeOf(pipelined_writes(0).bits.data(i))
+        }
+      }.otherwise {                                                               
+        for (i <- 0 until 16) {
+          val dataElement = pipelined_writes(0).bits.data(i).asUInt             
+          val scale = scale_mem.io.read_resp.bits.combined_scales(i)
+          val scaled_chunks = (0 until 4).map { j =>
+            applyE9M0Scale(
+              dataElement(j*16 + 15, j*16),
+              scale(j*9 + 8, j*9),
+              8, 7)
           }
-          scalecounter := 1.U
+          scaled_data(i) := Cat(scaled_chunks.reverse).asTypeOf(pipelined_writes(0).bits.data(i))
         }
       }
     }
-    // }.elsewhen(io.write.fire) {
-    //     waiting_for_scale := true.B
-    // }
- }
+  }
   for (i <- 1 until acc_latency) {
     // always shift
     pipelined_writes(i) := pipelined_writes(i-1)

@@ -10,7 +10,7 @@ class ScalingFactorReadReq(addrWidth: Int) extends Bundle {
 }
 
 class ScalingFactorReadResp(numRows: Int, numCols: Int) extends Bundle {  
-  val combined_scales = Vec(numRows, UInt(9.W))
+  val combined_scales = Vec(16, UInt(36.W))
 }
 
 class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: Int, meshRows:Int, tileRows: Int) extends Bundle {
@@ -208,15 +208,19 @@ class ScalingFactorMem(
   
   val act_scales = WireDefault(VecInit(Seq.fill(meshRows*tileRows * 2)(0.U(8.W))))
   val weight_scales = WireDefault(VecInit(Seq.fill(meshRows*tileRows * 2)(0.U(8.W))))
-  val scale_counter = RegInit(0.U(6.W))
+  dontTouch(act_scales)
+  dontTouch(weight_scales)
+  val scale_counter = RegInit(0.U(4.W))
 
   def multiplyScalesE8M0(act: UInt, weight: UInt): UInt = {
     val sum = act +& weight
     sum(8, 0)
   }
 
+  
   val read_fire = io.read_req.fire && io.read_req.bits.scaling_enable && ((act_buffer_0_read_enable && weight_buffer_0_read_enable) || (act_buffer_1_read_enable && weight_buffer_1_read_enable)  )
-  val read_fire_real = read_fire && (scale_counter === 0.U) 
+  val read_fire_d1 = RegNext(read_fire, false.B)
+  val read_fire_real = read_fire && (scale_counter === 0.U) && !read_fire_d1
   
 
 
@@ -224,6 +228,8 @@ class ScalingFactorMem(
 
   val act_bank_data_vec = WireInit(VecInit(Seq.fill(meshRows*tileRows*2)(0.U(8.W))))
   val weight_bank_data_vec = WireInit(VecInit(Seq.fill(meshRows*tileRows*2)(0.U(8.W))))
+  dontTouch(act_bank_data_vec)
+  dontTouch(weight_bank_data_vec)
   val act_bank_sel =  Wire(UInt(2.W))
   val weight_bank_sel =  Wire(UInt(2.W))
   
@@ -321,9 +327,7 @@ class ScalingFactorMem(
   }
 
 
-  val read_addr_reg = RegNext(io.read_req.bits.addr)
-  val read_fire_d1 = RegNext(read_fire, false.B)
-  val read_fire_real_d1 = RegNext(read_fire_real, false.B)
+
   io.read_resp.bits.combined_scales.foreach(_ := 0.U)
   io.read_resp.valid := false.B
   io.read_req.ready := io.read_req.bits.scaling_enable && ((act_buffer_0_read_enable && weight_buffer_0_read_enable) || (act_buffer_1_read_enable && weight_buffer_1_read_enable))
@@ -340,22 +344,31 @@ class ScalingFactorMem(
     }
   }
   
-
   when(read_fire_d1) {
+    io.read_resp.valid := combined_scales_valid
+    when(scale_counter === 15.U) {
+      scale_counter := 0.U
+    }.otherwise{
+      scale_counter := scale_counter + 1.U
+    }
+    when(fp8Mode){
+      for(i <- 0 until meshRows*tileRows) {
+        val single_scale = combined_scales_buffer(scale_counter)(i)
+        io.read_resp.bits.combined_scales(i) := Cat(0.U(27.W), single_scale(8, 0))
+      }
+    }.otherwise{
+      for(i <- 0 until meshRows*tileRows) {
+        val single_scale_0 = combined_scales_buffer((scale_counter << 1.U))(2*i)
+        val single_scale_1 = combined_scales_buffer((scale_counter << 1.U))(2*i+1)
+        val single_scale_2 = combined_scales_buffer((scale_counter << 1.U)+1.U)(2*i)
+        val single_scale_3 = combined_scales_buffer((scale_counter << 1.U)+1.U)(2*i+1)
+        val single_scale = Cat(single_scale_3, single_scale_2, single_scale_1, single_scale_0)
+        io.read_resp.bits.combined_scales(i) := single_scale
+      }
+    }
     for(i <- 0 until 2*meshRows*tileRows) {
       act_scales(i) := act_bank_data_vec(i)
       weight_scales(i) := weight_bank_data_vec(i)
-      // printf(p"[ScalingFactorMem] Read act_scales=${act_scales(i) }\n")
-      // printf(p"[ScalingFactorMem] Read weight_scales=${weight_scales(i) }\n")
-      io.read_resp.valid := combined_scales_valid
-      io.read_resp.bits.combined_scales(i) := combined_scales_buffer(scale_counter)(i)
-    }
-    //printf(p"[ScalingFactorMem] Read scales from row=${read_addr_reg}\n")
-   
-    when (((scale_counter === ((meshRows*tileRows-1).U) && fp8Mode) || (scale_counter === ((2*meshRows*tileRows-1).U) && !fp8Mode))) {
-      scale_counter := 0.U
-    }.otherwise{
-      scale_counter := scale_counter +& 1.U
     }
   }
 }

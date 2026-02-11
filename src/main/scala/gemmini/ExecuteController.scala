@@ -15,6 +15,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
                                   (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
   import config._
   import ev._
+  val block_size = meshRows*tileRows
 
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
@@ -52,8 +53,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val enable_MXQuant = Output(Bool())
 
     val counter = new CounterEventIO()
-    val a_fire_counter = Output(UInt(log2Up(block_size).W))
-    val b_fire_counter = Output(UInt(log2Up(block_size).W))
+    val read_d = Output(Bool())
+    val read_a = Output(Bool())
     val scale_mem_mvout_base_addr_act = Output(UInt(scale_mem.get.ScaleMemWriteAddrWidth.W))
     val quant_lut_update_granularity = Output(UInt(16.W))
     val scaleMemCntl = Output(new ScalingFactorCntl(meshRows*tileRows))
@@ -71,7 +72,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 // }
   
 
-  val block_size = meshRows*tileRows
+  //val block_size = meshRows*tileRows
 
   val mesh_tag = new Bundle with TagQueueTag {
     val rob_id = UDValid(UInt(log2Up(reservation_station_entries).W))
@@ -502,11 +503,18 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     d_fire_counter_mulpre := d_fire_counter - mul_pre_counter_sub
   }.otherwise{d_fire_counter_mulpre := d_fire_counter}
 
+  // Track read operand types per bank
+  val read_a_per_bank = Wire(Vec(sp_banks, Bool()))
+  val read_d_per_bank = Wire(Vec(sp_banks, Bool()))
+
   // Scratchpad reads
   for (i <- 0 until sp_banks) {
     val read_a = a_valid && !a_read_from_acc && dataAbank === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros && !(im2col_wire&&im2col_en)
     val read_b = b_valid && !b_read_from_acc && dataBbank === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
     val read_d = d_valid && !d_read_from_acc && dataDbank === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
+
+    read_a_per_bank(i) := read_a
+    read_d_per_bank(i) := read_d
     
     //val d_needs_sram_read = read_d && !(needsBuffering(weight_mx_format) && d_buffer_valid && !d_buffer_half)
 
@@ -541,9 +549,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.srams.read(i).resp.ready := false.B
   }
 
+  // Create 4-cycle delayed versions to match scratchpad read latency
+  val read_a_delayed = ShiftRegister(read_a_per_bank.asUInt.orR, 4, false.B, true.B)
+  val read_d_delayed = ShiftRegister(read_d_per_bank.asUInt.orR, 4, false.B, true.B)
 
-  io.a_fire_counter := a_fire_counter
-  io.b_fire_counter := d_fire_counter
+  io.read_a := read_a_delayed
+  io.read_d := read_d_delayed
 
   // Accumulator read
   for (i <- 0 until acc_banks) {

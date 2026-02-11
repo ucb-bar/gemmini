@@ -65,8 +65,8 @@ class MxRequantizerIO(
   val spad_projected_data   = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
   val spad_deprojected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width)))
   val fp8_mode = Input(Bool())  // true for 64-lane mode, false for 16-lane mode
-  val a_fire_counter = Input(UInt(log2Up(16).W))
-  val b_fire_counter = Input(UInt(log2Up(16).W))
+  val read_a = Input(Bool())
+  val read_d = Input(Bool())
   val scale_mem_mvout_base_addr_act = Input(UInt(scaleMem_addr_width.W)) // from execute controller
   val quant_lut_update_granularity = Input(UInt(lutConfig.lutUpdateRegularityWidth.W))
   val counter_i = Input(UInt(iterator_bitwidth.W)) // from  controller
@@ -150,36 +150,33 @@ class MxRequantizer[T <: Data: Arithmetic](
   //buffer twice for 16-lane mode
   val half_lanes = 16
   val input_32_buffer = RegInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(io.inputdataWidth.W))))
+  val input_32_buffer_gpu = RegInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(io.inputdataWidth.W))))
   val requant_data_in_valid_d = RegNext(io.requant_data_in.fire)
   val requant_data_in_gpu_valid_d = RegNext(io.requant_data_in_gpu.fire)
   val should_compute = Wire(Bool())
   val quantize_valid = RegNext(should_compute)
   dontTouch(requant_data_in_valid_d)
   dontTouch( should_compute)
-  io.requant_data_in.ready := true.B
   should_compute := false.B
-  io.requant_data_in_gpu.ready := true.B
 
 
   when(io.requant_data_in.fire) {{
-      io.requant_data_in_gpu.ready := false.B
       for (i <- 0 until 32) {
         input_32_buffer(i) := io.requant_data_in.bits.data(i)
       }
-      data_buffer_counter := 1.U
     }
   }.elsewhen(io.requant_data_in_gpu.fire) {
     for (i <- 0 until half_lanes) {
       val idx = Mux(data_buffer_counter === 0.U, i.U, (half_lanes + i).U)
-      input_32_buffer(idx) := io.requant_data_in_gpu.bits.data(i) 
+      input_32_buffer_gpu(idx) := io.requant_data_in_gpu.bits.data(i)
     }
     data_buffer_counter := ~data_buffer_counter
   }
   
-  val data_buffer = WireInit(VecInit(Seq.fill(io.outputnumLanes)(0.U(io.inputdataWidth.W))))
-  data_buffer := input_32_buffer
+  val gpu_fire_d = RegNext(io.requant_data_in_gpu.fire)
+  val data_buffer = Mux(gpu_fire_d, input_32_buffer_gpu, input_32_buffer)
 
-  when(requant_data_in_valid_d || (requant_data_in_gpu_valid_d && (data_buffer_counter === 0.U))) {
+  when(requant_data_in_valid_d || (gpu_fire_d && (data_buffer_counter === 0.U))) {
       should_compute := true.B
   }
   
@@ -261,8 +258,8 @@ class MxRequantizer[T <: Data: Arithmetic](
   quantLut.io.spad_projected_data <> io.spad_projected_data
   quantLut.io.spad_deprojected_data <> io.spad_deprojected_data
   quantLut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
-  quantLut.io.a_fire_counter := io.a_fire_counter
-  quantLut.io.b_fire_counter := io.b_fire_counter
+  quantLut.io.read_a := io.read_a
+  quantLut.io.read_d := io.read_d
   quantLut.io.counter_i := io.counter_i
   quantLut.io.counter_j := io.counter_j
   // quantLut.io.lut_write.valid := false.B
@@ -304,17 +301,63 @@ class MxRequantizer[T <: Data: Arithmetic](
       }
     }
   }
-  io.requant_data_out.valid := false.B // TODO (nicolas): check that this is correct
-  when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
-    io.requant_data_out.valid := true.B
-    io.requant_data_out.bits.dataType := quant_dataType
-    io.requant_data_out.bits.data := Cat(quantLut.io.projected_data.bits.reverse)
-  }.elsewhen(quantize_valid && ((total_bits_per_element === 4.U) || (total_bits_per_element === 8.U))){
-    io.requant_data_out.valid := true.B
-    io.requant_data_out.bits.dataType := quant_dataType
-    io.requant_data_out.bits.data := extracted_data
-  }.otherwise {
-    io.requant_data_out.bits.data := 0.U
+
+  val pipelineLatency = config.pipelineLatency
+
+  if (pipelineLatency == 0) {
+    io.requant_data_out.valid := false.B
+    when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
+      io.requant_data_out.valid := true.B
+      io.requant_data_out.bits.dataType := quant_dataType
+      io.requant_data_out.bits.data := Cat(quantLut.io.projected_data.bits.reverse)
+    }.elsewhen(quantize_valid && ((total_bits_per_element === 4.U) || (total_bits_per_element === 8.U))){
+      io.requant_data_out.valid := true.B
+      io.requant_data_out.bits.dataType := quant_dataType
+      io.requant_data_out.bits.data := extracted_data
+    }.otherwise {
+      io.requant_data_out.bits.data := 0.U
+    }
+
+    io.requant_data_in.ready := true.B
+    io.requant_data_in_gpu.ready := !io.requant_data_in.fire
+  } else {
+    // This part some how causes: Error: "/bwrcq/B/mshi/chipyard/cy_gpu/chipyard/sims/vcs/generated-src/chipyard.harness.TestHarness.RadianceGemminiOnlyConfig/gen-collateral/TLMonitor_246.sv", 165: TestDriver.testHarness.chiptop0.system.cluster_prci_domain.element_reset_domain_element.shared_mem.buffer_56.monitor: at time 785000 ps
+    // Assertion failed: 'A' channel PutFull contains invalid mask (connected at generators/radiance/src/main/scala/radiance/cluster/RadianceSharedMemComponents.scala:129:13)
+    // at Monitor.scala:45 assert(cond, message)
+    // so set pipeline latency to 0 bypass the issue for now, need to investigate more later
+    val pipeline = Reg(Vec(pipelineLatency, Valid(new RequantizerOutBundle(config.numOutputLanes))))
+    val stage0_valid = WireDefault(false.B)
+    val stage0_data = Wire(new RequantizerOutBundle(config.numOutputLanes))
+    stage0_data := DontCare
+
+    when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
+      stage0_valid := true.B
+      stage0_data.dataType := quant_dataType
+      stage0_data.data := Cat(quantLut.io.projected_data.bits.reverse)
+    }.elsewhen(quantize_valid && ((total_bits_per_element === 4.U) || (total_bits_per_element === 8.U))){
+      stage0_valid := true.B
+      stage0_data.dataType := quant_dataType
+      stage0_data.data := extracted_data
+    }
+
+    val pipeline_advance = !pipeline(pipelineLatency-1).valid || io.requant_data_out.ready
+
+    when(pipeline_advance) {
+      for (i <- (pipelineLatency-1) to 1 by -1) {
+        pipeline(i) := pipeline(i-1)
+      }
+      pipeline(0).valid := stage0_valid
+      when(stage0_valid) {
+        pipeline(0).bits := stage0_data
+      }
+    }
+
+    io.requant_data_out.valid := pipeline(pipelineLatency-1).valid
+    io.requant_data_out.bits := pipeline(pipelineLatency-1).bits
+
+    val can_accept_input = !pipeline(0).valid || pipeline_advance
+    io.requant_data_in.ready := can_accept_input
+    io.requant_data_in_gpu.ready := !io.requant_data_in.fire
   }
 
   val scale_write_counter = RegInit(0.U(log2Ceil(scaleSize).W))

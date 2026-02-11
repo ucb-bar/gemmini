@@ -25,8 +25,8 @@ class QuantLutIO(
   val spad_deprojected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width)))
   val counter_j = Input(UInt(iterator_bitwidth.W))
   val counter_i = Input(UInt(iterator_bitwidth.W))
-  val a_fire_counter = Input(UInt(log2Up(16).W))
-  val b_fire_counter = Input(UInt(log2Up(16).W))
+  val read_a = Input(Bool())
+  val read_d = Input(Bool())
   val quant_lut_update_granularity = Input(UInt(lutConfig.lutUpdateRegularityWidth.W))
 }
 
@@ -254,38 +254,58 @@ class QuantLut(
   io.projected_data.valid := projectedDataValid
   io.projected_data.bits := projectedIndices
   
-  
+  val used_lut_act = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
+  val used_lut_w = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
+  val counter_act = RegInit(0.U(log2Ceil(lutConfig(0)._1).W))
+  val counter_w = RegInit(0.U(log2Ceil(lutConfig(1)._1).W))
+
+  dontTouch(used_lut_act)
+  dontTouch(used_lut_w)
+  dontTouch(counter_act)
+  dontTouch(counter_w)
+
   for (i <- 0 until sp_banks) {
+    // Each bank has its own deprojected_bits
+    val deprojected_bits = WireDefault(VecInit(Seq.fill(outputnumLanes)(0.U(rdataWidth.W))))
+
     // Initialize unused spad_projected_data outputs (QuantLut doesn't send requests)
     io.spad_projected_data(i).req.valid := false.B
     io.spad_projected_data(i).req.bits := DontCare
-    io.spad_projected_data(i).resp.ready := true.B  
+    io.spad_projected_data(i).resp.ready := true.B
     io.spad_deprojected_data(i).req.ready := false.B
     io.spad_deprojected_data(i).resp.valid := false.B
     io.spad_deprojected_data(i).resp.bits.data := 0.U
     io.spad_deprojected_data(i).resp.bits.fromDMA := false.B
-    io.spad_deprojected_data(i).resp.bits.weight_mx_format := 1.U                                  
-    io.spad_deprojected_data(i).resp.bits.input_mx_format := 1.U  
-  
+    io.spad_deprojected_data(i).resp.bits.weight_mx_format := 1.U
+    io.spad_deprojected_data(i).resp.bits.input_mx_format := 1.U
+
+
     when(io.spad_projected_data(i).resp.valid) {
-      val deprojected_bits = Wire(Vec(outputnumLanes, UInt(6.W)))
-      for (k <- 0 until 32) {
-      deprojected_bits(k) := 0.U
-    }
-    when((lutCache_act_in_buffer_0_read_enable || lutCache_act_in_buffer_1_read_enable)) {
-      for (k <- 0 until 32) {
-        val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-        deprojected_bits(k) := lutCache_act_in(io.a_fire_counter(3, 0))(chunk_4bit)  
+      when(io.read_a && (lutCache_act_in_buffer_0_read_enable || lutCache_act_in_buffer_1_read_enable)) {
+        used_lut_act := lutCache_act_in(counter_act)
+        for (k <- 0 until 32) {
+          val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
+          deprojected_bits(k) := used_lut_act(chunk_4bit)
+        }
+        when (counter_act === (lutConfig(0)._1 - 1).U){
+          counter_act := 0.U
+        }.otherwise{
+          counter_act := counter_act + 1.U
+        }
       }
-    }
-    when ((lutCache_weight_buffer_0_read_enable || lutCache_weight_buffer_1_read_enable)) {
-      for (k <- 0 until 32) {
-        val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-        deprojected_bits(k) := lutCache_weight(io.b_fire_counter(3, 0))(chunk_4bit)  
+      when (io.read_d && (lutCache_weight_buffer_0_read_enable || lutCache_weight_buffer_1_read_enable)) {
+        used_lut_w := lutCache_weight(counter_w)
+        for (k <- 0 until 32) {
+          val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
+          deprojected_bits(k) := used_lut_w(chunk_4bit)
+        }
+        when (counter_w === (lutConfig(1)._1 - 1).U){
+          counter_w := 0.U
+        }.otherwise{
+          counter_w := counter_w + 1.U
+        }
       }
-    }
-      
-    io.spad_deprojected_data(i).resp.bits.data := deprojected_bits.asUInt
+    io.spad_deprojected_data(i).resp.bits.data := Cat(deprojected_bits.reverse)  
     io.spad_deprojected_data(i).resp.valid := true.B
     io.spad_deprojected_data(i).resp.bits.fromDMA := io.spad_projected_data(i).resp.bits.fromDMA
     io.spad_deprojected_data(i).resp.bits.weight_mx_format := io.spad_projected_data(i).resp.bits.weight_mx_format

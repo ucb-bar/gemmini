@@ -383,7 +383,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val state = RegInit(idle)
 
   val req = Reg(new LoopMatmulExecuteReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops))
-  val block_ij = Mux(req.narrow_type, (2*block_size).U, block_size.U)
+  val block_ij = Mux(req.narrow_type, (block_size).U, block_size.U)
   val c_addr_start = /*(BigInt(1) << 31).U |*/ req.c_addr_start
   val b_addr_start = req.b_addr_end - req.max_k * req.max_j * block_size.U
 
@@ -410,12 +410,12 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   // val c_cols = block_size.U - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)
   // val c_rows = block_size.U - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)
 
-  val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)   // k dim (16)
-  val a_rows = block_ij - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)       // i dim (32)
-  val b_cols = block_ij - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)       // j dim (32)
-  val b_rows = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)   // k dim (16)
-  val c_cols = block_ij - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)       // j dim (32)
-  val c_rows = block_ij - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)       // i dim (32)
+  val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)   
+  val a_rows = block_ij - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)       
+  val b_cols = block_ij - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)       
+  val b_rows = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)   
+  val c_cols = block_ij - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)       
+  val c_rows = block_ij - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)      
 
 
   val pre_cmd = Wire(new RoCCCommand)
@@ -1074,7 +1074,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     switch (cmd.bits.cmd.inst.funct) {
       is (LOOP_WS_CONFIG_BOUNDS) {
         val is_narrow = (io.activation_mx_format =/= 0.U) && (io.weight_mx_format =/= 0.U)
-        val divisor = Mux(is_narrow, 2.U, 1.U)
+        val divisor = Mux(is_narrow, 1.U, 1.U)
 
         loop_being_configured.max_k := cmd.bits.cmd.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2)
         loop_being_configured.max_j := cmd.bits.cmd.rs2(iterator_bitwidth * 2 - 1, iterator_bitwidth) / divisor
