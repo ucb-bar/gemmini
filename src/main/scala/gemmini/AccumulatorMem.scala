@@ -167,7 +167,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     mantBits: Int
   )(implicit ev: Arithmetic[T]): T = {
 
-    val valueUInt = value.asUInt(15, 0) //TODO (nicolas): this only works if input data is fp8
+    val valueUInt = value.asUInt(15, 0)
     val totalBits = valueUInt.getWidth
    
     require(totalBits == 1 + expBits + mantBits,

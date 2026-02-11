@@ -317,6 +317,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val write_norm_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, accType.getWidth, acc_scale_t_bits), spad_read_delay+2))
     val write_scale_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, accType.getWidth, acc_scale_t_bits), spad_read_delay+2))
     val write_issue_q = Module(new Queue(new ScratchpadMemWriteRequest(local_addr_t, accType.getWidth, acc_scale_t_bits), spad_read_delay+1 + 2, pipe=true))
+    val mx2dma_q = Module(new Queue(io.mx_req_io.mx_data_out.bits.cloneType, 2, flow=false, pipe=true))
     val read_issue_q = Module(new Queue(new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), spad_read_delay+1, pipe=true)) // TODO can't this just be a normal queue?
 
     write_dispatch_q.ready := false.B
@@ -671,10 +672,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       scale_t = acc_scale_t,
     )
 
-    io.mx_req_io.mx_data_out.ready := false.B
-    io.mx_req_io.mx_data_in.valid := false.B
-    io.mx_req_io.mx_data_in.bits := DontCare
+//    io.mx_req_io.mx_data_out.ready := false.B
+//    io.mx_req_io.mx_data_in.valid := false.B
+//    io.mx_req_io.mx_data_in.bits := DontCare
     io.mx_req_io.mx_mode := io.output_mx_format
+
+    mx2dma_q.io.enq.valid := io.mx_req_io.mx_data_out.valid
+    mx2dma_q.io.enq.bits  := io.mx_req_io.mx_data_out.bits
+    io.mx_req_io.mx_data_out.ready := mx2dma_q.io.enq.ready
 
     acc_norm_unit_in.valid := false.B
     acc_norm_unit_in.bits.len := write_norm_q.io.deq.bits.len
@@ -711,21 +716,38 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     acc_scale_unit.io.in.valid := acc_norm_unit_out.valid && acc_waiting_to_be_scaled
     acc_scale_unit.io.in.bits  := acc_norm_unit_out.bits
 
-    val dma_resp_ready =
-      (writer.module.io.req.ready && spad_writer.map(_.module.io.req.ready).getOrElse(true.B)) &&
+//    val dma_resp_ready =
+//      (writer.module.io.req.ready && spad_writer.map(_.module.io.req.ready).getOrElse(true.B)) &&
+//        write_issue_q.io.deq.bits.laddr.is_acc_addr &&
+//        !write_issue_q.io.deq.bits.laddr.is_garbage()
+
+    val wantDmaAcc =
+      write_issue_q.io.deq.valid &&
         write_issue_q.io.deq.bits.laddr.is_acc_addr &&
         !write_issue_q.io.deq.bits.laddr.is_garbage()
 
-    val toMx = acc_scale_unit.io.out.bits.fromDMA
+    val canIssueDma = wantDmaAcc &&
+        mx2dma_q.io.deq.valid &&
+        writer.module.io.req.ready &&
+        spad_writer.map(_.module.io.req.ready).getOrElse(true.B)
 
-    when (io.mx_req_io.mx_data_out.bits.fromDMA && dma_resp_ready) {
-      // Send the acc-scale result into the DMA
-      io.mx_req_io.mx_data_out.ready := true.B
-      writeData.valid := io.mx_req_io.mx_data_out.valid
-      writeData.bits  := io.mx_req_io.mx_data_out.bits.data.asUInt
-      fullAccWriteData := io.mx_req_io.mx_data_out.bits.full_data.asUInt
+//    when (io.mx_req_io.mx_data_out.bits.fromDMA && dma_resp_ready) {
+//      // Send the acc-scale result into the DMA
+//      io.mx_req_io.mx_data_out.ready := true.B
+//      writeData.valid := io.mx_req_io.mx_data_out.valid
+//      writeData.bits  := io.mx_req_io.mx_data_out.bits.data.asUInt
+//      fullAccWriteData := io.mx_req_io.mx_data_out.bits.full_data.asUInt
+//    }
+
+    when (io.mx_req_io.mx_data_out.bits.fromDMA && canIssueDma) {
+      writeData.valid := true.B
+      writeData.bits     := mx2dma_q.io.deq.bits.data.asUInt
+      fullAccWriteData   := mx2dma_q.io.deq.bits.full_data.asUInt
     }
 
+    mx2dma_q.io.deq.ready := canIssueDma && write_issue_q.io.deq.ready
+
+    val toMx = acc_scale_unit.io.out.bits.fromDMA
     val nonDmaReady = WireDefault(false.B)
     for (i <- 0 until acc_banks) {
       // Send the acc-sccale result to the ExController
