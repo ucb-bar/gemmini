@@ -24,6 +24,9 @@ class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
 ) extends Bundle {
   val in = Flipped(Decoupled(new NormalizedOutput[T,U](fullDataType, scale_t)))
   val out = Decoupled(new AccumulatorScaleResp[T](fullDataType, rDataType))
+  val mx_req_io = new MxRequantizerAccMemIO[T](
+    fullDataType, rDataType,
+  )
 }
 
 class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extends Bundle {
@@ -142,17 +145,21 @@ class AccumulatorScale[T <: Data, U <: Data](
 
     val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t)(ev)))
     in.valid := io.in.valid
+    io.mx_req_io.mx_data_in.valid := io.in.valid
     io.in.ready := in.ready
     in.bits.resp := io.in.bits.acc_read_resp
     in.bits.full_data := acc_read_data
+    io.mx_req_io.mx_data_in.bits := acc_read_data
     in.bits.resp.data := activated_data
 
     val pipe_out = Pipeline(in, latency)
+    io.mx_req_io.mx_mode := 0.U
 
-    out.valid := pipe_out.valid
-    pipe_out.ready := out.ready
+    out.valid := pipe_out.valid && io.mx_req_io.mx_data_out.valid
+    pipe_out.ready := out.ready && io.mx_req_io.mx_data_out.valid
+    io.mx_req_io.mx_data_out.ready := out.ready && pipe_out.valid
     out.bits.full_data := pipe_out.bits.full_data
-    out.bits.data      := pipe_out.bits.resp.data
+    out.bits.data      := io.mx_req_io.mx_data_out.bits
     out.bits.fromDMA   := pipe_out.bits.resp.fromDMA
     out.bits.acc_bank_id := pipe_out.bits.resp.acc_bank_id
   } else {

@@ -37,7 +37,13 @@ object MxFloatFormat {
   }
 }
 
-class MxRequantizerIO(
+class MxRequantizerAccResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]]) extends Bundle {
+  val full_data = fullDataType.cloneType
+  val q_data = rDataType.cloneType
+  val mx_mode = UInt(2.W)
+}
+
+class MxRequantizerIO[T <: Data: Arithmetic](
   sp_data_width: Int,  
   sp_addr_width: Int,
   scaleMem_data_width: Int,
@@ -49,12 +55,15 @@ class MxRequantizerIO(
   sp_banks: Int,
   sp_width: Int,
   sp_width_projected: Int,
+  acc_row_t: Vec[Vec[T]],
+  spad_row_t: Vec[Vec[T]],
   iterator_bitwidth: Int,
-  config: GemminiRequantizerConfig 
+  config: GemminiRequantizerConfig
 ) extends Bundle {
   val inputnumLanes = config.numInputLanes
   val outputnumLanes = config.numOutputLanes
   val inputdataWidth = config.inputBits
+  val mxacc_req = Flipped(new MxRequantizerAccMemIO[T](acc_row_t, spad_row_t))
   val requant_data_in = Flipped(Decoupled(new RequantizerInBundle(outputnumLanes, inputdataWidth)))
   val requant_data_in_gpu = Flipped(Decoupled(new RequantizerInBundle(config.numGPUInputLanes, inputdataWidth)))
   val scaleMem_write = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
@@ -74,7 +83,7 @@ class MxRequantizerIO(
   val counter_k = Input(UInt(iterator_bitwidth.W)) // from  controller
 }
    
-class MxRequantizer[T <: Data: Arithmetic](
+class MxRequantizer[T <: Data](
   sp_data_width: Int, 
   sp_addr_width: Int,
   scaleMem_data_width: Int,
@@ -87,12 +96,17 @@ class MxRequantizer[T <: Data: Arithmetic](
   sp_width: Int,
   sp_width_projected: Int,
   iterator_bitwidth: Int,
-  config: GemminiRequantizerConfig 
+  meshColumns: Int, tileColumns: Int,
+  accType: T, weightTypeProjected: T,
+  config: GemminiRequantizerConfig
 )(implicit ev: Arithmetic[T]) extends Module {
   
   import ev._
-  
-  val io = IO(new MxRequantizerIO(
+  val pipelineLatency = config.pipelineLatency
+  val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
+  val spad_row_t = Vec(meshColumns, Vec(tileColumns, weightTypeProjected))
+
+  val io = IO(new MxRequantizerIO[T](
     sp_data_width, 
     sp_addr_width, 
     scaleMem_data_width,
@@ -104,6 +118,8 @@ class MxRequantizer[T <: Data: Arithmetic](
     sp_banks,
     sp_width,
     sp_width_projected,
+    acc_row_t,
+    spad_row_t,
     iterator_bitwidth,
     config
   ))
@@ -145,6 +161,18 @@ class MxRequantizer[T <: Data: Arithmetic](
     result
   }
 
+//  val outQueue = Module(new Queue(new MxRequantizerAccResp[T](acc_row_t, spad_row_t), if (pipelineLatency > 0) pipelineLatency else 1, pipe = true))
+//  val can_enqueue = if (pipelineLatency > 0) outQueue.io.enq.ready else true.B
+  // Queue at output for backpressure
+  // Can we push into the queue this cycle?
+  val pipe_in = Wire(Decoupled(new MxRequantizerAccResp[T](acc_row_t, spad_row_t)(ev)))
+  pipe_in.valid := false.B
+  pipe_in.bits := DontCare
+  val pipe_out = Pipeline(pipe_in, pipelineLatency)
+  val can_enqueue = pipe_in.ready
+
+
+
   val (exp_bits, mant_bits, pmax, log2_pmax_floor) = MxFloatFormat(format_reg)
   val data_buffer_counter = RegInit(0.U(1.W))
   //buffer twice for 16-lane mode
@@ -176,13 +204,16 @@ class MxRequantizer[T <: Data: Arithmetic](
   val gpu_fire_d = RegNext(io.requant_data_in_gpu.fire)
   val data_buffer = Mux(gpu_fire_d, input_32_buffer_gpu, input_32_buffer)
 
-  when(requant_data_in_valid_d || (gpu_fire_d && (data_buffer_counter === 0.U))) {
+  should_compute := false.B
+  when (can_enqueue) {
+    when(requant_data_in_valid_d || (gpu_fire_d && (data_buffer_counter === 0.U))) {
       should_compute := true.B
+    }
   }
   
   val block_max = Wire(UInt(io.inputdataWidth.W))
-  block_max := 0.U 
-  
+  block_max := 0.U
+
   when(should_compute) {
     block_max := data_buffer.map(abs).reduce { (a, b) =>
       Mux(a > b, a, b)
@@ -302,8 +333,6 @@ class MxRequantizer[T <: Data: Arithmetic](
     }
   }
 
-  val pipelineLatency = config.pipelineLatency
-
   if (pipelineLatency == 0) {
     io.requant_data_out.valid := false.B
     when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
@@ -319,45 +348,31 @@ class MxRequantizer[T <: Data: Arithmetic](
     }
 
     io.requant_data_in.ready := true.B
+    io.mxacc_req.mx_data_in.ready := true.B
     io.requant_data_in_gpu.ready := !io.requant_data_in.fire
   } else {
-    // This part some how causes: Error: "/bwrcq/B/mshi/chipyard/cy_gpu/chipyard/sims/vcs/generated-src/chipyard.harness.TestHarness.RadianceGemminiOnlyConfig/gen-collateral/TLMonitor_246.sv", 165: TestDriver.testHarness.chiptop0.system.cluster_prci_domain.element_reset_domain_element.shared_mem.buffer_56.monitor: at time 785000 ps
-    // Assertion failed: 'A' channel PutFull contains invalid mask (connected at generators/radiance/src/main/scala/radiance/cluster/RadianceSharedMemComponents.scala:129:13)
-    // at Monitor.scala:45 assert(cond, message)
-    // so set pipeline latency to 0 bypass the issue for now, need to investigate more later
-    val pipeline = Reg(Vec(pipelineLatency, Valid(new RequantizerOutBundle(config.numOutputLanes))))
-    val stage0_valid = WireDefault(false.B)
-    val stage0_data = Wire(new RequantizerOutBundle(config.numOutputLanes))
-    stage0_data := DontCare
+    io.mxacc_req.mx_data_out.bits := VecInit(pipe_out.bits.full_data.map(row =>
+      VecInit(row.map(elem => elem.asUInt(7, 0).asTypeOf(weightTypeProjected)))
+    ))
+    io.mxacc_req.mx_data_out.valid := pipe_out.valid
+    pipe_out.ready := io.mxacc_req.mx_data_out.ready
+
+    // Only allow input handshake when queue has space
+    io.requant_data_in.ready := can_enqueue
+    io.mxacc_req.mx_data_in.ready := can_enqueue
+    io.requant_data_in_gpu.ready := can_enqueue && !io.requant_data_in.fire
+
 
     when(quantLut.io.projected_data.valid && (total_bits_per_element === 6.U)) {
-      stage0_valid := true.B
-      stage0_data.dataType := quant_dataType
-      stage0_data.data := Cat(quantLut.io.projected_data.bits.reverse)
-    }.elsewhen(quantize_valid && ((total_bits_per_element === 4.U) || (total_bits_per_element === 8.U))){
-      stage0_valid := true.B
-      stage0_data.dataType := quant_dataType
-      stage0_data.data := extracted_data
+//      outQueue.io.enq.valid := true.B
+//      outQueue.io.enq.bits.mx_mode := RequantizerDataType.toUInt(quant_dataType)
+//      outQueue.io.enq.bits.data := Cat(quantLut.io.projected_data.bits.reverse)
+//    }.elsewhen(io.requant_data_in.valid && ((total_bits_per_element === 4.U) || (total_bits_per_element === 8.U))) {
+    }.elsewhen(io.mxacc_req.mx_data_in.valid && ((total_bits_per_element === 4.U) || (total_bits_per_element === 8.U))) {
+      pipe_in.valid := true.B
+      pipe_in.bits.mx_mode := io.mxacc_req.mx_mode
+      pipe_in.bits.full_data := io.mxacc_req.mx_data_in.bits
     }
-
-    val pipeline_advance = !pipeline(pipelineLatency-1).valid || io.requant_data_out.ready
-
-    when(pipeline_advance) {
-      for (i <- (pipelineLatency-1) to 1 by -1) {
-        pipeline(i) := pipeline(i-1)
-      }
-      pipeline(0).valid := stage0_valid
-      when(stage0_valid) {
-        pipeline(0).bits := stage0_data
-      }
-    }
-
-    io.requant_data_out.valid := pipeline(pipelineLatency-1).valid
-    io.requant_data_out.bits := pipeline(pipelineLatency-1).bits
-
-    val can_accept_input = !pipeline(0).valid || pipeline_advance
-    io.requant_data_in.ready := can_accept_input
-    io.requant_data_in_gpu.ready := !io.requant_data_in.fire
   }
 
   val scale_write_counter = RegInit(0.U(log2Ceil(scaleSize).W))

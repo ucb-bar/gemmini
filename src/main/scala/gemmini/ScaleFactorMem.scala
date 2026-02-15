@@ -353,7 +353,8 @@ class ScalingFactorMem(
     }
     when(fp8Mode){
       for(i <- 0 until meshRows*tileRows) {
-        val single_scale = combined_scales_buffer(scale_counter)(i)
+//        val single_scale = combined_scales_buffer(scale_counter)(i)
+          val single_scale = 127.U // TODO: get rid of this, just for debugging
         io.read_resp.bits.combined_scales(i) := Cat(0.U(27.W), single_scale(8, 0))
       }
     }.otherwise{

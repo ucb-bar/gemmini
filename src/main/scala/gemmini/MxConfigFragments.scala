@@ -57,6 +57,10 @@ object RequantizerDataType extends ChiselEnum {
   def widthBits(x: Type): UInt = {
     Mux(x === FP4, 4.U(4.W), 8.U(4.W))
   }
+
+  def toUInt(x: Type): UInt = {
+    Mux(x === FP8, 0.U(2.W), Mux(x === FP6, 1.U(2.W), 2.U(2.W)))
+  }
 }
 
 

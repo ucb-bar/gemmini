@@ -194,6 +194,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       sp_width = outer.config.sp_width,
       sp_width_projected = outer.config.sp_width_projected,
       iterator_bitwidth = 16,
+      meshColumns = outer.config.meshColumns,
+      tileColumns = outer.config.tileColumns,
+      accType = outer.config.accType,
+      weightTypeProjected = outer.config.weightTypeProjected,
       config = q  
     ))
   }
@@ -313,33 +317,42 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
 
   // Connect accumulator memory to mxrequantizer
-  val acc_mem_in = Reg(chiselTypeOf(spad.module.io.mx_req_io.mx_data_in.bits))
-  val acc_mem_mx_mode = Reg(chiselTypeOf(spad.module.io.mx_req_io.mx_mode))
-
-  val acc_mem_in_data = Mux(spad.module.io.mx_req_io.mx_data_in.fire, spad.module.io.mx_req_io.mx_data_in.bits, acc_mem_in)
-  acc_mem_in := acc_mem_in_data
-  acc_mem_mx_mode := Mux(spad.module.io.mx_req_io.mx_data_in.fire, spad.module.io.mx_req_io.mx_mode, acc_mem_mx_mode)
 
   // default
-  spad.module.io.mx_req_io.mx_data_out.bits.data := acc_mem_in.data
-  spad.module.io.mx_req_io.mx_data_out.valid := mx_io.get.requant_out.valid
-  spad.module.io.mx_req_io.mx_data_out.bits.full_data := acc_mem_in.full_data
-  mx_requantizer.get.io.requant_data_out.ready := spad.module.io.mx_req_io.mx_data_out.ready
-  mx_requantizer.get.io.requant_data_in.bits.address := DontCare
+  spad.module.io.mx_req_io <> mx_requantizer.get.io.mxacc_req
+  mx_requantizer.get.io.requant_data_in <> DontCare
+  mx_requantizer.get.io.fp8_mode := true.B
+  mx_requantizer.get.io.requant_data_out <> DontCare
 
-  // acc to mxreq
-  mx_requantizer.get.io.requant_data_in.bits.data := acc_mem_in.data.asTypeOf(mx_requantizer.get.io.requant_data_in.bits.data) // TODO (nicolas): fix this properly
-  mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType(spad.module.io.mx_req_io.mx_mode)
-  mx_requantizer.get.io.requant_data_in.valid := spad.module.io.mx_req_io.mx_data_in.valid
-  spad.module.io.mx_req_io.mx_data_in.ready := mx_requantizer.get.io.requant_data_in.ready
-  mx_requantizer.get.io.fp8_mode := spad.module.io.mx_req_io.mx_mode === 0.U
 
-  // mxreq to acc
-  spad.module.io.mx_req_io.mx_data_out.bits.data := mx_io.get.requant_out.bits.data(127, 0).asTypeOf(spad.module.io.mx_req_io.mx_data_out.bits.data) // TODO (nicolas): fix this properly
-  spad.module.io.mx_req_io.mx_data_out.valid := mx_io.get.requant_out.valid
-  spad.module.io.mx_req_io.mx_data_out.bits.fromDMA := acc_mem_in.fromDMA
-  spad.module.io.mx_req_io.mx_data_out.bits.acc_bank_id := acc_mem_in.acc_bank_id
-  mx_requantizer.get.io.requant_data_out.ready := spad.module.io.mx_req_io.mx_data_out.ready
+//  // Connect accumulator memory to mxrequantizer
+//  val acc_mem_in = Reg(chiselTypeOf(spad.module.io.mx_req_io.mx_data_in.bits))
+//  val acc_mem_mx_mode = Reg(chiselTypeOf(spad.module.io.mx_req_io.mx_mode))
+//
+//  val acc_mem_in_data = Mux(spad.module.io.mx_req_io.mx_data_in.fire, spad.module.io.mx_req_io.mx_data_in.bits, acc_mem_in)
+//  acc_mem_in := acc_mem_in_data
+//  acc_mem_mx_mode := Mux(spad.module.io.mx_req_io.mx_data_in.fire, spad.module.io.mx_req_io.mx_mode, acc_mem_mx_mode)
+//
+//  // default
+//  spad.module.io.mx_req_io.mx_data_out.bits.data := acc_mem_in.data
+//  spad.module.io.mx_req_io.mx_data_out.valid := mx_io.get.requant_out.valid
+//  spad.module.io.mx_req_io.mx_data_out.bits.full_data := acc_mem_in.full_data
+//  mx_requantizer.get.io.requant_data_out.ready := spad.module.io.mx_req_io.mx_data_out.ready
+//  mx_requantizer.get.io.requant_data_in.bits.address := DontCare
+//
+//  // acc to mxreq
+//  mx_requantizer.get.io.requant_data_in.bits.data := acc_mem_in.data.asTypeOf(mx_requantizer.get.io.requant_data_in.bits.data) // TODO (nicolas): fix this properly
+//  mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType(spad.module.io.mx_req_io.mx_mode)
+//  mx_requantizer.get.io.requant_data_in.valid := spad.module.io.mx_req_io.mx_data_in.valid
+//  spad.module.io.mx_req_io.mx_data_in.ready := mx_requantizer.get.io.requant_data_in.ready
+//  mx_requantizer.get.io.fp8_mode := spad.module.io.mx_req_io.mx_mode === 0.U
+//
+//  // mxreq to acc
+//  spad.module.io.mx_req_io.mx_data_out.bits.data := mx_io.get.requant_out.bits.data(127, 0).asTypeOf(spad.module.io.mx_req_io.mx_data_out.bits.data) // TODO (nicolas): fix this properly
+//  spad.module.io.mx_req_io.mx_data_out.valid := mx_io.get.requant_out.valid
+//  spad.module.io.mx_req_io.mx_data_out.bits.fromDMA := acc_mem_in.fromDMA
+//  spad.module.io.mx_req_io.mx_data_out.bits.acc_bank_id := acc_mem_in.acc_bank_id
+//  mx_requantizer.get.io.requant_data_out.ready := spad.module.io.mx_req_io.mx_data_out.ready
 
 //  val quant_to_spad_write = if ((outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined)) {
 //    val requantized_writes = Wire(Vec(outer.config.sp_banks,

@@ -181,9 +181,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   }
   assert(acc_scale_latency > 0)
 
-  val mvin_cols_bits = log2Up(((dma_maxbytes / (weightTypeProjected.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvin_cols_bits = log2Up(((dma_maxbytes / (weightType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvin_rows_bits = log2Up(2*meshRows * tileRows + 1)
-  val mvout_cols_bits = log2Up(((dma_maxbytes / (weightTypeProjected.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvout_cols_bits = log2Up(((dma_maxbytes / (weightType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
   val mvout_rows_bits = log2Up(2*meshRows * tileRows + 1)
 
   val load_states = 3
