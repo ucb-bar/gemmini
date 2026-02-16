@@ -242,7 +242,7 @@ object GemminiMxFPConfigs {
     spad_read_delay = 1,
 
     dma_maxbytes = 64, // TODO get this from cacheblockbytes
-    dma_buswidth = 128, // TODO get this from SystemBusKey
+    dma_buswidth = 256, // TODO get this from SystemBusKey
     aligned_to = 1,
     tlb_size = 4,
     use_tlb_register_filter = true,
