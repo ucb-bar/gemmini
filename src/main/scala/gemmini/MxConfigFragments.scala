@@ -34,7 +34,7 @@ case class GemminiRequantizerConfig(
   lutUpdateRegularityW : Int = 128,  // means how many elements updatScalingFactorCntle once the lut
   lutUpdateRegularityActIn : Int = 128,
   lutUpdateRegularityActOut : Int = 128,
-  pipelineLatency: Int = 0,
+  pipelineLatency: Int = 2,
 )
 
 case class GemminiLUTConfig(

@@ -356,8 +356,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writeData.bits := DontCare
     val fullAccWriteData = Wire(UInt(acc_w.W))
     fullAccWriteData := DontCare
-    val writeData_is_full_width = !write_issue_q.io.deq.bits.laddr.is_garbage() &&
-     write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.read_full_acc_row && (!io.enable_MXQuant)
+//    val writeData_is_full_width = !write_issue_q.io.deq.bits.laddr.is_garbage() &&
+//     write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.read_full_acc_row && (!io.enable_MXQuant)
+    val writeData_is_full_width = !write_issue_q.io.deq.bits.laddr.is_garbage() && (!io.enable_MXQuant)
 
     //    val writeData_is_full_width = true.B //TODO: fix this. Right now needed for data transfer from accumulator in mxconfig.
     val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()

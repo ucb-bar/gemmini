@@ -666,9 +666,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               weight_mx_format := config_ex_rs1.weight_mx_format
               output_mx_format := config_ex_rs1.output_mx_format
               uselut := config_ex_rs1.uselut
-              if (output_mx_format != 3.U){
+              when (config_ex_rs1.output_mx_format =/= 3.U){
                 enable_mxquant := true.B
-              } else {
+              }.otherwise {
                 enable_mxquant := false.B
               }
               if (dataflow == Dataflow.BOTH) {
