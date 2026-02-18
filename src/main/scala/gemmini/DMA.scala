@@ -413,6 +413,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val size = UInt(log2Ceil(maxBytes+1).W)
       val lg_size = UInt(log2Ceil(log2Ceil(maxBytes+1)+1).W)
       val mask = Vec(maxBeatsPerReq, Vec(beatBytes, Bool()))
+      println("Creating a mask of sizes (max, beatBytes): " + maxBeatsPerReq + " " + beatBytes + "\n")
       val vaddr = UInt(vaddrBits.W)
       val is_full = Bool()
 

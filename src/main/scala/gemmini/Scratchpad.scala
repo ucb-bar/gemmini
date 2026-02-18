@@ -227,13 +227,17 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val id_node = TLIdentityNode()
   val xbar_node = TLXbar()
 
+  println("maxBytes: " + maxBytes + "\n")
+  println("dataBits: " + dataBits + "\n")
+  println("acc_w: " + acc_w + "\n")
+
   val reader = LazyModule(new StreamReader(config, max_in_flight_mem_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter,
     use_firesim_simulation_counters))
   val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
     if (acc_read_full_width) acc_w else spad_w, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters))
-  val spad_writer = Option.when(config.use_tl_ext_mem)(LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
+  val spad_writer = Option.when(config.use_tl_ext_mem)(LazyModule(new StreamWriter(max_in_flight_mem_reqs, spad_writer_dma_width, max_spad_writer_bytes,
     if (acc_read_full_width) acc_w else spad_w, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters)))
 

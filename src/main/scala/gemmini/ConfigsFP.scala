@@ -241,8 +241,10 @@ object GemminiMxFPConfigs {
     acc_capacity = CapacityInKilobytes(64),
     spad_read_delay = 1,
 
-    dma_maxbytes = 64, // TODO get this from cacheblockbytes
-    dma_buswidth = 256, // TODO get this from SystemBusKey
+    dma_maxbytes = 64, // These are overwritten by radiance
+    dma_buswidth = 512, // These are overwritten by radiance
+    max_spad_writer_bytes = 64,
+    spad_writer_dma_width = 512,
     aligned_to = 1,
     tlb_size = 4,
     use_tlb_register_filter = true,

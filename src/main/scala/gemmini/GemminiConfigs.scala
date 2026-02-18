@@ -62,6 +62,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              
                                                                              dma_maxbytes: Int = 64, // TODO get this from cacheblockbytes
                                                                              dma_buswidth: Int = 128, // TODO get this from SystemBusKey
+                                                                             spad_writer_dma_width: Int = 512,
+                                                                             max_spad_writer_bytes: Int = 64,
 
                                                                              shifter_banks: Int = 1, // TODO add separate parameters for left and up shifter banks
 
