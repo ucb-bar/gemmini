@@ -68,7 +68,7 @@ class ScalingFactorMem(
   val combined_scales_valid = WireDefault(false.B)
   val bankDataT = Vec(bytesPerBank, UInt(8.W))
   val banks = Seq.fill(numBanks)(SyncReadMem(depth, bankDataT))
-  val fp8Mode = io.dataType === 2.U
+  val fp8Mode = io.dataType === 0.U
   
   val weight_write_buffer_sel = RegInit(false.B) 
   val weight_buffer_0_read_enable = RegInit(false.B)
@@ -353,8 +353,8 @@ class ScalingFactorMem(
     }
     when(fp8Mode){
       for(i <- 0 until meshRows*tileRows) {
-//        val single_scale = combined_scales_buffer(scale_counter)(i)
-          val single_scale = 127.U // TODO: get rid of this, just for debugging
+        val single_scale = combined_scales_buffer(scale_counter)(i)
+//          val single_scale = 127.U // TODO: get rid of this, just for debugging
         io.read_resp.bits.combined_scales(i) := Cat(0.U(27.W), single_scale(8, 0))
       }
     }.otherwise{

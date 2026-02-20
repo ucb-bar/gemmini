@@ -41,7 +41,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   val spad_base = config.tl_ext_mem_base
   val spad_data_len = config.sp_width_projected / 8
   val acc_data_len = config.sp_width / config.weightType.getWidth * config.accType.getWidth / 8
-  val max_data_len = 64 //spad_data_len max acc_data_len
+  val max_data_len = spad_data_len // max acc_data_len
 
   val mem_depth = config.sp_bank_entries * spad_data_len / max_data_len
   val mem_width = max_data_len
