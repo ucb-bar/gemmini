@@ -16,6 +16,7 @@ class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, sca
   val weight_mx_format = UInt(2.W)
   val act = UInt(Activation.bitwidth.W) // TODO magic number
   val full = Bool() // Whether or not we return the full bitwidth output
+  val is_last_half = Bool()
   
   val fromDMA = Bool()
 
@@ -31,11 +32,12 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val iexp_qln2_inv = fullDataType.head.head.cloneType
   val act = UInt(Activation.bitwidth.W) // TODO magic number
   val acc_bank_id = UInt(2.W) // TODO magic number
+  val is_last_half = Bool()
 }
 
-class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, fullDataType: Vec[Vec[T]], scale_t: U) extends Bundle {
+class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, fullDataType: Vec[Vec[T]], scale_t: U, half_t: Vec[Vec[T]]) extends Bundle {
   val req = Decoupled(new AccumulatorReadReq[T, U](n, fullDataType.head.head.cloneType, scale_t))
-  val resp = Flipped(Decoupled(new AccumulatorReadResp[T, U](fullDataType, scale_t)))
+  val resp = Flipped(Decoupled(new AccumulatorReadResp[T, U](half_t, scale_t)))
 }
 
 class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
@@ -46,10 +48,10 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
 }
 
 
-class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U,
+class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U, half_t: Vec[Vec[T]],
   acc_sub_banks: Int, use_shared_ext_mem: Boolean, use_mx_scaling: Boolean, meshRows: Int, tileRows: Int, bankWidthBits: Int
 ) extends Bundle {
-  val read = Flipped(new AccumulatorReadIO(n, t, scale_t))
+  val read = Flipped(new AccumulatorReadIO(n, t, scale_t, half_t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
 
   val ext_mem = if (use_shared_ext_mem) Some(Vec(acc_sub_banks, new ExtMemIO)) else None
@@ -127,9 +129,11 @@ class AccumulatorMem[T <: Data, U <: Data](
   // accType.getWidth/8 aligned, because it won't make sense to do matrix additions directly in the DMA otherwise.
   
   import ev._
-  
+
+  val half_t = Vec(t.length / 2, t.head.cloneType)
+
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t, scale_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows, scale_mem.get.bankWidthBits))
+  val io = IO(new AccumulatorMemIO(n, t, scale_t, half_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows, scale_mem.get.bankWidthBits))
   
   val scaleFactorMem = scale_mem.map { conf =>
     // println(s"[ScalingFactorMem Config]")
@@ -309,7 +313,7 @@ class AccumulatorMem[T <: Data, U <: Data](
 
   val rdata_for_adder = Wire(t)
   rdata_for_adder := DontCare
-  val rdata_for_read_resp = Wire(t)
+  val rdata_for_read_resp = Wire(half_t)
   rdata_for_read_resp := DontCare
   
   val adder_sum = io.adder.sum
@@ -368,6 +372,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     ext_mem.foreach(_.read_req.valid := false.B)
     ext_mem.foreach(_.read_resp.ready := false.B) // no reading from external accmem
   }
+
   if (!acc_singleported && !is_dummy) {
     // if (use_shared_ext_mem && use_tl_ext_ram) {
     //   // duplicate write to external memory
@@ -381,15 +386,29 @@ class AccumulatorMem[T <: Data, U <: Data](
     // } else if (use_shared_ext_mem) {
     //   require(false, "cannot use two-port external acc mem bank")
     // }
-    val mem = TwoPortSyncMem(n, t, mask_len) // TODO We assume byte-alignment here. Use aligned_to instead
+
+    println("Creating Accumulator memory with sizes: acc_num_entries " + n + " len " + mask_len + "\n")
+
+    val mem = AsymmetricTwoPortSyncMem(n, t, mask_len) // TODO We assume byte-alignment here. Use aligned_to instead
+
+    // write
     mem.io.waddr := oldest_pipelined_write.bits.addr
     mem.io.wen := oldest_pipelined_write.valid
     mem.io.wdata := Mux(oldest_pipelined_write.bits.acc, adder_sum, oldest_pipelined_write.bits.data)
     mem.io.mask := oldest_pipelined_write.bits.mask
-    rdata_for_adder := mem.io.rdata
-    rdata_for_read_resp := mem.io.rdata
-    mem.io.raddr := Mux(io.write.fire && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
-    mem.io.ren := io.read.req.fire || (io.write.fire && io.write.bits.acc)
+
+    // full-width read
+    mem.io.raddr_full := io.write.bits.addr
+    mem.io.ren_full := io.write.fire && io.write.bits.acc
+    rdata_for_adder := mem.io.rdata_full
+
+    // half-width read
+    // address for halfwidth port = {addr, bank_sel}
+    mem.io.raddr_half := Cat(io.read.req.bits.addr, io.read.req.bits.is_last_half.asUInt)
+    mem.io.ren_half := io.read.req.fire
+
+    rdata_for_read_resp := mem.io.rdata_half.asTypeOf(half_t)
+
   } else if (!is_dummy) {
     val rmw_req = Wire(Decoupled(UInt()))
     rmw_req.valid := io.write.valid && io.write.bits.acc
@@ -548,8 +567,8 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
   }
 
-  val q = Module(new Queue(new AccumulatorReadResp(t, scale_t),  1, true, true))
-  q.io.enq.bits.data := rdata_for_read_resp
+  val q = Module(new Queue(new AccumulatorReadResp(half_t, scale_t), 1, true, true))
+  q.io.enq.bits.data := rdata_for_read_resp.asTypeOf(half_t)
 
   if (is_dummy) {
     rdata_for_read_resp := DontCare
@@ -564,6 +583,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
   q.io.enq.bits.fromDMA := RegNext(io.read.req.bits.fromDMA)
   q.io.enq.bits.acc_bank_id := DontCare
+  q.io.enq.bits.is_last_half := RegNext(io.read.req.bits.is_last_half)
   q.io.enq.valid := RegNext(io.read.req.fire)
 
   val p = q.io.deq
@@ -578,9 +598,11 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.read.resp.bits.scale := p.bits.scale
   io.read.resp.bits.acc_bank_id := DontCare // This is set in Scratchpad
   io.read.resp.valid := p.valid
+  io.read.resp.bits.is_last_half := p.bits.is_last_half
   p.ready := io.read.resp.ready
 
   val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U
+  dontTouch(q_will_be_empty)
   io.read.req.ready := q_will_be_empty && (
       // Make sure we aren't accumulating, which would take over both ports
       !(io.write.valid && io.write.bits.acc) &&

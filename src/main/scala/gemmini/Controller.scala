@@ -243,6 +243,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // mxRequantizer gets used when reading out data with dma
   spad.module.io.enable_MXQuant := ex_controller.io.enable_MXQuant
+  store_controller.io.enable_wide_spad_write := !ex_controller.io.enable_MXQuant
 
   val lut_deprojected_data = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
   lut_deprojected_data := 0.U.asTypeOf(lut_deprojected_data)

@@ -57,13 +57,14 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   sp_width_projected: Int,
   acc_row_t: Vec[Vec[T]],
   spad_row_t: Vec[Vec[T]],
+  half_t: Vec[Vec[T]],
   iterator_bitwidth: Int,
   config: GemminiRequantizerConfig
 ) extends Bundle {
   val inputnumLanes = config.numInputLanes
   val outputnumLanes = config.numOutputLanes
   val inputdataWidth = config.inputBits
-  val mxacc_req = Flipped(new MxRequantizerAccMemIO[T](acc_row_t, spad_row_t))
+  val mxacc_req = Flipped(new MxRequantizerAccMemIO[T](acc_row_t, spad_row_t, half_t))
   val requant_data_in = Flipped(Decoupled(new RequantizerInBundle(outputnumLanes, inputdataWidth)))
   val requant_data_in_gpu = Flipped(Decoupled(new RequantizerInBundle(config.numGPUInputLanes, inputdataWidth)))
   val scaleMem_write = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
@@ -105,6 +106,7 @@ class MxRequantizer[T <: Data](
   val pipelineLatency = config.pipelineLatency
   val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
   val spad_row_t = Vec(meshColumns, Vec(tileColumns, weightTypeProjected))
+  val half_acc_row_t = Vec(meshColumns/2, Vec(tileColumns, accType))
 
   val io = IO(new MxRequantizerIO[T](
     sp_data_width, 
@@ -120,6 +122,7 @@ class MxRequantizer[T <: Data](
     sp_width_projected,
     acc_row_t,
     spad_row_t,
+    half_acc_row_t,
     iterator_bitwidth,
     config
   ))
@@ -165,7 +168,7 @@ class MxRequantizer[T <: Data](
 //  val can_enqueue = if (pipelineLatency > 0) outQueue.io.enq.ready else true.B
   // Queue at output for backpressure
   // Can we push into the queue this cycle?
-  val pipe_in = Wire(Decoupled(new MxRequantizerAccResp[T](acc_row_t, spad_row_t)(ev)))
+  val pipe_in = Wire(Decoupled(new MxRequantizerAccResp[T](half_acc_row_t, spad_row_t)(ev)))
   pipe_in.valid := false.B
   pipe_in.bits := DontCare
   val pipe_out = Pipeline(pipe_in, pipelineLatency)
@@ -352,8 +355,8 @@ class MxRequantizer[T <: Data](
     io.requant_data_in_gpu.ready := !io.requant_data_in.fire
   } else {
     io.mxacc_req.mx_data_out.bits := VecInit(pipe_out.bits.full_data.map(row =>
-      VecInit(row.map(elem => elem.asUInt(7, 0).asTypeOf(weightTypeProjected)))
-    ))
+      VecInit(row.map(elem => elem.asUInt(15, 0).asTypeOf(weightTypeProjected)))
+    )).asTypeOf(spad_row_t)
     io.mxacc_req.mx_data_out.valid := pipe_out.valid
     pipe_out.ready := io.mxacc_req.mx_data_out.ready
 

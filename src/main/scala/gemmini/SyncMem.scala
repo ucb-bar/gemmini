@@ -51,6 +51,62 @@ class TwoPortSyncMem[T <: Data](n: Int, t: T, mask_len: Int) extends Module {
   }
 }
 
+class AsymmetricTwoPortSyncMem[T <: Data](n: Int, t: T, mask_len: Int) extends Module {
+  val fullWidth = t.getWidth
+  val halfWidth = fullWidth / 2
+  assert(!(mask_len % 2 == 1), "masklen must be even")
+  val half_mask_len = mask_len / 2
+  val mask_elem = UInt((fullWidth / mask_len).W)
+
+  val io = IO(new Bundle {
+    // full width write
+    val waddr = Input(UInt((log2Ceil(n) max 1).W))
+    val wdata = Input(t)
+    val mask = Input(Vec(mask_len, Bool()))
+    val wen = Input(Bool())
+
+    // full width write (for accumulation RMW)
+    val raddr_full = Input(UInt((log2Ceil(n) max 1).W))
+    val rdata_full = Output(t)
+    val ren_full = Input(Bool())
+
+    val raddr_half = Input(UInt((log2Ceil(n) + 1).W))
+    val ren_half = Input(Bool())
+    val rdata_half = Output(UInt(halfWidth.W))
+  })
+  assert(!(io.wen && io.ren_full && io.raddr_full === io.waddr), "undefined behavior in dual-ported SRAM")
+  assert(!(io.wen && io.ren_half && io.raddr_half(log2Ceil(n), 1) === io.waddr), "undefined behaviour in dual-ported SRAM")
+  assert(!(io.ren_half && io.ren_full), "cannot read full and half simultaneously")
+
+  val memLo = SyncReadMem(n, Vec(half_mask_len, mask_elem))
+  val memHi = SyncReadMem(n, Vec(half_mask_len, mask_elem))
+
+  // always write full width
+  val write_data = io.wdata.asTypeOf(Vec(mask_len, mask_elem))
+  val wLo_data = VecInit(write_data.slice(0, half_mask_len))
+  val wHi_data = VecInit(write_data.slice(half_mask_len, mask_len))
+  val wLo_mask = VecInit(io.mask.slice(0, half_mask_len))
+  val wHi_mask = VecInit(io.mask.slice(half_mask_len, mask_len))
+
+  when(io.wen) {
+    memLo.write(io.waddr, wLo_data, wLo_mask)
+    memHi.write(io.waddr, wHi_data, wHi_mask)
+  }
+
+  val readAddr = Mux(io.ren_half, io.raddr_half >> 1, io.raddr_full)(log2Ceil(n) - 1, 0)
+  val bankSel = io.raddr_half(0).asBool
+  val bankSelResp = RegNext(bankSel)
+
+  val renLo = io.ren_full | (io.ren_half && !bankSel)
+  val renHi = io.ren_full | (io.ren_half && bankSel)
+
+  val rLo = memLo.read(readAddr, renLo)
+  val rHi = memHi.read(readAddr, renHi)
+
+  io.rdata_full := Cat(rLo.asUInt, rHi.asUInt).asTypeOf(t)
+  io.rdata_half := Mux(bankSelResp, rHi.asUInt, rLo.asUInt)
+}
+
 class SplitSinglePortSyncMem[T <: Data](n: Int, t: T, splits: Int) extends Module {
   val io = IO(new Bundle {
     val waddr = Input(UInt((log2Ceil(n) max 1).W))
@@ -103,6 +159,10 @@ object SinglePortSyncMem {
 
 object TwoPortSyncMem {
   def apply[T <: Data](n: Int, t: T, mask_len: Int): TwoPortSyncMem[T] = Module(new TwoPortSyncMem(n, t, mask_len))
+}
+
+object AsymmetricTwoPortSyncMem {
+  def apply[T <: Data](n: Int, t: T, mask_len: Int): AsymmetricTwoPortSyncMem[T] = Module(new AsymmetricTwoPortSyncMem(n, t, mask_len))
 }
 
 object SplitSinglePortSyncMem {
