@@ -282,10 +282,15 @@ class QuantLut(
 
     when(io.spad_projected_data(i).resp.valid) {
       when(io.read_a && (lutCache_act_in_buffer_0_read_enable || lutCache_act_in_buffer_1_read_enable)) {
-        used_lut_act := lutCache_act_in(counter_act)
-        for (k <- 0 until 32) {
-          val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-          deprojected_bits(k) := used_lut_act(chunk_4bit)
+        
+        for (k <- 0 until 16) { //act data layout is k15a1, k15a0, k14a1, k14a0,...,k0a1,k0a0, each 4 bit, total 32*4 
+          used_lut_act := lutCache_act_in(k)
+          val chunk_4bit_0 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 3, 2*k*4)
+          val chunk_4bit_1 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 7, 2*k*4 + 4)
+          val deprojected_bit_0 = used_lut_act(chunk_4bit_0)
+          val deprojected_bit_1 = used_lut_act(chunk_4bit_1)
+          deprojected_bits(2*k) := deprojected_bit_0
+          deprojected_bits(2*k + 1) := deprojected_bit_1
         }
         when (counter_act === (lutConfig(0)._1 - 1).U){
           counter_act := 0.U

@@ -68,7 +68,7 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   val i = Input(UInt(16.W)) //for scaling factor memory control
   val j = Input(UInt(16.W)) //for scaling factor memory control
   val k = Input(UInt(16.W)) //for scaling factor memory control
-  val dataType = Input(UInt(2.W)) //this is the input mxformat datatype
+  val dataType_out = Input(UInt(2.W)) //this is the output mxformat datatype
   val scale_mem_write_act = if (use_mx_scaling) {
     Some(Flipped(Decoupled(new ScalingFactorWriteReq(13, 64))))
   } else None
@@ -188,7 +188,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     val scaleS:  SInt = Cat(0.U(1.W), scale_e9m0).asSInt
     val expS:    SInt = Cat(0.U(1.W), exp).asSInt
     printf(p"[AccumulatorMem] combined_scales=${scaleS}\n")
-    // E9M0: scale = 2^(scale_e9m0 - 255)
+    // scale = 2^(a+b-254) where a,b are fpe8m0 codes; scaleOffset = (a+b) - 254
     val scaleOffset: SInt = scaleS - 254.S
     val newExp: SInt      = expS + scaleOffset
 
@@ -204,7 +204,9 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
     val clampedExp = clampedExpS.asUInt(expBits - 1, 0)
 
-    val outUInt = Cat(sign, clampedExp, mant)
+    val isZero  = (exp === 0.U) && (mant === 0.U)
+    val finalExp = Mux(isZero, 0.U(expBits.W), clampedExp)
+    val outUInt = Cat(sign, finalExp, mant)
     outUInt.asTypeOf(value)
   }   
   
@@ -220,7 +222,8 @@ class AccumulatorMem[T <: Data, U <: Data](
   }
  
     require (acc_latency >= 2)
-    val dataType = io.dataType
+    val dataType = io.dataType_out
+    
     val scaled_data = WireInit(0.U.asTypeOf(t)) //fee
     val scalecounter = RegInit(0.U(1.W))
     val pipelined_writes = Reg(Vec(acc_latency, Valid(new AccumulatorWriteReq(n, t))))
@@ -244,7 +247,7 @@ class AccumulatorMem[T <: Data, U <: Data](
 
   if (use_mx_scaling) {
     val scale_mem = scaleFactorMem.get
-    scale_mem.io.dataType := io.dataType
+    scale_mem.io.dataType := io.dataType_out
     //wirte scale_mem
     scale_mem.io.scale_mem_write_w <> io.scale_mem_write_w.get
     scale_mem.io.scale_mem_write_act <> io.scale_mem_write_act.get
@@ -273,22 +276,24 @@ class AccumulatorMem[T <: Data, U <: Data](
       scale_mem.io.read_req.bits.scaling_enable := true.B
       scale_mem.io.read_req.bits.addr := calculateScaleAddr(io.write.bits.addr)
     }
-   
     when(scale_mem.io.read_resp.valid) {
       when(dataType === 0.U) {
         for (i <- 0 until 16) {
-          val dataElement = pipelined_writes(0).bits.data(i).asUInt  // 64-bit
+          val dataElement = Wire(UInt(64.W))
+          dataElement := pipelined_writes(0).bits.data(i).asUInt
           val dataBits = dataElement(15, 0)  // Extract lowest 16 bits
           val scaled_result = applyE9M0Scale(dataBits, scale_mem.io.read_resp.bits.combined_scales(i), 8, 7)
           val fullResult = Cat(0.U(48.W), scaled_result)
           scaled_data(i) := fullResult.asTypeOf(pipelined_writes(0).bits.data(i))
         }
-      }.otherwise {                                                               
+      }.otherwise {
         for (i <- 0 until 16) {
-          val dataElement = pipelined_writes(0).bits.data(i).asUInt             
+          val scaled_chunks = Wire(Vec(4, UInt(16.W)))
+          val dataElement = Wire(UInt(64.W))
+          dataElement := pipelined_writes(0).bits.data(i).asUInt
           val scale = scale_mem.io.read_resp.bits.combined_scales(i)
-          val scaled_chunks = (0 until 4).map { j =>
-            applyE9M0Scale(
+          for (j <- 0 until 4) {
+            scaled_chunks(j) := applyE9M0Scale(
               dataElement(j*16 + 15, j*16),
               scale(j*9 + 8, j*9),
               8, 7)

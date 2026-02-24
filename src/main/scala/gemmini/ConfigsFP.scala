@@ -263,7 +263,7 @@ object GemminiMxFPConfigs {
     spatialArrayInputType = MxFloat(3, 3, 2, pad=false), 
     spatialArrayWeightType = MxFloat(3, 3, 2, pad=false),
     spatialArrayOutputType = MxFloat(8, 8, 4, true, false),
-
+    
     meshProdPrecisionList = Seq.fill(4) {(8, 8)} ++ 
                                  Seq.fill(4) {(8, 8)} ++ 
                                  Seq.fill(4) {(8, 8)} ++ 
@@ -273,6 +273,17 @@ object GemminiMxFPConfigs {
                                  Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
                                  Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
                                  Seq.fill(4) {MxFloat(8, 8, 4, true, false)},
+
+
+    // meshProdPrecisionList = Seq.fill(4) {(4, 4)} ++ 
+    //                              Seq.fill(4) {(4, 4)} ++ 
+    //                              Seq.fill(4) {(4, 4)} ++ 
+    //                              Seq.fill(4) {(4, 4)}, 
+
+    // meshAccPrecisionList =     Seq.fill(4) {MxFloat(4, 3, 4, true, false)} ++ 
+    //                              Seq.fill(4) {MxFloat(4, 3, 4, true, false)} ++ 
+    //                              Seq.fill(4) {MxFloat(4, 3, 4, true, false)} ++ 
+    //                              Seq.fill(4) {MxFloat(4, 3, 4, true, false)},
 
                                  // 16x16 mesh with varying precisions
     // scaleMem_data_width = 128,

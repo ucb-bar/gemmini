@@ -226,6 +226,7 @@ class ScalingFactorMem(
 
 
 
+
   val act_bank_data_vec = WireInit(VecInit(Seq.fill(meshRows*tileRows*2)(0.U(8.W))))
   val weight_bank_data_vec = WireInit(VecInit(Seq.fill(meshRows*tileRows*2)(0.U(8.W))))
   dontTouch(act_bank_data_vec)

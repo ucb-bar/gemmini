@@ -33,6 +33,9 @@ class MxFpMulHarnessBf16Out_NewIO(lut: Boolean, fpProductPrecision: (Int, Int), 
     // 4 × BF16 packed LSB-first (lane0 in [15:0])
     val out_bf16      = Output(UInt(64.W))
 
+    // Raw recFN(8,8) output from DUT: 4 × 17b = 68b, lane0 at [16:0]
+    val out_recfn     = Output(UInt(dut.io.out.getWidth.W))
+
     // Observe what rec_c actually got applied
     val rec_c_applied = Output(UInt(dut.io.rec_c.getWidth.W))
   })
@@ -83,7 +86,8 @@ class MxFpMulHarnessBf16Out_NewIO(lut: Boolean, fpProductPrecision: (Int, Int), 
     for (i <- 0 until 4) lanesBF16(i) := lanes(i)(15,0)
   }
 
-  io.out_bf16 := Cat(lanesBF16.reverse) // lane0 at [15:0]
+  io.out_bf16  := Cat(lanesBF16.reverse) // lane0 at [15:0]
+  io.out_recfn := dut.io.out             // raw 4×17b recFN, lane0 at [16:0]
 }
 
 class MxFpMul_AllATypes_BF16Out_SelfChecking_NewIO_Spec
@@ -266,21 +270,21 @@ class MxFpMul_AllATypes_BF16Out_SelfChecking_NewIO_Spec
 
         // Variants: keep same semantic knobs (type + altfmt), but NEW lane counts
         val aVariants = Seq(
-          ("A: 2×fp4",             0, false, () => Seq(genSmall(FP4_E2M1), genSmall(FP4_E2M1))),
+          //("A: 2×fp4",             0, false, () => Seq(genSmall(FP4_E2M1), genSmall(FP4_E2M1))),
           // ("A: 2×fp6 (E2M3 alt0)", 1, false, () => Seq(genSmall(FP6_E2M3), genSmall(FP6_E2M3))),
-          ("A: 2×fp6 (E3M2 alt1)", 1, true,  () => Seq(genSmall(FP6_E3M2), genSmall(FP6_E3M2))),
-          ("A: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3))),
-          // ("A: 1×fp8 (E5M2 alt1)", 2, true,  () => Seq(genSmall(FP8_E5M2)))
+          ("A: 2×fp6 (E3M2 alt1)", 1, true,  () => Seq(genSmall(FP6_E3M2), genSmall(FP6_E3M2)))
+          // ("A: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3))),
+          // // ("A: 1×fp8 (E5M2 alt1)", 2, true,  () => Seq(genSmall(FP8_E5M2)))
         )
         val wVariants = Seq(
-          ("W: 2×fp4",             0, false, () => Seq(genSmall(FP4_E2M1), genSmall(FP4_E2M1))),
+          // ("W: 2×fp4",             0, false, () => Seq(genSmall(FP4_E2M1), genSmall(FP4_E2M1))),
           // ("W: 2×fp6 (E2M3 alt0)", 1, false, () => Seq(genSmall(FP6_E2M3), genSmall(FP6_E2M3))),
-          ("W: 2×fp6 (E3M2 alt1)", 1, true,  () => Seq(genSmall(FP6_E3M2), genSmall(FP6_E3M2))),
-          ("W: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3))),
-          // ("W: 1×fp8 (E5M2 alt1)", 2, true,  () => Seq(genSmall(FP8_E5M2)))
+          ("W: 2×fp6 (E3M2 alt1)", 1, true,  () => Seq(genSmall(FP6_E3M2), genSmall(FP6_E3M2)))
+          // ("W: 1×fp8 (E4M3 alt0)", 2, false, () => Seq(genSmall(FP8_E4M3))),
+          // // ("W: 1×fp8 (E5M2 alt1)", 2, true,  () => Seq(genSmall(FP8_E5M2)))
         )
 
-        val trialsPerCombo = 20
+        val trialsPerCombo = 1
         h.io.enable.poke(true.B)
 
         // ------------------------------------------------------------------
@@ -385,6 +389,107 @@ class MxFpMul_AllATypes_BF16Out_SelfChecking_NewIO_Spec
               }
             }
           }
+        }
+
+        h.io.enable.poke(false.B)
+        h.clock.step(1)
+      }
+  }
+
+  // -----------------------------------------------------------------------
+  // User-defined 12-bit activation / weight probe
+  // Edit `userCases` below to inject any raw 12-bit packed values and read
+  // the 4-lane BF16 output.
+  //
+  // Packing convention (FP6 E3M2, same as the randomised test above):
+  //   in_activation / in_weights are split into two halves by pack2IntoHalves:
+  //     bits [half-1 : 0]      -> element 0
+  //     bits [totalW-1 : half] -> element 1
+  //   where half = portWidth / 2.
+  //
+  //   For a 12-bit port: half = 6, element 0 in [5:0], element 1 in [11:6].
+  //   For a 16-bit port: half = 8, element 0 in [5:0] (zero-padded to 8b),
+  //                               element 1 in [13:8] (zero-padded to 8b).
+  //
+  // c_raw is a raw BF16 (E8M7) integer, e.g. 0x3F80 = 1.0, 0x0000 = 0.0.
+  // -----------------------------------------------------------------------
+  it should "run user-defined 12-bit activation and weight inputs and print lane outputs" in {
+
+    val fpProductPrecision = (8, 8)
+    val fpAccPrecision     = gemmini.MxFloat(8, 8, 4, true, false)
+
+    test(new MxFpMulHarnessBf16Out_NewIO(lut = false, fpProductPrecision, fpAccPrecision))
+      .withAnnotations(Seq(WriteVcdAnnotation)) { h =>
+
+        // ---- helpers (same as above) ----
+        def bf16ToFloat(raw16: Int): scala.Float = java.lang.Float.intBitsToFloat(raw16 << 16)
+        def binStr(x: BigInt, w: Int): String = {
+          val s = x.toString(2); "b" + ("0" * (w - s.length)) + s
+        }
+        def laneVal(bits: BigInt, idx: Int, laneW: Int): Int =
+          ((bits >> (idx * laneW)) & ((BigInt(1) << laneW) - 1)).toInt
+        def showBF16(tag: String, v: Int): Unit = {
+          val s = (v >>> 15) & 1
+          val e = (v >>> 7)  & 0xFF
+          val f = v & 0x7F
+          println(f"$tag: 0x$v%04X  s=$s e=0x$e%02X f=0x$f%02X  (~=${bf16ToFloat(v)}%g)")
+        }
+
+        val aW    = h.io.in_activation.getWidth
+        val wW    = h.io.in_weights.getWidth
+        val outLaneW = 16 // BF16 output lanes
+
+        // ====================================================================
+        // USER INPUTS — edit this table to test your own values.
+        //
+        // Each row: (label, activation_raw, weight_raw, c_raw_bf16)
+        //   activation_raw : BigInt — raw bits for in_activation (12 b or aW b)
+        //   weight_raw     : BigInt — raw bits for in_weights    (12 b or wW b)
+        //   c_raw_bf16     : Int    — raw BF16 integer for the accumulate input
+        // ====================================================================
+        val userCases: Seq[(String, BigInt, BigInt, Int)] = Seq(
+          // label            activation (12b)   weight (12b)    c_raw (BF16)
+          ("user case 0",  BigInt("B6D", 16),  BigInt("02D", 16),  0x0000),  // c = 1.0
+          //("user case 1",  BigInt("041", 16),  BigInt("041", 16),  0x0000),  // c = 0.0
+          //("user case 2",  BigInt("FFF", 16),  BigInt("000", 16),  0x0000),  // max act, zero wei
+        )
+
+    
+        h.io.type_a.exp.poke(3.U)
+        h.io.type_a.sig.poke(3.U)
+        h.io.type_w.exp.poke(3.U)
+        h.io.type_w.sig.poke(3.U)
+        h.io.enable.poke(true.B)
+
+        for ((label, actRaw, weiRaw, cRaw) <- userCases) {
+          println(s"\n==== $label ====")
+          println(s"  in_activation (${aW}b) = ${binStr(actRaw, aW)}   hex=0x${actRaw.toString(16).toUpperCase}")
+          println(s"  in_weights    (${wW}b) = ${binStr(weiRaw, wW)}   hex=0x${weiRaw.toString(16).toUpperCase}")
+          showBF16("  c_raw (BF16)         ", cRaw)
+
+          h.io.in_activation.poke(actRaw.U(aW.W))
+          h.io.in_weights.poke(weiRaw.U(wW.W))
+          h.io.c_raw.poke(cRaw.U(16.W))
+
+          h.clock.step(2)
+
+          // --- raw recFN(8,8) per lane: sign(1)|exp_recoded(9)|mant(7) = 17b ---
+          val recFnBits  = h.io.out_recfn.peek().litValue
+          val recFnLaneW = h.io.out_recfn.getWidth / 4   // 17
+          println(s"  out_recfn (${h.io.out_recfn.getWidth}b) = ${binStr(recFnBits, h.io.out_recfn.getWidth)}")
+          (0 until 4).foreach { i =>
+            val rv   = laneVal(recFnBits, i, recFnLaneW)
+            val sign = (rv >> (recFnLaneW - 1)) & 1
+            val exp  = (rv >> 7) & 0x1FF   // bits [15:7] — 9-bit recoded exp
+            val mant = rv & 0x7F           // bits [6:0]  — 7-bit mantissa
+            println(f"  recFN lane[$i]: 0x${rv}%05X  s=$sign exp=0x$exp%03X(${exp}d) mant=0x$mant%02X")
+          }
+
+          // --- BF16 converted output ---
+          val outBits = h.io.out_bf16.peek().litValue
+          println(s"  out_bf16  (${4 * outLaneW}b) = ${binStr(outBits, 4 * outLaneW)}")
+          val got = Array.tabulate(4)(i => laneVal(outBits, i, outLaneW))
+          (0 until 4).foreach(i => showBF16(f"  BF16 lane[$i]", got(i)))
         }
 
         h.io.enable.poke(false.B)

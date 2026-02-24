@@ -313,6 +313,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         rDataType = spad_row_t,
         half_t = half_t
       )
+      val weight_mx_format = Input(UInt(2.W))
+      val act_mx_format = Input(UInt(2.W))
       val output_mx_format = Input(UInt(2.W))
       val enable_MXQuant = Input(Bool()) //determines if mxrequantizer gets used
     })
@@ -776,15 +778,16 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.counter_i := io.counter_i
         bio.counter_j := io.counter_j
         bio.counter_k := io.counter_k
+        bio.dataType_out := io.output_mx_format
         // bio.scaleMemCntl <> io.scaleMemCntl.get
-        bio.scaleMemCntl.foreach { bioCnlt =>
+        bio.scaleMemCntl.foreach { bioCnlt =>          
           io.scaleMemCntl.foreach { ioCnlt =>
             bioCnlt <> ioCnlt
           }
         }
-        bio.dataType := 0.U // TODO (nicolas): make this configurable with mxReg
-        bio.read.req.bits.activation_mx_format := 0.U // TODO (nicolas): make this configurable with mxReg
-        bio.read.req.bits.weight_mx_format := 0.U // TODO (nicolas): make this configurable with mxReg
+      
+        bio.read.req.bits.activation_mx_format := io.act_mx_format
+        bio.read.req.bits.weight_mx_format := io.weight_mx_format
 
         if (use_shared_ext_mem) {
           io.ext_mem.get.acc(i) <> bio.ext_mem.get
