@@ -229,16 +229,16 @@ class AccumulatorMem[T <: Data, U <: Data](
     val pipelined_writes = Reg(Vec(acc_latency, Valid(new AccumulatorWriteReq(n, t))))
     val oldest_pipelined_write = Wire(Valid(new AccumulatorWriteReq(n, t)))
     
-    if(use_mx_scaling){
-      when(dataType === 0.U){
-        oldest_pipelined_write := pipelined_writes(acc_latency-1)
-      }.otherwise{
-        oldest_pipelined_write := pipelined_writes(acc_latency - 1)
-        oldest_pipelined_write.bits.data := scaled_data
-      }
-    }else{
-      oldest_pipelined_write := pipelined_writes(acc_latency-1)
-    }
+    // if(use_mx_scaling){
+    //   when(dataType === 0.U){
+    //     oldest_pipelined_write := pipelined_writes(acc_latency-1)
+    //   }.otherwise{
+    //     oldest_pipelined_write := pipelined_writes(acc_latency - 1)
+    //     oldest_pipelined_write.bits.data := scaled_data
+    //   }
+    // }else{
+    oldest_pipelined_write := pipelined_writes(acc_latency-1)
+    //}
 
     pipelined_writes(0).valid := io.write.fire
     pipelined_writes(0).bits  := io.write.bits
@@ -327,13 +327,12 @@ class AccumulatorMem[T <: Data, U <: Data](
   
   io.adder.op1 := rdata_for_adder
   if(use_mx_scaling){
-    when(dataType === 0.U){
-      io.adder.op2 := scaled_data
-      io.adder.valid := pipelined_writes(0).valid && pipelined_writes(0).bits.acc
-    }.otherwise{
-      io.adder.op2 := scaled_data
-      io.adder.valid := pipelined_writes(1).valid && pipelined_writes(1).bits.acc
-    }
+    // when(dataType === 0.U){
+    //   io.adder.op2 := scaled_data
+    //   io.adder.valid := pipelined_writes(0).valid && pipelined_writes(0).bits.acc
+    // }.otherwise{
+    io.adder.op2 := scaled_data
+    io.adder.valid := pipelined_writes(0).valid && pipelined_writes(0).bits.acc
   }
   else {
      io.adder.op2 := pipelined_writes(0).bits.data
