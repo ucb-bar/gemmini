@@ -282,7 +282,8 @@ class AccumulatorMem[T <: Data, U <: Data](
           val dataElement = Wire(UInt(64.W))
           dataElement := pipelined_writes(0).bits.data(i).asUInt
           val dataBits = dataElement(15, 0)  // Extract lowest 16 bits
-          val scaled_result = applyE9M0Scale(dataBits, scale_mem.io.read_resp.bits.combined_scales(i), 8, 7)
+          val scale = scale_mem.io.read_resp.bits.combined_scales(i)(8,0)
+          val scaled_result = applyE9M0Scale(dataBits, scale, 8, 7)
           val fullResult = Cat(0.U(48.W), scaled_result)
           scaled_data(i) := fullResult.asTypeOf(pipelined_writes(0).bits.data(i))
         }
@@ -309,7 +310,7 @@ class AccumulatorMem[T <: Data, U <: Data](
 
     // optional override
     if (use_mx_scaling) {
-      when (i.U === 1.U && dataType === 0.U) {
+      when (i.U === 1.U) {
         pipelined_writes(i).bits.data := scaled_data
       }
     }
