@@ -778,7 +778,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.counter_i := io.counter_i
         bio.counter_j := io.counter_j
         bio.counter_k := io.counter_k
-        bio.dataType_out := io.output_mx_format
+        bio.dataType_out := io.act_mx_format
         // bio.scaleMemCntl <> io.scaleMemCntl.get
         bio.scaleMemCntl.foreach { bioCnlt =>          
           io.scaleMemCntl.foreach { ioCnlt =>

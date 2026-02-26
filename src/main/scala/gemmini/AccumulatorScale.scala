@@ -147,8 +147,8 @@ class AccumulatorScale[T <: Data, U <: Data](
     })))
 
     val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, half_t)(ev)))
-    in.valid := io.in.valid & io.mx_req_io.mx_data_in.ready
-    io.mx_req_io.mx_data_in.valid := io.in.valid && in.ready
+    in.valid := io.in.valid
+    io.mx_req_io.mx_data_in.valid := io.in.valid
     io.in.ready := in.ready && io.mx_req_io.mx_data_in.ready
     in.bits.resp := io.in.bits.acc_read_resp
     in.bits.full_data := acc_read_data
