@@ -281,11 +281,12 @@ class AccumulatorMem[T <: Data, U <: Data](
         for (i <- 0 until 16) {
           val dataElement = Wire(UInt(64.W))
           dataElement := pipelined_writes(0).bits.data(i).asUInt
-          val dataBits = dataElement(15, 0)  // Extract lowest 16 bits
-          val scale = scale_mem.io.read_resp.bits.combined_scales(i)(8,0)
-          val scaled_result = applyE9M0Scale(dataBits, scale, 8, 7)
-          val fullResult = Cat(0.U(48.W), scaled_result)
-          scaled_data(i) := fullResult.asTypeOf(pipelined_writes(0).bits.data(i))
+          val scaled_result = if (i < 4) {
+            VecInit(dataElement.asTypeOf(Vec(4, UInt(16.W))).zipWithIndex.map { case (e, j) => applyE9M0Scale(e, scale_mem.io.read_resp.bits.combined_scales(i * 4 + j)(8, 0), 8, 7) })
+          } else {
+            0.U(64.W)
+          }
+          scaled_data(i) := scaled_result.asTypeOf(pipelined_writes(0).bits.data(i))
         }
       }.otherwise {
         for (i <- 0 until 16) {
