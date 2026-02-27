@@ -28,6 +28,7 @@ class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
   val mx_req_io = new MxRequantizerAccMemIO[T](
     fullDataType, rDataType, half_t
   )
+  val output_mx_format = Input(UInt(2.W))
 }
 
 class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extends Bundle {
@@ -147,8 +148,13 @@ class AccumulatorScale[T <: Data, U <: Data](
     })))
 
     val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, half_t)(ev)))
+<<<<<<< HEAD
     in.valid := io.in.valid
     io.mx_req_io.mx_data_in.valid := io.in.valid
+=======
+    in.valid := io.in.valid 
+    io.mx_req_io.mx_data_in.valid := io.in.valid 
+>>>>>>> 21979b4 (fp6 one tile test)
     io.in.ready := in.ready && io.mx_req_io.mx_data_in.ready
     in.bits.resp := io.in.bits.acc_read_resp
     in.bits.full_data := acc_read_data
@@ -157,7 +163,7 @@ class AccumulatorScale[T <: Data, U <: Data](
     in.bits.resp.is_last_half := io.in.bits.acc_read_resp.is_last_half
 
     val pipe_out = Pipeline(in, latency)
-    io.mx_req_io.mx_mode := 0.U
+    io.mx_req_io.mx_mode := io.output_mx_format
 
     out.valid := pipe_out.valid && io.mx_req_io.mx_data_out.valid
     pipe_out.ready := out.ready && io.mx_req_io.mx_data_out.valid

@@ -252,7 +252,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) with HasCoreParameters {
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
-    val spad_row_t = Vec(meshColumns, Vec(tileColumns, weightTypeProjected))
+    val spad_row_t = Vec(2*meshColumns, Vec(tileColumns, weightTypeProjected))
     val half_t = Vec(meshColumns / 2, Vec(tileColumns, accType))
 
     val io = IO(new Bundle {
@@ -275,8 +275,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           acc_bank_entries, accType, acc_scale_t.asInstanceOf[V]
         ))))
         val read_resp = Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
-          Vec(meshColumns, Vec(tileColumns, weightType)),
           Vec(meshColumns, Vec(tileColumns, accType)),
+          Vec(2*meshColumns, Vec(tileColumns, weightType)),
           Vec(meshColumns/2, Vec(tileColumns, accType))
         )))
         val write = Flipped(Vec(acc_banks, Decoupled(new AccumulatorWriteReq(
@@ -701,16 +701,17 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     ))
 
     acc_scale_unit.io.mx_req_io <> io.mx_req_io
-
+   
     val acc_waiting_to_be_scaled = write_scale_q.io.deq.valid &&
       !write_scale_q.io.deq.bits.laddr.is_garbage() &&
       write_scale_q.io.deq.bits.laddr.is_acc_addr &&
       write_issue_q.io.enq.ready
-
+    
+    acc_scale_unit.io.output_mx_format :=  io.output_mx_format
     acc_norm_unit_out.ready := acc_scale_unit.io.in.ready && acc_waiting_to_be_scaled
     acc_scale_unit.io.in.valid := acc_norm_unit_out.valid && acc_waiting_to_be_scaled
     acc_scale_unit.io.in.bits  := acc_norm_unit_out.bits
-
+    
     when (acc_scale_unit.io.in.fire) {
       write_issue_q.io.enq <> write_scale_q.io.deq
     }

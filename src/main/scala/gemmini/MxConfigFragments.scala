@@ -39,7 +39,7 @@ case class GemminiRequantizerConfig(
 
 case class GemminiLUTConfig(
   numBits: Seq[Int] = Seq(96, 96, 96),
-  numEntries: Seq[Int] = Seq(16, 16, 32),
+  numEntries: Seq[Int] = Seq(64, 64, 64),
   rdataWidth: Int = 6,
   raddrWidth: Int = 4, 
   lutUpdateRegularityWidth: Int = 16,

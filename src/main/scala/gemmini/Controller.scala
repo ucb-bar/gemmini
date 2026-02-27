@@ -204,7 +204,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   mx_requantizer.foreach { req =>
     req.io.scaleMem_write.ready := false.B
-    req.io.fp8_mode := false.B
+    //req.io.fp8_mode := false.B
     req.io.scale_mem_mvout_base_addr_act := ex_controller.io.scale_mem_mvout_base_addr_act
     req.io.quant_lut_update_granularity := ex_controller.io.quant_lut_update_granularity
   }
@@ -326,8 +326,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // default
   spad.module.io.mx_req_io <> mx_requantizer.get.io.mxacc_req
-  mx_requantizer.get.io.requant_data_in <> DontCare
-  mx_requantizer.get.io.fp8_mode := true.B
+  //mx_requantizer.get.io.requant_data_in <> DontCare
+  //mx_requantizer.get.io.fp8_mode := true.B
   mx_requantizer.get.io.requant_data_out <> DontCare
 
 
