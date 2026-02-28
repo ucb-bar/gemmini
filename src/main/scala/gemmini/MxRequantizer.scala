@@ -10,6 +10,7 @@ object MxFloatFormat {
   val FP6 = 1.U(2.W)
   val FP4 = 2.U(2.W)
   val BF16 = 3.U(2.W)
+
   def apply(bits: UInt): (UInt, UInt, UInt, UInt) = {
     val exp_bits = MuxLookup(bits, 4.U)(Seq(
       FP4 -> 2.U,
@@ -244,12 +245,20 @@ class MxRequantizer[T <: Data](
     // Only allow input handshake when queue has space
   io.mxacc_req.mx_data_in.ready := can_enqueue
   io.requant_data_in_gpu.ready := can_enqueue && !io.mxacc_req.mx_data_in.fire
-  io.mxacc_req.mx_data_out.bits  := final_pipe_out.bits.q_data
-  io.mxacc_req.mx_data_out.valid := final_pipe_out.valid
 
-  oldest_pipe_out.ready := io.mxacc_req.mx_data_out.ready
-  final_pipe_out.ready := io.mxacc_req.mx_data_out.ready
+  io.mxacc_req.full_mx_data_out.bits := final_pipe_out.bits.full_data
+  io.mxacc_req.quant_mx_data_out.bits  := final_pipe_out.bits.q_data
 
+  when(total_bits_per_element === 16.U){
+    io.mxacc_req.full_mx_data_out.valid := final_pipe_out.valid
+    io.mxacc_req.quant_mx_data_out.valid := false.B
+  }.otherwise{
+    io.mxacc_req.quant_mx_data_out.valid := final_pipe_out.valid
+    io.mxacc_req.full_mx_data_out.valid := false.B
+  }
+
+  oldest_pipe_out.ready := io.mxacc_req.quant_mx_data_out.ready
+  final_pipe_out.ready := io.mxacc_req.quant_mx_data_out.ready
   
   should_compute := false.B
   when (can_enqueue) {

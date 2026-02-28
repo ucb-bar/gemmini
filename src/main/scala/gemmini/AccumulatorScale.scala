@@ -148,13 +148,8 @@ class AccumulatorScale[T <: Data, U <: Data](
     })))
 
     val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, half_t)(ev)))
-<<<<<<< HEAD
-    in.valid := io.in.valid
-    io.mx_req_io.mx_data_in.valid := io.in.valid
-=======
-    in.valid := io.in.valid 
-    io.mx_req_io.mx_data_in.valid := io.in.valid 
->>>>>>> 21979b4 (fp6 one tile test)
+    in.valid := io.in.valid && io.mx_req_io.mx_data_in.ready
+    io.mx_req_io.mx_data_in.valid := io.in.valid && in.ready
     io.in.ready := in.ready && io.mx_req_io.mx_data_in.ready
     in.bits.resp := io.in.bits.acc_read_resp
     in.bits.full_data := acc_read_data
@@ -165,11 +160,13 @@ class AccumulatorScale[T <: Data, U <: Data](
     val pipe_out = Pipeline(in, latency)
     io.mx_req_io.mx_mode := io.output_mx_format
 
-    out.valid := pipe_out.valid && io.mx_req_io.mx_data_out.valid
-    pipe_out.ready := out.ready && io.mx_req_io.mx_data_out.valid
-    io.mx_req_io.mx_data_out.ready := out.ready && pipe_out.valid
-    out.bits.full_data := pipe_out.bits.full_data
-    out.bits.data      := io.mx_req_io.mx_data_out.bits
+    out.valid := pipe_out.valid && (io.mx_req_io.quant_mx_data_out.valid || io.mx_req_io.quant_mx_data_out.valid )
+    pipe_out.ready := out.ready
+    io.mx_req_io.full_mx_data_out.ready := out.ready
+    io.mx_req_io.quant_mx_data_out.ready := out.ready
+    //out.bits.full_data := pipe_out.bits.full_data
+    out.bits.full_data := io.mx_req_io.full_mx_data_out.bits
+    out.bits.data      := io.mx_req_io.quant_mx_data_out.bits
     out.bits.fromDMA   := pipe_out.bits.resp.fromDMA
     out.bits.acc_bank_id := pipe_out.bits.resp.acc_bank_id
     out.bits.is_last_half := pipe_out.bits.resp.is_last_half

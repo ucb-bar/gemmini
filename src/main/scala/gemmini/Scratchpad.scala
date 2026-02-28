@@ -105,7 +105,8 @@ class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundl
 }
 
 class MxRequantizerAccMemIO[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]], half_t: Vec[Vec[T]]) extends Bundle {
-  val mx_data_out = Flipped(Decoupled(rDataType.cloneType))
+  val quant_mx_data_out = Flipped(Decoupled(rDataType.cloneType))
+  val full_mx_data_out = Flipped(Decoupled(half_t.cloneType))
   val mx_data_in = Decoupled(half_t.cloneType)
   val mx_mode = Output(UInt(2.W))
 }

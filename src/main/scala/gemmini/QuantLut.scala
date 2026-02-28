@@ -85,25 +85,22 @@ class QuantLut(
   val projectedIndices = WireDefault(VecInit(Seq.fill(32)(0.U(raddrWidth.W))))
   val projectedDataValid = WireDefault(false.B)
   val counter_act_out = RegInit(0.U(log2Ceil(32).W))
-  val used_lut_act_out = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W)))) 
-  //TODO: double check if this is the correct way to do nearest neighbor search, aligning with the algorithm implementation
+  val used_lut_act_out = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
+
+  val minIdx = WireDefault(0.U(raddrWidth.W))
+  val fp6Finders = Seq.fill(32)(Module(new FP6E3M2NearestFinder()))
+
+  for (i <- 0 until 32) {
+    fp6Finders(i).io.in_lut := VecInit(Seq.fill(16)(0.U(rdataWidth.W)))
+    fp6Finders(i).io.in_fp6 := 0.U(6.W)
+  }
+
   when(io.quant_fp6.valid) {
-    used_lut_act_out := lutCache_act_out((io.counter_i << 5.U) + counter_act_out)
     for (i <- 0 until 32) {
-      val inputFp6 = io.quant_fp6.bits(i)
-      val distances = VecInit((0 until 16).map { j =>
-        val diff = Mux(inputFp6 > used_lut_act_out(j),
-                       inputFp6 - used_lut_act_out(j),
-                       used_lut_act_out(j) - inputFp6)
-        diff
-      })
-      val minIdx = distances.zipWithIndex.map { case (dist, idx) =>
-        (dist, idx.U(raddrWidth.W))
-      }.reduce { (a, b) =>
-        val selectA = a._1 <= b._1
-        (Mux(selectA, a._1, b._1), Mux(selectA, a._2, b._2))
-      }._2
-      projectedIndices(i) := minIdx
+      used_lut_act_out := lutCache_act_out((io.counter_i << 5.U) + counter_act_out)
+      fp6Finders(i).io.in_lut := used_lut_act_out
+      fp6Finders(i).io.in_fp6 := io.quant_fp6.bits(i)
+      projectedIndices(i) := fp6Finders(i).io.nearestIdx
     }
     projectedDataValid := true.B
     when (counter_act_out === (outputnumLanes - 1).U){
