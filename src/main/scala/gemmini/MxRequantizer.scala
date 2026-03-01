@@ -44,8 +44,7 @@ object MxFloatFormat {
 }
 
 class MxRequantizerAccResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]]) extends Bundle {
-  val full_data = fullDataType.cloneType
-  val q_data = rDataType.cloneType
+  val out = new MxRequantizerAccMemDataOut[T] (rDataType, fullDataType)
   val mx_mode = UInt(2.W)
 }
 
@@ -214,14 +213,18 @@ class MxRequantizer[T <: Data](
   when(io.mxacc_req.mx_data_in.valid) {
     pipe_in.valid := true.B
     pipe_in.bits.mx_mode := io.mxacc_req.mx_mode
-    pipe_in.bits.full_data := io.mxacc_req.mx_data_in.bits
-  
+    pipe_in.bits.out.full_mx_data_out := io.mxacc_req.mx_data_in.bits.full_mx_data_in
+    pipe_in.bits.out.fromDMA := io.mxacc_req.mx_data_in.bits.fromDMA
+    pipe_in.bits.out.is_last_half := io.mxacc_req.mx_data_in.bits.is_last_half
+    pipe_in.bits.out.acc_bank_id := io.mxacc_req.mx_data_in.bits.acc_bank_id
+
   //}
   }.elsewhen(io.requant_data_in_gpu.valid && data_buffer_counter === 1.U) {
     pipe_in.valid := true.B
     pipe_in.bits.mx_mode := 0.U
     val combined = input_16_buffer_gpu ++ io.requant_data_in_gpu.bits.data
-    pipe_in.bits.full_data := VecInit(combined.reverse).asTypeOf(half_acc_row_t)
+    pipe_in.bits.out.full_mx_data_out := VecInit(combined.reverse).asTypeOf(half_acc_row_t)
+    pipe_in.bits.out.fromDMA := true.B
   }
 
   // for (i <- 1 until pipelineLatency) {
@@ -233,10 +236,10 @@ class MxRequantizer[T <: Data](
   
   when(total_bits_per_element === 8.U || total_bits_per_element === 4.U){ //todo: every 8 bits weightTypeProjected only low 4bits are valid for 4bits!! mask
     final_pipe_out.valid := quantize_valid
-    final_pipe_out.bits.q_data := extracted_data.asTypeOf(spad_row_t)
+    final_pipe_out.bits.out.quant_mx_data_out := extracted_data.asTypeOf(spad_row_t)
   }.elsewhen(total_bits_per_element === 6.U){ //every 8 bits weightTypeProjected only low 4bits are valid for 4bits!! mask
     final_pipe_out.valid := quantLut.io.projected_data.valid
-    final_pipe_out.bits.q_data := VecInit(
+    final_pipe_out.bits.out.quant_mx_data_out := VecInit(
     quantLut.io.projected_data.bits.grouped(tileColumns).toSeq.map { group => VecInit(group.map(_.pad(weightTypeProjected.getWidth).asTypeOf(weightTypeProjected)))
       }
     )
@@ -246,19 +249,16 @@ class MxRequantizer[T <: Data](
   io.mxacc_req.mx_data_in.ready := can_enqueue
   io.requant_data_in_gpu.ready := can_enqueue && !io.mxacc_req.mx_data_in.fire
 
-  io.mxacc_req.full_mx_data_out.bits := final_pipe_out.bits.full_data
-  io.mxacc_req.quant_mx_data_out.bits  := final_pipe_out.bits.q_data
+  io.mxacc_req.mx_data_out.bits.full_mx_data_out := final_pipe_out.bits.out.full_mx_data_out
+  io.mxacc_req.mx_data_out.bits.quant_mx_data_out  := final_pipe_out.bits.out.quant_mx_data_out
+  io.mxacc_req.mx_data_out.valid := final_pipe_out.valid
+  io.mxacc_req.mx_data_out.bits.fromDMA := final_pipe_out.bits.out.fromDMA
+  io.mxacc_req.mx_data_out.bits.acc_bank_id := final_pipe_out.bits.out.acc_bank_id
+  io.mxacc_req.mx_data_out.bits.is_last_half := final_pipe_out.bits.out.is_last_half
 
-  when(total_bits_per_element === 16.U){
-    io.mxacc_req.full_mx_data_out.valid := final_pipe_out.valid
-    io.mxacc_req.quant_mx_data_out.valid := false.B
-  }.otherwise{
-    io.mxacc_req.quant_mx_data_out.valid := final_pipe_out.valid
-    io.mxacc_req.full_mx_data_out.valid := false.B
-  }
 
-  oldest_pipe_out.ready := io.mxacc_req.quant_mx_data_out.ready
-  final_pipe_out.ready := io.mxacc_req.quant_mx_data_out.ready
+  oldest_pipe_out.ready := io.mxacc_req.mx_data_out.ready
+  final_pipe_out.ready := io.mxacc_req.mx_data_out.ready
   
   should_compute := false.B
   when (can_enqueue) {
@@ -269,7 +269,7 @@ class MxRequantizer[T <: Data](
   
   val block_max = Wire(UInt(inputdataWidth.W))
   block_max := 0.U
-  val flat64 = pipelined_out_0.bits.full_data.flatten.map(_.asUInt)
+  val flat64 = pipelined_out_0.bits.out.full_mx_data_out.flatten.map(_.asUInt)
   val reshaped_pipelined_out_0 = VecInit(
     flat64.flatMap(
       x => (0 until 4).map(i => x(16*(i+1)-1, 16*i))

@@ -147,29 +147,22 @@ class AccumulatorScale[T <: Data, U <: Data](
       e_clipped
     })))
 
-    val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, half_t)(ev)))
-    in.valid := io.in.valid && io.mx_req_io.mx_data_in.ready
-    io.mx_req_io.mx_data_in.valid := io.in.valid && in.ready
-    io.in.ready := in.ready && io.mx_req_io.mx_data_in.ready
-    in.bits.resp := io.in.bits.acc_read_resp
-    in.bits.full_data := acc_read_data
-    io.mx_req_io.mx_data_in.bits := acc_read_data
-    in.bits.resp.data := activated_data
-    in.bits.resp.is_last_half := io.in.bits.acc_read_resp.is_last_half
-
-    val pipe_out = Pipeline(in, latency)
+    io.mx_req_io.mx_data_in.valid := io.in.valid
+    io.in.ready := io.mx_req_io.mx_data_in.ready
+    io.mx_req_io.mx_data_in.bits.full_mx_data_in := acc_read_data
+    io.mx_req_io.mx_data_in.bits.fromDMA := io.in.bits.acc_read_resp.fromDMA
+    io.mx_req_io.mx_data_in.bits.is_last_half := io.in.bits.acc_read_resp.is_last_half
+    io.mx_req_io.mx_data_in.bits.acc_bank_id := io.in.bits.acc_read_resp.acc_bank_id
     io.mx_req_io.mx_mode := io.output_mx_format
 
-    out.valid := pipe_out.valid && (io.mx_req_io.quant_mx_data_out.valid || io.mx_req_io.quant_mx_data_out.valid )
-    pipe_out.ready := out.ready
-    io.mx_req_io.full_mx_data_out.ready := out.ready
-    io.mx_req_io.quant_mx_data_out.ready := out.ready
-    //out.bits.full_data := pipe_out.bits.full_data
-    out.bits.full_data := io.mx_req_io.full_mx_data_out.bits
-    out.bits.data      := io.mx_req_io.quant_mx_data_out.bits
-    out.bits.fromDMA   := pipe_out.bits.resp.fromDMA
-    out.bits.acc_bank_id := pipe_out.bits.resp.acc_bank_id
-    out.bits.is_last_half := pipe_out.bits.resp.is_last_half
+    io.mx_req_io.mx_data_out.ready := out.ready
+    out.valid := io.mx_req_io.mx_data_out.valid
+    out.bits.full_data := io.mx_req_io.mx_data_out.bits.full_mx_data_out
+    out.bits.data := io.mx_req_io.mx_data_out.bits.quant_mx_data_out
+    out.bits.fromDMA   := io.mx_req_io.mx_data_out.bits.fromDMA
+    out.bits.acc_bank_id := io.mx_req_io.mx_data_out.bits.acc_bank_id
+    out.bits.is_last_half := io.mx_req_io.mx_data_out.bits.is_last_half
+
   } else {
     val width = acc_read_data.size * acc_read_data(0).size
     val nEntries = 3
