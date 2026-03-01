@@ -365,8 +365,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 //    val writeData_is_full_width = !write_issue_q.io.deq.bits.laddr.is_garbage() &&
 //     write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.read_full_acc_row && (!io.enable_MXQuant)
     val writeData_is_full_width = !write_issue_q.io.deq.bits.laddr.is_garbage() && (!io.enable_MXQuant)
-
-    //    val writeData_is_full_width = true.B //TODO: fix this. Right now needed for data transfer from accumulator in mxconfig.
+    val writeData_is_fp8 = !write_issue_q.io.deq.bits.laddr.is_garbage() && (io.output_mx_format === 0.U)
+    val writeData_is_fp4orfp6 = !write_issue_q.io.deq.bits.laddr.is_garbage() && (io.output_mx_format === 2.U || io.output_mx_format === 1.U)
     val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()
 
     writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && !write_issue_q.io.deq.bits.dest.asBool
@@ -394,7 +394,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       spad_writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
       spad_writer.module.io.req.bits.len := Mux(writeData_is_full_width,
         write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,
-        write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 8).U)
+        Mux(writeData_is_fp8, write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U,
+        write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 8).U))
       spad_writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
         writeData_is_all_zeros -> 0.U,
         writeData_is_full_width -> fullAccWriteData
