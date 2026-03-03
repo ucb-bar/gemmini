@@ -263,7 +263,8 @@ class BF16ScaleRoundToTiny(
   val quantized_buffer =  WireInit(VecInit(Seq.fill(outputnumLanes)(0.U(8.W))))
   io.out := quantized_buffer
 
-  val scale_exp_unbiased = io.scale_e8m0
+  //val scale_exp_unbiased = io.scale_e8m0
+  val scale_exp_unbiased = io.scale_e8m0 - 127.U 
   val maxExp             = ((1 << (inputexpWidth)) - 2).U(inputexpWidth.W) // e.g. 0xFE for BF16
 
   for (i <- 0 until outputnumLanes) {

@@ -188,7 +188,7 @@ class MxRequantizer[T <: Data](
   val oldest_pipe_out = Pipeline(pipelined_out_0, pipelineLatency - 1)
 
   val final_pipe_out = Wire(Decoupled(new MxRequantizerAccResp[T](half_acc_row_t, spad_row_t)(ev)))
-  
+  dontTouch(final_pipe_out)
   val quantLut = Module(new QuantLut(
     lutConfig,
     outputnumLanes = io.outputnumLanes ,
@@ -239,10 +239,7 @@ class MxRequantizer[T <: Data](
     final_pipe_out.bits.out.quant_mx_data_out := extracted_data.asTypeOf(spad_row_t)
   }.elsewhen(total_bits_per_element === 6.U){ //every 8 bits weightTypeProjected only low 4bits are valid for 4bits!! mask
     final_pipe_out.valid := quantLut.io.projected_data.valid
-    final_pipe_out.bits.out.quant_mx_data_out := VecInit(
-    quantLut.io.projected_data.bits.grouped(tileColumns).toSeq.map { group => VecInit(group.map(_.pad(weightTypeProjected.getWidth).asTypeOf(weightTypeProjected)))
-      }
-    )
+    final_pipe_out.bits.out.quant_mx_data_out := Cat(0.U(128.W), Cat(quantLut.io.projected_data.bits.reverse)).asTypeOf(spad_row_t)
   }
   val can_enqueue = pipe_in.ready
     // Only allow input handshake when queue has space
@@ -275,45 +272,59 @@ class MxRequantizer[T <: Data](
       x => (0 until 4).map(i => x(16*(i+1)-1, 16*i))
     )
   )
-  when(should_compute) {                                                                             
-    block_max := reshaped_pipelined_out_0.map(e => abs(e.asUInt)).reduce { (a, b) =>
-      Mux(a > b, a, b)
-    }
+  when(should_compute) {
+    block_max := reshaped_pipelined_out_0.map { e =>
+      val mag        = abs(e.asUInt)
+      val isNanOrInf = mag(14, 7).andR   // BF16: exp field all-ones → NaN or Inf
+      Mux(isNanOrInf, 0.U, mag)
+    }.reduce { (a, b) => Mux(a > b, a, b) }
   }
   
   val block_max_uint = block_max.asUInt
   val scale_exponent = Wire(SInt(9.W))
   val scale_e8m0 = Wire(UInt(8.W))
-  
+  val neg_e8m0_clamped = Wire(UInt(8.W))
   scale_exponent := 0.S
   scale_e8m0 := 0.U
+  neg_e8m0_clamped := 0.U
   
-  when(block_max_uint === 0.U) {
+  when(block_max_uint === 0.U || block_max_uint(14, 7) === 0.U) {
     scale_exponent := 0.S
-    scale_e8m0 := 0.U
+    scale_e8m0 := 127.U 
   }.otherwise {
-    val log2_m = log2_floor(block_max_uint)
-    scale_exponent := log2_m.zext - log2_pmax_floor.zext
-    val biased_exp = scale_exponent + 127.S
-    when(biased_exp < 0.S) {
+    val max_biased_exp = block_max_uint(14, 7)
+    scale_exponent := max_biased_exp.zext.asSInt - 127.S - log2_pmax_floor.zext.asSInt
+    val std_e8m0 = scale_exponent + 127.S
+    when(std_e8m0 < 0.S){
       scale_e8m0 := 0.U
-    }.elsewhen(biased_exp > 255.S) {
+    }.elsewhen(std_e8m0 > 255.S){ 
       scale_e8m0 := 255.U
+    }.otherwise{ 
+      scale_e8m0 := std_e8m0.asUInt(7, 0)}
+
+    val neg_e8m0 = 127.S(9.W) - scale_exponent
+    
+    when(neg_e8m0 < 0.S) {
+      neg_e8m0_clamped := 0.U
+    }.elsewhen(neg_e8m0 > 254.S) {
+      neg_e8m0_clamped := 254.U
     }.otherwise {
-      scale_e8m0 := biased_exp.asUInt
+      neg_e8m0_clamped := neg_e8m0.asUInt(7, 0)
     }
   }
   
   val BF16ScaleRoundToTiny = Module(new BF16ScaleRoundToTiny(outputnumLanes = io.outputnumLanes))
   BF16ScaleRoundToTiny.io.in_bf16 := reshaped_pipelined_out_0
-  BF16ScaleRoundToTiny.io.scale_e8m0 := scale_e8m0
+  BF16ScaleRoundToTiny.io.scale_e8m0 := neg_e8m0_clamped 
   BF16ScaleRoundToTiny.io.dataType := format_reg
   quantized_buffer := RegNext(BF16ScaleRoundToTiny.io.out)
   
 
   
   when(quantize_valid) {
-    when(total_bits_per_element === 4.U || total_bits_per_element === 8.U){
+    when(total_bits_per_element === 4.U){
+      extracted_data := Cat((0 until io.outputnumLanes).map(i => quantized_buffer(i)(3, 0)).reverse)
+    }.elsewhen(total_bits_per_element === 8.U){
       extracted_data := Cat(quantized_buffer.reverse)
     }.otherwise{
       extracted_data := 0.U((io.outputnumLanes*8).W)
@@ -323,7 +334,7 @@ class MxRequantizer[T <: Data](
   val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
   quant_fp6 := Mux(total_bits_per_element === 6.U, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(5, 0))), 
   VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
-  val quant_projected_data = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(4.W))))
+  //val quant_projected_data = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(4.W))))
 
  
   
