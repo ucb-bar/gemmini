@@ -72,7 +72,6 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val mxacc_req = Flipped(new MxRequantizerAccMemIO[T](acc_row_t, spad_row_t, half_t))
   val requant_data_in_gpu = Flipped(Decoupled(new RequantizerInBundle(config.numGPUInputLanes, inputdataWidth)))
   val scaleMem_write = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
-  val requant_data_out = Decoupled(new RequantizerOutBundle(outputnumLanes)) //todo: what is the usage???
   val lut0_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(0))))
   val lut1_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(1))))
   val lut2_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(2))))
@@ -141,8 +140,6 @@ class MxRequantizer[T <: Data](
   
   io.scaleMem_write.valid := false.B
   io.scaleMem_write.bits := DontCare
-  io.requant_data_out.valid := false.B
-  io.requant_data_out.bits := DontCare
 
   def abs(x: UInt): UInt = {  
     x & 0x7FFF.U  
