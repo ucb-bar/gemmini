@@ -103,7 +103,7 @@ class AsymmetricTwoPortSyncMem[T <: Data](n: Int, t: T, mask_len: Int) extends M
   val rLo = memLo.read(readAddr, renLo)
   val rHi = memHi.read(readAddr, renHi)
 
-  io.rdata_full := Cat(rLo.asUInt, rHi.asUInt).asTypeOf(t)
+  io.rdata_full := Cat(rHi.asUInt, rLo.asUInt).asTypeOf(t)
   io.rdata_half := Mux(bankSelResp, rHi.asUInt, rLo.asUInt)
 }
 

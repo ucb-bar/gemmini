@@ -247,8 +247,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecisionList, meshAccPrecisionList))
  
-  dontTouch(mesh.io)
-  mesh.io.activation_mx_format := activation_mx_format  
+  mesh.io.activation_mx_format := activation_mx_format
   mesh.io.weight_mx_format := weight_mx_format
   
 
@@ -1044,21 +1043,31 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val w_total_output_rows = mesh.io.resp.bits.total_rows
 
-  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, mesh.io.resp.bits.tag.addr + output_counter * c_addr_stride,
-    mesh.io.resp.bits.tag.addr + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
-  val write_to_acc = w_address.is_acc_addr
 
-  val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address.sp_bank())
-  val w_row = Mux(write_to_acc, w_address.acc_row(), w_address.sp_row())
+  val address = mesh.io.resp.bits.tag.addr
+  val address_no_offset = (address.asUInt & (~("h_f".U)).asUInt).asTypeOf(address)
+  val offset = address.asUInt % block_size.U
 
-  val is_garbage_addr = mesh.io.resp.bits.tag.addr.is_garbage()
+  val w_address = Mux(current_dataflow === Dataflow.WS.id.U,address_no_offset + output_counter * c_addr_stride,
+   address_no_offset + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
+
+  val w_address_sp = Mux(current_dataflow === Dataflow.WS.id.U, address + output_counter * c_addr_stride,
+    address + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
+
+  val write_to_acc = w_address_sp.is_acc_addr
+
+  val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address_sp.sp_bank())
+  val w_row = Mux(write_to_acc, w_address.acc_row(), w_address_sp.sp_row())
+
+  val is_garbage_addr =address.is_garbage()
 
   val w_matrix_rows = mesh.io.resp.bits.tag.rows
   val w_matrix_cols = mesh.io.resp.bits.tag.cols
 
   val write_this_row = Mux(current_dataflow === Dataflow.WS.id.U, output_counter < w_matrix_rows,
     w_total_output_rows - 1.U - output_counter < w_matrix_rows)
-  val w_mask = (0 until block_size).map(_.U < w_matrix_cols) // This is an element-wise mask, rather than a byte-wise mask
+  val w_mask = Mux(activation_mx_format === 0.U, VecInit((0 until block_size).map(e => offset <= e.U && e.U < (offset +& w_matrix_cols / 4.U))),
+    VecInit((0 until block_size).map(_.U < w_matrix_cols))) // This is an element-wise mask, rather than a byte-wise mask
 
   // Write to normal scratchpad
   for(i <- 0 until sp_banks) {
@@ -1088,9 +1097,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     if (ex_write_to_acc) {
       io.acc.write(i).valid := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
       io.acc.write(i).bits.addr := w_row
-      io.acc.write(i).bits.data := VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))
-      io.acc.write(i).bits.acc := w_address.accumulate
+      io.acc.write(i).bits.data := Mux(activation_mx_format === 0.U, (VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType).asUInt(15,0))))).asUInt << (offset * 64.U)).asTypeOf(io.acc.write(i).bits.data),
+        VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType))))))
+      io.acc.write(i).bits.acc := w_address_sp.accumulate
       io.acc.write(i).bits.mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
+      io.acc.write(i).bits.offset := offset
     } else {
       io.acc.write(i).valid := false.B
       io.acc.write(i).bits.addr := DontCare
