@@ -944,6 +944,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           }
         }
         bio.write.valid := false.B
+        bio.write.bits.offset := DontCare
 
         // bio.write.bits.acc := MuxCase(zero_writer.io.resp.bits.laddr.accumulate,
         bio.write.bits.acc := MuxCase(zero_writer_pixel_repeater.io.resp.bits.laddr.accumulate,
@@ -961,6 +962,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.valid := true.B
           bio.write.bits.data := io.acc.write(i).bits.data
           bio.write.bits.mask := io.acc.write(i).bits.mask
+          bio.write.bits.offset := io.acc.write(i).bits.offset
         }.elsewhen (dmaread && !spad_last && !consecutive_write_block) {
           bio.write.valid := true.B
           bio.write.bits.data := Mux(from_mvin_scale,

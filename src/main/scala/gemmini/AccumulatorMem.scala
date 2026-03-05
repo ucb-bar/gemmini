@@ -45,6 +45,7 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
   val data = t.cloneType
   val acc = Bool()
   val mask = Vec(t.getWidth / 8, Bool()) // TODO Use aligned_to here
+  val offset = UInt(4.W) // TODO(nicolas): not hardcoded
 }
 
 
@@ -153,7 +154,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   }
  
   def calculateScaleAddr(write_addr: UInt): UInt = {
-    write_addr  // TODO: Using the accmulator write addr to caculate the scaling memory read addr, for simplification 
+    (write_addr & (~("h_f".U)).asUInt).asUInt  // TODO: Using the accmulator write addr to caculate the scaling memory read addr, for simplification
   }
   // def applyMxScaling(data: Vec[Vec[T]], scales: Vec[Vec[UInt]]): Vec[Vec[T]] = {
   //   val scaled = Wire(data.cloneType)
@@ -280,11 +281,15 @@ class AccumulatorMem[T <: Data, U <: Data](
       when(dataType === 0.U) {
         for (i <- 0 until 16) {
           val dataElement = Wire(UInt(64.W))
+          val offset = pipelined_writes(0).bits.offset
+          dontTouch(offset)
           dataElement := pipelined_writes(0).bits.data(i).asUInt
-          val scaled_result = if (i < 4) {
-            VecInit(dataElement.asTypeOf(Vec(4, UInt(16.W))).zipWithIndex.map { case (e, j) => applyE9M0Scale(e, scale_mem.io.read_resp.bits.combined_scales(i * 4 + j)(8, 0), 8, 7) })
-          } else {
-            0.U(64.W)
+
+          val scaled_result = WireInit(0.U(64.W))
+          when(i.U >= offset && i.U < (offset +& 4.U)) {
+            scaled_result:= VecInit(dataElement.asTypeOf(Vec(4, UInt(16.W))).zipWithIndex.map {
+              case (e, j) =>
+              applyE9M0Scale(e, scale_mem.io.read_resp.bits.combined_scales((i.U - offset)*4.U +& j.U)(8, 0), 8, 7) }).asUInt
           }
           scaled_data(i) := scaled_result.asTypeOf(pipelined_writes(0).bits.data(i))
         }
