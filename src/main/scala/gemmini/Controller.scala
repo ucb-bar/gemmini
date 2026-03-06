@@ -230,8 +230,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     
     mx_requantizer.get.io.requant_data_in_gpu <> mx_io.requant_in_gpu
     mx_io.scale_factor_out <> mx_requantizer.get.io.scaleMem_write
-//    mx_requantizer.get.io.requant_data_in <> mx_io.requant_in
-
     mx_requantizer.get.io.lut0_write <> mx_io.lut0
     mx_requantizer.get.io.lut1_write <> mx_io.lut1
     mx_requantizer.get.io.lut2_write <> mx_io.lut2

@@ -133,17 +133,22 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val scale_mem_mvin_base_addr_w = RegInit(0.U(32.W))
   val scale_mem_mvout_base_addr_act = RegInit(0.U(scale_mem.get.ScaleMemWriteAddrWidth.W))
   val quant_lut_update_granularity = RegInit(0.U(16.W))
-  
+  val scale_mem_read_act_sel = RegInit(0.U(1.W))
+  val scale_mem_read_w_sel = RegInit(0.U(1.W))
+  val loop_bound_i = RegInit(0.U(9.W))
+  val loop_bound_j = RegInit(0.U(9.W))
+  val loop_bound_k = RegInit(0.U(9.W))
   when(functs(0) === CONFIG_SCALE_MEM) {
-    val direction = rs2s(0)(63) 
-    when(direction === 1.U) { // mvin
-      scale_mem_mvin_base_addr_act := rs1s(0)
-      scale_mem_mvin_base_addr_w := rs1s(0) + (scale_mem.get.sizeInBytes >> 1).U
-    }.elsewhen(direction === 0.U) { // mvout
-      scale_mem_mvout_base_addr_act := rs1s(0)(32,0)
-      quant_lut_update_granularity := rs1s(0)(48,33)
-    }
+      scale_mem_mvout_base_addr_act := rs1s(0)(32,0) 
+      loop_bound_i := rs1s(0)(41,33)
+      loop_bound_j := rs1s(0)(50,42)
+      loop_bound_k := rs1s(0)(59,51)
+      scale_mem_read_act_sel := rs1s(0)(60)
+      scale_mem_read_w_sel := rs1s(0)(61)
   } 
+  dontTouch(loop_bound_i)
+  dontTouch(loop_bound_j)
+  dontTouch(loop_bound_k)
   io.scale_mem_mvout_base_addr_act := scale_mem_mvout_base_addr_act
   io.quant_lut_update_granularity := quant_lut_update_granularity
 
@@ -443,6 +448,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   io.scaleMemCntl.counter_b := b_fire_counter
   io.scaleMemCntl.fire_a := a_fire 
   io.scaleMemCntl.fire_b := b_fire
+  io.scaleMemCntl.scale_mem_read_act_sel := scale_mem_read_act_sel 
+  io.scaleMemCntl.scale_mem_read_w_sel := scale_mem_read_w_sel
+  io.scaleMemCntl.loop_bound_i := loop_bound_i
+  io.scaleMemCntl.loop_bound_j := loop_bound_j
+  io.scaleMemCntl.loop_bound_k := loop_bound_k
   io.scaleMemCntl.baseAddress_act := scale_mem_mvin_base_addr_act
   io.scaleMemCntl.baseAddress_w := scale_mem_mvin_base_addr_w
 

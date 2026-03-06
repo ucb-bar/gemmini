@@ -67,13 +67,21 @@ object GemminiISA {
   val GARBAGE_ADDR      = "hffffffff".U(32.W)
   
   val CONFIG_SCALE_MEM_RS1_ADDR_WIDTH = 33
-  val CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH = 16
-  val CONFIG_SCALE_MEM_SPACER_WIDTH = 64 - 1 - CONFIG_SCALE_MEM_RS1_ADDR_WIDTH - CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH
+  val CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH = 0
+  val CONFIG_SCALE_MEM_READ_ACT_RS1_ADDR_WIDTH = 1
+  val CONFIG_SCALE_MEM_READ_W_RS1_ADDR_WIDTH = 1
+  val CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH = 9
+  val CONFIG_SCALE_MEM_SPACER_WIDTH = 64 - 1 - CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH*3 - CONFIG_SCALE_MEM_RS1_ADDR_WIDTH - CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH - CONFIG_SCALE_MEM_READ_W_RS1_ADDR_WIDTH - CONFIG_SCALE_MEM_READ_ACT_RS1_ADDR_WIDTH
 
   class ConfigMxQuantRs1 extends Bundle {
     val _spacer0 = UInt(CONFIG_SCALE_MEM_SPACER_WIDTH.W)
     val mem_direction = UInt(1.W) // 0 for mvin, 1 for mvout
-    val quant_lut_update_granularity = UInt(CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH.W)
+    val scale_mem_read_act_sel = UInt(1.W) 
+    val scale_mem_read_w_sel = UInt(1.W) 
+    val loop_bound_i = UInt(CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH.W)
+    val loop_bound_j = UInt(CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH.W)
+    val loop_bound_k = UInt(CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH.W)
+    //val quant_lut_update_granularity = UInt(CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH.W)
     val mem_address = UInt(CONFIG_SCALE_MEM_RS1_ADDR_WIDTH.W)
   }
 
