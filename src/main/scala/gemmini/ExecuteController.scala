@@ -1056,20 +1056,35 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
 
   val address = mesh.io.resp.bits.tag.addr
-  val address_no_offset = (address.asUInt & (~("h_f".U)).asUInt).asTypeOf(address)
+  //val address_no_offset = (address.asUInt & (~("h_f".U)).asUInt).asTypeOf(address)
+  val address_no_offset = Cat(address.asUInt >> 4,
+  0.U(4.W)).asTypeOf(address)
   val offset = address.asUInt % block_size.U
-
-  val w_address = Mux(current_dataflow === Dataflow.WS.id.U,address_no_offset + output_counter * c_addr_stride,
+  
+  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, address_no_offset + output_counter * c_addr_stride,
    address_no_offset + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
 
+  val w_total_output_rows_wire = WireDefault(w_total_output_rows)
+  dontTouch(w_total_output_rows_wire)
+  val address_no_offset_wire = WireDefault(address_no_offset)
+  dontTouch(address_no_offset_wire)
+   val output_counter_wire = WireDefault(output_counter)
+  dontTouch(output_counter_wire)
+  val c_addr_stride_wire = WireDefault(c_addr_stride)
+  dontTouch(c_addr_stride_wire)
+
+  val w_address_wire = WireDefault(w_address)
+  dontTouch(w_address_wire)
   val w_address_sp = Mux(current_dataflow === Dataflow.WS.id.U, address + output_counter * c_addr_stride,
     address + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
-
+  
   val write_to_acc = w_address_sp.is_acc_addr
-
+  val write_to_acc_wire = WireDefault(write_to_acc)
+  dontTouch(write_to_acc_wire)
   val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address_sp.sp_bank())
   val w_row = Mux(write_to_acc, w_address.acc_row(), w_address_sp.sp_row())
-
+  val w_row_wire = WireDefault(w_row)
+  dontTouch(w_row_wire)
   val is_garbage_addr =address.is_garbage()
 
   val w_matrix_rows = mesh.io.resp.bits.tag.rows
