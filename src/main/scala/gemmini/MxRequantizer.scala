@@ -81,9 +81,9 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val read_d = Input(Bool())
   val scale_mem_mvout_base_addr_act = Input(UInt(scaleMem_addr_width.W)) // from execute controller
   val quant_lut_update_granularity = Input(UInt(lutConfig.lutUpdateRegularityWidth.W))
-  val counter_i = Input(UInt(iterator_bitwidth.W)) // from  controller
-  val counter_j = Input(UInt(iterator_bitwidth.W)) // from  controller
-  val counter_k = Input(UInt(iterator_bitwidth.W)) // from  controller
+  val loop_bound_i = Input(UInt(iterator_bitwidth.W)) // from  controller
+  val loop_bound_j = Input(UInt(iterator_bitwidth.W)) // from  controller
+  val loop_bound_k = Input(UInt(iterator_bitwidth.W)) // from  controller
 }
    
 class MxRequantizer[T <: Data](
@@ -340,8 +340,10 @@ class MxRequantizer[T <: Data](
   quantLut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
   quantLut.io.read_a := io.read_a
   quantLut.io.read_d := io.read_d
-  quantLut.io.counter_i := io.counter_i
-  quantLut.io.counter_j := io.counter_j
+  quantLut.io.loop_bound_i := io.loop_bound_i
+  quantLut.io.loop_bound_j := io.loop_bound_j
+  quantLut.io.loop_bound_k := io.loop_bound_k
+  quantLut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
   quantLut.io.quant_fp6.valid := false.B
   quantLut.io.quant_fp6.bits := DontCare
   quantLut.io.lut_write_weight <> io.lut0_write

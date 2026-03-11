@@ -569,9 +569,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   loop_matmul.io.activation_mx_format := ex_controller.io.activation_mx_format_out
   loop_matmul.io.weight_mx_format := ex_controller.io.weight_mx_format_out
-  mx_requantizer.get.io.counter_i := loop_matmul.io.counter_i
-  mx_requantizer.get.io.counter_j := loop_matmul.io.counter_j  
-  mx_requantizer.get.io.counter_k := loop_matmul.io.counter_k
+  mx_requantizer.get.io.loop_bound_i := ex_controller.io.scaleMemCntl.loop_bound_i
+  mx_requantizer.get.io.loop_bound_j := ex_controller.io.scaleMemCntl.loop_bound_j  
+  mx_requantizer.get.io.loop_bound_k := ex_controller.io.scaleMemCntl.loop_bound_k  
   mx_requantizer.get.io.read_a := ex_controller.io.read_a
   mx_requantizer.get.io.read_d := ex_controller.io.read_d
   spad.module.io.scaleMemCntl.foreach { spadCnlt =>

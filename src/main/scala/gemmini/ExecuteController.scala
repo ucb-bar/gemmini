@@ -145,6 +145,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       loop_bound_k := rs1s(0)(59,51)
       scale_mem_read_act_sel := rs1s(0)(60)
       scale_mem_read_w_sel := rs1s(0)(61)
+      quant_lut_update_granularity :=  rs2s(0)(15,0)
   } 
   dontTouch(loop_bound_i)
   dontTouch(loop_bound_j)

@@ -67,7 +67,7 @@ object GemminiISA {
   val GARBAGE_ADDR      = "hffffffff".U(32.W)
   
   val CONFIG_SCALE_MEM_RS1_ADDR_WIDTH = 33
-  val CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH = 0
+  val CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH = 16
   val CONFIG_SCALE_MEM_READ_ACT_RS1_ADDR_WIDTH = 1
   val CONFIG_SCALE_MEM_READ_W_RS1_ADDR_WIDTH = 1
   val CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH = 9
@@ -81,7 +81,7 @@ object GemminiISA {
     val loop_bound_i = UInt(CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH.W)
     val loop_bound_j = UInt(CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH.W)
     val loop_bound_k = UInt(CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH.W)
-    //val quant_lut_update_granularity = UInt(CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH.W)
+    val quant_lut_update_granularity = UInt(CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH.W)
     val mem_address = UInt(CONFIG_SCALE_MEM_RS1_ADDR_WIDTH.W)
   }
 

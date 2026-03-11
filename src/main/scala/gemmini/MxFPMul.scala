@@ -213,8 +213,11 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
   }
 
   // Compute the sign of the outputs
-  val out_signs = Cat(inA_sign(0) ^ inW_sign(0), inA_sign(0) ^ inW_sign(1), inA_sign(1) ^ inW_sign(0), inA_sign(1) ^ inW_sign(1))
-
+  //val out_signs = Cat(inA_sign(0) ^ inW_sign(0), inA_sign(0) ^ inW_sign(1), inA_sign(1) ^ inW_sign(0), inA_sign(1) ^ inW_sign(1))
+  val out_signs = Cat(inA_sign(1) ^ inW_sign(1),   
+                      inA_sign(1) ^ inW_sign(0),   
+                      inA_sign(0) ^ inW_sign(1),    
+                      inA_sign(0) ^ inW_sign(0))    
   // PE Instantiation
   val out_pe = Wire(UInt(peOutWidth.W))
   val PE = Module(new MxPE(mxparameters, lut))

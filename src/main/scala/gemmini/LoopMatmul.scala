@@ -764,7 +764,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val src_addr = acc_addr_start + (i * req.max_j + j) * block_size.U
   val blocks = Mux(j + max_blocks <= req.max_j, max_blocks, req.max_j-j)
   val cols = (blocks * block_size.U) - Mux(j + blocks >= req.max_j, req.pad_j, 0.U)
-  val rows = block_size.U - Mux(i === req.max_i-1.U, req.pad_i, 0.U)
+  val rows = block_size.U  - Mux(i === req.max_i-1.U, req.pad_i, 0.U)
 
   val mvout_cmd = Wire(new RoCCCommand)
   mvout_cmd := DontCare
