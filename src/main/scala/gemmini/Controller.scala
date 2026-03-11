@@ -686,6 +686,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // }
   
   spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
+  spad.module.io.loop_bounds := ex_controller.io.loop_bounds
   ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
   ex_controller.io.acc.write <> spad.module.io.acc.write
 

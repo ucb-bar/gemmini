@@ -52,6 +52,36 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
   val pool_en = Bool()
   val store_en = Bool()
 
+  val is_second_half = Bool()
+
+}
+
+class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)(implicit p: Parameters) extends Module {
+  val io = IO(new Bundle {
+    val in = Flipped(Decoupled(new ScratchpadMemWriteRequest(local_addr_t, acc_t_bits, scale_t_bits)))
+    val out = Decoupled(new ScratchpadMemWriteRequest(local_addr_t, acc_t_bits, scale_t_bits))
+  })
+
+  val second_half = RegInit(false.B)
+  val is_acc_write = io.in.bits.laddr.is_acc_addr && !io.in.bits.laddr.is_garbage()
+
+  io.out.valid := io.in.valid
+  io.out.bits := io.in.bits
+  io.out.bits.is_second_half := Mux(is_acc_write, second_half, false.B)
+  io.out.bits.vaddr   := Mux(is_acc_write && second_half,
+    io.in.bits.vaddr + 4.U,
+    io.in.bits.vaddr)
+
+  io.in.ready := io.out.ready && (!is_acc_write || second_half)
+
+  when (io.out.fire) {
+    when (is_acc_write && !second_half) {
+      second_half := true.B   // first half accepted; hold input for second half
+    } .otherwise {
+      second_half := false.B  // second half (or non-acc) fired; reset
+    }
+  }
+
 }
 
 class ScratchpadMemWriteResponse extends Bundle {
@@ -332,9 +362,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val act_mx_format = Input(UInt(2.W))
       val output_mx_format = Input(UInt(2.W))
       val enable_MXQuant = Input(Bool()) //determines if mxrequantizer gets used
+      val loop_bounds = Input(new MaxBounds())
     })
 
-    val write_dispatch_q = Queue(io.dma.write.req)
+    val write_req_expander = Module(new WriteReqExpander(local_addr_t, accType.getWidth, acc_scale_t_bits))
+    write_req_expander.io.in <> io.dma.write.req
+    val write_dispatch_q = Queue(write_req_expander.io.out)
+    
     // Write norm/scale queues are necessary to maintain in-order requests to accumulator norm/scale units
     // Writes from main SPAD just flow directly between scale_q and issue_q, while writes
     // From acc are ordered
@@ -818,7 +852,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val ex_read_req = io.acc.read_req(i)
         val exread = ex_read_req.valid
 
-        val dispatch_first_half_sent = RegInit(false.B)
+//        val dispatch_first_half_sent = RegInit(false.B)
 
 
         // TODO we tie the write dispatch queue's, and write issue queue's, ready and valid signals together here
@@ -851,19 +885,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.iexp_qln2_inv := write_dispatch_q.bits.acc_iexp_qln2_inv.asTypeOf(bio.read.req.bits.iexp_qln2_inv)
           bio.read.req.bits.scale := write_dispatch_q.bits.acc_scale.asTypeOf(bio.read.req.bits.scale)
           bio.read.req.bits.fromDMA := true.B
-          bio.read.req.bits.is_last_half := dispatch_first_half_sent
+          bio.read.req.bits.is_last_half := write_dispatch_q.bits.is_second_half
+
 
           when (bio.read.req.fire) {
-            when (!dispatch_first_half_sent) {
-              write_norm_q.io.enq.valid := true.B
-              write_norm_q.io.enq.bits := write_dispatch_q.bits
-              dispatch_first_half_sent := true.B
-            } .otherwise {
-              write_norm_q.io.enq.valid := true.B
-              write_norm_q.io.enq.bits := write_dispatch_q.bits
-              write_norm_q.io.enq.bits.vaddr := write_dispatch_q.bits.vaddr + 4.U
-              write_dispatch_q.ready := true.B
-              dispatch_first_half_sent := false.B
+            write_norm_q.io.enq.valid := true.B
+            write_norm_q.io.enq.bits := write_dispatch_q.bits
+            write_dispatch_q.ready := true.B
+            when (write_dispatch_q.bits.is_second_half) {
               io.dma.write.resp.valid := true.B
             }
           }

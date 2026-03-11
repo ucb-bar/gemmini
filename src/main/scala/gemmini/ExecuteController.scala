@@ -8,7 +8,11 @@ import Util._
 import org.chipsalliance.cde.config.Parameters
 import midas.targetutils.PerfCounter
 
-
+class MaxBounds extends Bundle {
+  val i = UInt(9.W)
+  val j = UInt(9.W)
+  val k = UInt(9.W)
+}
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
@@ -59,6 +63,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val scale_mem_mvout_base_addr_act = Output(UInt(scale_mem.get.ScaleMemWriteAddrWidth.W))
     val quant_lut_update_granularity = Output(UInt(16.W))
     val scaleMemCntl = Output(new ScalingFactorCntl(meshRows*tileRows))
+    val loop_bounds = Output(new MaxBounds)
   })
 
 
@@ -138,6 +143,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val loop_bound_i = RegInit(0.U(9.W))
   val loop_bound_j = RegInit(0.U(9.W))
   val loop_bound_k = RegInit(0.U(9.W))
+
+  io.loop_bounds.i := loop_bound_i
+  io.loop_bounds.j := loop_bound_j
+  io.loop_bounds.k := loop_bound_k
+
   when(functs(0) === CONFIG_SCALE_MEM) {
       scale_mem_mvout_base_addr_act := rs1s(0)(32,0) 
       loop_bound_i := rs1s(0)(41,33)
@@ -1056,7 +1066,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
 
   val address = mesh.io.resp.bits.tag.addr
-  val address_no_offset = (address.asUInt & (~("h_f".U)).asUInt).asTypeOf(address)
+  val address_no_offset = Cat(address.asUInt(address.getWidth - 1, 4), 0.U(4.W)).asTypeOf(address)
   val offset = address.asUInt % block_size.U
 
   val w_address = Mux(current_dataflow === Dataflow.WS.id.U,address_no_offset + output_counter * c_addr_stride,
