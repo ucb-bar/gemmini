@@ -424,6 +424,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.len := Mux(writeData_is_full_width,
       write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,
       write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 8).U)
+      
     writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
       writeData_is_all_zeros -> 0.U,
       writeData_is_full_width -> fullAccWriteData

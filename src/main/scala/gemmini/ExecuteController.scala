@@ -1075,26 +1075,19 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
    address_no_offset + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
 
   val w_total_output_rows_wire = WireDefault(w_total_output_rows)
-  dontTouch(w_total_output_rows_wire)
   val address_no_offset_wire = WireDefault(address_no_offset)
-  dontTouch(address_no_offset_wire)
-   val output_counter_wire = WireDefault(output_counter)
-  dontTouch(output_counter_wire)
+  val output_counter_wire = WireDefault(output_counter)
   val c_addr_stride_wire = WireDefault(c_addr_stride)
-  dontTouch(c_addr_stride_wire)
 
   val w_address_wire = WireDefault(w_address)
-  dontTouch(w_address_wire)
   val w_address_sp = Mux(current_dataflow === Dataflow.WS.id.U, address + output_counter * c_addr_stride,
     address + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
   
   val write_to_acc = w_address_sp.is_acc_addr
   val write_to_acc_wire = WireDefault(write_to_acc)
-  dontTouch(write_to_acc_wire)
   val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address_sp.sp_bank())
   val w_row = Mux(write_to_acc, w_address.acc_row(), w_address_sp.sp_row())
   val w_row_wire = WireDefault(w_row)
-  dontTouch(w_row_wire)
   val is_garbage_addr =address.is_garbage()
 
   val w_matrix_rows = mesh.io.resp.bits.tag.rows
@@ -1133,9 +1126,25 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     if (ex_write_to_acc) {
       io.acc.write(i).valid := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
       io.acc.write(i).bits.addr := w_row
+      // io.acc.write(i).bits.data := Mux(activation_mx_format === 0.U, (VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType).asUInt(15,0))))).asUInt << (offset * 64.U)).asTypeOf(io.acc.write(i).bits.data),
+      //   // Mux(activation_mx_format === 1.U || activation_mx_format === 2.U, VecInit((mesh.io.resp.bits.data.flatten.grouped(2).map(_(0)).toSeq ++ mesh.io.resp.bits.data.flatten.grouped(2).map(_(1)).toSeq).map(e=>e.withWidthOf(accType))).asUInt.asTypeOf(io.acc.write(i).bits.data),
+      //   // VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))))
+      //  VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType))))))
       io.acc.write(i).bits.data := Mux(activation_mx_format === 0.U, (VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType).asUInt(15,0))))).asUInt << (offset * 64.U)).asTypeOf(io.acc.write(i).bits.data),
-        Mux(activation_mx_format === 1.U || activation_mx_format === 2.U, VecInit((mesh.io.resp.bits.data.flatten.grouped(2).map(_(0)).toSeq ++ mesh.io.resp.bits.data.flatten.grouped(2).map(_(1)).toSeq).map(e=>e.withWidthOf(accType))).asUInt.asTypeOf(io.acc.write(i).bits.data),
-        VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))))
+        Mux(activation_mx_format === 1.U || activation_mx_format === 2.U, {
+          // flat16 (64 elems): [r0_c0, r0_c1, r1_c0, r1_c1, r0_c2, r0_c3, r1_c2, r1_c3, ... r0_c30, r0_c31, r1_c30, r1_c31]
+          // Pattern repeats every 4: pos%4∈{0,1} → row-0, pos%4∈{2,3} → row-1
+          val flat16 = mesh.io.resp.bits.data.flatten.flatMap { e =>
+            val w = e.withWidthOf(accType).asUInt
+            Seq(w(15, 0), w(31, 16), w(47, 32), w(63, 48))
+          }
+          val row0 = flat16.zipWithIndex.filter { case (_, k) => k % 4 < 2  }.map(_._1) // r0_c0..c31
+          val row1 = flat16.zipWithIndex.filter { case (_, k) => k % 4 >= 2 }.map(_._1) // r1_c0..c31
+          val row0Words = row0.grouped(4).map { g => Cat(g(3), g(2), g(1), g(0)) }.toSeq
+          val row1Words = row1.grouped(4).map { g => Cat(g(3), g(2), g(1), g(0)) }.toSeq
+          VecInit(row0Words ++ row1Words).asUInt.asTypeOf(io.acc.write(i).bits.data)},
+          VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))))
+          
       io.acc.write(i).bits.acc := w_address_sp.accumulate
       io.acc.write(i).bits.mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
       io.acc.write(i).bits.offset := offset

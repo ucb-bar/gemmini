@@ -403,8 +403,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val b_addr = b_addr_start + (b_row * b_max_col + b_col) * block_size.U
   val c_addr = Mux(req.narrow_type, c_addr_start + (i * req.max_j + j) * block_size.U,
     c_addr_start + (i * req.max_j + j) * (block_size / 4).U)
-   val c_addr_wire = WireDefault(c_addr)
-   dontTouch(c_addr_wire)
+  //  val c_addr_wire = WireDefault(c_addr)
+  //  dontTouch(c_addr_wire)
   // val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
   // val a_rows = block_size.U - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)
   // val b_cols = block_size.U - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)
