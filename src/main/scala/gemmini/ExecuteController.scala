@@ -1134,8 +1134,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.write(i).valid := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
       io.acc.write(i).bits.addr := w_row
       io.acc.write(i).bits.data := Mux(activation_mx_format === 0.U, (VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType).asUInt(15,0))))).asUInt << (offset * 64.U)).asTypeOf(io.acc.write(i).bits.data),
-        Mux(activation_mx_format === 1.U || activation_mx_format === 2.U, VecInit((mesh.io.resp.bits.data.flatten.grouped(2).map(_(0)).toSeq ++ mesh.io.resp.bits.data.flatten.grouped(2).map(_(1)).toSeq).map(e=>e.withWidthOf(accType))).asUInt.asTypeOf(io.acc.write(i).bits.data),
-        VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))))
+        Mux(activation_mx_format === 1.U || activation_mx_format === 2.U,
+          VecInit(mesh.io.resp.bits.data.flatten.zipWithIndex.sortBy { case (_, k) => k % 2 }.map(_._1).map(_.withWidthOf(accType))).asUInt.asTypeOf(io.acc.write(i).bits.data),
+          VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))))
       io.acc.write(i).bits.acc := w_address_sp.accumulate
       io.acc.write(i).bits.mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
       io.acc.write(i).bits.offset := offset
