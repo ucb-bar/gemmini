@@ -64,7 +64,7 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
 
   val second_half = RegInit(false.B)
   val is_acc_write = io.in.bits.laddr.is_acc_addr && !io.in.bits.laddr.is_garbage()
-  val address_second_half  = io.in.bits.vaddr + (acc_t_bits/8).U * 16.U // 16 from 16 rows per tile, TODO (nicolas): make parametrizable
+  val address_second_half  = io.in.bits.vaddr + (acc_t_bits/16).U * 16.U // 16 from 16 rows per tile, TODO (nicolas): make parametrizable
 
   io.out.valid := io.in.valid
   io.out.bits := io.in.bits

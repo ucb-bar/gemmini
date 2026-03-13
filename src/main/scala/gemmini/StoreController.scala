@@ -128,7 +128,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val current_vaddr = vaddr + row_counter * stride
   val current_localaddr = WireInit(localaddr + (block_counter * block_stride + row_counter))
-  val current_dst_spad_addr = dst_spad_addr.asUInt + row_counter * Mux(io.enable_wide_spad_write, 8.U * dst_spad_stride, dst_spad_stride) // TODO(nicolas): make this dependent on acc_row_width / spad_row_width
+  val current_dst_spad_addr = dst_spad_addr.asUInt + row_counter * Mux(io.enable_wide_spad_write, 4.U * dst_spad_stride, dst_spad_stride) // TODO(nicolas): make this dependent on acc_row_width / spad_row_width
 
   val pool_row_addr = localaddr + (orow * pool_ocols +& ocol)
   when (orow_is_negative || ocol_is_negative || orow >= pool_orows || ocol >= pool_ocols) {

@@ -1253,11 +1253,15 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
   val loop_requesting_st_id = Mux(head_loop.st_started, tail_loop_id, head_loop_id)
   val loop_requesting_st = loops(loop_requesting_st_id)
+  val pad_i = Mux(loop_requesting_st.pad_i/2.U > 1.U, loop_requesting_st.pad_i/2.U, 1.U)
+  val pad_j = Mux(loop_requesting_st.pad_j/2.U > 1.U, loop_requesting_st.pad_j/2.U, 1.U)
+  val max_i = Mux(loop_requesting_st.max_i/2.U > 1.U, loop_requesting_st.max_i/2.U, 1.U)
+  val max_j = Mux(loop_requesting_st.max_j/2.U > 1.U, loop_requesting_st.max_j/2.U, 1.U)
   stC.io.req.bits.max_k := Mux(is_resadd, 1.U, loop_requesting_st.max_k)
-  stC.io.req.bits.max_j := Mux(io.activation_mx_format === 0.U, loop_requesting_st.max_j/2.U, loop_requesting_st.max_j)
-  stC.io.req.bits.max_i := Mux(io.activation_mx_format === 0.U, loop_requesting_st.max_i/2.U, loop_requesting_st.max_i)
-  stC.io.req.bits.pad_j := Mux(io.activation_mx_format === 0.U, loop_requesting_st.pad_j/2.U, loop_requesting_st.pad_j)
-  stC.io.req.bits.pad_i := Mux(io.activation_mx_format === 0.U, loop_requesting_st.pad_i/2.U, loop_requesting_st.pad_i)
+  stC.io.req.bits.max_j := Mux(io.activation_mx_format === 0.U, max_j, loop_requesting_st.max_j)
+  stC.io.req.bits.max_i := Mux(io.activation_mx_format === 0.U, max_i, loop_requesting_st.max_i)
+  stC.io.req.bits.pad_j := Mux(io.activation_mx_format === 0.U, pad_j, loop_requesting_st.pad_j)
+  stC.io.req.bits.pad_i := Mux(io.activation_mx_format === 0.U, pad_i, loop_requesting_st.pad_i)
   stC.io.req.bits.dram_addr := loop_requesting_st.c_dram_addr
   stC.io.req.bits.dram_stride := loop_requesting_st.c_dram_stride
   stC.io.req.bits.full_c := loop_requesting_st.full_c
@@ -1267,10 +1271,10 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.is_resadd := is_resadd
 
   stC_spad.io.req.bits.max_k := Mux(is_resadd, 1.U, loop_requesting_st.max_k)
-  stC_spad.io.req.bits.max_j := Mux(io.activation_mx_format === 0.U, loop_requesting_st.max_j/2.U, loop_requesting_st.max_j)
-  stC_spad.io.req.bits.max_i := Mux(io.activation_mx_format === 0.U, loop_requesting_st.max_i/2.U, loop_requesting_st.max_i)
-  stC_spad.io.req.bits.pad_j := Mux(io.activation_mx_format === 0.U, loop_requesting_st.pad_j/2.U, loop_requesting_st.pad_j)
-  stC_spad.io.req.bits.pad_i := Mux(io.activation_mx_format === 0.U, loop_requesting_st.pad_i/2.U, loop_requesting_st.pad_i)
+  stC_spad.io.req.bits.max_j := Mux(io.activation_mx_format === 0.U, max_j, loop_requesting_st.max_j)
+  stC_spad.io.req.bits.max_i := Mux(io.activation_mx_format === 0.U, max_i, loop_requesting_st.max_i)
+  stC_spad.io.req.bits.pad_j := Mux(io.activation_mx_format === 0.U, pad_j, loop_requesting_st.pad_j)
+  stC_spad.io.req.bits.pad_i := Mux(io.activation_mx_format === 0.U, pad_i, loop_requesting_st.pad_i)
   stC_spad.io.req.bits.src_addr := st_c_addr_start
   stC_spad.io.req.bits.dst_addr := loop_requesting_st.c_spad_addr
   stC_spad.io.req.bits.full_c := loop_requesting_st.full_c
