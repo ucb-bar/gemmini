@@ -142,7 +142,14 @@ class QuantLut(
     io.spad_deprojected_data(i).resp.bits.fromDMA := false.B
     io.spad_deprojected_data(i).resp.bits.weight_mx_format := 1.U
     io.spad_deprojected_data(i).resp.bits.input_mx_format := 1.U
-
+    val lut_idx = (counter_i << 1.U) >> io.quant_lut_update_granularity
+    val lut_idx_wire = WireDefault(lut_idx)
+    val lut_idx_1 = ((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity
+    val lut_idx_wire_1 = WireDefault(lut_idx)
+    dontTouch(lut_idx_wire)
+    dontTouch(lut_idx_wire_1)
+    
+    
     when(io.spad_projected_data(i).resp.valid) {
       when(io.read_a) {
         when(counter_i === ((io.loop_bound_i << 4.U) - 1.U)){
@@ -150,15 +157,17 @@ class QuantLut(
         }.otherwise{
           counter_i := counter_i + 1.U
         } 
-        used_lut_act_0 := lutCache_act_in((counter_i << 1.U) >> io.quant_lut_update_granularity)
-        used_lut_act_1 := lutCache_act_in(((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity)
-        for (k <- 0 until 16) { //act data layout is k15a1, k15a0, k14a1, k14a0,...,k0a1,k0a0, each 4 bit, total 32*4
-          val chunk_4bit_0 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 3, 2*k*4)
-          val chunk_4bit_1 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 7, 2*k*4 + 4)
-          val deprojected_bit_0 = used_lut_act_0(chunk_4bit_0)
-          val deprojected_bit_1 = used_lut_act_1(chunk_4bit_1)
-          deprojected_bits(2*k) := deprojected_bit_0
-          deprojected_bits(2*k + 1) := deprojected_bit_1
+        if (i < (sp_banks / 2)) {
+          used_lut_act_0 := lutCache_act_in((counter_i << 1.U) >> io.quant_lut_update_granularity)
+          used_lut_act_1 := lutCache_act_in(((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity)
+          for (k <- 0 until 16) { //act data layout is k15a1, k15a0, k14a1, k14a0,...,k0a1,k0a0, each 4 bit, total 32*4
+            val chunk_4bit_0 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 3, 2*k*4)
+            val chunk_4bit_1 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 7, 2*k*4 + 4)
+            val deprojected_bit_0 = used_lut_act_0(chunk_4bit_0)
+            val deprojected_bit_1 = used_lut_act_1(chunk_4bit_1)
+            deprojected_bits(2*k) := deprojected_bit_0
+            deprojected_bits(2*k + 1) := deprojected_bit_1
+          }
         }
       }
       when(io.read_d) {
@@ -167,10 +176,13 @@ class QuantLut(
         }.otherwise{
           counter_j := counter_j + 1.U
         }
-        for (k <- 0 until 32) {
-          val used_lut_w = lutCache_weight((((counter_j >> 4.U) << 5.U) + k.U) >> io.quant_lut_update_granularity)
-          val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-          deprojected_bits(k) := used_lut_w(chunk_4bit)
+        if (i >= (sp_banks / 2)) {
+          for (k <- 0 until 32) {
+            val used_lut_w = lutCache_weight((((counter_j >> 4.U) << 5.U) + k.U) >> io.quant_lut_update_granularity)
+            val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
+            deprojected_bits(k) := used_lut_w(chunk_4bit)
+         
+          }
         }
         // when (counter_w === (lutConfig(1)._1 - 1).U){
         //   counter_w := 0.U

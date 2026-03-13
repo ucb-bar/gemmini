@@ -248,11 +248,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   lut_deprojected_data := 0.U.asTypeOf(lut_deprojected_data)
 
   val read_projected = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
-  dontTouch(read_projected)
+  // dontTouch(read_projected)
   //val mx_sel = WireDefault(VecInit(Seq.fill(sp_banks)(false.B)))
   val mx_sel = Wire(Vec(sp_banks, Bool()))
   val sram_read_buffer = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
-  dontTouch(sram_read_buffer)
+  // dontTouch(sram_read_buffer)
 
   if (mx_requantizer.isDefined) {
     for (bank <- 0 until sp_banks) {

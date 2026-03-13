@@ -230,14 +230,94 @@ class MxRequantizer[T <: Data](
   // pipelined_out(0).valid := pipe_in.valid
   // pipelined_out(0).bits  := pipe_in.bits
   final_pipe_out := oldest_pipe_out
+  // val packed_quant_data = RegInit((0.U((128).W)))
+  // val packed_quant_data_counter = RegInit(0.U(1.W)) 
+
+  // when(total_bits_per_element === 6.U || total_bits_per_element === 4.U){ 
+  //   when(should_compute){
+  //     packed_quant_data_counter := ~packed_quant_data_counter
+  //     when(packed_quant_data_counter === 1.U){
+  //       when(total_bits_per_element === 6.U ){
+  //         packed_quant_data := Cat(quantLut.io.projected_data.bits.reverse)   
+  //       }.otherwise{
+  //         packed_quant_data :=  extracted_data(127,0)                
+  //       }        
+  //     }
+  //   }
+  // }
   
-  when(total_bits_per_element === 8.U || total_bits_per_element === 4.U){ //todo: every 8 bits weightTypeProjected only low 4bits are valid for 4bits!! mask
+  // when(total_bits_per_element === 8.U){ 
+  //   final_pipe_out.valid := quantize_valid
+  //   final_pipe_out.bits.out.quant_mx_data_out := extracted_data.asTypeOf(spad_row_t)
+  // }.elsewhen(total_bits_per_element === 6.U){ 
+  //   final_pipe_out.valid := quantLut.io.projected_data.valid && (packed_quant_data_counter === 1.U)
+  //   val lut_quant_data = Cat(quantLut.io.projected_data.bits.reverse)
+  //   val row0 = (0 until 32).map(k => packed_quant_data(4*k+3,  4*k))  // r0_c0..c31
+  //   val row1 = (0 until 32).map(k => lut_quant_data(4*k+3,    4*k))  // r1_c0..c31
+  //   val interleaved = (0 until 16).flatMap { j => Seq(row0(2*j), row0(2*j+1), row1(2*j), row1(2*j+1)) }
+  //   final_pipe_out.bits.out.quant_mx_data_out := Cat(interleaved.reverse).asTypeOf(spad_row_t)
+  // }.elsewhen(total_bits_per_element === 4.U){
+  //   final_pipe_out.valid := quantize_valid && (packed_quant_data_counter === 1.U)
+  //   val row0 = (0 until 32).map(k => packed_quant_data(4*k+3,  4*k))  // r0_c0..c31
+  //   val row1 = (0 until 32).map(k => extracted_data(4*k+3,    4*k))  // r1_c0..c31
+  //   val interleaved = (0 until 16).flatMap { j => Seq(row0(2*j), row0(2*j+1), row1(2*j), row1(2*j+1)) }
+  //   final_pipe_out.bits.out.quant_mx_data_out := Cat(interleaved.reverse).asTypeOf(spad_row_t)
+  // }
+
+  // Two-cycle accumulation registers for FP4 / FP6:
+  val quant_half_counter = RegInit(false.B)
+  val first_half_buf     = RegInit(0.U(128.W))
+
+  val fp6_lut_out     = Cat(quantLut.io.projected_data.bits.reverse)        
+  val fp6_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))    
+  val fp6_row1        = (0 until 32).map(k => fp6_lut_out(4*k+3, 4*k))      
+  val fp6_interleaved = (0 until 16).flatMap { j => Seq(fp6_row0(2*j), fp6_row0(2*j+1), fp6_row1(2*j), fp6_row1(2*j+1)) }
+  val fp6_combined    = Cat(fp6_interleaved.reverse)                           
+
+  val fp4_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))
+  val fp4_row1        = (0 until 32).map(k => extracted_data(4*k+3, 4*k))
+  val fp4_interleaved = (0 until 16).flatMap { j => Seq(fp4_row0(2*j), fp4_row0(2*j+1), fp4_row1(2*j), fp4_row1(2*j+1)) }
+  val fp4_combined    = Cat(fp4_interleaved.reverse)                       
+
+  when(total_bits_per_element === 8.U) {
     final_pipe_out.valid := quantize_valid
     final_pipe_out.bits.out.quant_mx_data_out := extracted_data.asTypeOf(spad_row_t)
-  }.elsewhen(total_bits_per_element === 6.U){ //every 8 bits weightTypeProjected only low 4bits are valid for 4bits!! mask
-    final_pipe_out.valid := quantLut.io.projected_data.valid
-    final_pipe_out.bits.out.quant_mx_data_out := Cat(0.U(128.W), Cat(quantLut.io.projected_data.bits.reverse)).asTypeOf(spad_row_t)
+  }.elsewhen(total_bits_per_element === 6.U) {
+    val lut_valid = quantLut.io.projected_data.valid
+    when(lut_valid) {
+      when(!quant_half_counter) {
+        first_half_buf     := fp6_lut_out
+        quant_half_counter := true.B
+      }.otherwise {
+        quant_half_counter := false.B
+      }
+    }
+    final_pipe_out.valid := lut_valid 
+    final_pipe_out.bits.out.quant_mx_data_out := (fp6_combined).asTypeOf(spad_row_t)
+  }.elsewhen(total_bits_per_element === 4.U) {
+    when(quantize_valid) {
+      when(!quant_half_counter) {
+        first_half_buf     := extracted_data(127, 0)
+        quant_half_counter := true.B
+      }.otherwise {
+        quant_half_counter := false.B
+      }
+    }
+    final_pipe_out.valid := (quantize_valid) 
+    final_pipe_out.bits.out.quant_mx_data_out := (fp4_combined).asTypeOf(spad_row_t)
   }
+  
+  when(quantize_valid) {
+    when(total_bits_per_element === 4.U){
+      extracted_data := Cat((0 until io.outputnumLanes).map(i => quantized_buffer(i)(3, 0)).reverse)
+    }.elsewhen(total_bits_per_element === 8.U){
+      extracted_data := Cat(quantized_buffer.reverse)
+    }.otherwise{
+      extracted_data := 0.U((io.outputnumLanes*8).W)
+    }
+  }
+  
+
   val can_enqueue = pipe_in.ready
     // Only allow input handshake when queue has space
   io.mxacc_req.mx_data_in.ready := can_enqueue
@@ -318,16 +398,18 @@ class MxRequantizer[T <: Data](
   
 
   
-  when(quantize_valid) {
-    when(total_bits_per_element === 4.U){
-      extracted_data := Cat((0 until io.outputnumLanes).map(i => quantized_buffer(i)(3, 0)).reverse)
-    }.elsewhen(total_bits_per_element === 8.U){
-      extracted_data := Cat(quantized_buffer.reverse)
-    }.otherwise{
-      extracted_data := 0.U((io.outputnumLanes*8).W)
-    }
-  }
+  // when(quantize_valid) {
+  //   when(total_bits_per_element === 4.U){
+  //     extracted_data := Cat((0 until io.outputnumLanes).map(i => quantized_buffer(i)(3, 0)).reverse)
+  //   }.elsewhen(total_bits_per_element === 8.U){
+  //     extracted_data := Cat(quantized_buffer.reverse)
+  //   }.otherwise{
+  //     extracted_data := 0.U((io.outputnumLanes*8).W)
+  //   }
+  // }
   
+ 
+
   val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
   quant_fp6 := Mux(total_bits_per_element === 6.U, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(5, 0))), 
   VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
