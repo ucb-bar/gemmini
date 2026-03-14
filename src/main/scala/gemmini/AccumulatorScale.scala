@@ -17,6 +17,7 @@ class AccumulatorScaleResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDa
   val acc_bank_id = UInt(2.W)
   val fromDMA = Bool()
   val is_last_half = Bool()
+  val is_garbage = Bool()
 }
 
 class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
@@ -157,6 +158,7 @@ class AccumulatorScale[T <: Data, U <: Data](
 
     io.mx_req_io.mx_data_out.ready := out.ready
     out.valid := io.mx_req_io.mx_data_out.valid
+    out.bits.is_garbage := io.mx_req_io.mx_data_out.bits.is_garbage
     out.bits.full_data := io.mx_req_io.mx_data_out.bits.full_mx_data_out
     out.bits.data := io.mx_req_io.mx_data_out.bits.quant_mx_data_out
     out.bits.fromDMA   := io.mx_req_io.mx_data_out.bits.fromDMA
