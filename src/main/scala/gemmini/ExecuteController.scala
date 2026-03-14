@@ -8,7 +8,11 @@ import Util._
 import org.chipsalliance.cde.config.Parameters
 import midas.targetutils.PerfCounter
 
-
+class MaxBounds extends Bundle {
+  val i = UInt(9.W)
+  val j = UInt(9.W)
+  val k = UInt(9.W)
+}
 
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
@@ -59,6 +63,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val scale_mem_mvout_base_addr_act = Output(UInt(scale_mem.get.ScaleMemWriteAddrWidth.W))
     val quant_lut_update_granularity = Output(UInt(16.W))
     val scaleMemCntl = Output(new ScalingFactorCntl(meshRows*tileRows))
+    val loop_bounds = Output(new MaxBounds)
   })
 
 
@@ -133,17 +138,28 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val scale_mem_mvin_base_addr_w = RegInit(0.U(32.W))
   val scale_mem_mvout_base_addr_act = RegInit(0.U(scale_mem.get.ScaleMemWriteAddrWidth.W))
   val quant_lut_update_granularity = RegInit(0.U(16.W))
-  
+  val scale_mem_read_act_sel = RegInit(0.U(1.W))
+  val scale_mem_read_w_sel = RegInit(0.U(1.W))
+  val loop_bound_i = RegInit(0.U(9.W))
+  val loop_bound_j = RegInit(0.U(9.W))
+  val loop_bound_k = RegInit(0.U(9.W))
+
+  io.loop_bounds.i := loop_bound_i
+  io.loop_bounds.j := loop_bound_j
+  io.loop_bounds.k := loop_bound_k
+
   when(functs(0) === CONFIG_SCALE_MEM) {
-    val direction = rs2s(0)(63) 
-    when(direction === 1.U) { // mvin
-      scale_mem_mvin_base_addr_act := rs1s(0)
-      scale_mem_mvin_base_addr_w := rs1s(0) + (scale_mem.get.sizeInBytes >> 1).U
-    }.elsewhen(direction === 0.U) { // mvout
-      scale_mem_mvout_base_addr_act := rs1s(0)(32,0)
-      quant_lut_update_granularity := rs1s(0)(48,33)
-    }
+      scale_mem_mvout_base_addr_act := rs1s(0)(32,0) 
+      loop_bound_i := rs1s(0)(41,33)
+      loop_bound_j := rs1s(0)(50,42)
+      loop_bound_k := rs1s(0)(59,51)
+      scale_mem_read_act_sel := rs1s(0)(60)
+      scale_mem_read_w_sel := rs1s(0)(61)
+      quant_lut_update_granularity :=  rs2s(0)(15,0)
   } 
+  dontTouch(loop_bound_i)
+  dontTouch(loop_bound_j)
+  dontTouch(loop_bound_k)
   io.scale_mem_mvout_base_addr_act := scale_mem_mvout_base_addr_act
   io.quant_lut_update_granularity := quant_lut_update_granularity
 
@@ -443,6 +459,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   io.scaleMemCntl.counter_b := b_fire_counter
   io.scaleMemCntl.fire_a := a_fire 
   io.scaleMemCntl.fire_b := b_fire
+  io.scaleMemCntl.scale_mem_read_act_sel := scale_mem_read_act_sel 
+  io.scaleMemCntl.scale_mem_read_w_sel := scale_mem_read_w_sel
+  io.scaleMemCntl.loop_bound_i := loop_bound_i
+  io.scaleMemCntl.loop_bound_j := loop_bound_j
+  io.scaleMemCntl.loop_bound_k := loop_bound_k
   io.scaleMemCntl.baseAddress_act := scale_mem_mvin_base_addr_act
   io.scaleMemCntl.baseAddress_w := scale_mem_mvin_base_addr_w
 
@@ -1033,7 +1054,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   when (cntl_valid && cntl.perform_single_mul) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshColumns, Vec(tileColumns, accType)))
+    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshColumns, Vec(tileColumns, spatialArrayOutputType)))
     mesh.io.req.bits.tag.addr.make_this_garbage()
   }
 
@@ -1045,20 +1066,28 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
 
   val address = mesh.io.resp.bits.tag.addr
-  val address_no_offset = (address.asUInt & (~("h_f".U)).asUInt).asTypeOf(address)
+  //val address_no_offset = (address.asUInt & (~("h_f".U)).asUInt).asTypeOf(address)
+  val address_no_offset = Cat(address.asUInt >> 4,
+  0.U(4.W)).asTypeOf(address)
   val offset = address.asUInt % block_size.U
-
-  val w_address = Mux(current_dataflow === Dataflow.WS.id.U,address_no_offset + output_counter * c_addr_stride,
+  
+  val w_address = Mux(current_dataflow === Dataflow.WS.id.U, address_no_offset + output_counter * c_addr_stride,
    address_no_offset + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
 
+  val w_total_output_rows_wire = WireDefault(w_total_output_rows)
+  val address_no_offset_wire = WireDefault(address_no_offset)
+  val output_counter_wire = WireDefault(output_counter)
+  val c_addr_stride_wire = WireDefault(c_addr_stride)
+
+  val w_address_wire = WireDefault(w_address)
   val w_address_sp = Mux(current_dataflow === Dataflow.WS.id.U, address + output_counter * c_addr_stride,
     address + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
-
+  
   val write_to_acc = w_address_sp.is_acc_addr
-
+  val write_to_acc_wire = WireDefault(write_to_acc)
   val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address_sp.sp_bank())
   val w_row = Mux(write_to_acc, w_address.acc_row(), w_address_sp.sp_row())
-
+  val w_row_wire = WireDefault(w_row)
   val is_garbage_addr =address.is_garbage()
 
   val w_matrix_rows = mesh.io.resp.bits.tag.rows
@@ -1097,8 +1126,25 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     if (ex_write_to_acc) {
       io.acc.write(i).valid := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
       io.acc.write(i).bits.addr := w_row
+      // io.acc.write(i).bits.data := Mux(activation_mx_format === 0.U, (VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType).asUInt(15,0))))).asUInt << (offset * 64.U)).asTypeOf(io.acc.write(i).bits.data),
+      //   // Mux(activation_mx_format === 1.U || activation_mx_format === 2.U, VecInit((mesh.io.resp.bits.data.flatten.grouped(2).map(_(0)).toSeq ++ mesh.io.resp.bits.data.flatten.grouped(2).map(_(1)).toSeq).map(e=>e.withWidthOf(accType))).asUInt.asTypeOf(io.acc.write(i).bits.data),
+      //   // VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))))
+      //  VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType))))))
       io.acc.write(i).bits.data := Mux(activation_mx_format === 0.U, (VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType).asUInt(15,0))))).asUInt << (offset * 64.U)).asTypeOf(io.acc.write(i).bits.data),
-        VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType))))))
+        Mux(activation_mx_format === 1.U || activation_mx_format === 2.U, {
+          // flat16 (64 elems): [r0_c0, r0_c1, r1_c0, r1_c1, r0_c2, r0_c3, r1_c2, r1_c3, ... r0_c30, r0_c31, r1_c30, r1_c31]
+          // Pattern repeats every 4: pos%4∈{0,1} → row-0, pos%4∈{2,3} → row-1
+          val flat16 = mesh.io.resp.bits.data.flatten.flatMap { e =>
+            val w = e.withWidthOf(accType).asUInt
+            Seq(w(15, 0), w(31, 16), w(47, 32), w(63, 48))
+          }
+          val row0 = flat16.zipWithIndex.filter { case (_, k) => k % 4 < 2  }.map(_._1) // r0_c0..c31
+          val row1 = flat16.zipWithIndex.filter { case (_, k) => k % 4 >= 2 }.map(_._1) // r1_c0..c31
+          val row0Words = row0.grouped(4).map { g => Cat(g(3), g(2), g(1), g(0)) }.toSeq
+          val row1Words = row1.grouped(4).map { g => Cat(g(3), g(2), g(1), g(0)) }.toSeq
+          VecInit(row0Words ++ row1Words).asUInt.asTypeOf(io.acc.write(i).bits.data)},
+          VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))))
+
       io.acc.write(i).bits.acc := w_address_sp.accumulate
       io.acc.write(i).bits.mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
       io.acc.write(i).bits.offset := offset

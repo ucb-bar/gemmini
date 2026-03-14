@@ -128,7 +128,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val current_vaddr = vaddr + row_counter * stride
   val current_localaddr = WireInit(localaddr + (block_counter * block_stride + row_counter))
-  val current_dst_spad_addr = dst_spad_addr.asUInt + row_counter * Mux(io.enable_wide_spad_write, 8.U * dst_spad_stride, dst_spad_stride) // TODO(nicolas): make this dependent on acc_row_width / spad_row_width
+  val current_dst_spad_addr = dst_spad_addr.asUInt + row_counter * Mux(io.enable_wide_spad_write, 4.U * dst_spad_stride, dst_spad_stride) // TODO(nicolas): make this dependent on acc_row_width / spad_row_width
 
   val pool_row_addr = localaddr + (orow * pool_ocols +& ocol)
   when (orow_is_negative || ocol_is_negative || orow >= pool_orows || ocol >= pool_ocols) {
@@ -186,6 +186,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.pool_en := pooling_is_enabled && (wrow_counter =/= 0.U || wcol_counter =/= 0.U)
   io.dma.req.bits.store_en := Mux(pooling_is_enabled, wrow_counter === pool_size - 1.U && wcol_counter === pool_size - 1.U,
     block_counter === blocks - 1.U)
+  io.dma.req.bits.is_second_half := DontCare
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore

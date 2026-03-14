@@ -289,7 +289,9 @@ class AccumulatorMem[T <: Data, U <: Data](
           when(i.U >= offset && i.U < (offset +& 4.U)) {
             scaled_result:= VecInit(dataElement.asTypeOf(Vec(4, UInt(16.W))).zipWithIndex.map {
               case (e, j) =>
-              applyE9M0Scale(e, scale_mem.io.read_resp.bits.combined_scales((i.U - offset)*4.U +& j.U)(8, 0), 8, 7) }).asUInt
+              val scale = scale_mem.io.read_resp.bits.combined_scales((i.U - offset)*4.U +& j.U)(8, 0)
+              dontTouch(scale)
+              applyE9M0Scale(e, scale, 8, 7) }).asUInt
           }
           scaled_data(i) := scaled_result.asTypeOf(pipelined_writes(0).bits.data(i))
         }

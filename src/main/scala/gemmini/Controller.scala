@@ -230,8 +230,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     
     mx_requantizer.get.io.requant_data_in_gpu <> mx_io.requant_in_gpu
     mx_io.scale_factor_out <> mx_requantizer.get.io.scaleMem_write
-//    mx_requantizer.get.io.requant_data_in <> mx_io.requant_in
-
     mx_requantizer.get.io.lut0_write <> mx_io.lut0
     mx_requantizer.get.io.lut1_write <> mx_io.lut1
     mx_requantizer.get.io.lut2_write <> mx_io.lut2
@@ -250,11 +248,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   lut_deprojected_data := 0.U.asTypeOf(lut_deprojected_data)
 
   val read_projected = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
-  dontTouch(read_projected)
+  // dontTouch(read_projected)
   //val mx_sel = WireDefault(VecInit(Seq.fill(sp_banks)(false.B)))
   val mx_sel = Wire(Vec(sp_banks, Bool()))
   val sram_read_buffer = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
-  dontTouch(sram_read_buffer)
+  // dontTouch(sram_read_buffer)
 
   if (mx_requantizer.isDefined) {
     for (bank <- 0 until sp_banks) {
@@ -571,9 +569,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   loop_matmul.io.activation_mx_format := ex_controller.io.activation_mx_format_out
   loop_matmul.io.weight_mx_format := ex_controller.io.weight_mx_format_out
-  mx_requantizer.get.io.counter_i := loop_matmul.io.counter_i
-  mx_requantizer.get.io.counter_j := loop_matmul.io.counter_j  
-  mx_requantizer.get.io.counter_k := loop_matmul.io.counter_k
+  loop_matmul.io.output_mx_format := ex_controller.io.output_MxFormat
+
+  mx_requantizer.get.io.loop_bound_i := ex_controller.io.scaleMemCntl.loop_bound_i
+  mx_requantizer.get.io.loop_bound_j := ex_controller.io.scaleMemCntl.loop_bound_j  
+  mx_requantizer.get.io.loop_bound_k := ex_controller.io.scaleMemCntl.loop_bound_k  
   mx_requantizer.get.io.read_a := ex_controller.io.read_a
   mx_requantizer.get.io.read_d := ex_controller.io.read_d
   spad.module.io.scaleMemCntl.foreach { spadCnlt =>
@@ -688,6 +688,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // }
   
   spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
+  spad.module.io.loop_bounds := ex_controller.io.loop_bounds
   ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
   ex_controller.io.acc.write <> spad.module.io.acc.write
 

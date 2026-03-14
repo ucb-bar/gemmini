@@ -403,7 +403,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val b_addr = b_addr_start + (b_row * b_max_col + b_col) * block_size.U
   val c_addr = Mux(req.narrow_type, c_addr_start + (i * req.max_j + j) * block_size.U,
     c_addr_start + (i * req.max_j + j) * (block_size / 4).U)
-
+  //  val c_addr_wire = WireDefault(c_addr)
+  //  dontTouch(c_addr_wire)
   // val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
   // val a_rows = block_size.U - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)
   // val b_cols = block_size.U - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)
@@ -716,6 +717,7 @@ class LoopMatmulStCSpadReq(val block_size: Int, val iterator_bitwidth: Int, val 
   val act = UInt(Activation.bitwidth.W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
   val is_resadd = Bool()
+  val output_mx_format = UInt(2.W)
 }
 
 class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int,
@@ -757,14 +759,14 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
 
   val acc_addr_start = req.src_addr
 
-  val dst_offset = Mux(req.full_c, (i * req.max_j + j) * block_size.U,
+  val dst_offset = Mux(req.full_c || (req.output_mx_format === 3.U), (i * req.max_j + j) * block_size.U,
     (i * req.max_j + j) * block_size.U)
   val dst_addr = req.dst_addr + dst_offset
 
   val src_addr = acc_addr_start + (i * req.max_j + j) * block_size.U
   val blocks = Mux(j + max_blocks <= req.max_j, max_blocks, req.max_j-j)
   val cols = (blocks * block_size.U) - Mux(j + blocks >= req.max_j, req.pad_j, 0.U)
-  val rows = block_size.U - Mux(i === req.max_i-1.U, req.pad_i, 0.U)
+  val rows = block_size.U  - Mux(i === req.max_i-1.U, req.pad_i, 0.U)
 
   val mvout_cmd = Wire(new RoCCCommand)
   mvout_cmd := DontCare
@@ -932,6 +934,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     val k = Output(UInt(16.W))
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
+    val output_mx_format = Input(UInt(2.W))
   })
 
   // Create states
@@ -1250,9 +1253,11 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
   val loop_requesting_st_id = Mux(head_loop.st_started, tail_loop_id, head_loop_id)
   val loop_requesting_st = loops(loop_requesting_st_id)
+  val max_i = Mux(loop_requesting_st.max_i/2.U > 1.U, loop_requesting_st.max_i/2.U, 1.U)
+  val max_j = Mux(loop_requesting_st.max_j/2.U > 1.U, loop_requesting_st.max_j/2.U, 1.U)
   stC.io.req.bits.max_k := Mux(is_resadd, 1.U, loop_requesting_st.max_k)
-  stC.io.req.bits.max_j := loop_requesting_st.max_j
-  stC.io.req.bits.max_i := loop_requesting_st.max_i
+  stC.io.req.bits.max_j := Mux(io.activation_mx_format === 0.U, max_j, loop_requesting_st.max_j)
+  stC.io.req.bits.max_i := Mux(io.activation_mx_format === 0.U, max_i, loop_requesting_st.max_i)
   stC.io.req.bits.pad_j := loop_requesting_st.pad_j
   stC.io.req.bits.pad_i := loop_requesting_st.pad_i
   stC.io.req.bits.dram_addr := loop_requesting_st.c_dram_addr
@@ -1264,8 +1269,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.is_resadd := is_resadd
 
   stC_spad.io.req.bits.max_k := Mux(is_resadd, 1.U, loop_requesting_st.max_k)
-  stC_spad.io.req.bits.max_j := loop_requesting_st.max_j
-  stC_spad.io.req.bits.max_i := loop_requesting_st.max_i
+  stC_spad.io.req.bits.max_j := Mux(io.activation_mx_format === 0.U, max_j, loop_requesting_st.max_j)
+  stC_spad.io.req.bits.max_i := Mux(io.activation_mx_format === 0.U, max_i, loop_requesting_st.max_i)
   stC_spad.io.req.bits.pad_j := loop_requesting_st.pad_j
   stC_spad.io.req.bits.pad_i := loop_requesting_st.pad_i
   stC_spad.io.req.bits.src_addr := st_c_addr_start
@@ -1274,6 +1279,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC_spad.io.req.bits.act := loop_requesting_st.act
   stC_spad.io.req.bits.loop_id := loop_requesting_st_id
   stC_spad.io.req.bits.is_resadd := is_resadd
+  stC_spad.io.req.bits.output_mx_format := io.output_mx_format
 
   stC.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started &&
     loop_requesting_st.configured && !loop_requesting_st.spad_only
