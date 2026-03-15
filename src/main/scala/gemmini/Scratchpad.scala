@@ -141,6 +141,7 @@ class MxRequantizerAccMemDataOut[T <: Data: Arithmetic](rDataType: Vec[Vec[T]], 
   val fromDMA = Bool()
   val is_last_half = Bool()
   val acc_bank_id = UInt(2.W)
+  val is_garbage = Bool()
 }
 
 class MxRequantizerAccMemDataIn[T <: Data: Arithmetic](rDataType: Vec[Vec[T]], half_t: Vec[Vec[T]]) extends Bundle {
@@ -400,14 +401,25 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     when (write_norm_q.io.deq.bits.laddr.is_garbage() || !write_norm_q.io.deq.bits.laddr.is_acc_addr) {
       write_scale_q.io.enq <> write_norm_q.io.deq
     }
-
+   
     // Non-acc or garbage can immediately fire between scale_q and issue_q
     when (write_scale_q.io.deq.bits.laddr.is_garbage() || !write_scale_q.io.deq.bits.laddr.is_acc_addr) {
       write_issue_q.io.enq <> write_scale_q.io.deq
     }
-
+     val acc_scale_unit = Module(new AccumulatorScale(
+      acc_row_t,
+      spad_row_t,
+      acc_scale_t.asInstanceOf[V],
+      acc_read_small_width,
+      acc_read_full_width,
+      acc_scale_func,
+      acc_scale_num_units,
+      acc_scale_latency,
+      has_nonlinear_activations,
+      has_normalizations
+    ))
     val writeData = Wire(Valid(UInt((spad_w max (acc_w/2)).W)))
-    writeData.valid := write_issue_q.io.deq.bits.laddr.is_garbage()
+    writeData.valid := write_issue_q.io.deq.bits.laddr.is_garbage() || (acc_scale_unit.io.out.bits.is_garbage)
     writeData.bits := DontCare
     val fullAccWriteData = Wire(UInt((acc_w/2).W))
     fullAccWriteData := DontCare
@@ -433,10 +445,17 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.block := write_issue_q.io.deq.bits.block
     writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
-    writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
+    writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en 
 
     write_issue_q.io.deq.ready := writer.module.io.req.ready &&
       spad_writer.map(_.module.io.req.ready).getOrElse(true.B) && writeData.valid
+    
+    when (acc_scale_unit.io.out.valid && acc_scale_unit.io.out.bits.is_garbage) {
+      acc_scale_unit.io.out.ready    := true.B   // drain scale unit
+      write_issue_q.io.deq.ready     := true.B   // drain queue, no writer needed
+      spad_writer.module.io.req.valid  := false.B  // suppress writer
+      spad_writer.foreach { sw => sw.module.io.req.valid := false.B }
+    }
     spad_writer.foreach { spad_writer =>
       spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool
       spad_writer.module.io.req.bits.vaddr := config.tl_ext_mem_base.U |
@@ -445,7 +464,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       spad_writer.module.io.req.bits.len := Mux(writeData_is_full_width,
         write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,
         Mux(writeData_is_fp8, write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U,
-        write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 8).U))
+             write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U))
       spad_writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
         writeData_is_all_zeros -> 0.U,
         writeData_is_full_width -> fullAccWriteData
@@ -453,7 +472,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       spad_writer.module.io.req.bits.block := write_issue_q.io.deq.bits.block
       spad_writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
       spad_writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
-      spad_writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en
+      spad_writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en && (!acc_scale_unit.io.out.bits.is_garbage)
     }
 
     io.dma.write.resp.valid := false.B
@@ -665,7 +684,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         dma_read_pipe.io.deq.ready := writer.module.io.req.ready &&
           spad_writer.map(_.module.io.req.ready).getOrElse(true.B) &&
           (!write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
-            write_issue_q.io.deq.valid) && !write_issue_q.io.deq.bits.laddr.is_garbage()
+            write_issue_q.io.deq.valid) && !write_issue_q.io.deq.bits.laddr.is_garbage() 
         when (dma_read_pipe.io.deq.fire) {
           writeData.valid := true.B
           writeData.bits := dma_read_pipe.io.deq.bits.data
@@ -739,18 +758,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     acc_norm_unit_in.bits.cmd := write_norm_q.io.deq.bits.laddr.norm_cmd
     acc_norm_unit_in.bits.acc_read_resp := DontCare
 
-    val acc_scale_unit = Module(new AccumulatorScale(
-      acc_row_t,
-      spad_row_t,
-      acc_scale_t.asInstanceOf[V],
-      acc_read_small_width,
-      acc_read_full_width,
-      acc_scale_func,
-      acc_scale_num_units,
-      acc_scale_latency,
-      has_nonlinear_activations,
-      has_normalizations
-    ))
+   
 
     acc_scale_unit.io.mx_req_io <> io.mx_req_io
    
@@ -769,12 +777,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     }
 
     acc_scale_unit.io.out.ready := false.B
-
+    
     val dma_resp_ready =
       (writer.module.io.req.ready && spad_writer.map(_.module.io.req.ready).getOrElse(true.B)) &&
         write_issue_q.io.deq.bits.laddr.is_acc_addr &&
-        !write_issue_q.io.deq.bits.laddr.is_garbage()
-
+        !write_issue_q.io.deq.bits.laddr.is_garbage() 
+    val dma_read_resp_wire = WireDefault(dma_resp_ready)
+    dontTouch(dma_read_resp_wire)
     when (acc_scale_unit.io.out.bits.fromDMA && dma_resp_ready) {
       // Send the acc-scale result into the DMA
       acc_scale_unit.io.out.ready := true.B

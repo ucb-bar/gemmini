@@ -272,16 +272,24 @@ class MxRequantizer[T <: Data](
   val fp6_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))    
   val fp6_row1        = (0 until 32).map(k => fp6_lut_out(4*k+3, 4*k))      
   val fp6_interleaved = (0 until 16).flatMap { j => Seq(fp6_row0(2*j), fp6_row0(2*j+1), fp6_row1(2*j), fp6_row1(2*j+1)) }
-  val fp6_combined    = Cat(fp6_interleaved.reverse)                           
+  val fp6_combined    = Cat(fp6_interleaved.reverse)   
+  val fp6_combined_wire = WireDefault(fp6_combined)                        
+  val fp6_lut_out_wire = WireDefault(fp6_lut_out)
+  dontTouch(fp6_combined_wire)
+  dontTouch(fp6_lut_out_wire)
 
   val fp4_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))
   val fp4_row1        = (0 until 32).map(k => extracted_data(4*k+3, 4*k))
   val fp4_interleaved = (0 until 16).flatMap { j => Seq(fp4_row0(2*j), fp4_row0(2*j+1), fp4_row1(2*j), fp4_row1(2*j+1)) }
   val fp4_combined    = Cat(fp4_interleaved.reverse)                       
+  val fp4_combined_wire = WireDefault(fp4_combined)                        
+  dontTouch(fp4_combined_wire)
+
 
   when(total_bits_per_element === 8.U) {
     final_pipe_out.valid := quantize_valid
     final_pipe_out.bits.out.quant_mx_data_out := extracted_data.asTypeOf(spad_row_t)
+    final_pipe_out.bits.out.is_garbage := false.B
   }.elsewhen(total_bits_per_element === 6.U) {
     val lut_valid = quantLut.io.projected_data.valid
     when(lut_valid) {
@@ -292,6 +300,7 @@ class MxRequantizer[T <: Data](
         quant_half_counter := false.B
       }
     }
+    final_pipe_out.bits.out.is_garbage := !quant_half_counter && lut_valid
     final_pipe_out.valid := lut_valid 
     final_pipe_out.bits.out.quant_mx_data_out := (fp6_combined).asTypeOf(spad_row_t)
   }.elsewhen(total_bits_per_element === 4.U) {
@@ -304,6 +313,7 @@ class MxRequantizer[T <: Data](
       }
     }
     final_pipe_out.valid := (quantize_valid) 
+    final_pipe_out.bits.out.is_garbage := !quant_half_counter && quantize_valid
     final_pipe_out.bits.out.quant_mx_data_out := (fp4_combined).asTypeOf(spad_row_t)
   }
   
@@ -319,10 +329,13 @@ class MxRequantizer[T <: Data](
   
 
   val can_enqueue = pipe_in.ready
+  val can_enqueue_wire = WireDefault(can_enqueue)
+  dontTouch(can_enqueue_wire)
     // Only allow input handshake when queue has space
   io.mxacc_req.mx_data_in.ready := can_enqueue
   io.requant_data_in_gpu.ready := can_enqueue && !io.mxacc_req.mx_data_in.fire
-
+  
+  io.mxacc_req.mx_data_out.bits.is_garbage := final_pipe_out.bits.out.is_garbage
   io.mxacc_req.mx_data_out.bits.full_mx_data_out := final_pipe_out.bits.out.full_mx_data_out
   io.mxacc_req.mx_data_out.bits.quant_mx_data_out  := final_pipe_out.bits.out.quant_mx_data_out
   io.mxacc_req.mx_data_out.valid := final_pipe_out.valid
