@@ -352,7 +352,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   val block_read_req = WireInit(false.B)
   val block_write_req = WireInit(false.B)
 
-  val mask_len = t.getWidth / 8
+  val mask_len = t.getWidth / (8 * 32)
   val mask_elem = UInt((t.getWidth / mask_len).W)
 
   // val ext_mem_write_q_enq = if (use_shared_ext_mem && use_tl_ext_ram) {
@@ -408,7 +408,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     mem.io.waddr := oldest_pipelined_write.bits.addr
     mem.io.wen := oldest_pipelined_write.valid
     mem.io.wdata := Mux(oldest_pipelined_write.bits.acc, adder_sum, oldest_pipelined_write.bits.data)
-    mem.io.mask := oldest_pipelined_write.bits.mask
+    mem.io.mask := VecInit(oldest_pipelined_write.bits.mask.grouped(32).map(_.reduce(_ || _)).toSeq)
 
     // full-width read
     mem.io.raddr_full := io.write.bits.addr
