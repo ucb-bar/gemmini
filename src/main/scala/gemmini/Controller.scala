@@ -573,7 +573,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   mx_requantizer.get.io.loop_bound_i := ex_controller.io.scaleMemCntl.loop_bound_i
   mx_requantizer.get.io.loop_bound_j := ex_controller.io.scaleMemCntl.loop_bound_j  
-  mx_requantizer.get.io.loop_bound_k := ex_controller.io.scaleMemCntl.loop_bound_k  
+  mx_requantizer.get.io.loop_bound_k := ex_controller.io.scaleMemCntl.loop_bound_k
+
+  store_controller.io.loop_bound_j := ex_controller.io.loop_bounds.j
+
   mx_requantizer.get.io.read_a := ex_controller.io.read_a
   mx_requantizer.get.io.read_d := ex_controller.io.read_d
   mx_requantizer.get.io.scale_mem_counter_reset_flag := ex_controller.io.scaleMemCntl.scale_mem_counter_reset_flag

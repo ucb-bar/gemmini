@@ -41,6 +41,7 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
   val acc_iexp_qln2 = UInt(acc_t_bits.W)
   val acc_iexp_qln2_inv = UInt(acc_t_bits.W)
   val acc_norm_stats_id = UInt(8.W) // TODO magic number
+  val max_j = UInt(8.W)
 
   val len = UInt(16.W) // TODO don't use a magic number for the width here
   val block = UInt(8.W) // TODO don't use a magic number for the width here
@@ -64,7 +65,9 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
 
   val second_half = RegInit(false.B)
   val is_acc_write = io.in.bits.laddr.is_acc_addr && !io.in.bits.laddr.is_garbage()
-  val address_second_half  = io.in.bits.vaddr + (acc_t_bits/16).U * 16.U // 16 from 16 rows per tile, TODO (nicolas): make parametrizable
+  val address_second_half  = Mux(io.in.bits.max_j <= 2.U,
+    io.in.bits.vaddr + (acc_t_bits/16).U * 16.U, // 16 from 16 rows per tile, TODO (nicolas): make parametrizable
+    io.in.bits.vaddr + 4.U)
 
   io.out.valid := io.in.valid
   io.out.bits := io.in.bits
