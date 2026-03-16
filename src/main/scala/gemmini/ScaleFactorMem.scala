@@ -30,7 +30,7 @@ class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: 
 }
 
 class ScalingFactorMem(
-  depth: Int = 8,                     
+  depth: Int = 64,                     
   sramWidth: Int = 128,                 
   actOutputScalingWidth: Int = 8,       
   numBanks: Int = 8,
@@ -40,7 +40,7 @@ class ScalingFactorMem(
 ) extends Module {
   val scaleMemSizeFactor = 4
   val doubleBufferFactor = 2
-  val totalSizeBytes = scaleMemSizeFactor*doubleBufferFactor*8*sramWidth*numBanks/8
+  val totalSizeBytes = 64*sramWidth*numBanks/8
   val bytesPerBank = sramWidth / 8        
   val AddrWidth = log2Ceil(totalSizeBytes)      
   val bankaddressWidth = log2Ceil(numBanks) 
@@ -136,18 +136,11 @@ class ScalingFactorMem(
   when(write_weight_counter === 1.U && io.scale_mem_write_w.fire){
     write_weight_counter := 0.U
     val write_bytes = Cat(io.scale_mem_write_w.bits.data, write_weight_full_row(63, 0)).asTypeOf(bankDataT)
-    when(fp8Mode){
-      for (b <- 0 until 4) {
-        when(bank_idx_w_fp8 === b.U) {
-          banks(b).write(write_row_addr_w_fp8, write_bytes)
-        }
-      }
-    }.otherwise{
-      val bank_sel = Cat(bank_idx_w_nonfp8, bank_idx_w_internal)  // 3 bits -> bank 0-3
-      for (b <- 0 until 4) {
-        when(bank_sel === b.U) {
-          banks(b).write(write_row_addr_w_nonfp8, write_bytes)
-        }
+    val bank_sel_w = Mux(fp8Mode, bank_idx_w_fp8, Cat(bank_idx_w_nonfp8, bank_idx_w_internal))
+    val write_row_addr_w = Mux(fp8Mode, write_row_addr_w_fp8, write_row_addr_w_nonfp8)
+    for (b <- 0 until 4) {
+      when(bank_sel_w === b.U) {
+        banks(b).write(write_row_addr_w, write_bytes)
       }
     }
   }.elsewhen(io.scale_mem_write_w.fire) {
@@ -173,18 +166,11 @@ class ScalingFactorMem(
   when(write_act_counter === 1.U && io.scale_mem_write_act.fire) {
       write_act_counter := 0.U
       val write_bytes = Cat(io.scale_mem_write_act.bits.data, write_act_full_row(63, 0)).asTypeOf(bankDataT)
-      when(fp8Mode) {
-        for (b <- 0 until 4) {
-          when(bank_idx_act_fp8 === b.U) {
-            banks(b + 4).write(write_row_addr_act_fp8, write_bytes)
-          }
-        }
-      }.otherwise {
-        val bank_sel = Cat(bank_idx_act_nonfp8, bank_idx_act_internal)
-        for (b <- 0 until 4) {
-          when(bank_sel === b.U) {
-            banks(b + 4).write(write_row_addr_act_nonfp8, write_bytes)
-          }
+      val bank_sel_act = Mux(fp8Mode, bank_idx_act_fp8, Cat(bank_idx_act_nonfp8, bank_idx_act_internal))
+      val write_row_addr_act = Mux(fp8Mode, write_row_addr_act_fp8, write_row_addr_act_nonfp8)
+      for (b <- 0 until 4) {
+        when(bank_sel_act === b.U) {
+          banks(b + 4).write(write_row_addr_act, write_bytes)
         }
       }
   }.elsewhen(io.scale_mem_write_act.fire) {
@@ -235,10 +221,10 @@ class ScalingFactorMem(
   
   read_fire_real := read_fire && (scale_counter === 0.U) 
   
-  val act_bank_data_vec = WireInit(VecInit(Seq.fill(meshRows*tileRows*2)(0.U(8.W))))
-  val weight_bank_data_vec = WireInit(VecInit(Seq.fill(meshRows*tileRows*2)(0.U(8.W))))
-  dontTouch(act_bank_data_vec)
-  dontTouch(weight_bank_data_vec)
+  // val act_bank_data_vec = WireInit(VecInit(Seq.fill(meshRows*tileRows*2)(0.U(8.W))))
+  // val weight_bank_data_vec = WireInit(VecInit(Seq.fill(meshRows*tileRows*2)(0.U(8.W))))
+  // dontTouch(act_bank_data_vec)
+  // dontTouch(weight_bank_data_vec)
 
   val read_fire_banks = VecInit(Seq(
     read_fire_real && (Mux(fp8Mode, (read_bank_idx_w === 0.U) && !double_buffer_w_sel   , !double_buffer_w_sel  )),  
