@@ -453,7 +453,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     when (acc_scale_unit.io.out.valid && acc_scale_unit.io.out.bits.is_garbage) {
       acc_scale_unit.io.out.ready    := true.B   // drain scale unit
       write_issue_q.io.deq.ready     := true.B   // drain queue, no writer needed
-      spad_writer.module.io.req.valid  := false.B  // suppress writer
+      //spad_writer.module.io.req.valid  := false.B  // suppress writer
       spad_writer.foreach { sw => sw.module.io.req.valid := false.B }
     }
     spad_writer.foreach { spad_writer =>
