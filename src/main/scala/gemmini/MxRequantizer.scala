@@ -272,7 +272,7 @@ class MxRequantizer[T <: Data](
   val fp6_lut_out     = Cat(quantLut.io.projected_data.bits.reverse)        
   val fp6_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))    
   val fp6_row1        = (0 until 32).map(k => fp6_lut_out(4*k+3, 4*k))      
-  val fp6_interleaved = (0 until 16).flatMap { j => Seq(fp6_row1(2*j+1), fp6_row0(2*j+1), fp6_row1(2*j), fp6_row0(2*j) ) }
+  val fp6_interleaved = (0 until 16).flatMap { j => Seq(fp6_row0(2*j), fp6_row1(2*j), fp6_row0(2*j+1), fp6_row1(2*j+1)) }
   val fp6_combined    = Cat(fp6_interleaved.reverse)   
   val fp6_combined_wire = WireDefault(fp6_combined)                        
   val fp6_lut_out_wire = WireDefault(fp6_lut_out)
@@ -281,7 +281,7 @@ class MxRequantizer[T <: Data](
 
   val fp4_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))
   val fp4_row1        = (0 until 32).map(k => extracted_data(4*k+3, 4*k))
-  val fp4_interleaved = (0 until 16).flatMap { j => Seq(fp4_row1(2*j+1), fp4_row0(2*j+1),fp4_row1(2*j),fp4_row0(2*j)) }
+  val fp4_interleaved = (0 until 16).flatMap { j => Seq(fp4_row0(2*j), fp4_row1(2*j), fp4_row0(2*j+1), fp4_row1(2*j+1)) }
   val fp4_combined    = Cat(fp4_interleaved.reverse)                       
   val fp4_combined_wire = WireDefault(fp4_combined)                        
   dontTouch(fp4_combined_wire)
