@@ -257,7 +257,7 @@ class BF16ScaleRoundToTiny(
     val out      = Output(Vec(outputnumLanes, UInt(8.W)))
   })
 
-  val data_buffer = RegInit(VecInit(Seq.fill(outputnumLanes)(0.U(16.W))))
+  val data_buffer = WireInit(VecInit(Seq.fill(outputnumLanes)(0.U(16.W))))
   data_buffer := io.in_bf16
 
   val quantized_buffer =  WireInit(VecInit(Seq.fill(outputnumLanes)(0.U(8.W))))

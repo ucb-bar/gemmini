@@ -166,7 +166,8 @@ class MxRequantizer[T <: Data](
   val input_16_buffer_gpu = RegInit(VecInit(Seq.fill(io.outputnumLanes/2)(0.U(inputdataWidth.W))))
   val should_compute = Wire(Bool())
   val quantize_valid = RegNext(should_compute)
-  val quantized_buffer = Wire(Vec(io.outputnumLanes, UInt(8.W)))
+  val quantized_buffer = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(8.W)))) 
+  dontTouch(quantized_buffer)
   dontTouch( should_compute)
   should_compute := false.B
 
@@ -271,7 +272,7 @@ class MxRequantizer[T <: Data](
   val fp6_lut_out     = Cat(quantLut.io.projected_data.bits.reverse)        
   val fp6_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))    
   val fp6_row1        = (0 until 32).map(k => fp6_lut_out(4*k+3, 4*k))      
-  val fp6_interleaved = (0 until 16).flatMap { j => Seq(fp6_row0(2*j), fp6_row0(2*j+1), fp6_row1(2*j), fp6_row1(2*j+1)) }
+  val fp6_interleaved = (0 until 16).flatMap { j => Seq(fp6_row1(2*j+1), fp6_row0(2*j+1), fp6_row1(2*j), fp6_row0(2*j) ) }
   val fp6_combined    = Cat(fp6_interleaved.reverse)   
   val fp6_combined_wire = WireDefault(fp6_combined)                        
   val fp6_lut_out_wire = WireDefault(fp6_lut_out)
@@ -280,7 +281,7 @@ class MxRequantizer[T <: Data](
 
   val fp4_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))
   val fp4_row1        = (0 until 32).map(k => extracted_data(4*k+3, 4*k))
-  val fp4_interleaved = (0 until 16).flatMap { j => Seq(fp4_row0(2*j), fp4_row0(2*j+1), fp4_row1(2*j), fp4_row1(2*j+1)) }
+  val fp4_interleaved = (0 until 16).flatMap { j => Seq(fp4_row1(2*j+1), fp4_row0(2*j+1),fp4_row1(2*j),fp4_row0(2*j)) }
   val fp4_combined    = Cat(fp4_interleaved.reverse)                       
   val fp4_combined_wire = WireDefault(fp4_combined)                        
   dontTouch(fp4_combined_wire)
@@ -357,6 +358,8 @@ class MxRequantizer[T <: Data](
   val block_max = Wire(UInt(inputdataWidth.W))
   block_max := 0.U
   val flat64 = pipelined_out_0.bits.out.full_mx_data_out.flatten.map(_.asUInt)
+  val flat64_wire = WireDefault(VecInit(flat64))
+  dontTouch(flat64_wire)
   val reshaped_pipelined_out_0 = VecInit(
     flat64.flatMap(
       x => (0 until 4).map(i => x(16*(i+1)-1, 16*i))
@@ -371,12 +374,14 @@ class MxRequantizer[T <: Data](
   }
   
   val block_max_uint = block_max.asUInt
+  val block_max_uint_wire = WireDefault(block_max_uint)
+  dontTouch(block_max_uint_wire)
   val scale_exponent = Wire(SInt(9.W))
-  val scale_e8m0 = Wire(UInt(8.W))
-  val neg_e8m0_clamped = Wire(UInt(8.W))
+  val scale_e8m0 = WireDefault(0.U(8.W))
+  val neg_e8m0_clamped = WireDefault(0.U(8.W))
+  dontTouch(scale_e8m0)
+  dontTouch(neg_e8m0_clamped)
   scale_exponent := 0.S
-  scale_e8m0 := 0.U
-  neg_e8m0_clamped := 0.U
   
   when(block_max_uint === 0.U || block_max_uint(14, 7) === 0.U) {
     scale_exponent := 0.S
@@ -424,6 +429,7 @@ class MxRequantizer[T <: Data](
  
 
   val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
+  dontTouch(quant_fp6)
   quant_fp6 := Mux(total_bits_per_element === 6.U, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(5, 0))), 
   VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
   //val quant_projected_data = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(4.W))))
@@ -438,7 +444,7 @@ class MxRequantizer[T <: Data](
   quantLut.io.loop_bound_i := io.loop_bound_i
   quantLut.io.loop_bound_j := io.loop_bound_j
   quantLut.io.loop_bound_k := io.loop_bound_k
-  quantLut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
+  //quantLut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
   quantLut.io.quant_fp6.valid := false.B
   quantLut.io.quant_fp6.bits := DontCare
   quantLut.io.lut_write_weight <> io.lut0_write
