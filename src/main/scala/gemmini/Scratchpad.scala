@@ -459,10 +459,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     //   //spad_writer.module.io.req.valid  := false.B  // suppress writer
     //   spad_writer.foreach { sw => sw.module.io.req.valid := false.B }
     // }
+    val vaddr_offset = Mux(writeData_is_full_width,
+      (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.weightTypeProjected.getWidth / 8).U).asUInt,
+      (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.weightTypeProjected.getWidth / 4).U).asUInt
+    )
     spad_writer.foreach { spad_writer =>
       spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool && (!acc_scale_unit.io.out.bits.is_garbage)
-      spad_writer.module.io.req.bits.vaddr := config.tl_ext_mem_base.U |
-        (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.weightTypeProjected.getWidth / 4).U).asUInt
+      spad_writer.module.io.req.bits.vaddr := config.tl_ext_mem_base.U | vaddr_offset
       spad_writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
       spad_writer.module.io.req.bits.len := Mux(writeData_is_full_width,
         write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U, write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U)
