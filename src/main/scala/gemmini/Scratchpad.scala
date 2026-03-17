@@ -285,10 +285,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter,
     use_firesim_simulation_counters))
   val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
-    if (acc_read_full_width) acc_w/2 else spad_w, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
+    if (acc_read_full_width) acc_w/2 else 2*spad_w, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters))
   val spad_writer = Option.when(config.use_tl_ext_mem)(LazyModule(new StreamWriter(max_in_flight_mem_reqs, spad_writer_dma_width, max_spad_writer_bytes,
-    if (acc_read_full_width) acc_w/2 else spad_w, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
+    if (acc_read_full_width) acc_w/2 else 2*spad_w, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters)))
 
   // TODO make a cross-bar vs two separate ports a config option
@@ -439,7 +439,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
     writer.module.io.req.bits.len := Mux(writeData_is_full_width,
       write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,
-      write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 8).U)
+      write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U)
       
     writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
       writeData_is_all_zeros -> 0.U,
@@ -453,21 +453,19 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     write_issue_q.io.deq.ready := writer.module.io.req.ready &&
       spad_writer.map(_.module.io.req.ready).getOrElse(true.B) && writeData.valid
     
-    when (acc_scale_unit.io.out.valid && acc_scale_unit.io.out.bits.is_garbage) {
-      acc_scale_unit.io.out.ready    := true.B   // drain scale unit
-      write_issue_q.io.deq.ready     := true.B   // drain queue, no writer needed
-      //spad_writer.module.io.req.valid  := false.B  // suppress writer
-      spad_writer.foreach { sw => sw.module.io.req.valid := false.B }
-    }
+    // when (acc_scale_unit.io.out.valid && acc_scale_unit.io.out.bits.is_garbage) {
+    //   acc_scale_unit.io.out.ready    := true.B   // drain scale unit
+    //   write_issue_q.io.deq.ready     := true.B   // drain queue, no writer needed
+    //   //spad_writer.module.io.req.valid  := false.B  // suppress writer
+    //   spad_writer.foreach { sw => sw.module.io.req.valid := false.B }
+    // }
     spad_writer.foreach { spad_writer =>
-      spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool
+      spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool && (!acc_scale_unit.io.out.bits.is_garbage)
       spad_writer.module.io.req.bits.vaddr := config.tl_ext_mem_base.U |
-        (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.weightTypeProjected.getWidth / 8).U).asUInt
+        (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.weightTypeProjected.getWidth / 4).U).asUInt
       spad_writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
       spad_writer.module.io.req.bits.len := Mux(writeData_is_full_width,
-        write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,
-        Mux(writeData_is_fp8, write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U,
-             write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U))
+        write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U, write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U)
       spad_writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
         writeData_is_all_zeros -> 0.U,
         writeData_is_full_width -> fullAccWriteData

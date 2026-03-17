@@ -486,6 +486,16 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     val bytes_written_this_beat = write_packet.bytes_written_per_beat(beatsSent)
 
+    // Debug wires to trace bytesSent changes
+    // val trace_bytesSent        = WireDefault(bytesSent);         dontTouch(trace_bytesSent)
+    // val trace_bytesLeft        = WireDefault(bytesLeft);         dontTouch(trace_bytesLeft)
+    // val trace_bytes_this_beat  = WireDefault(bytes_written_this_beat); dontTouch(trace_bytes_this_beat)
+    // val trace_state            = WireDefault(state);             dontTouch(trace_state)
+    // val trace_req_len          = WireDefault(req.len);           dontTouch(trace_req_len)
+    // val trace_write_beats      = WireDefault(write_beats);       dontTouch(trace_write_beats)
+    // val trace_beats_left       = WireDefault(beatsLeft);         dontTouch(trace_beats_left)
+    // val trace_req_fire         = WireDefault(io.req.fire);       dontTouch(trace_req_fire)
+
     // Firing off TileLink write requests
     val putFull = edge.Put(
       fromSource = RegEnableThru(xactId, state === s_writing_new_block),
@@ -510,6 +520,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
+    val trace_tl_a_fire = WireDefault(untranslated_a.fire); dontTouch(trace_tl_a_fire)
     xactBusy_fire := untranslated_a.fire && state === s_writing_new_block
     untranslated_a.valid := (state === s_writing_new_block || state === s_writing_beats) && !xactBusy.andR
     untranslated_a.bits.tl_a := Mux(write_full, putFull, putPartial)
