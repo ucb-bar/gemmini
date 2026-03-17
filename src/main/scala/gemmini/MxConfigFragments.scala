@@ -86,6 +86,7 @@ class ScalingFactorCntl(max_block: Int) extends Bundle {
   val loop_bound_i = UInt(9.W)
   val loop_bound_j = UInt(9.W)
   val loop_bound_k = UInt(9.W)
+  val scale_mem_counter_reset_flag = Bool()
 }
 
 class RequantizerInBundle(numLanes: Int, dataWidth: Int = 16) extends Bundle {

@@ -140,6 +140,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val quant_lut_update_granularity = RegInit(0.U(16.W))
   val scale_mem_read_act_sel = RegInit(0.U(1.W))
   val scale_mem_read_w_sel = RegInit(0.U(1.W))
+  val scale_mem_counter_reset_flag = RegInit(0.U(1.W))
   val loop_bound_i = RegInit(0.U(9.W))
   val loop_bound_j = RegInit(0.U(9.W))
   val loop_bound_k = RegInit(0.U(9.W))
@@ -155,6 +156,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       loop_bound_k := rs1s(0)(59,51)
       scale_mem_read_act_sel := rs1s(0)(60)
       scale_mem_read_w_sel := rs1s(0)(61)
+      scale_mem_counter_reset_flag := rs1s(0)(62)
       quant_lut_update_granularity :=  rs2s(0)(15,0)
   } 
   dontTouch(loop_bound_i)
@@ -454,7 +456,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val d_fire = d_valid && d_ready
 
   val firing = start_inputting_a || start_inputting_b || start_inputting_d
-
+  io.scaleMemCntl.scale_mem_counter_reset_flag := (scale_mem_counter_reset_flag ===1.U) && (RegNext(functs(0)) === CONFIG_SCALE_MEM)
   io.scaleMemCntl.counter_a := a_fire_counter
   io.scaleMemCntl.counter_b := b_fire_counter
   io.scaleMemCntl.fire_a := a_fire 

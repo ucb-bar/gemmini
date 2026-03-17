@@ -84,6 +84,7 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val loop_bound_i = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_k = Input(UInt(iterator_bitwidth.W)) // from  controller
+  val scale_mem_counter_reset_flag = Input(Bool()) 
 }
    
 class MxRequantizer[T <: Data](
@@ -132,11 +133,11 @@ class MxRequantizer[T <: Data](
   val scale_mem_mvout_base_addr_act = io.scale_mem_mvout_base_addr_act
 
   val scales_per_write = scaleMem_data_width / 8
-  val scale_write_addr_counter = RegInit(0.U(log2Ceil(scaleMem_addr_width).W))
+  val scale_write_addr_counter = RegInit(0.U(16.W))
 
   val scale_buffer = RegInit(VecInit(Seq.fill(scaleSize)(0.U(8.W))))
   val quant_dataType = io.mxacc_req.mx_mode  //output data fromat
-  val format_reg = RegNext(quant_dataType.asUInt, 2.U)
+  val format_reg = RegNext(quant_dataType.asUInt, 0.U)
   
   io.scaleMem_write.valid := false.B
   io.scaleMem_write.bits := DontCare
@@ -184,6 +185,7 @@ class MxRequantizer[T <: Data](
   //val pipelined_out = Reg(Vec(pipelineLatency, Decoupled(new MxRequantizerAccResp[T](half_acc_row_t, spad_row_t)(ev))))
   val pipelined_out_0 = Pipeline(pipe_in, 1)
   val oldest_pipe_out = Pipeline(pipelined_out_0, pipelineLatency - 1)
+  
 
   val final_pipe_out = Wire(Decoupled(new MxRequantizerAccResp[T](half_acc_row_t, spad_row_t)(ev)))
   dontTouch(final_pipe_out)
@@ -286,6 +288,9 @@ class MxRequantizer[T <: Data](
   val fp4_combined_wire = WireDefault(fp4_combined)                        
   dontTouch(fp4_combined_wire)
 
+  final_pipe_out.valid := false.B
+  final_pipe_out.bits.out.quant_mx_data_out := 0.U.asTypeOf(spad_row_t)
+  final_pipe_out.bits.out.is_garbage := false.B
 
   when(total_bits_per_element === 8.U) {
     final_pipe_out.valid := quantize_valid
@@ -304,6 +309,7 @@ class MxRequantizer[T <: Data](
     final_pipe_out.bits.out.is_garbage := !quant_half_counter && lut_valid
     final_pipe_out.valid := lut_valid 
     final_pipe_out.bits.out.quant_mx_data_out := (fp6_combined).asTypeOf(spad_row_t)
+
   }.elsewhen(total_bits_per_element === 4.U) {
     when(quantize_valid) {
       when(!quant_half_counter) {
@@ -331,6 +337,8 @@ class MxRequantizer[T <: Data](
 
   val can_enqueue = pipe_in.ready
   val can_enqueue_wire = WireDefault(can_enqueue)
+  val full_precision_valid = RegNext(can_enqueue && pipelined_out_0.valid && (total_bits_per_element === 16.U))
+
   dontTouch(can_enqueue_wire)
     // Only allow input handshake when queue has space
   io.mxacc_req.mx_data_in.ready := can_enqueue
@@ -339,7 +347,7 @@ class MxRequantizer[T <: Data](
   io.mxacc_req.mx_data_out.bits.is_garbage := final_pipe_out.bits.out.is_garbage
   io.mxacc_req.mx_data_out.bits.full_mx_data_out := final_pipe_out.bits.out.full_mx_data_out
   io.mxacc_req.mx_data_out.bits.quant_mx_data_out  := final_pipe_out.bits.out.quant_mx_data_out
-  io.mxacc_req.mx_data_out.valid := final_pipe_out.valid
+  io.mxacc_req.mx_data_out.valid := final_pipe_out.valid || full_precision_valid
   io.mxacc_req.mx_data_out.bits.fromDMA := final_pipe_out.bits.out.fromDMA
   io.mxacc_req.mx_data_out.bits.acc_bank_id := final_pipe_out.bits.out.acc_bank_id
   io.mxacc_req.mx_data_out.bits.is_last_half := final_pipe_out.bits.out.is_last_half
@@ -350,7 +358,7 @@ class MxRequantizer[T <: Data](
   
   should_compute := false.B
   when (can_enqueue) {
-    when(pipelined_out_0.valid) {
+    when(pipelined_out_0.valid && (total_bits_per_element =/= 16.U)) {
       should_compute := true.B
     }
   }
@@ -479,11 +487,15 @@ class MxRequantizer[T <: Data](
   }
   
   when(io.scaleMem_write.fire) {
-      when(scale_write_addr_counter === ((1 << 10) - 1).U) {
+      when(scale_write_addr_counter === ((1 << 16) - 1).U) {
         scale_write_addr_counter := 0.U
       }.otherwise {
         scale_write_addr_counter := scale_write_addr_counter + 1.U
       }
+  }
+
+  when(io.scale_mem_counter_reset_flag) {
+    scale_write_addr_counter := 0.U
   }
 
   when(scale_buffer_full) {
