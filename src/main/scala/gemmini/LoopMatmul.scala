@@ -753,10 +753,19 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
 
   val total_tiles = req.max_j * req.max_i
 
-  val iter_max_j = Mux(total_tiles <= 4.U, req.max_j / 2.U, req.max_j / 4.U)
-  val iter_max_i = Mux(total_tiles <= 4.U, req.max_i / 2.U, req.max_i)
-  val ex_i_compressed = Mux(total_tiles <= 4.U, io.ex_i / 2.U, io.ex_i)
-  val ex_j_compressed = Mux(total_tiles <= 4.U, io.ex_j / 2.U, io.ex_j / 4.U)
+  val iter_max_j = Mux(req.activation_mx_format === 0.U,
+    Mux(total_tiles <= 4.U, req.max_j / 2.U, req.max_j / 4.U),
+    req.max_j)
+  val iter_max_i = Mux(req.activation_mx_format === 0.U,
+    Mux(total_tiles <= 4.U, req.max_i / 2.U, req.max_i),
+    req.max_i)
+
+  val ex_i_compressed = Mux(req.activation_mx_format === 0.U,
+    Mux(total_tiles <= 4.U, io.ex_i / 2.U, io.ex_i),
+    io.ex_i)
+  val ex_j_compressed = Mux(req.activation_mx_format === 0.U,
+    Mux(total_tiles <= 4.U, io.ex_j / 2.U, io.ex_j / 4.U),
+    io.ex_i)
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
   assert(max_block_len == 1, "there might be hw bugs if block length > 1, disabled for now")
@@ -767,12 +776,14 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
 
   val acc_addr_start = req.src_addr
 
-  val dst_offset = Mux(req.full_c || (req.output_mx_format === 3.U),
-    (i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U, //TODO (nicolas): check for fp6
-    (i * req.max_j + j) * block_size.U)
+  val dst_offset = Mux(req.full_c || (req.output_mx_format === 3.U && req.activation_mx_format === 0.U),
+    (i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U,
+    Mux(req.output_mx_format === 0.U, ((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U)/2.U,
+    (i * req.max_j*2.U + j) * block_size.U))
   val dst_addr = req.dst_addr + dst_offset
 
-  val src_addr = acc_addr_start + (i * req.max_j/4.U + j) * block_size.U
+  val acc_addr_offset = Mux(req.activation_mx_format === 0.U, i * req.max_j/4.U + j, i*req.max_j + j) * block_size.U
+  val src_addr = acc_addr_start + acc_addr_offset
   val blocks = Mux(j + max_blocks <= iter_max_j, max_blocks, iter_max_j-j)
   val cols = (blocks * block_size.U) - Mux(j + blocks >= iter_max_j, req.pad_j, 0.U)
   val rows = block_size.U  - Mux(i === iter_max_i-1.U, req.pad_i, 0.U)

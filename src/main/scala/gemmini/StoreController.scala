@@ -29,6 +29,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     val enable_wide_spad_write = Input(Bool())
 
     val loop_bound_j = Input(UInt(8.W))
+
+    val activation_mx_type = Input(UInt(2.W))
   })
 
   // val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -130,8 +132,16 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   val current_vaddr = vaddr + row_counter * stride
   val current_localaddr = WireInit(localaddr + (block_counter * block_stride + row_counter))
-  val fp8_stride_addr = (io.loop_bound_j / 2.U) * 4.U
-  val current_dst_spad_addr = dst_spad_addr.asUInt + row_counter * Mux(io.enable_wide_spad_write, fp8_stride_addr * dst_spad_stride, dst_spad_stride) // TODO(nicolas): make this dependent on acc_row_width / spad_row_width
+  val mx_stride = Mux(io.enable_wide_spad_write && io.activation_mx_type === 0.U, io.loop_bound_j / 2.U * 4.U,
+    Mux(!io.enable_wide_spad_write && io.activation_mx_type === 0.U, io.loop_bound_j / 2.U * 2.U,
+      Mux(!io.enable_wide_spad_write && io.activation_mx_type =/= 0.U, io.loop_bound_j * 2.U,
+        1.U
+      )
+    ))
+  val current_dst_spad_addr = dst_spad_addr.asUInt + row_counter * dst_spad_stride * mx_stride
+  dontTouch(dst_spad_stride)
+  dontTouch(mx_stride)
+  dontTouch(current_dst_spad_addr)
 
   val pool_row_addr = localaddr + (orow * pool_ocols +& ocol)
   when (orow_is_negative || ocol_is_negative || orow >= pool_orows || ocol >= pool_ocols) {
@@ -191,6 +201,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     block_counter === blocks - 1.U)
   io.dma.req.bits.is_second_half := DontCare
   io.dma.req.bits.max_j := io.loop_bound_j
+  io.dma.req.bits.activation_mx_type := io.activation_mx_type
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore

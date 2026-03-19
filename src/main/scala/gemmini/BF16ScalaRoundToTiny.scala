@@ -308,8 +308,8 @@ class BF16ScaleRoundToTiny(
     val rounded = Mux(io.dataType === 1.U,
                       roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp6, (in: UInt) => E4M2ToFp6(in)),
                       Mux(io.dataType === 0.U,
-                        roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp4, (in: UInt) => E3M1Tofp4(in)),
-                        roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp8, (in: UInt) => E5M3ToFp8(in))
+                        roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp8, (in: UInt) => E5M3ToFp8(in)),
+                        roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp4, (in: UInt) => E3M1Tofp4(in))
                       )
                     )
 

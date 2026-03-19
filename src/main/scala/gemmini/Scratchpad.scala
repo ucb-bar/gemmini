@@ -55,6 +55,8 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
 
   val is_second_half = Bool()
 
+  val activation_mx_type = UInt(2.W)
+
 }
 
 class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)(implicit p: Parameters) extends Module {
@@ -65,9 +67,10 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
 
   val second_half = RegInit(false.B)
   val is_acc_write = io.in.bits.laddr.is_acc_addr && !io.in.bits.laddr.is_garbage()
-  val address_second_half  = Mux(io.in.bits.max_j <= 2.U,
-    io.in.bits.vaddr + (acc_t_bits/16).U * 16.U, // 16 from 16 rows per tile, TODO (nicolas): make parametrizable
-    io.in.bits.vaddr + 4.U)
+  val address_second_half  = Mux(io.in.bits.max_j <= 2.U && io.in.bits.activation_mx_type === 0.U,
+    io.in.bits.vaddr + (acc_t_bits/16).U * 16.U, // 16 from 16 rows per tile, TODO (nicolas): make dependent on output quantization
+    Mux((io.in.bits.activation_mx_type === 1.U || io.in.bits.activation_mx_type === 2.U), io.in.bits.vaddr,
+    Mux(io.in.bits.activation_mx_type === 0.U, io.in.bits.vaddr + 2.U, io.in.bits.vaddr + 4.U)))
 
   io.out.valid := io.in.valid
   io.out.bits := io.in.bits
@@ -459,10 +462,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     //   //spad_writer.module.io.req.valid  := false.B  // suppress writer
     //   spad_writer.foreach { sw => sw.module.io.req.valid := false.B }
     // }
-    val vaddr_offset = Mux(writeData_is_full_width,
-      (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.weightTypeProjected.getWidth / 8).U).asUInt,
-      (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.weightTypeProjected.getWidth / 4).U).asUInt
-    )
+    val vaddr_offset = (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.weightTypeProjected.getWidth / 8).U).asUInt
     spad_writer.foreach { spad_writer =>
       spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool && (!acc_scale_unit.io.out.bits.is_garbage)
       spad_writer.module.io.req.bits.vaddr := config.tl_ext_mem_base.U | vaddr_offset
