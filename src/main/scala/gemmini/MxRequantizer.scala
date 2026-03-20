@@ -221,7 +221,7 @@ class MxRequantizer[T <: Data](
   //}
   }.elsewhen(io.requant_data_in_gpu.valid && data_buffer_counter === 1.U) {
     pipe_in.valid := true.B
-    pipe_in.bits.mx_mode := 0.U
+    pipe_in.bits.mx_mode := format_reg
     val combined = input_16_buffer_gpu ++ io.requant_data_in_gpu.bits.data
     pipe_in.bits.out.full_mx_data_out := VecInit(combined.reverse).asTypeOf(half_acc_row_t)
     pipe_in.bits.out.fromDMA := true.B
@@ -283,6 +283,10 @@ class MxRequantizer[T <: Data](
 
   val fp4_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))
   val fp4_row1        = (0 until 32).map(k => extracted_data(4*k+3, 4*k))
+  val fp4_row0_wire = WireDefault(VecInit(fp4_row0))
+  val fp4_row1_wire = WireDefault(VecInit(fp4_row1))
+  dontTouch(fp4_row0_wire)
+  dontTouch(fp4_row1_wire)
   val fp4_interleaved = (0 until 16).flatMap { j => Seq(fp4_row0(2*j), fp4_row1(2*j), fp4_row0(2*j+1), fp4_row1(2*j+1)) }
   val fp4_combined    = Cat(fp4_interleaved.reverse)                       
   val fp4_combined_wire = WireDefault(fp4_combined)                        

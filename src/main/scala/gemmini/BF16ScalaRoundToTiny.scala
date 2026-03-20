@@ -76,8 +76,10 @@ object E3M1Tofp4 {
     val isZero = (exp === 0.U) && (sig === 0.U)
     val isSpecial = isE3M1NaN(in) || isE3M1Inf(in)
     
-    val mapToZero = (exp < 2.U) || isZero
-    val mapToSubnorm = (exp === 2.U) && (sig === 0.U)
+    // val mapToZero = (exp < 2.U) || isZero
+    // val mapToSubnorm = (exp === 2.U) && (sig === 0.U)
+    val mapToZero   = (exp < 2.U) && !(exp === 1.U && sig === 1.U) // exp<2 except (exp=1, sig=1)
+    val mapToSubnorm = ((exp === 2.U) && (sig === 0.U)) || ((exp === 1.U) && (sig === 1.U)) 
     val mapToMinNorm = (exp === 2.U) && (sig === 1.U)
 
     val mapToMax = (exp > (biasDiff +& 3.U)) || isSpecial
@@ -259,10 +261,10 @@ class BF16ScaleRoundToTiny(
 
   val data_buffer = WireInit(VecInit(Seq.fill(outputnumLanes)(0.U(16.W))))
   data_buffer := io.in_bf16
-
+  dontTouch(data_buffer)
   val quantized_buffer =  WireInit(VecInit(Seq.fill(outputnumLanes)(0.U(8.W))))
   io.out := quantized_buffer
-
+  dontTouch(quantized_buffer)
   //val scale_exp_unbiased = io.scale_e8m0
   val scale_exp_unbiased = io.scale_e8m0 - 127.U 
   val maxExp             = ((1 << (inputexpWidth)) - 2).U(inputexpWidth.W) // e.g. 0xFE for BF16
@@ -299,12 +301,23 @@ class BF16ScaleRoundToTiny(
     } .otherwise {
       scaled_exp := summed_u
     }
-
+    //dontTouch(scaled_exp)
     val format_fp4 = MxFType.E3M1
     val format_fp6 = MxFType.E4M2
     val format_fp8 = MxFType.E5M3
 
     val scaled_bf16 = Cat(sign, scaled_exp, sig)
+
+    val dbg_input_value = WireDefault(input_value);      dontTouch(dbg_input_value)
+    val dbg_input_exp   = WireDefault(input_exp);        dontTouch(dbg_input_exp)
+    val dbg_input_sig   = WireDefault(input_sig);        dontTouch(dbg_input_sig)
+    val dbg_scale       = WireDefault(scale);            dontTouch(dbg_scale)
+    val dbg_summed_u    = WireDefault(summed_u);         dontTouch(dbg_summed_u)
+    val dbg_underflow   = WireDefault(underflow);        dontTouch(dbg_underflow)
+    val dbg_overflow    = WireDefault(overflow);         dontTouch(dbg_overflow)
+    val dbg_scaled_exp  = WireDefault(scaled_exp);       dontTouch(dbg_scaled_exp)
+    val dbg_scaled_bf16 = WireDefault(scaled_bf16);      dontTouch(dbg_scaled_bf16)
+
     val rounded = Mux(io.dataType === 1.U,
                       roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp6, (in: UInt) => E4M2ToFp6(in)),
                       Mux(io.dataType === 0.U,
@@ -313,6 +326,7 @@ class BF16ScaleRoundToTiny(
                       )
                     )
 
+    val dbg_rounded     = WireDefault(rounded);          dontTouch(dbg_rounded)
     quantized_buffer(i) := rounded
   }
 }

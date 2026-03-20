@@ -298,11 +298,21 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // resp to ex
     val useMxB = mx_requantizer.isDefined.B && !mx_sel(b)
 
-    when (useMxB) {
       // FP8 mode: bypass requantizer
+    when (useMxB) {
+      // bypass requantizer: expand spad data to 16 x 12-bit for the execute stage
       val proj = read_projected(b).resp
+      val padded_data = WireInit(0.U((16 * 12).W))
       val spad_data_vec = proj.bits.data.asTypeOf(Vec(16, UInt(8.W)))
-      val padded_data = VecInit(spad_data_vec.map(_.pad(12))).asUInt
+      when(ex_controller.io.weight_mx_format_out === 0.U) {
+        padded_data := VecInit(spad_data_vec.map(_.pad(12))).asUInt
+      }.elsewhen(ex_controller.io.weight_mx_format_out === 2.U) {
+        padded_data := VecInit(spad_data_vec.map { byte =>
+          val nibble_lo = Cat(0.U(2.W), byte(3, 0))
+          val nibble_hi = Cat(0.U(2.W), byte(7, 4))
+          Cat(nibble_hi, nibble_lo)
+        }).asUInt
+      }
       sram_read_buffer(b).resp.valid := read_projected(b).resp.valid
       sram_read_buffer(b).resp.bits.data := padded_data
       sram_read_buffer(b).resp.bits.fromDMA := read_projected(b).resp.bits.fromDMA
