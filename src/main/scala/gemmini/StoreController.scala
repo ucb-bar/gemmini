@@ -31,6 +31,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     val loop_bound_j = Input(UInt(8.W))
 
     val activation_mx_type = Input(UInt(2.W))
+    val output_mx_type = Input(UInt(2.W))
   })
 
   // val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -202,6 +203,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.is_second_half := DontCare
   io.dma.req.bits.max_j := io.loop_bound_j
   io.dma.req.bits.activation_mx_type := io.activation_mx_type
+  io.dma.req.bits.output_mx_type := io.output_mx_type
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore

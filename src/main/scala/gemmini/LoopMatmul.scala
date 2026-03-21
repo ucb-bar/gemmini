@@ -765,7 +765,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     io.ex_i)
   val ex_j_compressed = Mux(req.activation_mx_format === 0.U,
     Mux(total_tiles <= 4.U, io.ex_j / 2.U, io.ex_j / 4.U),
-    io.ex_i)
+    io.ex_j)
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
   assert(max_block_len == 1, "there might be hw bugs if block length > 1, disabled for now")
