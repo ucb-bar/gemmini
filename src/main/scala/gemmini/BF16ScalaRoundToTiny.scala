@@ -178,7 +178,7 @@ object E5M3ToFp8 {
 
     val mapToZero = (exp <= 5.U) || isZero
     val mapToSubnorm = (exp >= 6.U) && (exp <= 8.U)
-    val mapToMax = (exp > (23.U)) || isSpecial
+    val mapToMax = (exp > (23.U)) || isSpecial || (exp === 23.U && sig.andR)
 
     val exp_adj = (exp - biasDiff)(3, 0)
     val outNorm = sign ## exp_adj ## sig
