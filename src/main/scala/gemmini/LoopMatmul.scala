@@ -779,7 +779,8 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val dst_offset = Mux(req.full_c || (req.output_mx_format === 3.U && req.activation_mx_format === 0.U),
     (i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U,
     Mux(req.output_mx_format === 0.U, ((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U)/2.U,
-    (i * req.max_j*2.U + j) * block_size.U))
+    (i * req.max_j) * block_size.U * 2.U + j*(block_size/8).U
+    ))
   val dst_addr = req.dst_addr + dst_offset
 
   val acc_addr_offset = Mux(req.activation_mx_format === 0.U, i * req.max_j/4.U + j, i*req.max_j + j) * block_size.U

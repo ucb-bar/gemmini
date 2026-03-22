@@ -74,7 +74,7 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
 
   val address_second_half_narrow = MuxCase(io.in.bits.vaddr + 2.U, Seq(
     (io.in.bits.max_j <= 2.U && io.in.bits.activation_mx_type === 0.U) -> (io.in.bits.vaddr + (acc_t_bits/16).U * 16.U / 2.U),
-    (io.in.bits.activation_mx_type === 1.U || io.in.bits.activation_mx_type === 2.U) -> (io.in.bits.vaddr + 1.U)
+    (io.in.bits.activation_mx_type === 1.U || io.in.bits.activation_mx_type === 2.U) -> (io.in.bits.vaddr)
   ))
   val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, address_second_half_wide, address_second_half_narrow)
 
