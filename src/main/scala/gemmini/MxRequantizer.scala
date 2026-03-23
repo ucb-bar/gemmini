@@ -202,7 +202,7 @@ class MxRequantizer[T <: Data](
     iterator_bitwidth = iterator_bitwidth
   ))
 
-  when(io.requant_data_in_gpu.valid) {
+  when(io.requant_data_in_gpu.fire) {
      for (i <- 0 until half_lanes) {
       input_16_buffer_gpu(i) := io.requant_data_in_gpu.bits.data(i)
     }
@@ -210,7 +210,7 @@ class MxRequantizer[T <: Data](
   }
   
   
-  when(io.mxacc_req.mx_data_in.valid) {
+  when(io.mxacc_req.mx_data_in.fire) {
     pipe_in.valid := true.B
     pipe_in.bits.mx_mode := io.mxacc_req.mx_mode
     pipe_in.bits.out.full_mx_data_out := io.mxacc_req.mx_data_in.bits.full_mx_data_in
@@ -219,7 +219,7 @@ class MxRequantizer[T <: Data](
     pipe_in.bits.out.acc_bank_id := io.mxacc_req.mx_data_in.bits.acc_bank_id
 
   //}
-  }.elsewhen(io.requant_data_in_gpu.valid && data_buffer_counter === 1.U) {
+  }.elsewhen(io.requant_data_in_gpu.fire && data_buffer_counter === 1.U) {
     pipe_in.valid := true.B
     pipe_in.bits.mx_mode := format_reg
     val combined = input_16_buffer_gpu ++ io.requant_data_in_gpu.bits.data
@@ -266,7 +266,7 @@ class MxRequantizer[T <: Data](
   //   val interleaved = (0 until 16).flatMap { j => Seq(row0(2*j), row0(2*j+1), row1(2*j), row1(2*j+1)) }
   //   final_pipe_out.bits.out.quant_mx_data_out := Cat(interleaved.reverse).asTypeOf(spad_row_t)
   // }
-
+ 
   // Two-cycle accumulation registers for FP4 / FP6:
   val quant_half_counter = RegInit(false.B)
   val first_half_buf     = RegInit(0.U(128.W))

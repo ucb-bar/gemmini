@@ -87,7 +87,7 @@ class QuantLut(
 
   val projectedIndices = WireDefault(VecInit(Seq.fill(32)(0.U(raddrWidth.W))))
   val projectedDataValid = WireDefault(false.B)
-  val counter_act_out = RegInit(0.U(log2Ceil(64).W))
+  val counter_act_out = RegInit(0.U(log2Ceil(256).W))
   val used_lut_act_out = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
   dontTouch(used_lut_act_out)
   val minIdx = WireDefault(0.U(raddrWidth.W))
