@@ -284,11 +284,11 @@ object GemminiMxFPConfigs {
     //                              Seq.fill(4) {(4, 4)} ++ 
     //                              Seq.fill(4) {(4, 4)}, 
 
-    // meshAccPrecisionList =     Seq.fill(4) {MxFloat(4, 3, 4, true, false)} ++ 
-    //                              Seq.fill(4) {MxFloat(4, 3, 4, true, false)} ++ 
-    //                              Seq.fill(4) {MxFloat(4, 3, 4, true, false)} ++ 
-    //                              Seq.fill(4) {MxFloat(4, 3, 4, true, false)},
-
+    // meshAccPrecisionList = Seq.fill(4) {MxFloat(4, 5, 4, true, false)} ++
+    //                         Seq.fill(4) {MxFloat(4, 5, 4, true, false)} ++
+    //                         Seq.fill(2) {MxFloat(4, 6, 4, true, false)} ++
+    //                         Seq.fill(5) {MxFloat(4, 7, 4, true, false)} ++
+    //                         Seq.fill(1) {MxFloat(6, 7, 4, true, false)},                            
                                  // 16x16 mesh with varying precisions
     // scaleMem_data_width = 128,
     // scaleMem_write_data_addr_width = 32,
