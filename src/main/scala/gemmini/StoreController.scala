@@ -134,9 +134,11 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val current_vaddr = vaddr + row_counter * stride
   val current_localaddr = WireInit(localaddr + (block_counter * block_stride + row_counter))
   val mx_stride = Mux(io.enable_wide_spad_write && io.activation_mx_type === 0.U, io.loop_bound_j / 2.U * 4.U,
-    Mux(!io.enable_wide_spad_write && io.activation_mx_type === 0.U, io.loop_bound_j / 2.U * 2.U,
-      Mux(!io.enable_wide_spad_write && io.activation_mx_type =/= 0.U, io.loop_bound_j * 2.U,
-        1.U
+    Mux(io.enable_wide_spad_write, io.loop_bound_j * 8.U,
+      Mux(!io.enable_wide_spad_write && io.activation_mx_type === 0.U, io.loop_bound_j / 2.U * 2.U,
+        Mux(!io.enable_wide_spad_write && io.activation_mx_type =/= 0.U, io.loop_bound_j * 2.U,
+          1.U
+        )
       )
     ))
   val current_dst_spad_addr = dst_spad_addr.asUInt + row_counter * dst_spad_stride * mx_stride

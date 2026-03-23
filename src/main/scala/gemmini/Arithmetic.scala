@@ -853,23 +853,29 @@ object Arithmetic {
       }
 
       override def withWidthOf(t: MxFloat): MxFloat = {
-        val result = Wire(MxFloat(t.expWidth, t.sigWidth, self.count, t.isRecoded, t.pad))
-        val elems = Wire(Vec(self.count, UInt((t.expWidth + t.sigWidth + (if (t.isRecoded) 1 else 0)).W)))
-        val input = self.bits.asTypeOf(Vec(self.count, UInt((self.expWidth + self.sigWidth + (if (self.isRecoded) 1 else 0)).W)))
 
-        for (i <- 0 until self.count) {
-          val elem = input(i)
-          val self_rec = if (self.isRecoded) elem else recFNFromFN(self.expWidth, self.sigWidth, elem)
+        if (t.expWidth != self.expWidth || t.sigWidth != self.sigWidth || t.count != self.count || t.isRecoded != self.isRecoded || t.pad != self.pad) {
+          val result = Wire(MxFloat(t.expWidth, t.sigWidth, self.count, t.isRecoded, t.pad))
+          val elems = Wire(Vec(self.count, UInt((t.expWidth + t.sigWidth + (if (t.isRecoded) 1 else 0)).W)))
+          val input = self.bits.asTypeOf(Vec(self.count, UInt((self.expWidth + self.sigWidth + (if (self.isRecoded) 1 else 0)).W)))
 
-          val resizer = Module(new RecFNToRecFN(self.expWidth, self.sigWidth, t.expWidth, t.sigWidth))
-          resizer.io.in := self_rec
-          resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-          resizer.io.detectTininess := consts.tininess_afterRounding
+          for (i <- 0 until self.count) {
+            val elem = input(i)
+            val self_rec = if (self.isRecoded) elem else recFNFromFN(self.expWidth, self.sigWidth, elem)
 
-          elems(i) := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
+            val resizer = Module(new RecFNToRecFN(self.expWidth, self.sigWidth, t.expWidth, t.sigWidth))
+            resizer.io.in := self_rec
+            resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
+            resizer.io.detectTininess := consts.tininess_afterRounding
+
+            elems(i) := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
+          }
+          result := elems.asTypeOf(result)
+          result
+        } else {
+          self
         }
-        result := elems.asTypeOf(result)
-        result
+
  
       }
 

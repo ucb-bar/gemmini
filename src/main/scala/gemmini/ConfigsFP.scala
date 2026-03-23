@@ -269,11 +269,15 @@ object GemminiMxFPConfigs {
                                  Seq.fill(4) {(8, 8)} ++ 
                                  Seq.fill(4) {(8, 8)}, 
 
-    meshAccPrecisionList =     Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
-                                 Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
-                                 Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++ 
+    meshAccPrecisionList =     Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++
+                                 Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++
+                                 Seq.fill(4) {MxFloat(8, 8, 4, true, false)} ++
                                  Seq.fill(4) {MxFloat(8, 8, 4, true, false)},
 
+//    meshAccPrecisionList = Seq.fill(8) {MxFloat(4, 5, 4, true, false)} ++
+//      Seq.fill(2) {MxFloat(4, 6, 4, true, false)} ++
+//      Seq.fill(5) {MxFloat(4, 7, 4, true, false)} ++
+//      Seq.fill(1) {MxFloat(6, 7, 4, true, false)},
 
     // meshProdPrecisionList = Seq.fill(4) {(4, 4)} ++ 
     //                              Seq.fill(4) {(4, 4)} ++ 
