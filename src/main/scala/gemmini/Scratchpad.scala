@@ -68,15 +68,17 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
 
   val second_half = RegInit(false.B)
   val is_acc_write = io.in.bits.laddr.is_acc_addr && !io.in.bits.laddr.is_garbage()
-  val address_second_half_wide = MuxCase(io.in.bits.vaddr + 4.U, Seq(
-    (io.in.bits.max_j <= 2.U && io.in.bits.activation_mx_type === 0.U) -> (io.in.bits.vaddr + (acc_t_bits/16).U * 16.U),
-    (io.in.bits.activation_mx_type === 1.U || io.in.bits.activation_mx_type === 2.U) -> (io.in.bits.vaddr + 4.U * io.in.bits.max_j)
-    ))
+  val gmem_multiplier = Mux(io.in.bits.dest =/= 0.U, 1.U, 16.U)
 
-  val address_second_half_narrow = MuxCase(io.in.bits.vaddr + 2.U, Seq(
-    (io.in.bits.max_j <= 2.U && io.in.bits.activation_mx_type === 0.U) -> (io.in.bits.vaddr + (acc_t_bits/16).U * 16.U / 2.U),
-    (io.in.bits.activation_mx_type === 1.U || io.in.bits.activation_mx_type === 2.U) -> (io.in.bits.vaddr)
-  ))
+  val address_second_half_wide = io.in.bits.vaddr + (gmem_multiplier * MuxCase(4.U, Seq(
+    (io.in.bits.max_j <= 2.U && io.in.bits.activation_mx_type === 0.U) -> ((acc_t_bits/16).U * 16.U),
+    (io.in.bits.activation_mx_type === 1.U || io.in.bits.activation_mx_type === 2.U) -> (4.U * io.in.bits.max_j)
+    )))
+
+  val address_second_half_narrow = io.in.bits.vaddr + (gmem_multiplier * MuxCase(2.U, Seq(
+    (io.in.bits.max_j <= 2.U && io.in.bits.activation_mx_type === 0.U) -> ((acc_t_bits/16).U * 16.U / 2.U),
+    (io.in.bits.activation_mx_type === 1.U || io.in.bits.activation_mx_type === 2.U) -> 0.U
+  )))
   val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, address_second_half_wide, address_second_half_narrow)
 
   io.out.valid := io.in.valid
@@ -443,7 +445,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val writeData_is_fp4orfp6 = !write_issue_q.io.deq.bits.laddr.is_garbage() && (io.output_mx_format === 2.U || io.output_mx_format === 1.U)
     val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()
 
-    writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && !write_issue_q.io.deq.bits.dest.asBool
+    writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && !write_issue_q.io.deq.bits.dest.asBool && (!acc_scale_unit.io.out.bits.is_garbage)
     // write_issue_q.io.deq.ready := writer.module.io.req.ready && writeData.valid
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
     writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
@@ -458,7 +460,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.block := write_issue_q.io.deq.bits.block
     writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
-    writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en 
+    writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en && (!acc_scale_unit.io.out.bits.is_garbage)
 
     write_issue_q.io.deq.ready := writer.module.io.req.ready &&
       spad_writer.map(_.module.io.req.ready).getOrElse(true.B) && writeData.valid

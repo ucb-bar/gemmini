@@ -177,7 +177,7 @@ class MxRequantizer[T <: Data](
   total_bits_per_element := 1.U  +&  exp_bits  +&  mant_bits 
 
   val extracted_data = WireDefault((0.U((io.outputnumLanes*8).W))) // 256bits / 128bits
-
+  val fp8_quant_data_held = RegInit(0.U((io.outputnumLanes*8).W))
 
   val pipe_in = Wire(Decoupled(new MxRequantizerAccResp[T](half_acc_row_t, spad_row_t)(ev)))
   pipe_in.valid := false.B
@@ -292,13 +292,12 @@ class MxRequantizer[T <: Data](
   val fp4_combined_wire = WireDefault(fp4_combined)                        
   dontTouch(fp4_combined_wire)
 
-  final_pipe_out.valid := false.B
   final_pipe_out.bits.out.quant_mx_data_out := 0.U.asTypeOf(spad_row_t)
   final_pipe_out.bits.out.is_garbage := false.B
 
   when(total_bits_per_element === 8.U) {
-    final_pipe_out.valid := quantize_valid
-    final_pipe_out.bits.out.quant_mx_data_out := extracted_data.asTypeOf(spad_row_t)
+    final_pipe_out.valid := oldest_pipe_out.valid
+    final_pipe_out.bits.out.quant_mx_data_out := Mux(quantize_valid, extracted_data, fp8_quant_data_held).asTypeOf(spad_row_t)
     final_pipe_out.bits.out.is_garbage := false.B
   }.elsewhen(total_bits_per_element === 6.U) {
     val lut_valid = quantLut.io.projected_data.valid
@@ -337,7 +336,10 @@ class MxRequantizer[T <: Data](
       extracted_data := 0.U((io.outputnumLanes*8).W)
     }
   }
-  
+
+  when(quantize_valid && total_bits_per_element === 8.U) {
+    fp8_quant_data_held := extracted_data
+  }
 
   val can_enqueue = pipe_in.ready
   val can_enqueue_wire = WireDefault(can_enqueue)

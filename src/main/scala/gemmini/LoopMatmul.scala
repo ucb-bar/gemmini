@@ -524,6 +524,8 @@ class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
   val is_resadd = Bool()
+  val output_mx_format = UInt(2.W)
+  val activation_mx_format = UInt(2.W)
 }
 
 class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int, mvout_rs2_t: MvoutRs2)
@@ -556,16 +558,36 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(req.max_j <= max_block_len.U, req.max_j, max_block_len.U))
 
+  val total_tiles = req.max_j * req.max_i
+
+  val iter_max_j = Mux(req.activation_mx_format === 0.U,
+    Mux(total_tiles <= 4.U, req.max_j / 2.U, req.max_j / 4.U),
+    req.max_j)
+  val iter_max_i = Mux(req.activation_mx_format === 0.U,
+    Mux(total_tiles <= 4.U, req.max_i / 2.U, req.max_i),
+    req.max_i)
+
+  val ex_i_compressed = Mux(req.activation_mx_format === 0.U,
+    Mux(total_tiles <= 4.U, io.ex_i / 2.U, io.ex_i),
+    io.ex_i)
+  val ex_j_compressed = Mux(req.activation_mx_format === 0.U,
+    Mux(total_tiles <= 4.U, io.ex_j / 2.U, io.ex_j / 4.U),
+    io.ex_j)
+
   // Non-normalization-related iterators and calculations
   val j = Reg(UInt(iterator_bitwidth.W))
   val i = Reg(UInt(iterator_bitwidth.W))
 
   val acc_addr_start = /*(BigInt(1) << 31).U | (req.full_c << 29.U).asUInt |*/ req.addr_start
 
-  val dram_offset = Mux(req.full_c, (i * req.dram_stride + j) * block_size.U * (acc_w/8).U,
-    (i * req.dram_stride + j) * block_size.U * (input_w/8).U)
+  val dram_offset =  MuxCase((i * req.max_j) * block_size.U * 2.U + j*(block_size/8).U, Seq(
+    (req.full_c || (req.output_mx_format === 3.U && req.activation_mx_format === 0.U)) -> ((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U),
+    (req.activation_mx_format === 0.U && (req.output_mx_format === 0.U)) -> (((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U)/2.U),
+    ((req.activation_mx_format === 1.U || req.activation_mx_format === 2.U) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*8.U + j * (block_size/4).U)
+  ))
   val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
-  val sp_addr = acc_addr_start + (i * req.max_j + j) * block_size.U
+  val acc_addr_offset = Mux(req.activation_mx_format === 0.U, i * req.max_j/4.U + j, i*req.max_j + j) * block_size.U
+  val sp_addr = acc_addr_start + acc_addr_offset
   val blocks = Mux(j + max_blocks <= req.max_j, max_blocks, req.max_j-j)
   val cols = (blocks * block_size.U) - Mux(j + blocks >= req.max_j, req.pad_j, 0.U)
   val rows = block_size.U - Mux(i === req.max_i-1.U, req.pad_i, 0.U)
@@ -642,10 +664,10 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val ex_ahead = WireInit(io.ex_completed ||
     ((req.act =/= Activation.LAYERNORM) && (req.act =/= Activation.SOFTMAX) &&
       (io.ex_k === req.max_k - 1.U &&
-        (io.ex_j >= j + blocks ||
-          ((io.ex_j === j + blocks - 1.U) && io.ex_i > i)))))
+        (ex_j_compressed >= j + blocks ||
+          ((ex_j_compressed === j + blocks - 1.U) && ex_i_compressed > i)))))
   when(req.is_resadd){
-    ex_ahead := io.ex_completed || (io.ex_i > i || (io.ex_i === i && io.ex_j >= j + blocks))
+    ex_ahead := io.ex_completed || (ex_i_compressed > i || (ex_i_compressed === i && ex_j_compressed >= j + blocks))
   }
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && ex_ahead && req.dram_addr =/= 0.U
@@ -660,8 +682,8 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     state := idle
   }.elsewhen (io.cmd.fire && state === st) {
     // The order here is k, j, i
-    val next_i = floorAdd(i, 1.U, req.max_i)
-    val next_j = floorAdd(j, max_blocks, req.max_j, next_i === 0.U)
+    val next_i = floorAdd(i, 1.U, iter_max_i)
+    val next_j = floorAdd(j, max_blocks, iter_max_j, next_i === 0.U)
 
     i := next_i
     j := next_j
@@ -1286,6 +1308,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.addr_start := st_c_addr_start
   stC.io.req.bits.loop_id := loop_requesting_st_id
   stC.io.req.bits.is_resadd := is_resadd
+  stC.io.req.bits.output_mx_format := io.output_mx_format
+  stC.io.req.bits.activation_mx_format := io.activation_mx_format
 
   stC_spad.io.req.bits.max_k := Mux(is_resadd, 1.U, loop_requesting_st.max_k)
   stC_spad.io.req.bits.max_j := loop_requesting_st.max_j
