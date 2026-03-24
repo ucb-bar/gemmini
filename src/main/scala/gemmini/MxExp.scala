@@ -48,10 +48,10 @@ class AddBit(elemW: Int, outType: MxFormats) extends Module {
     val a = Input(SInt(elemW.W))
     val b = Input(SInt(elemW.W))
     val enable = Input(Bool())
-    val y = Output(UInt(outType.exp.W))
+    val y = Output(UInt((outType.exp + 1).W))
   })
   val partial1 = io.a +& io.b
   val bias = 2.S +& outType.bias.S.pad(outType.exp + 1)
   val result = partial1 +& bias
-  io.y := Mux(io.enable, result.pad(outType.exp).asUInt(outType.exp - 1, 0), 0.U(outType.exp.W))
+  io.y := Mux(io.enable, result.pad(outType.exp+1).asUInt(outType.exp, 0), 0.U((outType.exp + 1).W))
 }

@@ -13,7 +13,7 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
   val outType2 = MxFormats(fpProductPrecision._1, fpProductPrecision._2)
   val outType4 = MxFormats(fpProductPrecision._1, fpProductPrecision._2)
   val cType = MxFormats(fpAccPrecision.expWidth, fpAccPrecision.sigWidth)
-  val totalAdderWidth = 4*(outType4.exp) 
+  val totalAdderWidth = 4*(outType4.exp + 1)
 
   val ts = TypeSupport(
     actSupportFp4 = true, actSupportFp6_1 = true, actSupportFp8_0 = true,
@@ -40,7 +40,30 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
       val leftShift = Mux(isPositiveShift, 0.U, PriorityEncoder(prod.asBools.reverse))
       val expAdj = Mux(isPositiveShift, 1.U, leftShift -& 1.U)
       val aligned = prod << leftShift
-      (Mux(isZero, 0.U(outBits.W), aligned(inBits - 2, inBits - 1 - outBits)), Mux(isZero, 0.U, expAdj), isPositiveShift)
+
+      // After alignment, the hidden-1 sits at bit inBits-1.
+      // The outBits fraction bits we want occupy [inBits-2 : inBits-1-outBits].
+      // Everything below that window is discarded; we must round instead of truncate.
+      val truncated = aligned(inBits - 2, inBits - 1 - outBits)
+
+      // bitsBelow: how many bits fall below the fraction window (elaboration-time constant)
+      val bitsBelow = inBits - 1 - outBits
+      // roundBit: MSB of the discarded portion (the deciding rounding bit)
+      val roundBit: Bool  = if (bitsBelow >= 1) aligned(inBits - 2 - outBits)       else false.B
+      // stickyBit: OR of all bits below the round bit; non-zero means we are strictly > midpoint
+      val stickyBit: Bool = if (bitsBelow >= 2) aligned(inBits - 3 - outBits, 0).orR else false.B
+      // Round-to-nearest-even: increment when roundBit=1 AND (past midpoint OR at midpoint with odd LSB)
+      val doRound = roundBit && (stickyBit || truncated(0))
+
+      // +& is width-growing addition: result is (outBits+1) bits, capturing any carry-out
+      val rounded       = truncated +& doRound
+      // roundOverflow: set when all outBits fraction bits were 1 and the increment wraps to 0
+      // In that case the normalised significand becomes 1.000…0 and the exponent gains +1
+      val roundOverflow = rounded(outBits)
+      val finalSig      = Mux(roundOverflow, 0.U(outBits.W), rounded(outBits - 1, 0))
+      val finalExpAdj   = expAdj +& roundOverflow
+
+      (Mux(isZero, 0.U(outBits.W), finalSig), Mux(isZero, 0.U, finalExpAdj), isPositiveShift)
     } else {
       val isZero = prod === 0.U
       val extraPad = outBits - inBits
@@ -81,6 +104,8 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
   val inW_sign = WireDefault(0.U(2.W))
   val in_a_mask= WireDefault("b11".U(2.W))
   val in_w_mask= WireDefault("b11".U(2.W))
+  val nanA = WireDefault(false.B)
+  val nanW = WireDefault(false.B)
 
   // Classify input lanes
   // Get exps, sigs, and signs from the classified inputs in the right format for the PE and Exp Adder
@@ -121,6 +146,7 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
       inA_exp := VecInit(exps_a_w3_fp8_1).asUInt
       inA_sign := VecInit.tabulate(2){ i => signs_a_w3_fp8_1(i) }.asUInt
       in_a_mask := VecInit.tabulate(2){i => in_a_w3_zero_fp8(i)}.asUInt
+      nanA := in_a_w3_cl_fp8(0).isNaN || in_a_w3_cl_fp8(1).isNaN
     }
   }
   if (actSupportFp6_0) {
@@ -145,6 +171,7 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
       inA_exp := VecInit(exps_a_w4_fp8_0).asUInt
       inA_sign := VecInit.tabulate(2){ i => signs_a_w4_fp8_0(0) }.asUInt
       in_a_mask := VecInit.tabulate(2){i => in_a_w4_zero_fp8(0)}.asUInt
+      nanA := in_a_w4_cl_fp8(0).isNaN
     }
   }
 
@@ -185,6 +212,7 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
       inW_exp := VecInit(exps_w_w3_fp8_1).asUInt
       inW_sign := VecInit.tabulate(2){ i => signs_w_w3_fp8_1(i) }.asUInt
       in_w_mask := VecInit.tabulate(2){i => in_w_w3_zero_fp8(i)}.asUInt
+      nanW := in_w_w3_cl_fp8(0).isNaN || in_w_w3_cl_fp8(1).isNaN
     }
   }
   if (weiSupportFp6_0) {
@@ -209,6 +237,7 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
       inW_exp := VecInit(exps_w_w4_fp8_0).asUInt
       inW_sign := VecInit.tabulate(2){ i => signs_w_w4_fp8_0(0) }.asUInt
       in_w_mask := VecInit.tabulate(2){i => in_w_w4_zero_fp8(0)}.asUInt
+      nanW := in_w_w4_cl_fp8(0).isNaN
     }
   }
 
@@ -253,18 +282,20 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
     val out4_toRec_norm_3 = normalize(out_pe((i)*(peOutWidth/4) + 3, i*peOutWidth/4), outType4.sig - 1, 4)
 
     val out4_rec_exp = Mux(io.type_a.sig === 2.U && io.type_w.sig === 2.U,  out4_toRec_norm_3._2,
-                          Mux(io.type_a.sig === 3.U && io.type_w.sig === 3.U,  out4_toRec_norm_1._2, out4_toRec_norm_2._2))
+      Mux(io.type_a.sig === 3.U && io.type_w.sig === 3.U,  out4_toRec_norm_1._2, out4_toRec_norm_2._2))
     val shift_dir = Mux(io.type_a.sig === 2.U && io.type_w.sig === 2.U,  out4_toRec_norm_3._3,
-                          Mux(io.type_a.sig === 3.U && io.type_w.sig === 3.U,  out4_toRec_norm_1._3, out4_toRec_norm_2._3))
+      Mux(io.type_a.sig === 3.U && io.type_w.sig === 3.U,  out4_toRec_norm_1._3, out4_toRec_norm_2._3))
     val out4_rec_sig = Mux(io.type_a.sig === 2.U && io.type_w.sig === 2.U,  out4_toRec_norm_3._1,
-                          Mux(io.type_a.sig === 3.U && io.type_w.sig === 3.U,  out4_toRec_norm_1._1, out4_toRec_norm_2._1))
+      Mux(io.type_a.sig === 3.U && io.type_w.sig === 3.U,  out4_toRec_norm_1._1, out4_toRec_norm_2._1))
 
     MxPEOutToRaw(
       expWidth = outType4.exp,
       sigWidth = outType4.sig,
       sign = out_signs(i),
-      exp = Mux(shift_dir === 0.U, out_e((i+1)*(totalAdderWidth/4)-1, i*(totalAdderWidth/4)) -% out4_rec_exp, out_e((i+1)*(totalAdderWidth/4)-1, i*(totalAdderWidth/4)) +% out4_rec_exp),
-      sig = out4_rec_sig
+      exp = Mux(!shift_dir, out_e((i+1)*(totalAdderWidth/4)-1, i*(totalAdderWidth/4)) -% out4_rec_exp, out_e((i+1)*(totalAdderWidth/4)-1, i*(totalAdderWidth/4)) +% out4_rec_exp),
+      sig = out4_rec_sig,
+      inputNaN  = nanA || nanW,
+      inputZero = in_a_mask(i / 2) || in_w_mask(i % 2)
     )
   }
 
@@ -280,21 +311,25 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
       expWidth = outType2.exp,
       sigWidth = outType2.sig,
       sign = out_signs(i*2),
-      exp = Mux(shift_dir === 0.U, out_e((i)*(totalAdderWidth/2) + outType2.exp - 1, (i)*(totalAdderWidth/2)) -% out2_toRec_exp, out_e((i)*(totalAdderWidth/2) + outType2.exp - 1, (i)*(totalAdderWidth/2)) +% out2_toRec_exp),
-      sig = out2_toRec_sig
+      exp = Mux(!shift_dir, out_e((i)*(totalAdderWidth/2) + outType2.exp, (i)*(totalAdderWidth/2)) -% out2_toRec_exp, out_e((i)*(totalAdderWidth/2) + outType2.exp, (i)*(totalAdderWidth/2)) +% out2_toRec_exp),
+      sig = out2_toRec_sig,
+      inputNaN  = nanA || nanW,
+      inputZero = in_a_mask(i) || in_w_mask(i % 2)
     )
   }
 
 
   val out1_toRec = VecInit.tabulate(1) { i =>
     val out1_toRec_norm = normalize(out_pe(7,0), outType1.sig - 1, 8)
-    
+
     MxPEOutToRaw(
       expWidth = outType1.exp,
       sigWidth = outType1.sig,
       sign = out_signs(0),
-      exp = Mux(out1_toRec_norm._3 === 0.U, out_e((i)*(totalAdderWidth) + outType1.exp - 1, i*(totalAdderWidth)) -% out1_toRec_norm._2, out_e((i)*(totalAdderWidth) + outType1.exp - 1, i*(totalAdderWidth)) +% out1_toRec_norm._2),
-      sig = out1_toRec_norm._1
+      exp = Mux(!out1_toRec_norm._3, out_e((i)*(totalAdderWidth) + outType1.exp, i*(totalAdderWidth)) -% out1_toRec_norm._2, out_e((i)*(totalAdderWidth) + outType1.exp, i*(totalAdderWidth)) +% out1_toRec_norm._2),
+      sig = out1_toRec_norm._1,
+      inputNaN  = nanA || nanW,
+      inputZero = in_a_mask(0) || in_w_mask(0)
     )
   }
 
@@ -313,11 +348,11 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
   }
 
   for (i <- 0 until 4) {
-    val rawIn = Mux(io.mode.numOutputs === 4.U, 
-                      resize(out4_toRec(i), outType4, cType), 
-                      Mux(io.mode.numOutputs === 2.U, 
-                        resize(out2_toRec(i/2), outType2, cType),
-                        resize(out1_toRec(0), outType1, cType)))
+    val rawIn = Mux(io.mode.numOutputs === 4.U,
+      resize(out4_toRec(i), outType4, cType),
+      Mux(io.mode.numOutputs === 2.U,
+        resize(out2_toRec(i/2), outType2, cType),
+        resize(out1_toRec(0), outType1, cType)))
     val recIn_c = io.rec_c.asTypeOf(Vec(4, UInt((cType.exp + cType.sig + 1).W)))(i)
 
     addUnits(i).io.roundingMode := hardfloat.consts.round_near_even
@@ -336,8 +371,8 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
 }
 
 object MxPEOutToRaw {
-  def apply(expWidth: Int, sigWidth: Int, sign: UInt, exp: UInt, sig: UInt): RawFloat = {
-    val expIn = exp(expWidth-1, 0)
+  def apply(expWidth: Int, sigWidth: Int, sign: UInt, exp: UInt, sig: UInt, inputNaN: Bool, inputZero: Bool): RawFloat = {
+    val expIn = exp(expWidth, 0)
     val fractIn = sig(sigWidth-2, 0)
 
     val isZeroExpIn = (expIn === 0.U)
@@ -359,14 +394,20 @@ object MxPEOutToRaw {
     val isZero = isZeroExpIn && isZeroFractIn
     val isSpecial = adjustedExp(expWidth, expWidth - 1) === 3.U
 
+    // Saturate to max finite value (FP8 E4M3 alt0: 0x7E = 448) on exponent overflow
+    // but propagate NaN when an input was actually NaN
+    val satExp  = (BigInt(3) << (expWidth - 1)).U((expWidth + 1).W)
+    val satFrac = ((BigInt(1) << (sigWidth - 1)) - 2).U((sigWidth - 1).W)
+    val saturate     = isSpecial && !inputNaN
+    val effectiveZero = (isZero || inputZero) && !inputNaN
+
     val out = Wire(new RawFloat(expWidth, sigWidth))
-    out.isNaN := isSpecial && !isZeroFractIn
-    out.isInf := isSpecial && isZeroFractIn
-    out.isZero := isZero
-    out.sign := sign
-    out.sExp := adjustedExp(expWidth, 0).zext
-    out.sig :=
-      0.U(1.W) ## !isZero ## Mux(isZeroExpIn, subnormFract, fractIn)
+    out.isNaN  := inputNaN
+    out.isInf  := false.B
+    out.isZero := effectiveZero
+    out.sign   := sign
+    out.sExp   := Mux(inputNaN || saturate, satExp, adjustedExp(expWidth, 0)).zext
+    out.sig    := 0.U(1.W) ## !effectiveZero ## Mux(inputNaN || saturate, satFrac, Mux(isZeroExpIn, subnormFract, fractIn))
     out
   }
 }
