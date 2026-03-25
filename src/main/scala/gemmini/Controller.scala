@@ -218,6 +218,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val scale_mem_write_w = Flipped(Decoupled(new ScalingFactorWriteReq(s)))
       val scale_mem_write_act = Flipped(Decoupled(new ScalingFactorWriteReq(s)))
       val requant_in_gpu = Flipped(Decoupled(new RequantizerInBundle(q.numGPUInputLanes, q.inputBits)))
+      val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
       val lut0 = Flipped(Decoupled(new QuantLutWriteBundle(l(0))))
       val lut1 = Flipped(Decoupled(new QuantLutWriteBundle(l(1))))
       val lut2 = Flipped(Decoupled(new QuantLutWriteBundle(l(2))))
@@ -227,7 +228,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     
     spad.module.io.scale_mem_write_w.get <> mx_io.scale_mem_write_w
     spad.module.io.scale_mem_write_act.get <> mx_io.scale_mem_write_act 
-    
+    mx_requantizer.get.io.requant_data_out <>  mx_io.requant_out
     mx_requantizer.get.io.requant_data_in_gpu <> mx_io.requant_in_gpu
     mx_io.scale_factor_out <> mx_requantizer.get.io.scaleMem_write
     mx_requantizer.get.io.lut0_write <> mx_io.lut0

@@ -46,6 +46,8 @@ object MxFloatFormat {
 class MxRequantizerAccResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]]) extends Bundle {
   val out = new MxRequantizerAccMemDataOut[T] (rDataType, fullDataType)
   val mx_mode = UInt(2.W)
+  val is_gpu = Bool()
+  val gpu_addr = UInt(32.W)
 }
 
 class MxRequantizerIO[T <: Data: Arithmetic](
@@ -71,6 +73,7 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val inputdataWidth = config.inputBits
   val mxacc_req = Flipped(new MxRequantizerAccMemIO[T](acc_row_t, spad_row_t, half_t))
   val requant_data_in_gpu = Flipped(Decoupled(new RequantizerInBundle(config.numGPUInputLanes, inputdataWidth)))
+  val requant_data_out = Decoupled(new RequantizerOutBundle(outputnumLanes))
   val scaleMem_write = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
   val lut0_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(0))))
   val lut1_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(1))))
@@ -137,7 +140,8 @@ class MxRequantizer[T <: Data](
 
   val scale_buffer = RegInit(VecInit(Seq.fill(scaleSize)(0.U(8.W))))
   val quant_dataType = io.mxacc_req.mx_mode  //output data fromat
-  val format_reg = RegNext(quant_dataType.asUInt, 0.U)
+  val format_reg = RegInit(0.U(2.W))
+  format_reg := quant_dataType.asUInt(1, 0)
   
   io.scaleMem_write.valid := false.B
   io.scaleMem_write.bits := DontCare
@@ -217,6 +221,8 @@ class MxRequantizer[T <: Data](
     pipe_in.bits.out.fromDMA := io.mxacc_req.mx_data_in.bits.fromDMA
     pipe_in.bits.out.is_last_half := io.mxacc_req.mx_data_in.bits.is_last_half
     pipe_in.bits.out.acc_bank_id := io.mxacc_req.mx_data_in.bits.acc_bank_id
+    pipe_in.bits.is_gpu := false.B
+    pipe_in.bits.gpu_addr := 0.U
 
   //}
   }.elsewhen(io.requant_data_in_gpu.fire && data_buffer_counter === 1.U) {
@@ -224,7 +230,9 @@ class MxRequantizer[T <: Data](
     pipe_in.bits.mx_mode := format_reg
     val combined = input_16_buffer_gpu ++ io.requant_data_in_gpu.bits.data
     pipe_in.bits.out.full_mx_data_out := VecInit(combined.reverse).asTypeOf(half_acc_row_t)
-    pipe_in.bits.out.fromDMA := true.B
+    pipe_in.bits.out.fromDMA := false.B
+    pipe_in.bits.is_gpu := true.B
+    pipe_in.bits.gpu_addr := io.requant_data_in_gpu.bits.address
   }
 
   // for (i <- 1 until pipelineLatency) {
@@ -270,6 +278,7 @@ class MxRequantizer[T <: Data](
   // Two-cycle accumulation registers for FP4 / FP6:
   val quant_half_counter = RegInit(false.B)
   val first_half_buf     = RegInit(0.U(128.W))
+  
 
   val fp6_lut_out     = Cat(quantLut.io.projected_data.bits.reverse)        
   val fp6_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))    
@@ -294,7 +303,7 @@ class MxRequantizer[T <: Data](
 
   final_pipe_out.bits.out.quant_mx_data_out := 0.U.asTypeOf(spad_row_t)
   final_pipe_out.bits.out.is_garbage := false.B
-
+  
   when(total_bits_per_element === 8.U) {
     final_pipe_out.valid := oldest_pipe_out.valid
     final_pipe_out.bits.out.quant_mx_data_out := Mux(quantize_valid, extracted_data, fp8_quant_data_held).asTypeOf(spad_row_t)
@@ -348,20 +357,56 @@ class MxRequantizer[T <: Data](
   dontTouch(can_enqueue_wire)
     // Only allow input handshake when queue has space
   io.mxacc_req.mx_data_in.ready := can_enqueue
-  io.requant_data_in_gpu.ready := can_enqueue && !io.mxacc_req.mx_data_in.fire
+  io.requant_data_in_gpu.ready := can_enqueue && !io.mxacc_req.mx_data_in.fire 
   
   io.mxacc_req.mx_data_out.bits.is_garbage := final_pipe_out.bits.out.is_garbage
   io.mxacc_req.mx_data_out.bits.full_mx_data_out := final_pipe_out.bits.out.full_mx_data_out
   io.mxacc_req.mx_data_out.bits.quant_mx_data_out  := final_pipe_out.bits.out.quant_mx_data_out
-  io.mxacc_req.mx_data_out.valid := final_pipe_out.valid || full_precision_valid
+  io.mxacc_req.mx_data_out.valid := (final_pipe_out.valid || full_precision_valid) && !final_pipe_out.bits.is_gpu
   io.mxacc_req.mx_data_out.bits.fromDMA := final_pipe_out.bits.out.fromDMA
   io.mxacc_req.mx_data_out.bits.acc_bank_id := final_pipe_out.bits.out.acc_bank_id
   io.mxacc_req.mx_data_out.bits.is_last_half := final_pipe_out.bits.out.is_last_half
 
 
-  oldest_pipe_out.ready := io.mxacc_req.mx_data_out.ready
-  final_pipe_out.ready := io.mxacc_req.mx_data_out.ready
+  final_pipe_out.ready := Mux(final_pipe_out.bits.is_gpu,
+    io.requant_data_out.ready,
+    io.mxacc_req.mx_data_out.ready)
+  oldest_pipe_out.ready := final_pipe_out.ready
   
+
+  val gpu_out_held = RegInit(0.U(256.W))
+  val helding_flag = RegInit(0.U)
+  when (io.requant_data_out.fire){
+    helding_flag := 0.U
+  }.elsewhen(final_pipe_out.bits.is_gpu && final_pipe_out.valid && !io.requant_data_out.ready){
+    helding_flag := 1.U
+  }
+
+  when(final_pipe_out.bits.is_gpu && final_pipe_out.valid){
+    when(helding_flag === 1.U && io.requant_data_out.ready){
+      io.requant_data_out.bits.data := gpu_out_held
+      io.requant_data_out.valid := true.B
+      io.requant_data_out.bits.dataType := RequantizerDataType(format_reg)
+      io.requant_data_out.bits.address := Mux(format_reg===0.U, final_pipe_out.bits.gpu_addr, final_pipe_out.bits.gpu_addr >>1)
+    }.elsewhen(helding_flag === 0.U && io.requant_data_out.ready){
+      io.requant_data_out.bits.data := final_pipe_out.bits.out.quant_mx_data_out.asUInt
+      io.requant_data_out.valid := true.B
+      io.requant_data_out.bits.dataType := RequantizerDataType(format_reg)
+      io.requant_data_out.bits.address := Mux(format_reg===0.U, final_pipe_out.bits.gpu_addr, final_pipe_out.bits.gpu_addr >> 1)
+    }.otherwise{
+      gpu_out_held := final_pipe_out.bits.out.quant_mx_data_out.asUInt
+      io.requant_data_out.bits.data := 0.U
+      io.requant_data_out.valid := false.B
+      io.requant_data_out.bits.dataType := RequantizerDataType(format_reg)
+      io.requant_data_out.bits.address := Mux(format_reg===0.U, final_pipe_out.bits.gpu_addr, final_pipe_out.bits.gpu_addr >> 1)
+    }
+  }.otherwise{
+    io.requant_data_out.bits.data := 0.U
+    io.requant_data_out.valid := false.B
+    io.requant_data_out.bits.dataType := RequantizerDataType(format_reg)
+    io.requant_data_out.bits.address := Mux(format_reg===0.U, final_pipe_out.bits.gpu_addr, final_pipe_out.bits.gpu_addr >> 1)
+  }
+
   should_compute := false.B
   when (can_enqueue) {
     when(pipelined_out_0.valid && (total_bits_per_element =/= 16.U)) {
