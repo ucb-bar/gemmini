@@ -148,23 +148,6 @@ class FrontendTLB(nClients: Int, entries: Int, maxSize: Int, use_tlb_register_fi
       client.resp.miss := !RegNext(l0_tlb_hit)
     }
 
-    // short-circuit passthroughs
-    val curr_req = tlbArbOpt.get.io.in(i)
-    when (tlbReqFire) {
-      dontTouch(curr_req.bits.tlb_req.passthrough)
-      when (curr_req.bits.tlb_req.passthrough) {
-        tlb.io.req.valid := false.B
-        client.resp.miss := false.B
-      }
-    }
-    when (RegNext(tlbReqFire)) {
-      when (RegNext(curr_req.bits.tlb_req.passthrough)) {
-        client.resp := 0.U.asTypeOf(client.resp)
-        client.resp.miss := false.B
-        client.resp.paddr := RegNext(curr_req.bits.tlb_req.vaddr)
-      }
-    }
-
     // If we're not using the TLB filter register, then we set this value to always be false
     if (!use_tlb_register_filter) {
       last_translated_valid := false.B
