@@ -233,7 +233,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     io.tlb.req.valid := tlb_q.io.deq.valid
     io.tlb.req.bits := DontCare
     io.tlb.req.bits.tlb_req.vaddr := tlb_q.io.deq.bits.vaddr
-    io.tlb.req.bits.tlb_req.passthrough := false.B
+    io.tlb.req.bits.tlb_req.passthrough := true.B
     io.tlb.req.bits.tlb_req.size := 0.U // send_size
     io.tlb.req.bits.tlb_req.cmd := M_XRD
     io.tlb.req.bits.status := tlb_q.io.deq.bits.status
@@ -545,6 +545,7 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     io.tlb.req.bits := DontCare
     io.tlb.req.bits.tlb_req.vaddr := tlb_q.io.deq.bits.vaddr
     io.tlb.req.bits.tlb_req.passthrough := tlb_q.io.deq.bits.passthrough
+    dontTouch(io.tlb.req.bits.tlb_req.passthrough)
     io.tlb.req.bits.tlb_req.size := 0.U // send_size
     io.tlb.req.bits.tlb_req.cmd := M_XWR
     io.tlb.req.bits.status := tlb_q.io.deq.bits.status
