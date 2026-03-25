@@ -40,30 +40,7 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
       val leftShift = Mux(isPositiveShift, 0.U, PriorityEncoder(prod.asBools.reverse))
       val expAdj = Mux(isPositiveShift, 1.U, leftShift -& 1.U)
       val aligned = prod << leftShift
-
-      // After alignment, the hidden-1 sits at bit inBits-1.
-      // The outBits fraction bits we want occupy [inBits-2 : inBits-1-outBits].
-      // Everything below that window is discarded; we must round instead of truncate.
-      val truncated = aligned(inBits - 2, inBits - 1 - outBits)
-
-      // bitsBelow: how many bits fall below the fraction window (elaboration-time constant)
-      val bitsBelow = inBits - 1 - outBits
-      // roundBit: MSB of the discarded portion (the deciding rounding bit)
-      val roundBit: Bool  = if (bitsBelow >= 1) aligned(inBits - 2 - outBits)       else false.B
-      // stickyBit: OR of all bits below the round bit; non-zero means we are strictly > midpoint
-      val stickyBit: Bool = if (bitsBelow >= 2) aligned(inBits - 3 - outBits, 0).orR else false.B
-      // Round-to-nearest-even: increment when roundBit=1 AND (past midpoint OR at midpoint with odd LSB)
-      val doRound = roundBit && (stickyBit || truncated(0))
-
-      // +& is width-growing addition: result is (outBits+1) bits, capturing any carry-out
-      val rounded       = truncated +& doRound
-      // roundOverflow: set when all outBits fraction bits were 1 and the increment wraps to 0
-      // In that case the normalised significand becomes 1.000…0 and the exponent gains +1
-      val roundOverflow = rounded(outBits)
-      val finalSig      = Mux(roundOverflow, 0.U(outBits.W), rounded(outBits - 1, 0))
-      val finalExpAdj   = expAdj +& roundOverflow
-
-      (Mux(isZero, 0.U(outBits.W), finalSig), Mux(isZero, 0.U, finalExpAdj), isPositiveShift)
+      (Mux(isZero, 0.U(outBits.W), aligned(inBits - 2, inBits - 1 - outBits)), Mux(isZero, 0.U, expAdj), isPositiveShift)
     } else {
       val isZero = prod === 0.U
       val extraPad = outBits - inBits
@@ -74,8 +51,8 @@ class MxFpMul (lut: Boolean) (fpProductPrecision: (Int, Int), fpAccPrecision: Mx
       val aligned = realProd << leftShift
       ((Mux(isZero, 0.U(outBits.W), aligned(inBits-1, 0) << (extraPad))(outBits-1, 0)), Mux(isZero, 0.U, expAdj), isPositiveShift)
 
-      }
     }
+  }
 
   def pack(c : MxClassifiedFp, w_exp: Int, w_sig: Int, padExp: Int): (UInt, UInt, UInt) = {
     val packed_sig = Mux(c.isZero, 0.U, (~c.isSub.asUInt ## c.sig))
