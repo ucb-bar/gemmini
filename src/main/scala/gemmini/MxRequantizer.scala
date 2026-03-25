@@ -216,9 +216,9 @@ class MxRequantizer[T <: Data](
   
   val gpu_addr = RegInit(0.U((32).W))
   when(io.requant_data_in_gpu.fire && data_buffer_counter === 0.U && total_bits_per_element === 8.U){
-    gpu_addr := (io.requant_data_in_gpu.bits.address >> 1)
+    gpu_addr := (io.requant_data_in_gpu.bits.address)
   }.elsewhen(io.requant_data_in_gpu.fire && data_buffer_counter === 0.U && total_bits_per_element =/= 8.U && !quant_half_counter){
-    gpu_addr := (io.requant_data_in_gpu.bits.address >> 2)
+    gpu_addr := (io.requant_data_in_gpu.bits.address >> 1)
   }
 
   when(io.mxacc_req.mx_data_in.fire) {
