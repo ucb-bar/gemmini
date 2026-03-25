@@ -449,13 +449,15 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     // write_issue_q.io.deq.ready := writer.module.io.req.ready && writeData.valid
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
     writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
-    writer.module.io.req.bits.len := Mux(writeData_is_full_width,
-      write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,
-      write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U)
+    writer.module.io.req.bits.len := Mux(writeData_is_full_width && !write_issue_q.io.deq.bits.laddr.is_acc_addr,
+      write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 8).U,
+        Mux( writeData_is_full_width,
+          write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,
+          write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U))
       
     writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
       writeData_is_all_zeros -> 0.U,
-      writeData_is_full_width -> fullAccWriteData
+      (writeData_is_full_width && write_issue_q.io.deq.bits.laddr.is_acc_addr) -> fullAccWriteData
     ))
     writer.module.io.req.bits.block := write_issue_q.io.deq.bits.block
     writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
