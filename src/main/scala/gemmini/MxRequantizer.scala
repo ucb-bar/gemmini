@@ -182,7 +182,7 @@ class MxRequantizer[T <: Data](
   total_bits_per_element := 1.U  +&  exp_bits  +&  mant_bits 
 
   val extracted_data = WireDefault((0.U((io.outputnumLanes*8).W))) // 256bits / 128bits
-  val fp8_quant_data_held = RegInit(0.U((io.outputnumLanes*8).W))
+  val quant_data_held = RegInit(0.U((io.outputnumLanes*8).W))
 
   val pipe_in = Wire(Decoupled(new MxRequantizerAccResp[T](half_acc_row_t, spad_row_t)(ev)))
   pipe_in.valid := false.B
@@ -216,9 +216,9 @@ class MxRequantizer[T <: Data](
   
   val gpu_addr = RegInit(0.U((32).W))
   when(io.requant_data_in_gpu.fire && data_buffer_counter === 0.U && total_bits_per_element === 8.U){
-    gpu_addr := (io.requant_data_in_gpu.bits.address)
+    gpu_addr := io.requant_data_in_gpu.bits.address 
   }.elsewhen(io.requant_data_in_gpu.fire && data_buffer_counter === 0.U && total_bits_per_element =/= 8.U && !quant_half_counter){
-    gpu_addr := (io.requant_data_in_gpu.bits.address >> 1)
+    gpu_addr := io.requant_data_in_gpu.bits.address >> 1
   }
 
   when(io.mxacc_req.mx_data_in.fire) {
@@ -311,13 +311,12 @@ class MxRequantizer[T <: Data](
 
   final_pipe_out.bits.out.quant_mx_data_out := 0.U.asTypeOf(spad_row_t)
   final_pipe_out.bits.out.is_garbage := false.B
-  
+  val lut_valid = quantLut.io.projected_data.valid
   when(total_bits_per_element === 8.U) {
     final_pipe_out.valid := oldest_pipe_out.valid
-    final_pipe_out.bits.out.quant_mx_data_out := Mux(quantize_valid, extracted_data, fp8_quant_data_held).asTypeOf(spad_row_t)
+    final_pipe_out.bits.out.quant_mx_data_out := Mux(quantize_valid, extracted_data, quant_data_held).asTypeOf(spad_row_t)
     final_pipe_out.bits.out.is_garbage := false.B
   }.elsewhen(total_bits_per_element === 6.U) {
-    val lut_valid = quantLut.io.projected_data.valid
     when(lut_valid) {
       when(!quant_half_counter) {
         first_half_buf     := fp6_lut_out
@@ -326,9 +325,9 @@ class MxRequantizer[T <: Data](
         quant_half_counter := false.B
       }
     }
-    final_pipe_out.bits.out.is_garbage := !quant_half_counter && lut_valid
-    final_pipe_out.valid := lut_valid 
-    final_pipe_out.bits.out.quant_mx_data_out := (fp6_combined).asTypeOf(spad_row_t)
+    final_pipe_out.bits.out.is_garbage := !quant_half_counter &&  (oldest_pipe_out.valid) 
+    final_pipe_out.valid :=  (oldest_pipe_out.valid)  
+    final_pipe_out.bits.out.quant_mx_data_out := Mux(lut_valid, fp6_combined, quant_data_held).asTypeOf(spad_row_t)
 
   }.elsewhen(total_bits_per_element === 4.U) {
     when(quantize_valid) {
@@ -339,9 +338,9 @@ class MxRequantizer[T <: Data](
         quant_half_counter := false.B
       }
     }
-    final_pipe_out.valid := (quantize_valid) 
-    final_pipe_out.bits.out.is_garbage := !quant_half_counter && quantize_valid
-    final_pipe_out.bits.out.quant_mx_data_out := (fp4_combined).asTypeOf(spad_row_t)
+    final_pipe_out.valid := (oldest_pipe_out.valid) 
+    final_pipe_out.bits.out.is_garbage := !quant_half_counter && oldest_pipe_out.valid
+    final_pipe_out.bits.out.quant_mx_data_out := Mux(quantize_valid, fp4_combined, quant_data_held).asTypeOf(spad_row_t)
   }
   
   when(quantize_valid) {
@@ -355,7 +354,11 @@ class MxRequantizer[T <: Data](
   }
 
   when(quantize_valid && total_bits_per_element === 8.U) {
-    fp8_quant_data_held := extracted_data
+    quant_data_held := extracted_data
+  }.elsewhen(lut_valid && total_bits_per_element === 6.U){
+    quant_data_held := (fp6_combined)
+  }.elsewhen(quantize_valid && total_bits_per_element === 4.U){
+    quant_data_held := (fp4_combined)
   }
 
   val can_enqueue = pipe_in.ready
