@@ -222,7 +222,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val lut0 = Flipped(Decoupled(new QuantLutWriteBundle(l(0))))
       val lut1 = Flipped(Decoupled(new QuantLutWriteBundle(l(1))))
       val lut2 = Flipped(Decoupled(new QuantLutWriteBundle(l(2))))
-      val scale_factor_out = Decoupled(new ScalingFactorWriteReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteAddrWidth))
+      val scale_factor_out = Decoupled(new ScalingFactorWriteReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))
     })
 
     
