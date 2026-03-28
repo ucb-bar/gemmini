@@ -236,7 +236,14 @@ class MxRequantizer[T <: Data](
     pipe_in.valid := true.B
     pipe_in.bits.mx_mode := format_reg
     val combined = input_16_buffer_gpu ++ io.requant_data_in_gpu.bits.data
-    pipe_in.bits.out.full_mx_data_out := VecInit(combined.reverse).asTypeOf(half_acc_row_t)
+    // reverse every 4 16-bits before flattening into vector-of-64bits
+    // so that later unpacking of reshaped_pipelined_out_0 restores the
+    // original Vec[16bit] order
+    val numUInt16sInT = (accType.getWidth / combined.head.getWidth)
+    assert(accType.getWidth % combined.head.getWidth == 0)
+    val combinedGrouped = combined.grouped(numUInt16sInT).toSeq
+    val flatAccVec = VecInit(combinedGrouped.map(g => VecInit(g.reverse).asTypeOf(accType)))
+    pipe_in.bits.out.full_mx_data_out := flatAccVec.asTypeOf(half_acc_row_t)
     pipe_in.bits.out.fromDMA := false.B
     pipe_in.bits.is_gpu := true.B
     pipe_in.bits.gpu_addr := gpu_addr
