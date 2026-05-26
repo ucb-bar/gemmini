@@ -7,3 +7,6 @@
 [submodule "software/gemmini-rocc-tests"]
 	path = software/gemmini-rocc-tests
 	url = https://github.com/Rakanic/gemmini-rocc-tests.git
+[submodule "src/main/scala/gemmini/mxgen"]
+	path = src/main/scala/gemmini/mxgen
+	url = git@github.com:ucb-bar/MxGen.git
