@@ -7,6 +7,7 @@ import freechips.rocketchip.tile.FType
 import chisel3._
 import chisel3.util._
 import hardfloat._
+import mxgen.{MxConfig, MxFormat, MxTypeBundle, requiredPEMode}
 
 // Bundles that represent the raw bits of custom datatypes
 case class Float(expWidth: Int, sigWidth: Int, isRecoded: Boolean = false) extends Bundle {
@@ -630,16 +631,22 @@ object Arithmetic {
 
       override def mac_mx(m1: MxFloat, m2: MxFloat, fpProductPrecision: (Int, Int), fpAccPrecision: MxFloat, activation_mx_format: UInt, weight_mx_format: UInt): MxFloat = {
         require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
-        val macc = Module(new MxFpMul(lut = false)(fpProductPrecision, fpAccPrecision))
+        val macConfig = MxConfig.mxGemmini.copy(
+          inActBusWidth    = m1.bits.getWidth,
+          inWeiBusWidth    = m2.bits.getWidth,
+          productFormat    = MxFormat(fpProductPrecision._1, fpProductPrecision._2),
+          accFormat        = MxFormat(fpAccPrecision.expWidth, fpAccPrecision.sigWidth)
+        )
+        val macc = Module(new mxgen.MxFpMul(macConfig, lut = false))
         val result = Wire(MxFloat(macc.cType.exp, macc.cType.sig, 4, true))
 
-        val typeA = Wire(new MxTypes)
+        val typeA = Wire(new MxTypeBundle)
         typeA.exp := Mux(activation_mx_format === 2.U, 2.U,
                       Mux(activation_mx_format === 1.U, 3.U, 4.U))
         typeA.sig := Mux(activation_mx_format === 2.U, 2.U,
                       Mux(activation_mx_format === 1.U, 3.U, 4.U))
 
-        val typeW = Wire(new MxTypes)
+        val typeW = Wire(new MxTypeBundle)
         typeW.exp := Mux(weight_mx_format === 2.U, 2.U,
                       Mux(weight_mx_format === 1.U, 3.U, 4.U))
         typeW.sig := Mux(weight_mx_format === 2.U, 2.U,

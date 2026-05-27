@@ -4,6 +4,7 @@ package gemmini
 import chisel3._
 import chisel3.util._
 import chisel3.experimental._
+import mxgen.{MxTypeBundle, requiredPEMode}
 
 /**
   * A Grid is a 2D array of Tile modules with registers in between each tile and
@@ -69,7 +70,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   //   tile.io.weight_mx_format := io.weight_mx_format
   // }
 
-  val typeA = Wire(new MxTypes)
+  val typeA = Wire(new MxTypeBundle)
   typeA.exp := Mux(io.activation_mx_format === 2.U, 2.U,
                 Mux(io.activation_mx_format === 1.U, 3.U, 4.U))
   typeA.sig := Mux(io.activation_mx_format === 2.U, 2.U,
@@ -77,7 +78,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   val typeA_size = Mux(io.activation_mx_format === 2.U, 4.U,
                 Mux(io.activation_mx_format === 1.U, 6.U, 8.U))
 
-  val typeW = Wire(new MxTypes)
+  val typeW = Wire(new MxTypeBundle)
   typeW.exp := Mux(io.weight_mx_format === 2.U, 2.U,
                 Mux(io.weight_mx_format === 1.U, 3.U, 4.U))
   typeW.sig := Mux(io.weight_mx_format === 2.U, 2.U,
