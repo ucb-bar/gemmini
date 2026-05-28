@@ -16,6 +16,9 @@ eval "$(conda shell.bash hook)"
 cd $LOCAL_CHIPYARD_DIR
 source env.sh
 
+# Put Synopsys VCS (and its license server) on PATH for the sims/vcs run.
+source /ecad/tools/vlsi.bashrc
+
 # Install the in-repo libgemmini.so over chipyard's stale copy.
 cd $LOCAL_CHECKOUT_DIR
 chown -R $(whoami) .
