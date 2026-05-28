@@ -9,4 +9,4 @@
 	url = https://github.com/Rakanic/gemmini-rocc-tests.git
 [submodule "mxgen"]
 	path = mxgen
-	url = git@github.com:ucb-bar/MxGen.git
+	url = https://github.com/ucb-bar/MxGen.git
