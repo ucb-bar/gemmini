@@ -12,7 +12,7 @@ LOCAL_MAKE_NPROC=$CI_MAKE_NPROC
 LOCAL_CHECKOUT_DIR=$GITHUB_WORKSPACE
 
 LOCAL_CHIPYARD_DIR=$REMOTE_WORK_DIR
-LOCAL_SIM_DIR=$LOCAL_CHIPYARD_DIR/sims/verilator
+LOCAL_SIM_DIR=$LOCAL_CHIPYARD_DIR/sims/vcs
 
 CICONFIG=chipyard.config.WithNoDebug_GemminiRocketConfig
 
@@ -22,6 +22,7 @@ CICONFIG=chipyard.config.WithNoDebug_GemminiRocketConfig
 # layout the spike libgemmini and the rocc tests expect.
 CHIPYARD_BRANCH=${CHIPYARD_BRANCH:-graphics}
 GEMMINI_SUBMODULE_BRANCH=${GEMMINI_SUBMODULE_BRANCH:-gemmini-mx-cleanup}
+RADIANCE_SUBMODULE_BRANCH=${RADIANCE_SUBMODULE_BRANCH:-main}
 
 # RTL config used for the MX (FP4/FP6/FP8) functional-equivalence job.
 MX_CICONFIG=RadianceGemminiOnlyConfig
