@@ -23,7 +23,48 @@ jobs:
         run: |
           .github/scripts/install-gemmini.sh
 
-  spike-run-tests:
+  # Legacy non-MX CI jobs (spike sanity + WithNoDebug_GemminiRocketConfig RTL).
+  # Disabled while the MX (FP4/FP6/FP8) track is the active gate.
+  # spike-run-tests:
+  #   runs-on: as4
+  #   needs: install-gemmini
+  #   steps:
+  #     - name: Delete old checkout
+  #       run: |
+  #           rm -rf ${{ github.workspace }}/* || true
+  #           rm -rf ${{ github.workspace }}/.* || true
+  #     - uses: actions/checkout@v3
+  #     - name: Run Gemmini Spike tests
+  #       run: |
+  #         .github/scripts/run-tests-spike.sh
+  #
+  # build-gemmini-config:
+  #   runs-on: as4
+  #   needs: install-gemmini
+  #   steps:
+  #     - name: Delete old checkout
+  #       run: |
+  #           rm -rf ${{ github.workspace }}/* || true
+  #           rm -rf ${{ github.workspace }}/.* || true
+  #     - uses: actions/checkout@v3
+  #     - name: Building Gemmini Config using Verilator
+  #       run: |
+  #         .github/scripts/do-rtl-build.sh
+  #
+  # rtl-run-tests:
+  #   runs-on: as4
+  #   needs: build-gemmini-config
+  #   steps:
+  #     - name: Delete old checkout
+  #       run: |
+  #           rm -rf ${{ github.workspace }}/* || true
+  #           rm -rf ${{ github.workspace }}/.* || true
+  #     - uses: actions/checkout@v3
+  #     - name: Run Gemmini Config tests using Verilator
+  #       run: |
+  #         .github/scripts/run-tests-rtl.sh
+
+  build-mx-config:
     runs-on: as4
     needs: install-gemmini
     steps:
@@ -32,39 +73,26 @@ jobs:
             rm -rf ${{ github.workspace }}/* || true
             rm -rf ${{ github.workspace }}/.* || true
       - uses: actions/checkout@v3
-      - name: Run Gemmini Spike tests
+      - name: Build MX (RadianceGemminiOnlyConfig) RTL with Verilator
         run: |
-          .github/scripts/run-tests-spike.sh
+          .github/scripts/do-rtl-build-mx.sh
 
-  build-gemmini-config:
+  mx-run-tests:
     runs-on: as4
-    needs: install-gemmini
+    needs: build-mx-config
     steps:
       - name: Delete old checkout
         run: |
             rm -rf ${{ github.workspace }}/* || true
             rm -rf ${{ github.workspace }}/.* || true
       - uses: actions/checkout@v3
-      - name: Building Gemmini Config using Verilator
+      - name: Run MX (FP4/FP6/FP8) tests on spike and Verilator
         run: |
-          .github/scripts/do-rtl-build.sh
-
-  rtl-run-tests:
-    runs-on: as4
-    needs: build-gemmini-config
-    steps:
-      - name: Delete old checkout
-        run: |
-            rm -rf ${{ github.workspace }}/* || true
-            rm -rf ${{ github.workspace }}/.* || true
-      - uses: actions/checkout@v3
-      - name: Run Gemmini Config tests using Verilator
-        run: |
-          .github/scripts/run-tests-rtl.sh
+          .github/scripts/run-tests-mx.sh
 
   cleanup:
     name: cleanup
-    needs: [spike-run-tests, rtl-run-tests]
+    needs: [mx-run-tests]
     runs-on: as4
     if: ${{ always() }}
     steps:

@@ -15,7 +15,14 @@ git clone --progress --verbose https://github.com/ucb-bar/chipyard.git $LOCAL_CH
 cd $LOCAL_CHIPYARD_DIR
 
 git fetch
-git checkout $(cat $LOCAL_CHECKOUT_DIR/CHIPYARD.hash)
+git checkout $CHIPYARD_BRANCH
+
+# Pin the gemmini submodule (used by build-setup.sh) to the branch matching
+# this PR's RoCC funct layout. Submodules are otherwise init'd at chipyard's
+# recorded gitlink commit, which can be ahead/behind for MX work.
+git submodule update --init generators/gemmini
+git -C generators/gemmini fetch origin
+git -C generators/gemmini checkout $GEMMINI_SUBMODULE_BRANCH
 
 export MAKEFLAGS="-j32"
 ./build-setup.sh riscv-tools -s 6 -s 7 -s 8 -s 9 -v
