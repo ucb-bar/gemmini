@@ -21,11 +21,17 @@ git submodule update --init generators/gemmini
 git -C generators/gemmini fetch origin
 git -C generators/gemmini checkout $GEMMINI_SUBMODULE_BRANCH
 
-# Radiance generator is needed by RadianceGemminiOnlyConfig; pin it to main
-# so the verilator elaborate picks up the matching radiance side of MX work.
-git submodule update --init generators/radiance
+git submodule update --init --recursive generators/radiance
 git -C generators/radiance fetch origin
 git -C generators/radiance checkout $RADIANCE_SUBMODULE_BRANCH
+git -C generators/radiance submodule update --init --recursive
+
+export RUSTUP_USE_CURL=1
+export CURL_IPRESOLVE=4
+export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+export CARGO_NET_RETRY=10
+export CARGO_HTTP_TIMEOUT=60
+(cd generators/radiance/cyclotron && cargo fetch)
 
 export MAKEFLAGS="-j32"
 ./build-setup.sh riscv-tools -s 6 -s 7 -s 8 -s 9 -v

@@ -14,6 +14,10 @@ LOCAL_CHECKOUT_DIR=$GITHUB_WORKSPACE
 LOCAL_CHIPYARD_DIR=$REMOTE_WORK_DIR
 LOCAL_SIM_DIR=$LOCAL_CHIPYARD_DIR/sims/vcs
 
+export CARGO_HOME=$HOME/.cargo
+export RUSTUP_HOME=$HOME/.rustup
+export PATH=$HOME/.cargo/bin:$PATH
+
 CICONFIG=chipyard.config.WithNoDebug_GemminiRocketConfig
 
 # Branches used by install-gemmini.sh. The chipyard branch needs the
