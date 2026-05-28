@@ -635,7 +635,8 @@ object Arithmetic {
           inActBusWidth    = m1.bits.getWidth,
           inWeiBusWidth    = m2.bits.getWidth,
           productFormat    = MxFormat(fpProductPrecision._1, fpProductPrecision._2),
-          accFormat        = MxFormat(fpAccPrecision.expWidth, fpAccPrecision.sigWidth)
+          accFormat        = MxFormat(fpAccPrecision.expWidth, fpAccPrecision.sigWidth),
+          useMxPEAddRecFN  = false,   // true = fused (B-style, peMag/peExp → MxPEAddRecFN); false = legacy useDefault chain
         )
         val macc = Module(new mxgen.MxFpMul(macConfig, lut = false))
         val result = Wire(MxFloat(macc.cType.exp, macc.cType.sig, 4, true))
