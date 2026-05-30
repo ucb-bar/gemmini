@@ -19,23 +19,7 @@ source env.sh
 # Put Synopsys VCS (and its license server) on PATH for the sims/vcs run.
 source /ecad/tools/vlsi.bashrc
 
-# Install the in-repo libgemmini.so over chipyard's stale copy.
-cd $LOCAL_CHECKOUT_DIR
-chown -R $(whoami) .
-git config --global --add safe.directory $LOCAL_CHECKOUT_DIR
-git config --global --add safe.directory '*'
-rm -rf $RISCV/lib/libgemmini.so
-git submodule update --init software/libgemmini
-make -C software/libgemmini install
-
 TESTS_DIR=$LOCAL_CHIPYARD_DIR/generators/gemmini/software/gemmini-rocc-tests
-
-# Build both binary flavours:
-#   build_spike/  -> -DSPIKE_SIM ROCC-only path
-#   build/        -> default MMIO path used by RTL
-cd $TESTS_DIR
-./build_spike.sh
-./build.sh
 
 PASS=()
 FAIL=()

@@ -17,3 +17,16 @@ source /ecad/tools/vlsi.bashrc
 
 cd $LOCAL_SIM_DIR
 make -j$LOCAL_MAKE_NPROC -C $LOCAL_SIM_DIR CONFIG=$MX_CICONFIG
+
+cd $LOCAL_CHECKOUT_DIR
+chown -R $(whoami) .
+git config --global --add safe.directory $LOCAL_CHECKOUT_DIR
+git config --global --add safe.directory '*'
+rm -rf $RISCV/lib/libgemmini.so
+git submodule update --init software/libgemmini
+make -C software/libgemmini install
+
+TESTS_DIR=$LOCAL_CHIPYARD_DIR/generators/gemmini/software/gemmini-rocc-tests
+cd $TESTS_DIR
+./build_spike.sh
+./build.sh
