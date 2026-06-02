@@ -14,6 +14,34 @@ class MaxBounds extends Bundle {
   val k = UInt(9.W)
 }
 
+class ExControllerMxScalingIO(
+  scaleMemWriteAddrWidth: Int,
+  meshRows: Int,
+  tileRows: Int,
+) extends Bundle {
+  val scale_mem_mvout_base_addr_act = Output(UInt(scaleMemWriteAddrWidth.W))
+  val quant_lut_update_granularity = Output(UInt(16.W))
+  val scaleMemCntl = Output(new ScalingFactorCntl(meshRows*tileRows))
+  val loop_bounds = Output(new MaxBounds)
+  val output_MxFormat = Output(UInt(2.W))
+  val activation_mx_format_out = Output(UInt(2.W))
+  val weight_mx_format_out = Output(UInt(2.W))
+  val enable_MXQuant = Output(Bool())
+}
+
+class ExControllerMxScalingRegs extends Bundle {
+  val activation_mx_format = UInt(2.W)
+  val weight_mx_format = UInt(2.W)
+  val output_mx_format = UInt(2.W)
+  val uselut = Bool()
+  val enable_mxquant = Bool()
+
+  // loop bounds
+  val loop_bound_i = UInt(9.W)
+  val loop_bound_j = UInt(9.W)
+  val loop_bound_k = UInt(9.W)
+}
+
 // TODO do we still need to flush when the dataflow is weight stationary? Won't the result just keep travelling through on its own?
 class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: Int, config: GemminiArrayConfig[T, U, V])
                                   (implicit p: Parameters, ev: Arithmetic[T]) extends Module {
@@ -52,18 +80,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val completed = Valid(UInt(log2Up(reservation_station_entries).W))
     val busy = Output(Bool())
 
-    val output_MxFormat = Output(UInt(2.W))
-    val activation_mx_format_out = Output(UInt(2.W))
-    val weight_mx_format_out = Output(UInt(2.W))
-    val enable_MXQuant = Output(Bool())
 
     val counter = new CounterEventIO()
     val read_d = Output(Bool())
     val read_a = Output(Bool())
-    val scale_mem_mvout_base_addr_act = Output(UInt(scale_mem.get.ScaleMemWriteAddrWidth.W))
-    val quant_lut_update_granularity = Output(UInt(16.W))
-    val scaleMemCntl = Output(new ScalingFactorCntl(meshRows*tileRows))
-    val loop_bounds = Output(new MaxBounds)
+
+    val mx = if (use_mx_scaling) { Some(new ExControllerMxScalingIO(scale_mem.get.ScaleMemWriteAddrWidth, meshRows, tileRows))} else {None}
   })
 
 
@@ -106,23 +128,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // Instruction-related variables
   val current_dataflow = if (dataflow == Dataflow.BOTH) Reg(UInt(1.W)) else dataflow.id.U
-  
-  // val scale_mem_act_read_base_addr = RegInit(0.U(xLen.W))      // act mvin
-  // val scale_mem_act_write_base_addr = RegInit(0.U(xLen.W))     // act mvout
-  // val scale_mem_weight_read_base_addr = RegInit(0.U(xLen.W))   // weight mvin
-  // val scale_mem_weight_write_base_addr = RegInit(0.U(xLen.W))  // weight mvout
-
-  val activation_mx_format = RegInit(0.U(2.W))
-  val weight_mx_format = RegInit(0.U(2.W))
-  val output_mx_format = RegInit(0.U(2.W))
-  io.output_MxFormat := output_mx_format
-  io.activation_mx_format_out := activation_mx_format
-  io.weight_mx_format_out := weight_mx_format
-  
-  val uselut = RegInit(false.B)
-  val enable_mxquant = RegInit(false.B)
-  io.enable_MXQuant := enable_mxquant
-  
   val functs = cmd.bits.map(_.cmd.inst.funct)
   val rs1s = VecInit(cmd.bits.map(_.cmd.rs1))
   val rs2s = VecInit(cmd.bits.map(_.cmd.rs2))
@@ -141,30 +146,35 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val scale_mem_read_act_sel = RegInit(0.U(1.W))
   val scale_mem_read_w_sel = RegInit(0.U(1.W))
   val scale_mem_counter_reset_flag = RegInit(0.U(1.W))
-  val loop_bound_i = RegInit(0.U(9.W))
-  val loop_bound_j = RegInit(0.U(9.W))
-  val loop_bound_k = RegInit(0.U(9.W))
 
-  io.loop_bounds.i := loop_bound_i
-  io.loop_bounds.j := loop_bound_j
-  io.loop_bounds.k := loop_bound_k
-
+  val mx_state = if (use_mx_scaling) Some(RegInit((0.U).asTypeOf(new ExControllerMxScalingRegs))) else None
   when(functs(0) === CONFIG_SCALE_MEM) {
-      scale_mem_mvout_base_addr_act := rs1s(0)(32,0) 
-      loop_bound_i := rs1s(0)(41,33)
-      loop_bound_j := rs1s(0)(50,42)
-      loop_bound_k := rs1s(0)(59,51)
+      if (use_mx_scaling) {
+        mx_state.get.loop_bound_i := rs1s(0)(41,33)
+        mx_state.get.loop_bound_j := rs1s(0)(50,42)
+        mx_state.get.loop_bound_k := rs1s(0)(59,51)
+      }
+
+      scale_mem_mvout_base_addr_act := rs1s(0)(32,0)
       scale_mem_read_act_sel := rs1s(0)(60)
       scale_mem_read_w_sel := rs1s(0)(61)
       scale_mem_counter_reset_flag := rs1s(0)(62)
       quant_lut_update_granularity :=  rs2s(0)(15,0)
-  } 
-  dontTouch(loop_bound_i)
-  dontTouch(loop_bound_j)
-  dontTouch(loop_bound_k)
-  io.scale_mem_mvout_base_addr_act := scale_mem_mvout_base_addr_act
-  io.quant_lut_update_granularity := quant_lut_update_granularity
+  }
 
+  if (use_mx_scaling) {
+    io.mx.get.output_MxFormat := mx_state.get.output_mx_format
+    io.mx.get.activation_mx_format_out := mx_state.get.activation_mx_format
+    io.mx.get.weight_mx_format_out := mx_state.get.weight_mx_format
+    io.mx.get.enable_MXQuant := mx_state.get.enable_mxquant
+    io.mx.get.scale_mem_mvout_base_addr_act := scale_mem_mvout_base_addr_act
+    io.mx.get.quant_lut_update_granularity := quant_lut_update_granularity
+
+    // loop bounds
+    io.mx.get.loop_bounds.i := mx_state.get.loop_bound_i
+    io.mx.get.loop_bounds.j := mx_state.get.loop_bound_j
+    io.mx.get.loop_bounds.k := mx_state.get.loop_bound_k
+  }
 
   val in_prop = functs(0) === COMPUTE_AND_FLIP_CMD
 
@@ -265,9 +275,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecisionList, meshAccPrecisionList))
  
-  mesh.io.activation_mx_format := activation_mx_format
-  mesh.io.weight_mx_format := weight_mx_format
-  
+  if (use_mx_scaling) {
+    mesh.io.activation_mx_format := mx_state.get.activation_mx_format
+    mesh.io.weight_mx_format := mx_state.get.weight_mx_format
+  }
 
   mesh.io.a.valid := false.B
   mesh.io.b.valid := false.B
@@ -355,17 +366,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val a_garbage = a_address_rs1.is_garbage() || !start_inputting_a
   val b_garbage = b_address_rs2.is_garbage() || !start_inputting_b
   val d_garbage = d_address_rs1.is_garbage() || !start_inputting_d
-
-
-  //MX format related
-  //val b_data_buffer = Reg(UInt(sp_width.W))
-  // val d_data_buffer = Reg(UInt(sp_width.W))
-
-  // //  buffer valid indicators
-  // val d_buffer_valid = RegInit(false.B)
-
-  // // half buffer indicators
-  // val d_buffer_half = RegInit(false.B)
 
 
   // TODO merge these into one enum
@@ -456,18 +456,21 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val d_fire = d_valid && d_ready
 
   val firing = start_inputting_a || start_inputting_b || start_inputting_d
-  io.scaleMemCntl.scale_mem_counter_reset_flag := (scale_mem_counter_reset_flag ===1.U) && (RegNext(functs(0)) === CONFIG_SCALE_MEM)
-  io.scaleMemCntl.counter_a := a_fire_counter
-  io.scaleMemCntl.counter_b := b_fire_counter
-  io.scaleMemCntl.fire_a := a_fire 
-  io.scaleMemCntl.fire_b := b_fire
-  io.scaleMemCntl.scale_mem_read_act_sel := scale_mem_read_act_sel 
-  io.scaleMemCntl.scale_mem_read_w_sel := scale_mem_read_w_sel
-  io.scaleMemCntl.loop_bound_i := loop_bound_i
-  io.scaleMemCntl.loop_bound_j := loop_bound_j
-  io.scaleMemCntl.loop_bound_k := loop_bound_k
-  io.scaleMemCntl.baseAddress_act := scale_mem_mvin_base_addr_act
-  io.scaleMemCntl.baseAddress_w := scale_mem_mvin_base_addr_w
+
+  if (use_mx_scaling) {
+    io.mx.get.scaleMemCntl.scale_mem_counter_reset_flag := (scale_mem_counter_reset_flag === 1.U) && (RegNext(functs(0)) === CONFIG_SCALE_MEM)
+    io.mx.get.scaleMemCntl.counter_a := a_fire_counter
+    io.mx.get.scaleMemCntl.counter_b := b_fire_counter
+    io.mx.get.scaleMemCntl.fire_a := a_fire
+    io.mx.get.scaleMemCntl.fire_b := b_fire
+    io.mx.get.scaleMemCntl.scale_mem_read_act_sel := scale_mem_read_act_sel
+    io.mx.get.scaleMemCntl.scale_mem_read_w_sel := scale_mem_read_w_sel
+    io.mx.get.scaleMemCntl.loop_bound_i := mx_state.get.loop_bound_i
+    io.mx.get.scaleMemCntl.loop_bound_j := mx_state.get.loop_bound_j
+    io.mx.get.scaleMemCntl.loop_bound_k := mx_state.get.loop_bound_k
+    io.mx.get.scaleMemCntl.baseAddress_act := scale_mem_mvin_base_addr_act
+    io.mx.get.scaleMemCntl.baseAddress_w := scale_mem_mvin_base_addr_w
+  }
 
   when (!firing) {
     a_fire_counter := 0.U
@@ -554,9 +557,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
         Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
           read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter_mulpre)))
       
-      io.srams.read(i).req.bits.input_mx_format := activation_mx_format
-      io.srams.read(i).req.bits.weight_mx_format := weight_mx_format
-      
+      if (use_mx_scaling) {
+        io.srams.read(i).req.bits.input_mx_format := mx_state.get.activation_mx_format
+        io.srams.read(i).req.bits.weight_mx_format := mx_state.get.weight_mx_format
+      }
+
       // TODO this just overrides the previous line. Should we erase the previous line?
       when(im2col_en === false.B) {
         io.srams.read(i).req.bits.addr := MuxCase(a_address.sp_row(),
@@ -592,8 +597,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
 
     if (ex_read_from_acc) {
-      io.acc.read_req(i).bits.weight_mx_format := weight_mx_format
-      io.acc.read_req(i).bits.activation_mx_format := activation_mx_format
+      if (use_mx_scaling) {
+        io.acc.read_req(i).bits.weight_mx_format := mx_state.get.weight_mx_format
+        io.acc.read_req(i).bits.activation_mx_format := mx_state.get.activation_mx_format
+      }
       io.acc.read_req(i).valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
       io.acc.read_req(i).bits.scale := acc_scale
       io.acc.read_req(i).bits.full := false.B
@@ -686,14 +693,17 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_t) // TODO magic number
               a_transpose := config_ex_rs1.a_transpose
               bd_transpose := config_ex_rs1.b_transpose
-              activation_mx_format := config_ex_rs1.activation_mx_format
-              weight_mx_format := config_ex_rs1.weight_mx_format
-              output_mx_format := config_ex_rs1.output_mx_format
-              uselut := config_ex_rs1.uselut
-              when (config_ex_rs1.output_mx_format =/= 3.U){
-                enable_mxquant := true.B
-              }.otherwise {
-                enable_mxquant := false.B
+
+              if (use_mx_scaling) {
+                mx_state.get.activation_mx_format := config_ex_rs1.activation_mx_format
+                mx_state.get.weight_mx_format := config_ex_rs1.weight_mx_format
+                mx_state.get.output_mx_format := config_ex_rs1.output_mx_format
+                mx_state.get.uselut := config_ex_rs1.uselut
+                when(config_ex_rs1.output_mx_format =/= 3.U) {
+                  mx_state.get.enable_mxquant := true.B
+                }.otherwise {
+                  mx_state.get.enable_mxquant := false.B
+                }
               }
               if (dataflow == Dataflow.BOTH) {
                 current_dataflow := config_ex_rs1.dataflow
@@ -1097,8 +1107,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val write_this_row = Mux(current_dataflow === Dataflow.WS.id.U, output_counter < w_matrix_rows,
     w_total_output_rows - 1.U - output_counter < w_matrix_rows)
-  val w_mask = Mux(activation_mx_format === 0.U, VecInit((0 until block_size).map(e => offset <= e.U && e.U < (offset +& w_matrix_cols / 4.U))),
-    VecInit((0 until block_size).map(_.U < w_matrix_cols))) // This is an element-wise mask, rather than a byte-wise mask
+
+  val w_mask = if (use_mx_scaling) {
+    Mux(mx_state.get.activation_mx_format === 0.U, VecInit((0 until block_size).map(e => offset <= e.U && e.U < (offset +& w_matrix_cols / 4.U))),
+      VecInit((0 until block_size).map(_.U < w_matrix_cols))) // This is an element-wise mask, rather than a byte-wise mask
+  } else {
+      VecInit((0 until block_size).map(_.U < w_matrix_cols))
+  }
 
   // Write to normal scratchpad
   for(i <- 0 until sp_banks) {
@@ -1128,24 +1143,27 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     if (ex_write_to_acc) {
       io.acc.write(i).valid := start_array_outputting && w_bank === i.U && write_to_acc && !is_garbage_addr && write_this_row
       io.acc.write(i).bits.addr := w_row
-      // io.acc.write(i).bits.data := Mux(activation_mx_format === 0.U, (VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType).asUInt(15,0))))).asUInt << (offset * 64.U)).asTypeOf(io.acc.write(i).bits.data),
-      //   // Mux(activation_mx_format === 1.U || activation_mx_format === 2.U, VecInit((mesh.io.resp.bits.data.flatten.grouped(2).map(_(0)).toSeq ++ mesh.io.resp.bits.data.flatten.grouped(2).map(_(1)).toSeq).map(e=>e.withWidthOf(accType))).asUInt.asTypeOf(io.acc.write(i).bits.data),
-      //   // VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))))
-      //  VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType))))))
-      io.acc.write(i).bits.data := Mux(activation_mx_format === 0.U, (VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType).asUInt(15,0))))).asUInt << (offset * 64.U)).asTypeOf(io.acc.write(i).bits.data),
-        Mux(activation_mx_format === 1.U || activation_mx_format === 2.U, {
-          // flat16 (64 elems): [r0_c0, r0_c1, r1_c0, r1_c1, r0_c2, r0_c3, r1_c2, r1_c3, ... r0_c30, r0_c31, r1_c30, r1_c31]
-          // Pattern repeats every 4: pos%4∈{0,1} → row-0, pos%4∈{2,3} → row-1
+
+      val normal_data = VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))
+      io.acc.write(i).bits.data := normal_data
+
+      if (use_mx_scaling) {
+        val activation_mx_format = mx_state.get.activation_mx_format
+        val fmt0_data = (VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType).asUInt(15, 0))))).asUInt << (offset * 64.U)).asTypeOf(io.acc.write(i).bits.data)
+        val packed_data = {
           val flat16 = mesh.io.resp.bits.data.flatten.flatMap { e =>
             val w = e.withWidthOf(accType).asUInt
             Seq(w(15, 0), w(31, 16), w(47, 32), w(63, 48))
           }
-          val row0 = flat16.zipWithIndex.filter { case (_, k) => k % 4 < 2  }.map(_._1) // r0_c0..c31
+          val row0 = flat16.zipWithIndex.filter { case (_, k) => k % 4 < 2 }.map(_._1) // r0_c0..c31
           val row1 = flat16.zipWithIndex.filter { case (_, k) => k % 4 >= 2 }.map(_._1) // r1_c0..c31
           val row0Words = row0.grouped(4).map { g => Cat(g(3), g(2), g(1), g(0)) }.toSeq
           val row1Words = row1.grouped(4).map { g => Cat(g(3), g(2), g(1), g(0)) }.toSeq
-          VecInit(row0Words ++ row1Words).asUInt.asTypeOf(io.acc.write(i).bits.data)},
-          VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map(e => e.withWidthOf(accType)))))))
+
+          VecInit(row0Words ++ row1Words).asUInt.asTypeOf(io.acc.write(i).bits.data)
+        }
+        io.acc.write(i).bits.data := Mux(activation_mx_format === 0.U, fmt0_data, packed_data)
+      }
 
       io.acc.write(i).bits.acc := w_address_sp.accumulate
       io.acc.write(i).bits.mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))

@@ -168,7 +168,6 @@ object GemminiConfigs {
     ex_read_from_acc = true,
     ex_write_to_spad = true,
     ex_write_to_acc = true,
-    use_mx_scaling = true
   )
 
   val dummyConfig = GemminiArrayConfig[DummySInt, Float, Float](

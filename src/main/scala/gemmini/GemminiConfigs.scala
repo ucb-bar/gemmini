@@ -116,7 +116,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              requantizer: Option[GemminiRequantizerConfig] = None,
                                                                              lut: Option[GemminiLUTConfig] = None,
                                                                              enable_lut: Boolean = true,
-                                                                             use_mx_scaling: Boolean = true,
+                                                                             use_mx_scaling: Boolean = false,
                                                                              testConfig: Boolean = false,
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {

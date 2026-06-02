@@ -11,7 +11,9 @@ import freechips.rocketchip.util.{BundleField, ClockGate}
 import freechips.rocketchip.tilelink._
 import GemminiISA._
 import Util._
-import freechips.rocketchip.diplomacy.{AddressSet, IdRange, TransferSizes}
+import freechips.rocketchip.diplomacy.{AddressSet, IdRange, SimpleDevice, TransferSizes}
+import freechips.rocketchip.regmapper.{RegField, RegReadFn, RegWriteFn}
+import freechips.rocketchip.tilelink.TLRegisterNode
 import org.chipsalliance.diplomacy.lazymodule.LazyModule
 
 class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
@@ -94,6 +96,51 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   override val atlNode = if (config.use_dedicated_tl_port) TLIdentityNode() else spad.id_node
 
   val node = if (config.use_dedicated_tl_port) tlNode else atlNode
+
+  // Standalone MMIO path to mx_io endpoints; parent config attaches to cbus.
+  // Disabled in radiance builds (use_shared_ext_mem=true), which use mx_io.
+  val use_mx_mmio = config.use_mx_scaling && !config.use_shared_ext_mem
+  val mx_mmio_node = Option.when(use_mx_mmio) {
+    TLRegisterNode(
+      address     = Seq(AddressSet(config.tl_ext_mem_base + 0x100000L, 0xfffL)),
+      device      = new SimpleDevice("gemmini-mx-mmio", Seq("ucbbar,gemmini-mx-mmio")),
+      beatBytes   = 8,
+      concurrency = 1)
+  }
+  // Push-side master for requantizer output: gemmini issues TL Puts to
+  // out.bits.address whenever the requantizer produces a result, mirroring
+  // radiance's requantizerSmemClient. Standalone config attaches to sysbus.
+  val mx_requant_out_client = Option.when(use_mx_mmio) {
+    val q = config.requantizer.get
+    val minBytes = q.numOutputLanes * q.minOutputBits / 8
+    val maxBytes = q.numOutputLanes * q.maxOutputBits / 8
+    TLClientNode(Seq(TLMasterPortParameters.v1(
+      clients = Seq(TLMasterParameters.v2(
+        name     = "gemmini-mx-requant-out",
+        sourceId = IdRange(0, 1 << q.outputIdBits),
+        emits    = TLMasterToSlaveTransferSizes(
+          putFull    = TransferSizes(minBytes, maxBytes),
+          putPartial = TransferSizes(minBytes, maxBytes)
+        )
+      ))
+    )))
+  }
+  // Push-side master for output scaling factors: gemmini issues fixed-width
+  // TL Puts whenever mx_requantizer.io.scaleMem_write fires.
+  val mx_scale_fac_out_client = Option.when(use_mx_mmio) {
+    val s = config.scale_mem.get
+    val dataBytes = s.ScaleMemWriteDataWidth / 8
+    TLClientNode(Seq(TLMasterPortParameters.v1(
+      clients = Seq(TLMasterParameters.v2(
+        name     = "gemmini-mx-scale-fac-out",
+        sourceId = IdRange(0, 1 << 4),
+        emits    = TLMasterToSlaveTransferSizes(
+          putFull    = TransferSizes(dataBytes, dataBytes),
+          putPartial = TransferSizes(dataBytes, dataBytes)
+        )
+      ))
+    )))
+  }
 }
 
 class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
@@ -161,22 +208,42 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     ext_mem_io.foreach(_ <> outer.spad.module.io.ext_mem.get)
   }
 
+  val tagWidth = 32
+
+  // Counters
+  val counters = Module(new CounterController(outer.config.num_counter, outer.xLen))
+  io.resp <> counters.io.out  // Counter access command will be committed immediately
+  counters.io.event_io.external_values(0) := 0.U
+  counters.io.event_io.event_signal(0) := false.B
+  counters.io.in.valid := false.B
+  counters.io.in.bits := DontCare
+  counters.io.event_io.collect(spad.module.io.counter)
+
+  // TLB
+  implicit val edge = outer.spad.id_node.edges.out.head
+  val tlb = Module(new FrontendTLB(if (outer.config.use_tl_ext_mem) 3 else 2,
+    tlb_size, dma_maxbytes, use_tlb_register_filter, use_firesim_simulation_counters, use_shared_tlb))
+  (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
+
+  tlb.io.exp.foreach(_.flush_skip := false.B)
+  tlb.io.exp.foreach(_.flush_retry := false.B)
+
+  io.ptw <> tlb.io.ptw
+
+  counters.io.event_io.collect(tlb.io.counter)
+
+  spad.module.io.flush := tlb.io.exp.map(_.flush()).reduce(_ || _)
 
   val clock_en_reg = RegInit(true.B)
   val gated_clock = if (clock_gate) ClockGate(clock, clock_en_reg, "gemmini_clock_gate") else clock
   outer.spad.module.clock := gated_clock
+
   //=========================================================================
   // Controllers
   //=========================================================================
   val load_controller = withClock (gated_clock) { Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t)) }
   val store_controller = withClock (gated_clock) { Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t)) }
   val ex_controller = withClock (gated_clock) { Module(new ExecuteController(xLen, tagWidth, outer.config)) }
-
-  
-  //val scaleMembasewrite := config.scaleMembasewrite
-
-
-  
   val mx_requantizer = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
     val q = outer.config.requantizer.get
     val l = outer.config.lut.get
@@ -203,18 +270,20 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
 
   mx_requantizer.foreach { req =>
+    require(outer.config.use_mx_scaling, "use_mx_scaling needs to be true if mx_requantizer is defined")
     req.io.scaleMem_write.ready := false.B
-    //req.io.fp8_mode := false.B
-    req.io.scale_mem_mvout_base_addr_act := ex_controller.io.scale_mem_mvout_base_addr_act
-    req.io.quant_lut_update_granularity := ex_controller.io.quant_lut_update_granularity
+    req.io.scale_mem_mvout_base_addr_act := ex_controller.io.mx.get.scale_mem_mvout_base_addr_act
+    req.io.quant_lut_update_granularity := ex_controller.io.mx.get.quant_lut_update_granularity
   }
 
 
-  val mx_io = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
+  val mx_io = Option.when(outer.config.use_mx_scaling && outer.config.use_shared_ext_mem) {
+    require(outer.config.requantizer.isDefined && outer.config.lut.isDefined, "requantizer and lut need to be defined if using mx_scaling")
     val q = outer.config.requantizer.get
     val l = outer.config.lut.get
     val s = outer.config.scale_mem.get
-    val mx_io = IO(new Bundle {
+
+    IO(new Bundle {
       val scale_mem_write_w = Flipped(Decoupled(new ScalingFactorWriteReq(s)))
       val scale_mem_write_act = Flipped(Decoupled(new ScalingFactorWriteReq(s)))
       val requant_in_gpu = Flipped(Decoupled(new RequantizerInBundle(q.numGPUInputLanes, q.inputBits)))
@@ -224,26 +293,223 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val lut2 = Flipped(Decoupled(new QuantLutWriteBundle(l(2))))
       val scale_factor_out = Decoupled(new ScalingFactorWriteReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))
     })
-
-    
-    spad.module.io.scale_mem_write_w.get <> mx_io.scale_mem_write_w
-    spad.module.io.scale_mem_write_act.get <> mx_io.scale_mem_write_act 
-    mx_requantizer.get.io.requant_data_out <>  mx_io.requant_out
-    mx_requantizer.get.io.requant_data_in_gpu <> mx_io.requant_in_gpu
-    mx_io.scale_factor_out <> mx_requantizer.get.io.scaleMem_write
-    mx_requantizer.get.io.lut0_write <> mx_io.lut0
-    mx_requantizer.get.io.lut1_write <> mx_io.lut1
-    mx_requantizer.get.io.lut2_write <> mx_io.lut2
-    
-    mx_io
   }
 
-  // mxRequantizer gets used when reading out data with dma
-  spad.module.io.enable_MXQuant := ex_controller.io.enable_MXQuant
-  store_controller.io.enable_wide_spad_write := !ex_controller.io.enable_MXQuant
-  
-  spad.module.io.weight_mx_format := ex_controller.io.weight_mx_format_out
-  spad.module.io.act_mx_format := ex_controller.io.activation_mx_format_out
+  val (mmio_scale_mem_write_w, mmio_scale_mem_write_act, mmio_requant_in_gpu,
+       mmio_lut0, mmio_lut1, mmio_lut2, mmio_requant_out, mmio_scale_factor_out) =
+    if (outer.use_mx_mmio) {
+      val s = outer.config.scale_mem.get
+      val q = outer.config.requantizer.get
+      val l = outer.config.lut.get
+
+      // ------ helper: latch a flat dataW-bit reg from N×64-bit MMIO writes ------
+      def dataRegFields(base: Int, data_reg: UInt, dataW: Int, offset: Int)
+        : Seq[(Int, Seq[RegField])] = {
+        val data_words = (dataW + 63) / 64
+        Seq.tabulate(data_words) { i =>
+          val hi = math.min(dataW - 1, 64 * (i + 1) - 1)
+          val lo = 64 * i
+          val width = hi - lo + 1
+          (base + offset + 8 * i) -> Seq(RegField(width,
+            RegReadFn(data_reg(hi, lo)),
+            RegWriteFn((wvalid, wdata) => {
+              when (wvalid) {
+                data_reg := (data_reg & ~(((BigInt(1) << width) - 1).U << lo.U).asUInt) |
+                            (wdata(width - 1, 0) << lo.U).asUInt
+              }
+              true.B
+            })))
+        }
+      }
+
+      def goField(base: Int, offset: Int, staged: Bool): (Int, Seq[RegField]) = {
+        (base + offset) -> Seq(RegField(1,
+          RegReadFn(staged),
+          RegWriteFn((wvalid, _) => {
+            when (wvalid && !staged) { staged := true.B }
+            !staged
+          })))
+      }
+
+      // ------ scale-mem write port (W or A) ------
+      def scaleMemPort(base: Int): (DecoupledIO[ScalingFactorWriteReq], Seq[(Int, Seq[RegField])]) = {
+        val addrW = s.addrBits
+        val dataW = s.ScaleMemWriteDataWidth
+        val w = Wire(Decoupled(new ScalingFactorWriteReq(s)))
+
+        val staged   = RegInit(false.B)
+        val addr_reg = RegInit(0.U(addrW.W))
+        val data_reg = RegInit(0.U(dataW.W))
+
+        w.valid     := staged
+        w.bits.addr := addr_reg
+        w.bits.data := data_reg
+        when (w.fire) { staged := false.B }
+
+        val fields = Seq(
+          (base + 0x000) -> Seq(RegField(addrW, addr_reg)),
+          goField(base, 0x028, staged)
+        ) ++ dataRegFields(base, data_reg, dataW, 0x008)
+
+        (w, fields)
+      }
+
+      // ------ requantizer-in port (data Vec + address + dataType + go) ------
+      def requantInPort(base: Int): (DecoupledIO[RequantizerInBundle], Seq[(Int, Seq[RegField])]) = {
+        val numLanes = q.numGPUInputLanes
+        val laneBits = q.inputBits
+        val dataW    = numLanes * laneBits
+        val w = Wire(Decoupled(new RequantizerInBundle(numLanes, laneBits)))
+
+        val staged    = RegInit(false.B)
+        val addr_reg  = RegInit(0.U(32.W))
+        val dtype_reg = RegInit(0.U(2.W))
+        val data_reg  = RegInit(0.U(dataW.W))
+
+        w.valid         := staged
+        w.bits.address  := addr_reg
+        w.bits.dataType := dtype_reg.asTypeOf(RequantizerDataType())
+        w.bits.data     := data_reg.asTypeOf(Vec(numLanes, UInt(laneBits.W)))
+        when (w.fire) { staged := false.B }
+
+        val fields = Seq(
+          (base + 0x000) -> Seq(RegField(32, addr_reg)),
+          (base + 0x008) -> Seq(RegField(2, dtype_reg)),
+          goField(base, 0x030, staged)
+        ) ++ dataRegFields(base, data_reg, dataW, 0x010)
+
+        (w, fields)
+      }
+
+      // ------ LUT write port (data Vec only, no addr/dtype) ------
+      def lutPort(base: Int, idx: Int): (DecoupledIO[QuantLutWriteBundle], Seq[(Int, Seq[RegField])]) = {
+        val (numEntries, numBits) = l(idx)
+        val dataW = numEntries * numBits
+        val w = Wire(Decoupled(new QuantLutWriteBundle(numEntries, numBits)))
+
+        val staged   = RegInit(false.B)
+        val data_reg = RegInit(0.U(dataW.W))
+
+        w.valid     := staged
+        w.bits.data := data_reg.asTypeOf(Vec(numEntries, UInt(numBits.W)))
+        when (w.fire) { staged := false.B }
+
+        val data_words   = (dataW + 63) / 64
+        val go_offset = data_words * 8  // immediately after the data block
+
+        val fields = Seq(
+          goField(base, go_offset, staged)
+        ) ++ dataRegFields(base, data_reg, dataW, 0x000)
+
+        (w, fields)
+      }
+
+      // ------ requant-out (push: gemmini issues TL Puts via mx_requant_out_client) ------
+      // Mirrors radiance GemminiTile.scala:333-361.
+      val rout_wire = {
+        val numLanes = q.numOutputLanes
+        val laneBits = q.maxOutputBits
+        val w = Wire(Flipped(Decoupled(new RequantizerOutBundle(numLanes, laneBits))))
+
+        val (node, edge) = outer.mx_requant_out_client.get.out.head
+        val fullWidth = q.numOutputLanes
+        val halfWidth = q.numOutputLanes / 2
+        val isFP4 = w.bits.dataType === RequantizerDataType.FP4
+
+        val source = RegInit(0.U(q.outputIdBits.W))
+        when (node.a.fire) { source := source + 1.U }
+
+        node.a.bits := edge.Put(
+          fromSource = source,
+          toAddress  = w.bits.address,
+          lgSize     = Mux(isFP4, log2Ceil(halfWidth).U, log2Ceil(fullWidth).U),
+          data       = Mux(isFP4,
+            Mux(w.bits.address(log2Ceil(halfWidth)),
+              (w.bits.data(halfWidth - 1, 0) << halfWidth).asTypeOf(UInt(fullWidth.W)),
+              w.bits.data),
+            w.bits.data
+          )
+        )._2
+        node.a.valid := w.valid
+        w.ready      := node.a.ready
+        node.d.ready := true.B
+
+        w
+      }
+
+      // ------ scale-factor-out (push: gemmini issues fixed-size TL Puts) ------
+      // Fires a TL Put on every w.fire from mx_requantizer.io.scaleMem_write.
+      val sfout_wire = {
+        val w = Wire(Flipped(Decoupled(new ScalingFactorWriteReq(
+          s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))))
+
+        val (node, edge) = outer.mx_scale_fac_out_client.get.out.head
+        val dataBytes = s.ScaleMemWriteDataWidth / 8
+
+        val source = RegInit(0.U(4.W))
+        when (node.a.fire) { source := source + 1.U }
+
+        node.a.bits := edge.Put(
+          fromSource = source,
+          toAddress  = w.bits.addr,
+          lgSize     = log2Ceil(dataBytes).U,
+          data       = w.bits.data
+        )._2
+        node.a.valid := w.valid
+        w.ready      := node.a.ready
+        node.d.ready := true.B
+
+        w
+      }
+
+      val (w_wire, w_fields)     = scaleMemPort(0x000)
+      val (a_wire, a_fields)     = scaleMemPort(0x040)
+      val (rin_wire, rin_fields) = requantInPort(0x080)
+      val (l0_wire, l0_fields)   = lutPort(0x100, 0)
+      val (l1_wire, l1_fields)   = lutPort(0x500, 1)
+      val (l2_wire, l2_fields)   = lutPort(0x900, 2)
+
+      outer.mx_mmio_node.get.regmap(
+        (w_fields ++ a_fields ++ rin_fields ++
+         l0_fields ++ l1_fields ++ l2_fields): _*)
+
+      (Some(w_wire), Some(a_wire), Some(rin_wire),
+       Some(l0_wire), Some(l1_wire), Some(l2_wire),
+       Some(rout_wire), Some(sfout_wire))
+    } else {
+      (None, None, None, None, None, None, None, None)
+    }
+  if (outer.config.use_mx_scaling) {
+    if (outer.config.use_shared_ext_mem) {
+      val b = mx_io.get
+      spad.module.io.scale_mem_write_w.get   <> b.scale_mem_write_w
+      spad.module.io.scale_mem_write_act.get <> b.scale_mem_write_act
+      mx_requantizer.get.io.requant_data_in_gpu <> b.requant_in_gpu
+      mx_requantizer.get.io.requant_data_out    <> b.requant_out
+      b.scale_factor_out                        <> mx_requantizer.get.io.scaleMem_write
+      mx_requantizer.get.io.lut0_write <> b.lut0
+      mx_requantizer.get.io.lut1_write <> b.lut1
+      mx_requantizer.get.io.lut2_write <> b.lut2
+    } else {
+      spad.module.io.scale_mem_write_w.get   <> mmio_scale_mem_write_w.get
+      spad.module.io.scale_mem_write_act.get <> mmio_scale_mem_write_act.get
+      mx_requantizer.get.io.requant_data_in_gpu <> mmio_requant_in_gpu.get
+      mx_requantizer.get.io.requant_data_out    <> mmio_requant_out.get
+      mmio_scale_factor_out.get                 <> mx_requantizer.get.io.scaleMem_write
+      mx_requantizer.get.io.lut0_write <> mmio_lut0.get
+      mx_requantizer.get.io.lut1_write <> mmio_lut1.get
+      mx_requantizer.get.io.lut2_write <> mmio_lut2.get
+    }
+  }
+
+  if (outer.config.use_mx_scaling) {
+    // mxRequantizer gets used when reading out data with dma
+    spad.module.io.enable_MXQuant := ex_controller.io.mx.get.enable_MXQuant
+    store_controller.io.enable_wide_spad_write := !ex_controller.io.mx.get.enable_MXQuant
+
+    spad.module.io.weight_mx_format := ex_controller.io.mx.get.weight_mx_format_out
+    spad.module.io.act_mx_format := ex_controller.io.mx.get.activation_mx_format_out
+  }
 
   val lut_deprojected_data = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
   lut_deprojected_data := 0.U.asTypeOf(lut_deprojected_data)
@@ -259,7 +525,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     for (bank <- 0 until sp_banks) {
       mx_sel(bank) := false.B
       when(read_projected(bank).resp.valid) {
-        mx_sel(bank) := (ex_controller.io.weight_mx_format_out === 1.U)
+        mx_sel(bank) := (ex_controller.io.mx.get.weight_mx_format_out === 1.U)
       }
     }
   }
@@ -305,9 +571,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val proj = read_projected(b).resp
       val padded_data = WireInit(0.U((16 * 12).W))
       val spad_data_vec = proj.bits.data.asTypeOf(Vec(16, UInt(8.W)))
-      when(ex_controller.io.weight_mx_format_out === 0.U) {
+      when(ex_controller.io.mx.get.weight_mx_format_out === 0.U) {
         padded_data := VecInit(spad_data_vec.map(_.pad(12))).asUInt
-      }.elsewhen(ex_controller.io.weight_mx_format_out === 2.U) {
+      }.elsewhen(ex_controller.io.mx.get.weight_mx_format_out === 2.U) {
         padded_data := VecInit(spad_data_vec.map { byte =>
           val nibble_lo = Cat(0.U(2.W), byte(3, 0))
           val nibble_hi = Cat(0.U(2.W), byte(7, 4))
@@ -333,126 +599,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // default
   spad.module.io.mx_req_io <> mx_requantizer.get.io.mxacc_req
-  //mx_requantizer.get.io.requant_data_in <> DontCare
-  //mx_requantizer.get.io.fp8_mode := true.B
-
-
-//  // Connect accumulator memory to mxrequantizer
-//  val acc_mem_in = Reg(chiselTypeOf(spad.module.io.mx_req_io.mx_data_in.bits))
-//  val acc_mem_mx_mode = Reg(chiselTypeOf(spad.module.io.mx_req_io.mx_mode))
-//
-//  val acc_mem_in_data = Mux(spad.module.io.mx_req_io.mx_data_in.fire, spad.module.io.mx_req_io.mx_data_in.bits, acc_mem_in)
-//  acc_mem_in := acc_mem_in_data
-//  acc_mem_mx_mode := Mux(spad.module.io.mx_req_io.mx_data_in.fire, spad.module.io.mx_req_io.mx_mode, acc_mem_mx_mode)
-//
-//  // default
-//  spad.module.io.mx_req_io.mx_data_out.bits.data := acc_mem_in.data
-//  spad.module.io.mx_req_io.mx_data_out.valid := mx_io.get.requant_out.valid
-//  spad.module.io.mx_req_io.mx_data_out.bits.full_data := acc_mem_in.full_data
-//  mx_requantizer.get.io.requant_data_out.ready := spad.module.io.mx_req_io.mx_data_out.ready
-//  mx_requantizer.get.io.requant_data_in.bits.address := DontCare
-//
-//  // acc to mxreq
-//  mx_requantizer.get.io.requant_data_in.bits.data := acc_mem_in.data.asTypeOf(mx_requantizer.get.io.requant_data_in.bits.data) // TODO (nicolas): fix this properly
-//  mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType(spad.module.io.mx_req_io.mx_mode)
-//  mx_requantizer.get.io.requant_data_in.valid := spad.module.io.mx_req_io.mx_data_in.valid
-//  spad.module.io.mx_req_io.mx_data_in.ready := mx_requantizer.get.io.requant_data_in.ready
-//  mx_requantizer.get.io.fp8_mode := spad.module.io.mx_req_io.mx_mode === 0.U
-//
-//  // mxreq to acc
-//  spad.module.io.mx_req_io.mx_data_out.bits.data := mx_io.get.requant_out.bits.data(127, 0).asTypeOf(spad.module.io.mx_req_io.mx_data_out.bits.data) // TODO (nicolas): fix this properly
-//  spad.module.io.mx_req_io.mx_data_out.valid := mx_io.get.requant_out.valid
-//  spad.module.io.mx_req_io.mx_data_out.bits.fromDMA := acc_mem_in.fromDMA
-//  spad.module.io.mx_req_io.mx_data_out.bits.acc_bank_id := acc_mem_in.acc_bank_id
-//  mx_requantizer.get.io.requant_data_out.ready := spad.module.io.mx_req_io.mx_data_out.ready
-
-//  val quant_to_spad_write = if ((outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined)) {
-//    val requantized_writes = Wire(Vec(outer.config.sp_banks,
-//      new ScratchpadWriteIO(outer.config.sp_bank_entries, outer.config.sp_width_projected,
-//        (outer.config.sp_width_projected / (outer.config.aligned_to * 8)) max 1)))
-//
-//    val elements_per_bank = outer.config.sp_width_projected / outer.config.weightType.getWidth
-//
-//    for (i <- 0 until outer.config.sp_banks) {
-//      requantized_writes(i).valid := false.B
-//      requantized_writes(i).addr := DontCare
-//      requantized_writes(i).data := DontCare
-//      requantized_writes(i).mask := VecInit(Seq.fill(requantized_writes(i).mask.length)(true.B))
-//    }
-//
-//    mx_requantizer.get.io.requant_data_in.valid := spad.module.io.mx_req_io.mx_data_in.valid
-//    mx_requantizer.get.io.requant_data_in.bits.data := spad.module.io.mx_req_io.mx_data_out.bits.data.asUInt
-//    mx_requantizer.get.io.fp8_mode := spad.module.io.mx_req_io.mx_mode === 2.U
-//
-//    val any_valid = spad.module.io.mx_req_io.mx_data_in.valid
-//
-//    when(mx_io.get.requant_out.valid) {
-//      val data_bits = MuxLookup(mx_io.get.requant_out.bits.dataType, 256.U)(Seq(
-//        RequantizerDataType.FP4 -> 128.U,
-//        RequantizerDataType.FP6 -> 128.U,
-//        RequantizerDataType.FP8 -> 256.U,
-//      ))
-//
-//      requantized_writes(0).valid := true.B
-//
-//      val extracted_data = MuxLookup(mx_io.get.requant_out.bits.dataType,
-//          mx_io.get.requant_out.bits.data(255, 0))(Seq(
-//          RequantizerDataType.FP4 -> mx_io.get.requant_out.bits.data(127, 0),
-//          RequantizerDataType.FP6 -> mx_io.get.requant_out.bits.data(127, 0),
-//          RequantizerDataType.FP8 -> mx_io.get.requant_out.bits.data(255, 0)
-//      ))
-//      requantized_writes(0).data := extracted_data.pad(256) // TODO (nicolas): fix this hardcoded value
-//
-//    }.elsewhen(any_valid) {
-//      val collected_data = Wire(Vec(outer.config.requantizer.get.numOutputLanes, UInt(outer.config.weightTypeProjected.getWidth.W)))
-//      collected_data := DontCare
-//
-//      // temporary
-//      collected_data := spad.module.io.mx_req_io.mx_data_in
-//
-//      var data_offset = 0
-//      for (bank <- 0 until outer.config.sp_banks) {
-//        val bank_data = ex_controller.io.srams.write(bank).data.asTypeOf(
-//          Vec(elements_per_bank, UInt(outer.config.weightType.getWidth.W)))
-//
-//        when(ex_controller.io.srams.write(bank).valid) {
-//          for (elem_idx <- 0 until elements_per_bank) {
-//            if (data_offset + elem_idx < outer.config.requantizer.get.numOutputLanes) {
-//              collected_data(data_offset + elem_idx) := bank_data(elem_idx)
-//            }
-//          }
-//        }
-//        data_offset += elements_per_bank
-//      }
-//        mx_requantizer.get.io.requant_data_in.bits.data := collected_data
-//
-//      mx_requantizer.get.io.requant_data_in.valid := true.B
-//
-//      when(spad.module.io.mx_req_io.mx_mode === 0.U) {
-//        mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType.FP4
-//      }.elsewhen(spad.module.io.mx_req_io.mx_mode === 1.U) {
-//        mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType.FP6
-//      }.elsewhen(spad.module.io.mx_req_io.mx_mode === 2.U) {
-//        mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType.FP8
-//      }
-
-//    }
-//    .elsewhen(!any_valid) {
-//      val padded_data = VecInit(Seq.fill(32)(0.U(16.W)))
-//      mx_requantizer.get.io.requant_data_in.valid := true.B
-//      mx_requantizer.get.io.requant_data_in.bits.data := padded_data
-//      mx_requantizer.get.io.requant_data_in.bits.dataType := RequantizerDataType.FP8
-//
-//    }.otherwise {
-//      mx_requantizer.get.io.requant_data_in.valid := false.B
-//      mx_requantizer.get.io.requant_data_in.bits := DontCare
-//
-//    }
-//
-//    requantized_writes
-//  } else {
-//    ex_controller.io.srams.write
-//  }
 
   // Writing to spad from ex
   for (i <- 0 until outer.config.sp_banks) {
@@ -466,39 +612,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     spad.module.io.srams.write(i).data := VecInit(spad_data_vec.map(a => a(7, 0))).asUInt
   }
 
-  
-  
-//   mx_io.foreach { io =>
-//   io.requant_in.valid := requant_in_valid
-//   io.requant_in.bits := requant_in_bits
-//   io.requant_in_gpu.ready := requant_in_gpu_ready
-//  }
-
-  val tagWidth = 32
-  
-  // Counters
-  val counters = Module(new CounterController(outer.config.num_counter, outer.xLen))
-  io.resp <> counters.io.out  // Counter access command will be committed immediately
-  counters.io.event_io.external_values(0) := 0.U
-  counters.io.event_io.event_signal(0) := false.B
-  counters.io.in.valid := false.B
-  counters.io.in.bits := DontCare
-  counters.io.event_io.collect(spad.module.io.counter)
-
-  // TLB
-  implicit val edge = outer.spad.id_node.edges.out.head
-  val tlb = Module(new FrontendTLB(if (outer.config.use_tl_ext_mem) 3 else 2,
-    tlb_size, dma_maxbytes, use_tlb_register_filter, use_firesim_simulation_counters, use_shared_tlb))
-  (tlb.io.clients zip outer.spad.module.io.tlb).foreach(t => t._1 <> t._2)
-
-  tlb.io.exp.foreach(_.flush_skip := false.B)
-  tlb.io.exp.foreach(_.flush_retry := false.B)
-
-  io.ptw <> tlb.io.ptw
-
-  counters.io.event_io.collect(tlb.io.counter)
-
-  spad.module.io.flush := tlb.io.exp.map(_.flush()).reduce(_ || _)
 
   /*
   //=========================================================================
@@ -578,24 +691,24 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
   
 
-  loop_matmul.io.activation_mx_format := ex_controller.io.activation_mx_format_out
-  loop_matmul.io.weight_mx_format := ex_controller.io.weight_mx_format_out
-  loop_matmul.io.output_mx_format := ex_controller.io.output_MxFormat
+  loop_matmul.io.activation_mx_format := ex_controller.io.mx.get.activation_mx_format_out
+  loop_matmul.io.weight_mx_format := ex_controller.io.mx.get.weight_mx_format_out
+  loop_matmul.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
 
-  mx_requantizer.get.io.loop_bound_i := ex_controller.io.scaleMemCntl.loop_bound_i
-  mx_requantizer.get.io.loop_bound_j := ex_controller.io.scaleMemCntl.loop_bound_j  
-  mx_requantizer.get.io.loop_bound_k := ex_controller.io.scaleMemCntl.loop_bound_k
+  mx_requantizer.get.io.loop_bound_i := ex_controller.io.mx.get.scaleMemCntl.loop_bound_i
+  mx_requantizer.get.io.loop_bound_j := ex_controller.io.mx.get.scaleMemCntl.loop_bound_j
+  mx_requantizer.get.io.loop_bound_k := ex_controller.io.mx.get.scaleMemCntl.loop_bound_k
 
-  store_controller.io.loop_bound_j := ex_controller.io.loop_bounds.j
-  store_controller.io.activation_mx_type := ex_controller.io.activation_mx_format_out
-  store_controller.io.output_mx_type := ex_controller.io.output_MxFormat
+  store_controller.io.loop_bound_j := ex_controller.io.mx.get.loop_bounds.j
+  store_controller.io.activation_mx_type := ex_controller.io.mx.get.activation_mx_format_out
+  store_controller.io.output_mx_type := ex_controller.io.mx.get.output_MxFormat
 
   mx_requantizer.get.io.read_a := ex_controller.io.read_a
   mx_requantizer.get.io.read_d := ex_controller.io.read_d
-  mx_requantizer.get.io.scale_mem_counter_reset_flag := ex_controller.io.scaleMemCntl.scale_mem_counter_reset_flag
+  mx_requantizer.get.io.scale_mem_counter_reset_flag := ex_controller.io.mx.get.scaleMemCntl.scale_mem_counter_reset_flag
   
   spad.module.io.scaleMemCntl.foreach { spadCnlt =>
-  spadCnlt <> ex_controller.io.scaleMemCntl
+  spadCnlt <> ex_controller.io.mx.get.scaleMemCntl
   }
   spad.module.io.counter_i := loop_matmul.io.counter_i
   spad.module.io.counter_j := loop_matmul.io.counter_j
@@ -603,7 +716,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   spad.module.io.i := loop_matmul.io.i
   spad.module.io.j := loop_matmul.io.j
   spad.module.io.k := loop_matmul.io.k
-  spad.module.io.output_mx_format := ex_controller.io.output_MxFormat
+  spad.module.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
   counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
@@ -706,7 +819,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // }
   
   spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
-  spad.module.io.loop_bounds := ex_controller.io.loop_bounds
+  spad.module.io.loop_bounds := ex_controller.io.mx.get.loop_bounds
   ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
   ex_controller.io.acc.write <> spad.module.io.acc.write
 

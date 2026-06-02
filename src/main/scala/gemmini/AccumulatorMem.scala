@@ -50,7 +50,7 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
 
 
 class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U, half_t: Vec[Vec[T]],
-  acc_sub_banks: Int, use_shared_ext_mem: Boolean, use_mx_scaling: Boolean, meshRows: Int, tileRows: Int, bankWidthBits: Int
+  acc_sub_banks: Int, use_shared_ext_mem: Boolean, use_mx_scaling: Boolean, meshRows: Int, tileRows: Int
 ) extends Bundle {
   val read = Flipped(new AccumulatorReadIO(n, t, scale_t, half_t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
@@ -134,8 +134,8 @@ class AccumulatorMem[T <: Data, U <: Data](
   val half_t = Vec(t.length / 2, t.head.cloneType)
 
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t, scale_t, half_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows, scale_mem.get.bankWidthBits))
-  
+  val io = IO(new AccumulatorMemIO(n, t, scale_t, half_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows))
+
   val scaleFactorMem = scale_mem.map { conf =>
     // println(s"[ScalingFactorMem Config]")
     // println(s"  depth = ${conf.depth}")
@@ -156,15 +156,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   def calculateScaleAddr(write_addr: UInt): UInt = {
     (write_addr & (~("h_f".U)).asUInt).asUInt  // TODO: Using the accmulator write addr to caculate the scaling memory read addr, for simplification
   }
-  // def applyMxScaling(data: Vec[Vec[T]], scales: Vec[Vec[UInt]]): Vec[Vec[T]] = {
-  //   val scaled = Wire(data.cloneType)
-  //   for (i <- 0 until data.length) {
-  //     for (j <- 0 until data(i).length) {
-  //       scaled(i)(j) := applyE9M0Scale(data(i)(j), scales(i)(j), 8, 7)
-  //     }
-  //   }
-  //   scaled 
-  // }
+
   def applyE9M0Scale[T <: Data](
     value: T,
     scale_e9m0: UInt,

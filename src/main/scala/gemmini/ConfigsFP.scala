@@ -251,6 +251,7 @@ object GemminiMxFPConfigs {
     max_in_flight_mem_reqs = 16,
     use_dedicated_tl_port = false,
     use_shared_ext_mem = false,
+    use_mx_scaling = true,
 
     inputType = MxFloat(3, 3, 2, pad=false), //consider worst case for total bit length, inputType maximal is 12bits? same case for projection? 
     weightType = MxFloat(3, 3, 2, pad=false),
