@@ -31,21 +31,25 @@ RADIANCE_SUBMODULE_BRANCH=${RADIANCE_SUBMODULE_BRANCH:-main}
 # RTL config used for the MX (FP4/FP6/FP8) functional-equivalence job.
 MX_CICONFIG=RadianceGemminiOnlyConfig
 
-# The 13 ported MX tiled-matmul tests (passing on spike; expected to pass on
-# RTL). matmul_tiled_fp4_64x64_DRAMMvout is intentionally omitted: it uses the
+# The ported MX (FP4/FP6/FP8) tests (passing on spike; expected to pass on
+# RTL). Each entry is the test binary's path relative to the build directory
+# (i.e. <category>/<name>), so tests outside bareMetalC (e.g. the mlps MNIST
+# end-to-end test) can be listed alongside the tiled-matmul kernels.
+# matmul_tiled_fp4_64x64_DRAMMvout is intentionally omitted: it uses the
 # accumulator -> DRAM mvout path that the spike kernel does not model.
 MX_TESTS=(
-  matmul_tiled_fp8_64x64
-  matmul_tiled_fp8_128x128
-  matmul_tiled_fp8_128x128x256
-  matmul_tiled_fp8_128x128_requant
-  matmul_tiled_fp4_64x64
-  matmul_tiled_fp4_64x64_requant
-  matmul_tiled_fp4_128x128
-  matmul_tiled_fp4_128x128_requant
-  matmul_tiled_fp4_128x128x512
-  matmul_tiled_fp4_128x128x512_requant
-  matmul_tiled_fp6_128x128
-  matmul_tiled_fp6_128x128x512
-  matmul_tiled_fp6_128x128x512_requant
+  bareMetalC/matmul_tiled_fp8_64x64
+  bareMetalC/matmul_tiled_fp8_128x128
+  bareMetalC/matmul_tiled_fp8_128x128x256
+  bareMetalC/matmul_tiled_fp8_128x128_requant
+  bareMetalC/matmul_tiled_fp4_64x64
+  bareMetalC/matmul_tiled_fp4_64x64_requant
+  bareMetalC/matmul_tiled_fp4_128x128
+  bareMetalC/matmul_tiled_fp4_128x128_requant
+  bareMetalC/matmul_tiled_fp4_128x128x512
+  bareMetalC/matmul_tiled_fp4_128x128x512_requant
+  bareMetalC/matmul_tiled_fp6_128x128
+  bareMetalC/matmul_tiled_fp6_128x128x512
+  bareMetalC/matmul_tiled_fp6_128x128x512_requant
+  mlps/mnist_mxgemmini
 )

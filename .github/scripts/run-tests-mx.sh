@@ -41,8 +41,8 @@ echo "================================================================"
 echo "  MX tests on spike"
 echo "================================================================"
 for t in "${MX_TESTS[@]}"; do
-  bin=$TESTS_DIR/build_spike/bareMetalC/${t}-baremetal
-  log=/tmp/mx-spike-${t}.log
+  bin=$TESTS_DIR/build_spike/${t}-baremetal
+  log=/tmp/mx-spike-${t//\//-}.log
   if [ ! -f "$bin" ]; then
     FAIL+=("spike:$t (binary missing)")
     continue
@@ -56,8 +56,8 @@ echo "  MX tests on verilator (CONFIG=$MX_CICONFIG)"
 echo "================================================================"
 cd $LOCAL_SIM_DIR
 for t in "${MX_TESTS[@]}"; do
-  bin=$TESTS_DIR/build/bareMetalC/${t}-baremetal
-  log=/tmp/mx-rtl-${t}.log
+  bin=$TESTS_DIR/build/${t}-baremetal
+  log=/tmp/mx-rtl-${t//\//-}.log
   if [ ! -f "$bin" ]; then
     FAIL+=("rtl:$t (binary missing)")
     continue
