@@ -48,6 +48,8 @@ object GemminiFPConfigs {
     max_in_flight_mem_reqs = 16,
     use_dedicated_tl_port = false,
     use_shared_ext_mem = false,
+    // MX scaling is the default; this is a non-MX (FP) config
+    use_mx_scaling = false,
     inputType = Float(8, 24),
     weightType = Float(8, 24),
     accType = Float(8, 24),

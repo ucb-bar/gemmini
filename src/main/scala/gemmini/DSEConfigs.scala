@@ -36,6 +36,8 @@ object DSEBaseConfig {
     dataflow = Dataflow.OS,
     acc_capacity = CapacityInKilobytes(16),
     spad_read_delay = 1,
+    // MX scaling is the default; this is a non-MX (DSE) config
+    use_mx_scaling = false,
     dma_maxbytes = 128, // TODO get this from cacheblockbytes
     dma_buswidth = 128, // TODO get this from SystemBusKey
     aligned_to = 16,

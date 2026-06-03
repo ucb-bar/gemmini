@@ -295,8 +295,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     })
   }
 
-  val (mmio_scale_mem_write_w, mmio_scale_mem_write_act, mmio_requant_in_gpu,
-       mmio_lut0, mmio_lut1, mmio_lut2, mmio_requant_out, mmio_scale_factor_out) =
+  val (mmio_scale_mem_write_w, mmio_scale_mem_write_act, mmio_requant_in_gpu, mmio_lut0, mmio_lut1, mmio_lut2, mmio_requant_out, mmio_scale_factor_out) =
     if (outer.use_mx_mmio) {
       val s = outer.config.scale_mem.get
       val q = outer.config.requantizer.get
@@ -500,35 +499,21 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_requantizer.get.io.lut1_write <> mmio_lut1.get
       mx_requantizer.get.io.lut2_write <> mmio_lut2.get
     }
-  }
 
-  if (outer.config.use_mx_scaling) {
-    // mxRequantizer gets used when reading out data with dma
     spad.module.io.enable_MXQuant := ex_controller.io.mx.get.enable_MXQuant
     store_controller.io.enable_wide_spad_write := !ex_controller.io.mx.get.enable_MXQuant
 
     spad.module.io.weight_mx_format := ex_controller.io.mx.get.weight_mx_format_out
     spad.module.io.act_mx_format := ex_controller.io.mx.get.activation_mx_format_out
+  } else {
+    // Non-MX build: drive the (unconditional) MX ports to inert defaults.
+    spad.module.io.enable_MXQuant := false.B
+    store_controller.io.enable_wide_spad_write := false.B
+
+    spad.module.io.weight_mx_format := 0.U
+    spad.module.io.act_mx_format := 0.U
   }
 
-  val lut_deprojected_data = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
-  lut_deprojected_data := 0.U.asTypeOf(lut_deprojected_data)
-
-  val read_projected = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
-  // dontTouch(read_projected)
-  //val mx_sel = WireDefault(VecInit(Seq.fill(sp_banks)(false.B)))
-  val mx_sel = Wire(Vec(sp_banks, Bool()))
-  val sram_read_buffer = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
-  // dontTouch(sram_read_buffer)
-
-  if (mx_requantizer.isDefined) {
-    for (bank <- 0 until sp_banks) {
-      mx_sel(bank) := false.B
-      when(read_projected(bank).resp.valid) {
-        mx_sel(bank) := (ex_controller.io.mx.get.weight_mx_format_out === 1.U)
-      }
-    }
-  }
 
   /* 
     Execute Controller - Controller - Spad
@@ -543,73 +528,70 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
    */
 
   // read assignments
-  for (b <- 0 until sp_banks) {
-    // req to srams 
-    // read_projected(b).req <> ex_controller.io.srams.read(b).req
-    read_projected(b).req <> sram_read_buffer(b).req
-    spad.module.io.srams.read(b).req <> read_projected(b).req
 
-    // resp from srams fp4/8
-    read_projected(b).resp.bits.fromDMA := spad.module.io.srams.read(b).resp.bits.fromDMA
-    read_projected(b).resp.bits.weight_mx_format := spad.module.io.srams.read(b).resp.bits.weight_mx_format
-    read_projected(b).resp.bits.input_mx_format := spad.module.io.srams.read(b).resp.bits.input_mx_format
-    read_projected(b).resp.valid := spad.module.io.srams.read(b).resp.valid
-    read_projected(b).resp.bits.data := spad.module.io.srams.read(b).resp.bits.data
-    spad.module.io.srams.read(b).resp.ready := read_projected(b).resp.ready
+  val spad_read = if (outer.config.use_mx_scaling) {
+    val read_projected = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected)))
+    val mx_sel = Wire(Vec(sp_banks, Bool()))
+    val sram_read_buffer = Wire(Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width)))
 
-    // resp from srams fp6 
-    mx_requantizer.get.io.spad_deprojected_data(b).req <> DontCare                                                                 
-    mx_requantizer.get.io.spad_projected_data(b).req <> DontCare     
-   
-    
-    // resp to ex
-    val useMxB = mx_requantizer.isDefined.B && !mx_sel(b)
+    for (b <- 0 until sp_banks) {
+      mx_sel(b) := false.B
+      when(read_projected(b).resp.valid) {
+        mx_sel(b) := (ex_controller.io.mx.get.weight_mx_format_out === 1.U)
+      }
+
+      // req to srams
+      // read_projected(b).req <> ex_controller.io.srams.read(b).req
+      read_projected(b).req <> sram_read_buffer(b).req
+      spad.module.io.srams.read(b).req <> read_projected(b).req
+
+      // resp from srams fp4/8
+      read_projected(b).resp.bits.fromDMA := spad.module.io.srams.read(b).resp.bits.fromDMA
+      read_projected(b).resp.bits.weight_mx_format := spad.module.io.srams.read(b).resp.bits.weight_mx_format
+      read_projected(b).resp.bits.input_mx_format := spad.module.io.srams.read(b).resp.bits.input_mx_format
+      read_projected(b).resp.valid := spad.module.io.srams.read(b).resp.valid
+      read_projected(b).resp.bits.data := spad.module.io.srams.read(b).resp.bits.data
+      spad.module.io.srams.read(b).resp.ready := read_projected(b).resp.ready
+
+      // resp from srams fp6
+      mx_requantizer.get.io.spad_deprojected_data(b).req <> DontCare
+      mx_requantizer.get.io.spad_projected_data(b).req <> DontCare
+
+      // resp to ex
+      val useMxB = mx_requantizer.isDefined.B && !mx_sel(b)
 
       // FP8 mode: bypass requantizer
-    when (useMxB) {
-      // bypass requantizer: expand spad data to 16 x 12-bit for the execute stage
-      val proj = read_projected(b).resp
-      val padded_data = WireInit(0.U((16 * 12).W))
-      val spad_data_vec = proj.bits.data.asTypeOf(Vec(16, UInt(8.W)))
-      when(ex_controller.io.mx.get.weight_mx_format_out === 0.U) {
-        padded_data := VecInit(spad_data_vec.map(_.pad(12))).asUInt
-      }.elsewhen(ex_controller.io.mx.get.weight_mx_format_out === 2.U) {
-        padded_data := VecInit(spad_data_vec.map { byte =>
-          val nibble_lo = Cat(0.U(2.W), byte(3, 0))
-          val nibble_hi = Cat(0.U(2.W), byte(7, 4))
-          Cat(nibble_hi, nibble_lo)
-        }).asUInt
+      when (useMxB) {
+        // bypass requantizer: expand spad data to 16 x 12-bit for the execute stage
+        val proj = read_projected(b).resp
+        val padded_data = WireInit(0.U((16 * 12).W))
+        val spad_data_vec = proj.bits.data.asTypeOf(Vec(16, UInt(8.W)))
+        when(ex_controller.io.mx.get.weight_mx_format_out === 0.U) {
+          padded_data := VecInit(spad_data_vec.map(_.pad(12))).asUInt
+        }.elsewhen(ex_controller.io.mx.get.weight_mx_format_out === 2.U) {
+          padded_data := VecInit(spad_data_vec.map { byte =>
+            val nibble_lo = Cat(0.U(2.W), byte(3, 0))
+            val nibble_hi = Cat(0.U(2.W), byte(7, 4))
+            Cat(nibble_hi, nibble_lo)
+          }).asUInt
+        }
+        sram_read_buffer(b).resp.valid := read_projected(b).resp.valid
+        sram_read_buffer(b).resp.bits.data := padded_data
+        sram_read_buffer(b).resp.bits.fromDMA := read_projected(b).resp.bits.fromDMA
+        sram_read_buffer(b).resp.bits.weight_mx_format := read_projected(b).resp.bits.weight_mx_format
+        sram_read_buffer(b).resp.bits.input_mx_format := read_projected(b).resp.bits.input_mx_format
+        read_projected(b).resp.ready := sram_read_buffer(b).resp.ready
+        mx_requantizer.get.io.spad_projected_data(b).resp.valid := false.B
+        mx_requantizer.get.io.spad_projected_data(b).resp.bits := DontCare
+        mx_requantizer.get.io.spad_deprojected_data(b).resp.ready := false.B
+      }.otherwise {
+        mx_requantizer.get.io.spad_projected_data(b).resp <> read_projected(b).resp
+        sram_read_buffer(b).resp <> mx_requantizer.get.io.spad_deprojected_data(b).resp
       }
-      sram_read_buffer(b).resp.valid := read_projected(b).resp.valid
-      sram_read_buffer(b).resp.bits.data := padded_data
-      sram_read_buffer(b).resp.bits.fromDMA := read_projected(b).resp.bits.fromDMA
-      sram_read_buffer(b).resp.bits.weight_mx_format := read_projected(b).resp.bits.weight_mx_format
-      sram_read_buffer(b).resp.bits.input_mx_format := read_projected(b).resp.bits.input_mx_format
-      read_projected(b).resp.ready := sram_read_buffer(b).resp.ready
-      mx_requantizer.get.io.spad_projected_data(b).resp.valid := false.B
-      mx_requantizer.get.io.spad_projected_data(b).resp.bits := DontCare
-      mx_requantizer.get.io.spad_deprojected_data(b).resp.ready := false.B
-    }.otherwise {
-      mx_requantizer.get.io.spad_projected_data(b).resp <> read_projected(b).resp
-      sram_read_buffer(b).resp <> mx_requantizer.get.io.spad_deprojected_data(b).resp
     }
-  }
-
-  // Connect accumulator memory to mxrequantizer
-
-  // default
-  spad.module.io.mx_req_io <> mx_requantizer.get.io.mxacc_req
-
-  // Writing to spad from ex
-  for (i <- 0 until outer.config.sp_banks) {
-    spad.module.io.srams.write(i).addr := ex_controller.io.srams.write(i).addr  // Default assignments
-    spad.module.io.srams.write(i).mask := ex_controller.io.srams.write(i).mask.take(16)
-
-    ex_controller.io.srams.write(i).ready := spad.module.io.srams.write(i).ready
-    spad.module.io.srams.write(i).valid := ex_controller.io.srams.write(i).valid
-    
-    val spad_data_vec = ex_controller.io.srams.write(i).data.asTypeOf(Vec(16, UInt(12.W)))
-    spad.module.io.srams.write(i).data := VecInit(spad_data_vec.map(a => a(7, 0))).asUInt
+    sram_read_buffer
+  } else {
+    spad.module.io.srams.read
   }
 
 
@@ -690,33 +672,53 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
   
+  if (use_mx_scaling) {
+    loop_matmul.io.activation_mx_format := ex_controller.io.mx.get.activation_mx_format_out
+    loop_matmul.io.weight_mx_format := ex_controller.io.mx.get.weight_mx_format_out
+    loop_matmul.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
 
-  loop_matmul.io.activation_mx_format := ex_controller.io.mx.get.activation_mx_format_out
-  loop_matmul.io.weight_mx_format := ex_controller.io.mx.get.weight_mx_format_out
-  loop_matmul.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
+    mx_requantizer.get.io.loop_bound_i := ex_controller.io.mx.get.scaleMemCntl.loop_bound_i
+    mx_requantizer.get.io.loop_bound_j := ex_controller.io.mx.get.scaleMemCntl.loop_bound_j
+    mx_requantizer.get.io.loop_bound_k := ex_controller.io.mx.get.scaleMemCntl.loop_bound_k
 
-  mx_requantizer.get.io.loop_bound_i := ex_controller.io.mx.get.scaleMemCntl.loop_bound_i
-  mx_requantizer.get.io.loop_bound_j := ex_controller.io.mx.get.scaleMemCntl.loop_bound_j
-  mx_requantizer.get.io.loop_bound_k := ex_controller.io.mx.get.scaleMemCntl.loop_bound_k
+    store_controller.io.loop_bound_j := ex_controller.io.mx.get.loop_bounds.j
+    store_controller.io.activation_mx_type := ex_controller.io.mx.get.activation_mx_format_out
+    store_controller.io.output_mx_type := ex_controller.io.mx.get.output_MxFormat
 
-  store_controller.io.loop_bound_j := ex_controller.io.mx.get.loop_bounds.j
-  store_controller.io.activation_mx_type := ex_controller.io.mx.get.activation_mx_format_out
-  store_controller.io.output_mx_type := ex_controller.io.mx.get.output_MxFormat
+    mx_requantizer.get.io.read_a := ex_controller.io.read_a
+    mx_requantizer.get.io.read_d := ex_controller.io.read_d
+    mx_requantizer.get.io.scale_mem_counter_reset_flag := ex_controller.io.mx.get.scaleMemCntl.scale_mem_counter_reset_flag
 
-  mx_requantizer.get.io.read_a := ex_controller.io.read_a
-  mx_requantizer.get.io.read_d := ex_controller.io.read_d
-  mx_requantizer.get.io.scale_mem_counter_reset_flag := ex_controller.io.mx.get.scaleMemCntl.scale_mem_counter_reset_flag
-  
-  spad.module.io.scaleMemCntl.foreach { spadCnlt =>
-  spadCnlt <> ex_controller.io.mx.get.scaleMemCntl
+    spad.module.io.scaleMemCntl.foreach { spadCnlt =>
+    spadCnlt <> ex_controller.io.mx.get.scaleMemCntl
+    }
+    spad.module.io.counter_i := loop_matmul.io.counter_i
+    spad.module.io.counter_j := loop_matmul.io.counter_j
+    spad.module.io.counter_k := loop_matmul.io.counter_k
+    spad.module.io.i := loop_matmul.io.i
+    spad.module.io.j := loop_matmul.io.j
+    spad.module.io.k := loop_matmul.io.k
+    spad.module.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
+  } else {
+    // Non-MX build: ex_controller.io.mx and mx_requantizer are absent, so drive
+    // the (unconditional) MX ports on loop_matmul/store_controller/spad to inert
+    // defaults. The loop counters still come from loop_matmul, which always has them.
+    loop_matmul.io.activation_mx_format := 0.U
+    loop_matmul.io.weight_mx_format := 0.U
+    loop_matmul.io.output_mx_format := 0.U
+
+    store_controller.io.loop_bound_j := 0.U
+    store_controller.io.activation_mx_type := 0.U
+    store_controller.io.output_mx_type := 0.U
+
+    spad.module.io.counter_i := loop_matmul.io.counter_i
+    spad.module.io.counter_j := loop_matmul.io.counter_j
+    spad.module.io.counter_k := loop_matmul.io.counter_k
+    spad.module.io.i := loop_matmul.io.i
+    spad.module.io.j := loop_matmul.io.j
+    spad.module.io.k := loop_matmul.io.k
+    spad.module.io.output_mx_format := 0.U
   }
-  spad.module.io.counter_i := loop_matmul.io.counter_i
-  spad.module.io.counter_j := loop_matmul.io.counter_j
-  spad.module.io.counter_k := loop_matmul.io.counter_k
-  spad.module.io.i := loop_matmul.io.i
-  spad.module.io.j := loop_matmul.io.j
-  spad.module.io.k := loop_matmul.io.k
-  spad.module.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
   counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
@@ -805,21 +807,31 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Wire up scratchpad to controllers
   spad.module.io.dma.read <> load_controller.io.dma
   spad.module.io.dma.write <> store_controller.io.dma
-  // ex_controller.io.srams.read.req <> spad.module.io.srams.read.req
-  // ex_controller.io.srams.read.resp <> spad.module.io.srams.read.resp
 
-  // if (outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
-  //   for (bank <- 0 until sp_banks) {
-  //     sram_read_buffer(bank) <> spad.module.io.srams.read(bank)
-  //     ex_controller.io.srams.read(bank) <> lut_deprojected_data(bank)
-  //   }
-  // } else{
-  //    ex_controller.io.srams.read <> spad.module.io.srams.read
+  if (outer.config.use_mx_scaling) {
+    spad.module.io.loop_bounds := ex_controller.io.mx.get.loop_bounds
 
-  // }
-  
+    // Connect accumulator memory to mxrequantizer
+    // default
+    spad.module.io.mx_req_io <> mx_requantizer.get.io.mxacc_req
+
+    // Writing to spad from ex
+    for (i <- 0 until outer.config.sp_banks) {
+      spad.module.io.srams.write(i).addr := ex_controller.io.srams.write(i).addr  // Default assignments
+      spad.module.io.srams.write(i).mask := ex_controller.io.srams.write(i).mask.take(16)
+
+      ex_controller.io.srams.write(i).ready := spad.module.io.srams.write(i).ready
+      spad.module.io.srams.write(i).valid := ex_controller.io.srams.write(i).valid
+
+      val spad_data_vec = ex_controller.io.srams.write(i).data.asTypeOf(Vec(16, UInt(12.W)))
+      spad.module.io.srams.write(i).data := VecInit(spad_data_vec.map(a => a(7, 0))).asUInt
+    }
+
+  } else {
+    ex_controller.io.srams.read <> spad.module.io.srams.read
+    ex_controller.io.srams.write <> spad.module.io.srams.write
+  }
   spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
-  spad.module.io.loop_bounds := ex_controller.io.mx.get.loop_bounds
   ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp
   ex_controller.io.acc.write <> spad.module.io.acc.write
 
@@ -833,7 +845,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   ex_controller.io.im2col.resp <> im2col.io.resp
 
   // Wire arbiter for ExecuteController and Im2Col scratchpad reads
-  (ex_controller.io.srams.read, im2col.io.sram_reads, sram_read_buffer).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
+  (ex_controller.io.srams.read, im2col.io.sram_reads, spad_read).zipped.foreach { case (ex_read, im2col_read, spad_read) =>
     val req_arb = Module(new Arbiter(new ScratchpadReadReq(n=sp_bank_entries), 2))
 
     req_arb.io.in(0) <> ex_read.req

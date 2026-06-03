@@ -51,6 +51,9 @@ object GemminiConfigs {
     sp_singleported = true,
     acc_singleported = false,
 
+    // MX scaling is the default; this is a non-MX (integer) config
+    use_mx_scaling = false,
+
     // DNN options
     has_training_convs = true,
     has_max_pool = true,
