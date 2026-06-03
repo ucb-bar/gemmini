@@ -29,12 +29,20 @@ class ExControllerMxScalingIO(
   val enable_MXQuant = Output(Bool())
 }
 
-class ExControllerMxScalingRegs extends Bundle {
+class ExControllerMxScalingRegs (scale_mem_write_addr_width: Int) extends Bundle {
   val activation_mx_format = UInt(2.W)
   val weight_mx_format = UInt(2.W)
   val output_mx_format = UInt(2.W)
   val uselut = Bool()
   val enable_mxquant = Bool()
+
+  val scale_mem_mvin_base_addr_act = UInt(32.W)
+  val scale_mem_mvin_base_addr_w = UInt(32.W)
+  val scale_mem_mvout_base_addr_act = UInt(scale_mem_write_addr_width.W)
+  val quant_lut_update_granularity = UInt(16.W)
+  val scale_mem_read_act_sel = UInt(1.W)
+  val scale_mem_read_w_sel = UInt(1.W)
+  val scale_mem_counter_reset_flag = UInt(1.W)
 
   // loop bounds
   val loop_bound_i = UInt(9.W)
@@ -138,28 +146,19 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   
   val preload_cmd_place = Mux(DoPreloads(0), 0.U, 1.U)
   // val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
-  
-  val scale_mem_mvin_base_addr_act = RegInit(0.U(32.W))
-  val scale_mem_mvin_base_addr_w = RegInit(0.U(32.W))
-  val scale_mem_mvout_base_addr_act = RegInit(0.U(scale_mem.get.ScaleMemWriteAddrWidth.W))
-  val quant_lut_update_granularity = RegInit(0.U(16.W))
-  val scale_mem_read_act_sel = RegInit(0.U(1.W))
-  val scale_mem_read_w_sel = RegInit(0.U(1.W))
-  val scale_mem_counter_reset_flag = RegInit(0.U(1.W))
 
-  val mx_state = if (use_mx_scaling) Some(RegInit((0.U).asTypeOf(new ExControllerMxScalingRegs))) else None
+  val mx_state = if (use_mx_scaling) Some(RegInit((0.U).asTypeOf(new ExControllerMxScalingRegs(scale_mem.get.ScaleMemWriteAddrWidth)))) else None
   when(functs(0) === CONFIG_SCALE_MEM) {
       if (use_mx_scaling) {
         mx_state.get.loop_bound_i := rs1s(0)(41,33)
         mx_state.get.loop_bound_j := rs1s(0)(50,42)
         mx_state.get.loop_bound_k := rs1s(0)(59,51)
+        mx_state.get.scale_mem_mvout_base_addr_act := rs1s(0)(32,0)
+        mx_state.get.scale_mem_read_act_sel := rs1s(0)(60)
+        mx_state.get.scale_mem_read_w_sel := rs1s(0)(61)
+        mx_state.get.scale_mem_counter_reset_flag := rs1s(0)(62)
+        mx_state.get.quant_lut_update_granularity :=  rs2s(0)(15,0)
       }
-
-      scale_mem_mvout_base_addr_act := rs1s(0)(32,0)
-      scale_mem_read_act_sel := rs1s(0)(60)
-      scale_mem_read_w_sel := rs1s(0)(61)
-      scale_mem_counter_reset_flag := rs1s(0)(62)
-      quant_lut_update_granularity :=  rs2s(0)(15,0)
   }
 
   if (use_mx_scaling) {
@@ -167,8 +166,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.mx.get.activation_mx_format_out := mx_state.get.activation_mx_format
     io.mx.get.weight_mx_format_out := mx_state.get.weight_mx_format
     io.mx.get.enable_MXQuant := mx_state.get.enable_mxquant
-    io.mx.get.scale_mem_mvout_base_addr_act := scale_mem_mvout_base_addr_act
-    io.mx.get.quant_lut_update_granularity := quant_lut_update_granularity
+    io.mx.get.scale_mem_mvout_base_addr_act := mx_state.get.scale_mem_mvout_base_addr_act
+    io.mx.get.quant_lut_update_granularity := mx_state.get.quant_lut_update_granularity
 
     // loop bounds
     io.mx.get.loop_bounds.i := mx_state.get.loop_bound_i
@@ -273,7 +272,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // Instantiate the actual mesh
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
-    tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecisionList, meshAccPrecisionList))
+    tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecision, meshAccPrecision))
  
   if (use_mx_scaling) {
     mesh.io.activation_mx_format := mx_state.get.activation_mx_format
@@ -458,18 +457,18 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val firing = start_inputting_a || start_inputting_b || start_inputting_d
 
   if (use_mx_scaling) {
-    io.mx.get.scaleMemCntl.scale_mem_counter_reset_flag := (scale_mem_counter_reset_flag === 1.U) && (RegNext(functs(0)) === CONFIG_SCALE_MEM)
+    io.mx.get.scaleMemCntl.scale_mem_counter_reset_flag := (mx_state.get.scale_mem_counter_reset_flag === 1.U) && (RegNext(functs(0)) === CONFIG_SCALE_MEM)
     io.mx.get.scaleMemCntl.counter_a := a_fire_counter
     io.mx.get.scaleMemCntl.counter_b := b_fire_counter
     io.mx.get.scaleMemCntl.fire_a := a_fire
     io.mx.get.scaleMemCntl.fire_b := b_fire
-    io.mx.get.scaleMemCntl.scale_mem_read_act_sel := scale_mem_read_act_sel
-    io.mx.get.scaleMemCntl.scale_mem_read_w_sel := scale_mem_read_w_sel
+    io.mx.get.scaleMemCntl.scale_mem_read_act_sel := mx_state.get.scale_mem_read_act_sel
+    io.mx.get.scaleMemCntl.scale_mem_read_w_sel := mx_state.get.scale_mem_read_w_sel
     io.mx.get.scaleMemCntl.loop_bound_i := mx_state.get.loop_bound_i
     io.mx.get.scaleMemCntl.loop_bound_j := mx_state.get.loop_bound_j
     io.mx.get.scaleMemCntl.loop_bound_k := mx_state.get.loop_bound_k
-    io.mx.get.scaleMemCntl.baseAddress_act := scale_mem_mvin_base_addr_act
-    io.mx.get.scaleMemCntl.baseAddress_w := scale_mem_mvin_base_addr_w
+    io.mx.get.scaleMemCntl.baseAddress_act := mx_state.get.scale_mem_mvin_base_addr_act
+    io.mx.get.scaleMemCntl.baseAddress_w := mx_state.get.scale_mem_mvin_base_addr_w
   }
 
   when (!firing) {

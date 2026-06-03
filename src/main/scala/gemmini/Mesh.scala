@@ -20,7 +20,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
                                    max_simultaneous_matmuls: Int, output_delay: Int,
                                    val tileRows: Int, val tileColumns: Int,
                                    val meshRows: Int, val meshColumns: Int,
-                                   meshProdPrecisionList : Seq[(Int, Int)],
+                                   meshProdPrecisionList : Seq[T],
                                    meshAccPrecisionList : Seq[T]) extends Module {
 
   val io = IO(new Bundle {
@@ -33,7 +33,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     val in_id = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Up(max_simultaneous_matmuls).W)))) // The unique id of this particular matmul
     val in_last = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
     val out_b = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
-    val out_c = Output(Vec(meshColumns, Vec(tileColumns, weightType)))
+    val out_c = Output(Vec(meshColumns, Vec(tileColumns, if (df == Dataflow.BOTH || df == Dataflow.OS) outputType else weightType)))
     val in_valid = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
     val out_valid = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
     val out_control = Output(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))

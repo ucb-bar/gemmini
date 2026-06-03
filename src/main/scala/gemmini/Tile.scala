@@ -13,7 +13,7 @@ import Util._
   * @param rows Number of PEs on each row
   * @param columns Number of PEs on each column
   */
-class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, tree_reduction: Boolean, max_simultaneous_matmuls: Int, val rows: Int, val columns: Int, meshFpProductPrecision: (Int, Int), meshFpAccPrecision: T)(implicit ev: Arithmetic[T]) extends Module {
+class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, tree_reduction: Boolean, max_simultaneous_matmuls: Int, val rows: Int, val columns: Int, meshFpProductPrecision: T, meshFpAccPrecision: T)(implicit ev: Arithmetic[T]) extends Module {
   val io = IO(new Bundle {
     val in_a        = Input(Vec(rows, inputType))
     val in_b        = Input(Vec(columns, outputType)) // This is the output of the tile next to it

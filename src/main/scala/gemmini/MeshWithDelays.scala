@@ -33,7 +33,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   (val inputType: T,  val weightType: T, val outputType: T, accType: T,
    tagType: U, df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int, output_delay: Int,
    tileRows: Int, tileColumns: Int, meshRows: Int, meshColumns: Int,
-   leftBanks: Int, upBanks: Int, meshProdPrecisionList : Seq[(Int, Int)],
+   leftBanks: Int, upBanks: Int, meshProdPrecisionList : Seq[T],
    meshAccPrecisionList : Seq[T], outBanks: Int = 1, n_simultaneous_matmuls: Int = -1)
   extends Module {
 
@@ -216,7 +216,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   } else if (df == Dataflow.WS) {
     io.resp.bits.data := shifted(mesh.io.out_b, outBanks, true)
   } else {
-    io.resp.bits.data := shifted(mesh.io.out_b, outBanks, true)
+    io.resp.bits.data := shifted(mesh.io.out_c, outBanks, true)
   }
   io.resp.valid := shifted(mesh.io.out_valid, outBanks, reverse = true)(0)(0)
 

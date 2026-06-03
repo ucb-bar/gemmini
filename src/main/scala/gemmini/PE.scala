@@ -12,7 +12,7 @@ class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
   // val weight_mx_format = UInt(2.W)
 }
 
-class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFpProductPrecisionList: (Int, Int), meshFpAccPrecisionList: T) (implicit ev: Arithmetic[T]) extends Module {
+class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFpProductPrecisionList: T, meshFpAccPrecisionList: T) (implicit ev: Arithmetic[T]) extends Module {
   import ev._
   val io = IO(new Bundle {
     val in_a  = Input(inputType)
@@ -31,7 +31,7 @@ class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFp
   * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
   * @param width Data width of operands
   */
-class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, max_simultaneous_matmuls: Int, meshFpProductPrecision: (Int, Int), meshFpAccPrecision: T)
+class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, max_simultaneous_matmuls: Int, meshFpProductPrecision: T, meshFpAccPrecision: T)
                    (implicit ev: Arithmetic[T]) extends Module { // Debugging variables
   import ev._
 

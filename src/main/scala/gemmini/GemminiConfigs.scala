@@ -28,7 +28,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              spatialArrayOutputType: T,
 
                                                                              dataflow: Dataflow.Value = Dataflow.BOTH,
-                                                                             meshProdPrecisionList : Seq[(Int, Int)] = Seq(), // empty seq means default precision for inputType/weightType/accType
+                                                                             // Empty => default to accType for every mesh row (see meshProdPrecision / meshAccPrecision)
+                                                                             meshProdPrecisionList : Seq[T] = Seq(),
                                                                              meshAccPrecisionList : Seq[T] = Seq(),
                                                              
                                                                              tileRows: Int = 1,
@@ -132,6 +133,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / acc_banks
   }
   require (!acc_singleported || (acc_sub_banks <= 4 && isPow2(acc_sub_banks)))
+
+  val meshAccPrecision: Seq[T] =
+    if (meshAccPrecisionList.isEmpty) Seq.fill(meshRows)(accType) else meshAccPrecisionList
+  val meshProdPrecision: Seq[T] =
+    if (meshProdPrecisionList.isEmpty) meshAccPrecision else meshProdPrecisionList
+  require(meshAccPrecision.length == meshRows && meshProdPrecision.length == meshRows)
 
   val local_addr_t = new LocalAddr(sp_banks, sp_bank_entries, acc_banks, acc_bank_entries)
 
