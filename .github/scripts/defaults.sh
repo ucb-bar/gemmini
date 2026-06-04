@@ -53,3 +53,23 @@ MX_TESTS=(
   bareMetalC/matmul_tiled_fp6_128x128x512_requant
   mlps/mnist_mxgemmini
 )
+
+# RTL config for the int8 (non-MX) GemminiRocketConfig sanity job. Built and
+# tested just like the MX track, but exercising the legacy systolic-array path.
+ROCKET_CICONFIG=GemminiRocketConfig
+
+# The int8 sanity tests. Built by the regular ./build.sh (the binaries run on
+# both spike and VCS, so no build_spike step is needed). Each entry is the test
+# binary's path relative to the build directory (<category>/<name>).
+ROCKET_TESTS=(
+  bareMetalC/matmul_ws
+  bareMetalC/matmul_os
+  bareMetalC/mvin_mvout
+  bareMetalC/mvin_mvout_spad
+  bareMetalC/conv
+)
+
+# Tests the spike gemmini extension does not model, so they are run on RTL only.
+ROCKET_SPIKE_SKIP=(
+  bareMetalC/conv
+)

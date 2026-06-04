@@ -111,9 +111,49 @@ jobs:
         run: |
           .github/scripts/run-tests-mx.sh
 
+  build-rocket-config:
+    runs-on: as4
+    needs: install-gemmini
+    steps:
+      - name: Identify runner host
+        run: |
+          echo "host=$(hostname -f)"
+          echo "user=$(whoami)"
+          echo "runner_name=$RUNNER_NAME"
+          echo "runner_workspace=$RUNNER_WORKSPACE"
+          echo "cwd=$(pwd)"
+      - name: Delete old checkout
+        run: |
+            rm -rf ${{ github.workspace }}/* || true
+            rm -rf ${{ github.workspace }}/.* || true
+      - uses: actions/checkout@v3
+      - name: Build int8 (GemminiRocketConfig) RTL and rocc-tests
+        run: |
+          .github/scripts/do-rtl-build-rocket.sh
+
+  rocket-run-tests:
+    runs-on: as4
+    needs: build-rocket-config
+    steps:
+      - name: Identify runner host
+        run: |
+          echo "host=$(hostname -f)"
+          echo "user=$(whoami)"
+          echo "runner_name=$RUNNER_NAME"
+          echo "runner_workspace=$RUNNER_WORKSPACE"
+          echo "cwd=$(pwd)"
+      - name: Delete old checkout
+        run: |
+            rm -rf ${{ github.workspace }}/* || true
+            rm -rf ${{ github.workspace }}/.* || true
+      - uses: actions/checkout@v3
+      - name: Run int8 (GemminiRocketConfig) tests on spike and VCS
+        run: |
+          .github/scripts/run-tests-rocket.sh
+
   cleanup:
     name: cleanup
-    needs: [mx-run-tests]
+    needs: [mx-run-tests, rocket-run-tests]
     runs-on: as4
     if: ${{ always() }}
     steps:
