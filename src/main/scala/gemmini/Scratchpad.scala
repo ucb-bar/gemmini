@@ -314,8 +314,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) with HasCoreParameters {
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
-    val spad_row_t = Vec(2*meshColumns, Vec(tileColumns, weightTypeProjected))
-    val half_t = Vec(meshColumns / 2, Vec(tileColumns, accType))
+    val spad_row_t = if (use_mx_scaling) Vec(2*meshColumns, Vec(tileColumns, weightTypeProjected))
+                     else Vec(meshColumns, Vec(tileColumns, inputType))
+    val half_t = if (use_mx_scaling) Vec(meshColumns / 2, Vec(tileColumns, accType))
+                 else Vec(meshColumns, Vec(tileColumns, accType))
 
     val io = IO(new Bundle {
       // DMA ports
@@ -338,8 +340,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         ))))
         val read_resp = Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
           Vec(meshColumns, Vec(tileColumns, accType)),
-          Vec(2*meshColumns, Vec(tileColumns, weightType)),
-          Vec(meshColumns/2, Vec(tileColumns, accType))
+          if (config.use_mx_scaling) Vec(2*meshColumns, Vec(tileColumns, weightType)) else Vec(meshColumns, Vec(tileColumns, inputType)),
+          if (config.use_mx_scaling) Vec(meshColumns/2, Vec(tileColumns, accType)) else Vec(meshColumns, Vec(tileColumns, accType))
         )))
         val write = Flipped(Vec(acc_banks, Decoupled(new AccumulatorWriteReq(
           acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))
@@ -431,7 +433,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       acc_scale_num_units,
       acc_scale_latency,
       has_nonlinear_activations,
-      has_normalizations
+      has_normalizations, config.use_mx_scaling
     ))
     val writeData = Wire(Valid(UInt((spad_w max (acc_w/2)).W)))
     writeData.valid := write_issue_q.io.deq.bits.laddr.is_garbage() || (acc_scale_unit.io.out.bits.is_garbage)
@@ -765,6 +767,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       latency = 4,
       fullDataType = acc_row_t,
       scale_t = acc_scale_t,
+      use_mx_scaling = config.use_mx_scaling
     )
 
     acc_norm_unit_in.valid := false.B

@@ -830,6 +830,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   } else {
     ex_controller.io.srams.read <> spad.module.io.srams.read
     ex_controller.io.srams.write <> spad.module.io.srams.write
+
+    spad.module.io.loop_bounds := DontCare
+    spad.module.io.mx_req_io.mx_data_out.valid := false.B
+    spad.module.io.mx_req_io.mx_data_out.bits := DontCare
+    spad.module.io.mx_req_io.mx_data_in.ready := false.B
   }
   spad.module.io.acc.read_req <> ex_controller.io.acc.read_req
   ex_controller.io.acc.read_resp <> spad.module.io.acc.read_resp

@@ -100,11 +100,13 @@ class AccumulatorScale[T <: Data, U <: Data](
   scale_func: (T, U) => T,
   num_scale_units: Int,
   latency: Int,
-  has_nonlinear_activations: Boolean, has_normalizations: Boolean)(implicit ev: Arithmetic[T]) extends Module {
+  has_nonlinear_activations: Boolean, has_normalizations: Boolean,
+  use_mx_scaling: Boolean)(implicit ev: Arithmetic[T]) extends Module {
 
   import ev._
 
-  val half_t = Vec(fullDataType.length / 2, fullDataType.head.cloneType)
+  val half_t = if (use_mx_scaling) Vec(fullDataType.length / 2, fullDataType.head.cloneType)
+               else Vec(fullDataType.length, fullDataType.head.cloneType)
 
   val io = IO(new AccumulatorScaleIO[T,U](
     fullDataType, scale_t, rDataType, half_t
@@ -148,22 +150,47 @@ class AccumulatorScale[T <: Data, U <: Data](
       e_clipped
     })))
 
-    io.mx_req_io.mx_data_in.valid := io.in.valid
-    io.in.ready := io.mx_req_io.mx_data_in.ready
-    io.mx_req_io.mx_data_in.bits.full_mx_data_in := acc_read_data
-    io.mx_req_io.mx_data_in.bits.fromDMA := io.in.bits.acc_read_resp.fromDMA
-    io.mx_req_io.mx_data_in.bits.is_last_half := io.in.bits.acc_read_resp.is_last_half
-    io.mx_req_io.mx_data_in.bits.acc_bank_id := io.in.bits.acc_read_resp.acc_bank_id
-    io.mx_req_io.mx_mode := io.output_mx_format
+    if (use_mx_scaling) {
+      io.mx_req_io.mx_data_in.valid := io.in.valid
+      io.in.ready := io.mx_req_io.mx_data_in.ready
+      io.mx_req_io.mx_data_in.bits.full_mx_data_in := acc_read_data
+      io.mx_req_io.mx_data_in.bits.fromDMA := io.in.bits.acc_read_resp.fromDMA
+      io.mx_req_io.mx_data_in.bits.is_last_half := io.in.bits.acc_read_resp.is_last_half
+      io.mx_req_io.mx_data_in.bits.acc_bank_id := io.in.bits.acc_read_resp.acc_bank_id
+      io.mx_req_io.mx_mode := io.output_mx_format
 
-    io.mx_req_io.mx_data_out.ready := out.ready
-    out.valid := io.mx_req_io.mx_data_out.valid
-    out.bits.is_garbage := io.mx_req_io.mx_data_out.bits.is_garbage
-    out.bits.full_data := io.mx_req_io.mx_data_out.bits.full_mx_data_out
-    out.bits.data := io.mx_req_io.mx_data_out.bits.quant_mx_data_out
-    out.bits.fromDMA   := io.mx_req_io.mx_data_out.bits.fromDMA
-    out.bits.acc_bank_id := io.mx_req_io.mx_data_out.bits.acc_bank_id
-    out.bits.is_last_half := io.mx_req_io.mx_data_out.bits.is_last_half
+      io.mx_req_io.mx_data_out.ready := out.ready
+      out.valid := io.mx_req_io.mx_data_out.valid
+      out.bits.is_garbage := io.mx_req_io.mx_data_out.bits.is_garbage
+      out.bits.full_data := io.mx_req_io.mx_data_out.bits.full_mx_data_out
+      out.bits.data := io.mx_req_io.mx_data_out.bits.quant_mx_data_out
+      out.bits.fromDMA := io.mx_req_io.mx_data_out.bits.fromDMA
+      out.bits.acc_bank_id := io.mx_req_io.mx_data_out.bits.acc_bank_id
+      out.bits.is_last_half := io.mx_req_io.mx_data_out.bits.is_last_half
+    } else {
+      io.mx_req_io.mx_data_in.valid := false.B
+      io.mx_req_io.mx_data_in.bits := DontCare
+      io.mx_req_io.mx_mode := 0.U
+      io.mx_req_io.mx_data_out.ready := false.B
+
+      val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, half_t)(ev)))
+      in.valid := io.in.valid
+      io.in.ready := in.ready
+      in.bits.resp := io.in.bits.acc_read_resp
+      in.bits.full_data := acc_read_data
+      in.bits.resp.data := activated_data
+
+      val pipe_out = Pipeline(in, latency)
+
+      out.valid := pipe_out.valid
+      pipe_out.ready := out.ready
+      out.bits.full_data := pipe_out.bits.full_data
+      out.bits.data      := pipe_out.bits.resp.data
+      out.bits.fromDMA   := pipe_out.bits.resp.fromDMA
+      out.bits.acc_bank_id := pipe_out.bits.resp.acc_bank_id
+      out.bits.is_last_half := pipe_out.bits.resp.is_last_half
+      out.bits.is_garbage := false.B
+    }
 
   } else {
     val width = acc_read_data.size * acc_read_data(0).size

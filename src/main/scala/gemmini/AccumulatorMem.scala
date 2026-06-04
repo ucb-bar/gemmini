@@ -131,7 +131,8 @@ class AccumulatorMem[T <: Data, U <: Data](
   
   import ev._
 
-  val half_t = Vec(t.length / 2, t.head.cloneType)
+  val half_t = if (use_mx_scaling) Vec(t.length / 2, t.head.cloneType)
+               else Vec(t.length, t.head.cloneType)
 
   // TODO unify this with TwoPortSyncMemIO
   val io = IO(new AccumulatorMemIO(n, t, scale_t, half_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows))
@@ -402,17 +403,30 @@ class AccumulatorMem[T <: Data, U <: Data](
     mem.io.wdata := Mux(oldest_pipelined_write.bits.acc, adder_sum, oldest_pipelined_write.bits.data)
     mem.io.mask := VecInit(oldest_pipelined_write.bits.mask.grouped(32).map(_.reduce(_ || _)).toSeq)
 
-    // full-width read
-    mem.io.raddr_full := io.write.bits.addr
-    mem.io.ren_full := io.write.fire && io.write.bits.acc
-    rdata_for_adder := mem.io.rdata_full
+    if (use_mx_scaling) {
+      // full-width read
+      mem.io.raddr_full := io.write.bits.addr
+      mem.io.ren_full := io.write.fire && io.write.bits.acc
+      rdata_for_adder := mem.io.rdata_full
 
-    // half-width read
-    // address for halfwidth port = {addr, bank_sel}
-    mem.io.raddr_half := Cat(io.read.req.bits.addr, io.read.req.bits.is_last_half.asUInt)
-    mem.io.ren_half := io.read.req.fire
+      // half-width read
+      // address for halfwidth port = {addr, bank_sel}
+      mem.io.raddr_half := Cat(io.read.req.bits.addr, io.read.req.bits.is_last_half.asUInt)
+      mem.io.ren_half := io.read.req.fire
 
-    rdata_for_read_resp := mem.io.rdata_half.asTypeOf(half_t)
+      rdata_for_read_resp := mem.io.rdata_half.asTypeOf(half_t)
+    } else {
+      // Non-MX build: full-width read response. The full read port is shared
+      // between accumulation RMW and the read response (write-accumulate wins);
+      // io.read.req.ready already prevents a read while accumulating.
+      mem.io.raddr_full := Mux(io.write.fire && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
+      mem.io.ren_full := (io.write.fire && io.write.bits.acc) || io.read.req.fire
+      rdata_for_adder := mem.io.rdata_full
+      rdata_for_read_resp := mem.io.rdata_full.asTypeOf(half_t)
+
+      mem.io.raddr_half := 0.U
+      mem.io.ren_half := false.B
+    }
 
   } else if (!is_dummy) {
     val rmw_req = Wire(Decoupled(UInt()))

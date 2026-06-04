@@ -77,8 +77,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
       val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
         Vec(meshColumns, Vec(tileColumns, accType)),
-        Vec(2*meshColumns, Vec(tileColumns, inputType)),
-        Vec(meshColumns/2, Vec(tileColumns, accType))
+        if (config.use_mx_scaling) Vec(2*meshColumns, Vec(tileColumns, weightType)) else Vec(meshColumns, Vec(tileColumns, inputType)),
+        if (config.use_mx_scaling) Vec(meshColumns/2, Vec(tileColumns, accType)) else Vec(meshColumns, Vec(tileColumns, accType))
       ))))
 
       // val write = Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))))
@@ -277,6 +277,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   if (use_mx_scaling) {
     mesh.io.activation_mx_format := mx_state.get.activation_mx_format
     mesh.io.weight_mx_format := mx_state.get.weight_mx_format
+  } else {
+    mesh.io.activation_mx_format := DontCare
+    mesh.io.weight_mx_format := DontCare
   }
 
   mesh.io.a.valid := false.B
@@ -559,6 +562,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       if (use_mx_scaling) {
         io.srams.read(i).req.bits.input_mx_format := mx_state.get.activation_mx_format
         io.srams.read(i).req.bits.weight_mx_format := mx_state.get.weight_mx_format
+      } else {
+        // Non-MX build: these format tags are passthrough metadata that nothing
+        // consumes, so default them to FP8 (0) to keep the bundle initialized.
+        io.srams.read(i).req.bits.input_mx_format := 0.U
+        io.srams.read(i).req.bits.weight_mx_format := 0.U
       }
 
       // TODO this just overrides the previous line. Should we erase the previous line?
@@ -571,6 +579,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.srams.read(i).req.valid := false.B
       io.srams.read(i).req.bits.fromDMA := false.B
       io.srams.read(i).req.bits.addr := DontCare
+      io.srams.read(i).req.bits.input_mx_format := DontCare
+      io.srams.read(i).req.bits.weight_mx_format := DontCare
     }
 
     io.srams.read(i).resp.ready := false.B
@@ -599,6 +609,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       if (use_mx_scaling) {
         io.acc.read_req(i).bits.weight_mx_format := mx_state.get.weight_mx_format
         io.acc.read_req(i).bits.activation_mx_format := mx_state.get.activation_mx_format
+      } else {
+        io.acc.read_req(i).bits.weight_mx_format := DontCare
+        io.acc.read_req(i).bits.activation_mx_format := DontCare
+        io.acc.read_req(i).bits.is_last_half := DontCare
       }
       io.acc.read_req(i).valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
       io.acc.read_req(i).bits.scale := acc_scale
