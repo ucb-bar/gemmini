@@ -17,7 +17,7 @@ source env.sh
 source /ecad/tools/vlsi.bashrc
 
 cd $LOCAL_SIM_DIR
-make -j$LOCAL_MAKE_NPROC -C $LOCAL_SIM_DIR CONFIG=$ROCKET_CICONFIG
+make -j$LOCAL_BUILD_NPROC -C $LOCAL_SIM_DIR CONFIG=$ROCKET_CICONFIG
 
 cd $LOCAL_CHECKOUT_DIR
 chown -R $(whoami) .

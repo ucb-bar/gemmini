@@ -5,8 +5,13 @@
 #############
 
 # make parallelism
+# BUILD_NPROC: threads for the RTL elaboration/compilation step (kept low to
+# avoid Scala/Chisel/VCS parallel-build races that break the RadianceGemminiOnlyConfig build).
+# MAKE_NPROC: threads used when running tests in parallel (tests are independent).
 CI_MAKE_NPROC=4
 LOCAL_MAKE_NPROC=$CI_MAKE_NPROC
+CI_BUILD_NPROC=1
+LOCAL_BUILD_NPROC=$CI_BUILD_NPROC
 
 # local variables
 LOCAL_CHECKOUT_DIR=$GITHUB_WORKSPACE
