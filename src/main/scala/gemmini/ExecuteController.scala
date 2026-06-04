@@ -272,7 +272,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   // Instantiate the actual mesh
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
-    tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecision, meshAccPrecision))
+    tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecision, meshAccPrecision, use_mx_scaling))
  
   if (use_mx_scaling) {
     mesh.io.activation_mx_format := mx_state.get.activation_mx_format
@@ -1018,7 +1018,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val dataD_unpadded = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
 
   val dataA = VecInit(dataA_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.a_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayInputType)))
-  val dataB = VecInit(dataB_unpadded.asTypeOf(Vec(block_size, accType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, accType.zero)}.map(d => d.asTypeOf(accType).withWidthOf(spatialArrayOutputType)))
+  val dataB = if (use_mx_scaling) {
+    VecInit(dataB_unpadded.asTypeOf(Vec(block_size, accType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, accType.zero)}.map(d => d.asTypeOf(accType).withWidthOf(spatialArrayOutputType)))
+  } else {
+    VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayOutputType)))
+  }
   val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, weightType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, weightType.zero)}.map(d => d.asTypeOf(weightType).withWidthOf(spatialArrayWeightType)))
 
   // Pop responses off the scratchpad io ports

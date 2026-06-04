@@ -444,6 +444,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     header ++= s"typedef ${c_type(acc_scale_t)} acc_scale_t;\n"
     header ++= s"typedef ${c_type(UInt(acc_scale_t_bits.W))} acc_scale_t_bits;\n\n"
 
+    // Gates compilation of the MX (FP4/FP6/FP8) tests, which redefine elem_t
+    // and assume the MX datapath. See bareMetalC/Makefile.
+    if (use_mx_scaling) {
+      header ++= s"#define HAS_MX_SCALING\n\n"
+    }
+
     header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"
     header ++= s"#define row_align_acc(blocks) __attribute__((aligned(blocks*DIM*sizeof(acc_t))))\n\n"
 

@@ -34,7 +34,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
    tagType: U, df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int, output_delay: Int,
    tileRows: Int, tileColumns: Int, meshRows: Int, meshColumns: Int,
    leftBanks: Int, upBanks: Int, meshProdPrecisionList : Seq[T],
-   meshAccPrecisionList : Seq[T], outBanks: Int = 1, n_simultaneous_matmuls: Int = -1)
+   meshAccPrecisionList : Seq[T], use_mx_scaling: Boolean = true, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1)
   extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
@@ -173,7 +173,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val transposer_out = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
 
   // Wire up mesh's IO to this module's IO
-  val mesh = Module(new Mesh(inputType, weightType, outputType, accType, df, tree_reduction, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns, meshProdPrecisionList, meshAccPrecisionList))
+  val mesh = Module(new Mesh(inputType, weightType, outputType, accType, df, tree_reduction, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns, meshProdPrecisionList, meshAccPrecisionList, use_mx_scaling))
 
   // TODO wire only to *_buf here, instead of io.*.bits
   val a_shifter_in = WireInit(Mux(a_is_from_transposer, transposer_out.asTypeOf(A_TYPE), a_buf))

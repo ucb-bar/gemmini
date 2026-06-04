@@ -21,7 +21,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
                                    val tileRows: Int, val tileColumns: Int,
                                    val meshRows: Int, val meshColumns: Int,
                                    meshProdPrecisionList : Seq[T],
-                                   meshAccPrecisionList : Seq[T]) extends Module {
+                                   meshAccPrecisionList : Seq[T],
+                                   use_mx_scaling: Boolean = true) extends Module {
 
   val io = IO(new Bundle {
     val weight_mx_format = Input(UInt(2.W))
@@ -93,9 +94,13 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   for (r <- 0 until meshRows) {
     mesh(r).foldLeft(io.in_a(r)) {
       case (in_a, tile) =>
-        tile.io.in_a := VecInit(in_a.map(a => VecInit(a.asTypeOf(Vec(inputType.getWidth, Bool())).zipWithIndex.map { case (e, i) =>
-          pipe(Mux(mode.actInputs === 1.U, i.U < typeA_size, (i % (a.getWidth / 2)).U < typeA_size), e, tile_latency+1)
-        }).asTypeOf(inputType)))
+        tile.io.in_a := (if (use_mx_scaling) {
+          VecInit(in_a.map(a => VecInit(a.asTypeOf(Vec(inputType.getWidth, Bool())).zipWithIndex.map { case (e, i) =>
+            pipe(Mux(mode.actInputs === 1.U, i.U < typeA_size, (i % (a.getWidth / 2)).U < typeA_size), e, tile_latency+1)
+          }).asTypeOf(inputType)))
+        } else {
+          ShiftRegister(in_a, tile_latency+1)
+        })
         tile.io.out_a
     }
   }
@@ -104,10 +109,14 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_b(c), io.in_valid(c), 0)) {
       case ((in_b, valid, r_idx), tile) =>
-        val resized = in_b.map(_.withWidthOf(meshAccPrecisionList(r_idx)))
-        tile.io.in_b := VecInit(resized.map(b => VecInit(b.asTypeOf(Vec(4, UInt((b.getWidth / 4).W))).zipWithIndex.map { case (e, i) =>
-          pipe(valid.head && (i.U < mode.numOutputs), e, tile_latency+1)
-        }).asTypeOf(outputType)))
+        tile.io.in_b := (if (use_mx_scaling) {
+          val resized = in_b.map(_.withWidthOf(meshAccPrecisionList(r_idx)))
+          VecInit(resized.map(b => VecInit(b.asTypeOf(Vec(4, UInt((b.getWidth / 4).W))).zipWithIndex.map { case (e, i) =>
+            pipe(valid.head && (i.U < mode.numOutputs), e, tile_latency+1)
+          }).asTypeOf(outputType)))
+        } else {
+          pipe(valid.head, in_b, tile_latency+1)
+        })
         (tile.io.out_b, tile.io.out_valid, r_idx + 1)
     }
   }
@@ -116,9 +125,13 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft((io.in_d(c), io.in_valid(c))) {
       case ((in_propag, valid), tile) =>
-        tile.io.in_d := VecInit(in_propag.map(w => VecInit(w.asTypeOf(Vec(weightType.getWidth, Bool())).zipWithIndex.map { case (e, i) =>
-          pipe(valid.head && Mux(mode.weiInputs === 1.U, i.U < typeW_size, (i % (w.getWidth / 2)).U < typeW_size), e, tile_latency+1)
-        }).asTypeOf(weightType)))
+        tile.io.in_d := (if (use_mx_scaling) {
+          VecInit(in_propag.map(w => VecInit(w.asTypeOf(Vec(weightType.getWidth, Bool())).zipWithIndex.map { case (e, i) =>
+            pipe(valid.head && Mux(mode.weiInputs === 1.U, i.U < typeW_size, (i % (w.getWidth / 2)).U < typeW_size), e, tile_latency+1)
+          }).asTypeOf(weightType)))
+        } else {
+          pipe(valid.head, in_propag, tile_latency+1)
+        })
         (tile.io.out_c, tile.io.out_valid)
     }
   }

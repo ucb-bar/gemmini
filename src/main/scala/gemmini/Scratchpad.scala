@@ -296,11 +296,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val reader = LazyModule(new StreamReader(config, max_in_flight_mem_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter,
     use_firesim_simulation_counters))
+  val writer_data_width = if (use_mx_scaling) { if (acc_read_full_width) acc_w/2 else 2*spad_w }
+                          else                { if (acc_read_full_width) acc_w   else spad_w   }
   val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
-    if (acc_read_full_width) acc_w/2 else 2*spad_w, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
+    writer_data_width, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters))
   val spad_writer = Option.when(config.use_tl_ext_mem)(LazyModule(new StreamWriter(max_in_flight_mem_reqs, spad_writer_dma_width, max_spad_writer_bytes,
-    if (acc_read_full_width) acc_w/2 else 2*spad_w, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
+    writer_data_width, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters)))
 
   // TODO make a cross-bar vs two separate ports a config option
@@ -384,10 +386,19 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val loop_bounds = Input(new MaxBounds())
     })
 
-    val write_req_expander = Module(new WriteReqExpander(local_addr_t, accType.getWidth, acc_scale_t_bits))
-    write_req_expander.io.in <> io.dma.write.req
-    val write_dispatch_q = Queue(write_req_expander.io.out)
-    
+    val write_dispatch_q = if (use_mx_scaling) {
+      val write_req_expander = Module(new WriteReqExpander(local_addr_t, accType.getWidth, acc_scale_t_bits))
+      write_req_expander.io.in <> io.dma.write.req
+      Queue(write_req_expander.io.out)
+    } else {
+      val single_write = Wire(Decoupled(new ScratchpadMemWriteRequest(local_addr_t, accType.getWidth, acc_scale_t_bits)))
+      single_write.valid := io.dma.write.req.valid
+      io.dma.write.req.ready := single_write.ready
+      single_write.bits := io.dma.write.req.bits
+      single_write.bits.is_second_half := true.B
+      Queue(single_write)
+    }
+
     // Write norm/scale queues are necessary to maintain in-order requests to accumulator norm/scale units
     // Writes from main SPAD just flow directly between scale_q and issue_q, while writes
     // From acc are ordered
@@ -435,14 +446,19 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       has_nonlinear_activations,
       has_normalizations, config.use_mx_scaling
     ))
-    val writeData = Wire(Valid(UInt((spad_w max (acc_w/2)).W)))
+    val acc_write_w = if (use_mx_scaling) acc_w/2 else acc_w
+    val writeData = Wire(Valid(UInt((spad_w max acc_write_w).W)))
     writeData.valid := write_issue_q.io.deq.bits.laddr.is_garbage() || (acc_scale_unit.io.out.bits.is_garbage)
     writeData.bits := DontCare
-    val fullAccWriteData = Wire(UInt((acc_w/2).W))
+    val fullAccWriteData = Wire(UInt(acc_write_w.W))
     fullAccWriteData := DontCare
-//    val writeData_is_full_width = !write_issue_q.io.deq.bits.laddr.is_garbage() &&
-//     write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.read_full_acc_row && (!io.enable_MXQuant)
-    val writeData_is_full_width = !write_issue_q.io.deq.bits.laddr.is_garbage() && (!io.enable_MXQuant)
+    val writeData_is_full_width = if (use_mx_scaling) {
+      !write_issue_q.io.deq.bits.laddr.is_garbage() && (!io.enable_MXQuant)
+    } else {
+      !write_issue_q.io.deq.bits.laddr.is_garbage() &&
+        write_issue_q.io.deq.bits.laddr.is_acc_addr &&
+        write_issue_q.io.deq.bits.laddr.read_full_acc_row
+    }
     val writeData_is_fp8 = !write_issue_q.io.deq.bits.laddr.is_garbage() && (io.output_mx_format === 0.U)
     val writeData_is_fp4orfp6 = !write_issue_q.io.deq.bits.laddr.is_garbage() && (io.output_mx_format === 2.U || io.output_mx_format === 1.U)
     val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()
@@ -451,12 +467,18 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     // write_issue_q.io.deq.ready := writer.module.io.req.ready && writeData.valid
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
     writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
-    writer.module.io.req.bits.len := Mux(writeData_is_full_width && !write_issue_q.io.deq.bits.laddr.is_acc_addr,
-      write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 8).U,
-        Mux( writeData_is_full_width,
-          write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,
-          write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U))
-      
+    writer.module.io.req.bits.len := (if (use_mx_scaling) {
+      Mux(writeData_is_full_width && !write_issue_q.io.deq.bits.laddr.is_acc_addr,
+        write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 8).U,
+          Mux( writeData_is_full_width,
+            write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,
+            write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U))
+    } else {
+      Mux(writeData_is_full_width,
+        write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
+        write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
+    })
+
     writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
       writeData_is_all_zeros -> 0.U,
       (writeData_is_full_width && write_issue_q.io.deq.bits.laddr.is_acc_addr) -> fullAccWriteData
@@ -480,8 +502,13 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool && (!acc_scale_unit.io.out.bits.is_garbage)
       spad_writer.module.io.req.bits.vaddr := config.tl_ext_mem_base.U | vaddr_offset
       spad_writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
-      spad_writer.module.io.req.bits.len := Mux(writeData_is_full_width,
-        write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U, write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U)
+      spad_writer.module.io.req.bits.len := (if (use_mx_scaling) {
+        Mux(writeData_is_full_width,
+          write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U, write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U)
+      } else {
+        Mux(writeData_is_full_width,
+          write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U, write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
+      })
       spad_writer.module.io.req.bits.data := MuxCase(writeData.bits, Seq(
         writeData_is_all_zeros -> 0.U,
         writeData_is_full_width -> fullAccWriteData
