@@ -401,8 +401,9 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
   val a_addr = req.a_addr_start + (a_row * a_max_col + a_col) * block_size.U
   val b_addr = b_addr_start + (b_row * b_max_col + b_col) * block_size.U
+  val ceil_max_j4 = ((req.max_j + 3.U) / 4.U) * 4.U
   val c_addr = Mux(req.narrow_type, c_addr_start + (i * req.max_j + j) * block_size.U,
-    c_addr_start + (i * req.max_j + j) * (block_size / 4).U)
+    c_addr_start + (i * ceil_max_j4 + j) * (block_size / 4).U)
   //  val c_addr_wire = WireDefault(c_addr)
   //  dontTouch(c_addr_wire)
   // val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
@@ -556,26 +557,17 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val req = Reg(new LoopMatmulStCReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, concurrent_loops))
 
-  val max_blocks = Mux(req.full_c, 1.U, Mux(req.max_j <= max_block_len.U, req.max_j, max_block_len.U))
-
   when(state =/= idle) {
     assert((req.max_i >= 2.U) && (req.max_i % 2.U === 0.U), "tiles need to be multiples of 32")
     assert((req.max_j >= 2.U) && (req.max_j % 2.U === 0.U), "tiles need to be multiples of 32")
   }
 
-  val iter_max_j = Mux(req.activation_mx_format === 0.U,
-    Mux(req.max_j < 4.U, req.max_j / 2.U, req.max_j / 4.U),
-    req.max_j)
-  val iter_max_i = Mux(req.activation_mx_format === 0.U,
-    Mux(req.max_j < 4.U, req.max_i / 2.U, req.max_i),
-    req.max_i)
+  val iter_max_j = Mux(req.activation_mx_format === 0.U, (req.max_j + 3.U) / 4.U, req.max_j)
+  val iter_max_i = req.max_i
+  val ex_j_compressed = Mux(req.activation_mx_format === 0.U, io.ex_j / 4.U, io.ex_j)
+  val ex_i_compressed = io.ex_i
 
-  val ex_i_compressed = Mux(req.activation_mx_format === 0.U,
-    Mux(req.max_j < 4.U, io.ex_i / 2.U, io.ex_i),
-    io.ex_i)
-  val ex_j_compressed = Mux(req.activation_mx_format === 0.U,
-    Mux(req.max_j < 4.U, io.ex_j / 2.U, io.ex_j / 4.U),
-    io.ex_j)
+  val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
 
   // Non-normalization-related iterators and calculations
   val j = Reg(UInt(iterator_bitwidth.W))
@@ -591,9 +583,14 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
   val acc_addr_offset = (i*iter_max_j+j) * block_size.U
   val sp_addr = acc_addr_start + acc_addr_offset
-  val blocks = Mux(j + max_blocks <= req.max_j, max_blocks, req.max_j-j)
-  val cols = (blocks * block_size.U) - Mux(j + blocks >= req.max_j, req.pad_j, 0.U)
-  val rows = block_size.U - Mux(i === req.max_i-1.U, req.pad_i, 0.U)
+  val blocks = Mux(j + max_blocks <= iter_max_j, max_blocks, iter_max_j-j)
+  val cols = Mux(req.activation_mx_format === 0.U, {
+    val fp8_tiles = Mux(j === iter_max_j - 1.U && req.max_j % 4.U =/= 0.U, req.max_j % 4.U, 4.U)
+    fp8_tiles * (block_size / 4).U - Mux(j === iter_max_j - 1.U, req.pad_j, 0.U)
+  }, {
+    blocks * block_size.U - Mux(j + blocks >= iter_max_j, req.pad_j, 0.U)
+  })
+  val rows = block_size.U - Mux(i === iter_max_i-1.U, req.pad_i, 0.U)
 
   val mvout_cmd = Wire(new RoCCCommand)
   mvout_cmd := DontCare
@@ -781,19 +778,10 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     assert((req.max_j >= 2.U) && (req.max_j % 2.U === 0.U), "tiles need to be multiples of 32")
   }
 
-  val iter_max_j = Mux(req.activation_mx_format === 0.U,
-    Mux(req.max_j < 4.U, req.max_j / 2.U, req.max_j / 4.U),
-    req.max_j)
-  val iter_max_i = Mux(req.activation_mx_format === 0.U,
-    Mux(req.max_j < 4.U, req.max_i / 2.U, req.max_i),
-    req.max_i)
-
-  val ex_i_compressed = Mux(req.activation_mx_format === 0.U,
-    Mux(req.max_j < 4.U, io.ex_i / 2.U, io.ex_i),
-    io.ex_i)
-  val ex_j_compressed = Mux(req.activation_mx_format === 0.U,
-    Mux(req.max_j < 4.U, io.ex_j / 2.U, io.ex_j / 4.U),
-    io.ex_j)
+  val iter_max_j = Mux(req.activation_mx_format === 0.U, (req.max_j + 3.U) / 4.U, req.max_j)
+  val iter_max_i = req.max_i
+  val ex_j_compressed = Mux(req.activation_mx_format === 0.U, io.ex_j / 4.U, io.ex_j)
+  val ex_i_compressed = io.ex_i
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
   assert(max_block_len == 1, "there might be hw bugs if block length > 1, disabled for now")
@@ -814,8 +802,13 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val acc_addr_offset = (i*iter_max_j+j) * block_size.U
   val src_addr = acc_addr_start + acc_addr_offset
   val blocks = Mux(j + max_blocks <= iter_max_j, max_blocks, iter_max_j-j)
-  val cols = (blocks * block_size.U) - Mux(j + blocks >= iter_max_j, req.pad_j, 0.U)
-  val rows = block_size.U  - Mux(i === iter_max_i-1.U, req.pad_i, 0.U)
+  val cols = Mux(req.activation_mx_format === 0.U, {
+    val fp8_tiles = Mux(j === iter_max_j - 1.U && req.max_j % 4.U =/= 0.U, req.max_j % 4.U, 4.U)
+    fp8_tiles * (block_size / 4).U - Mux(j === iter_max_j - 1.U, req.pad_j, 0.U)
+  }, {
+    blocks * block_size.U - Mux(j + blocks >= iter_max_j, req.pad_j, 0.U)
+  })
+  val rows = block_size.U - Mux(i === iter_max_i-1.U, req.pad_i, 0.U)
 
   val mvout_cmd = Wire(new RoCCCommand)
   mvout_cmd := DontCare

@@ -80,10 +80,14 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
     (io.in.bits.activation_mx_type === 1.U || io.in.bits.activation_mx_type === 2.U) -> 0.U
   )))
   val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, address_second_half_wide, address_second_half_narrow)
+  val second_half_invalid = io.in.bits.len < 16.U
+  val is_second_half = Mux(is_acc_write, second_half, false.B)
 
   io.out.valid := io.in.valid
   io.out.bits := io.in.bits
-  io.out.bits.is_second_half := Mux(is_acc_write, second_half, false.B)
+  io.out.bits.len := 16.U
+  io.out.bits.is_second_half := is_second_half
+  io.out.bits.store_en := Mux(is_acc_write, !is_second_half || !second_half_invalid, io.in.bits.store_en)
   io.out.bits.vaddr   := Mux(is_acc_write && second_half,
     address_second_half,
     io.in.bits.vaddr)
