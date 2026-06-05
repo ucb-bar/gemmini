@@ -113,7 +113,7 @@ jobs:
 
   build-rocket-config:
     runs-on: as4
-    needs: install-gemmini
+    needs: build-mx-config
     steps:
       - name: Identify runner host
         run: |
