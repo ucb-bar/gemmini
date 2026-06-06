@@ -43,10 +43,11 @@ MX_CICONFIG=RadianceGemminiOnlyConfig
 # matmul_tiled_fp4_64x64_DRAMMvout is intentionally omitted: it uses the
 # accumulator -> DRAM mvout path that the spike kernel does not model.
 MX_TESTS=(
-  bareMetalC/matmul_tiled_fp8_64x64
-  bareMetalC/matmul_tiled_fp8_128x128
   bareMetalC/matmul_tiled_fp8_128x128x256
+  bareMetalC/matmul_tiled_fp8_64x64_requant
   bareMetalC/matmul_tiled_fp8_128x128_requant
+  bareMetalC/matmul_tiled_fp8_64x96x64_requant
+  bareMetalC/matmul_tiled_fp8_96x96x64_requant
   bareMetalC/matmul_tiled_fp4_64x64
   bareMetalC/matmul_tiled_fp4_64x64_requant
   bareMetalC/matmul_tiled_fp4_128x128
