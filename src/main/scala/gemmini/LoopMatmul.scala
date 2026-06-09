@@ -567,11 +567,15 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     assert((req.max_j >= tilesPerMxBlock.U) && (req.max_j % tilesPerMxBlock.U === 0.U), "tiles need to be multiples of mxBlockSize")
   }
 
+  val numChunks = block_size / 8
+  val chunk_dram_stride = tilesPerMxBlock * block_size
+
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
 
   // Non-normalization-related iterators and calculations
   val j = Reg(UInt(iterator_bitwidth.W))
   val i = Reg(UInt(iterator_bitwidth.W))
+  val chunk_id = RegInit(0.U(GemminiISA.MX_CHUNK_ID_BITS.W))
 
   val acc_addr_start = /*(BigInt(1) << 31).U | (req.full_c << 29.U).asUInt |*/ req.addr_start
 
@@ -595,13 +599,16 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val mvout_cmd = Wire(new RoCCCommand)
   mvout_cmd := DontCare
   mvout_cmd.inst.funct := STORE_CMD
-  mvout_cmd.rs1 := dram_addr
+  mvout_cmd.rs1 := Mux(req.activation_mx_format === 0.U,
+    dram_addr + LoopMatmul.castDramOffset(chunk_id * chunk_dram_stride.U),
+    dram_addr)
 
   val mvout_cmd_rs2 = Wire(mvout_rs2_t.cloneType)
   mvout_cmd_rs2 := DontCare
   mvout_cmd_rs2.num_rows := rows.asUInt
   mvout_cmd_rs2.num_cols := cols.asUInt
   mvout_cmd_rs2.local_addr := cast_to_acc_addr(mvout_cmd_rs2.local_addr, sp_addr, accumulate = false.B, read_full = req.full_c)
+  mvout_cmd_rs2.mx_chunk_id := chunk_id
   mvout_cmd.rs2 := mvout_cmd_rs2.asUInt
 
   // Layernorm iterators and calculations
@@ -681,15 +688,19 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   when (req.dram_addr === 0.U) {
     state := idle
   }.elsewhen (io.cmd.fire && state === st) {
-    // The order here is k, j, i
-    val next_i = floorAdd(i, 1.U, iter_max_i)
-    val next_j = floorAdd(j, max_blocks, iter_max_j, next_i === 0.U)
+    when (req.activation_mx_format === 0.U && chunk_id < (numChunks - 1).U) {
+      chunk_id := chunk_id + 1.U
+    }.otherwise {
+      chunk_id := 0.U
+      val next_i = floorAdd(i, 1.U, iter_max_i)
+      val next_j = floorAdd(j, max_blocks, iter_max_j, next_i === 0.U)
 
-    i := next_i
-    j := next_j
+      i := next_i
+      j := next_j
 
-    when (next_i === 0.U && next_j === 0.U) {
-      state := idle
+      when (next_i === 0.U && next_j === 0.U) {
+        state := idle
+      }
     }
   }.elsewhen (io.cmd.fire && state === ln_config) {
     state := ln_st
@@ -720,6 +731,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
     j := 0.U
     i := 0.U
+    chunk_id := 0.U
     ln_row := 0.U
     ln_cmd := 0.U
     ln_stat_id := 0.U
@@ -783,12 +795,16 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     assert((req.max_j >= tilesPerMxBlock.U) && (req.max_j % tilesPerMxBlock.U === 0.U), "tiles need to be multiples of mxBlockSize")
   }
 
+  val numChunks = block_size / 8
+  val chunk_spad_stride = Mux(req.output_mx_format === 3.U || req.full_c, (2 * tilesPerMxBlock).U, tilesPerMxBlock.U)
+
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
   assert(max_block_len == 1, "there might be hw bugs if block length > 1, disabled for now")
 
   // Non-normalization-related iterators and calculations
   val j = Reg(UInt(iterator_bitwidth.W))
   val i = Reg(UInt(iterator_bitwidth.W))
+  val chunk_id = RegInit(0.U(GemminiISA.MX_CHUNK_ID_BITS.W))
 
   val acc_addr_start = req.src_addr
 
@@ -797,7 +813,9 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     (req.activation_mx_format === 0.U && (req.output_mx_format === 0.U)) -> (((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U)/2.U),
     ((req.activation_mx_format === 1.U || req.activation_mx_format === 2.U) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*8.U + j * (block_size/4).U)
     ))
-  val dst_addr = req.dst_addr + dst_offset
+  val dst_addr = Mux(req.activation_mx_format === 0.U,
+    req.dst_addr + dst_offset + chunk_id * chunk_spad_stride,
+    req.dst_addr + dst_offset)
 
   val acc_addr_offset = (i*iter_max_j+j) * block_size.U
   val src_addr = acc_addr_start + acc_addr_offset
@@ -825,6 +843,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   mvout_cmd_rs2.num_rows := rows.asUInt
   mvout_cmd_rs2.num_cols := cols.asUInt
   mvout_cmd_rs2.local_addr := cast_to_acc_addr(mvout_cmd_rs2.local_addr, src_addr, accumulate = false.B, read_full = req.full_c)
+  mvout_cmd_rs2.mx_chunk_id := chunk_id
   mvout_cmd.rs2 := mvout_cmd_rs2.asUInt
 
   io.req.ready := state === idle
@@ -847,15 +866,19 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   io.loop_id := req.loop_id
 
   when (io.cmd.fire && state === st) {
-    // The order here is k, j, i
-    val next_i = floorAdd(i, 1.U, iter_max_i)
-    val next_j = floorAdd(j, max_blocks, iter_max_j, next_i === 0.U)
+    when (req.activation_mx_format === 0.U && chunk_id < (numChunks - 1).U) {
+      chunk_id := chunk_id + 1.U
+    }.otherwise {
+      chunk_id := 0.U
+      val next_i = floorAdd(i, 1.U, iter_max_i)
+      val next_j = floorAdd(j, max_blocks, iter_max_j, next_i === 0.U)
 
-    i := next_i
-    j := next_j
+      i := next_i
+      j := next_j
 
-    when(next_i === 0.U && next_j === 0.U) {
-      state := idle
+      when(next_i === 0.U && next_j === 0.U) {
+        state := idle
+      }
     }
   }
 
@@ -864,6 +887,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     state := st
     j := 0.U
     i := 0.U
+    chunk_id := 0.U
   }
 }
 

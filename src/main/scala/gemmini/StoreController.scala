@@ -205,7 +205,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.pool_en := pooling_is_enabled && (wrow_counter =/= 0.U || wcol_counter =/= 0.U)
   io.dma.req.bits.store_en := Mux(pooling_is_enabled, wrow_counter === pool_size - 1.U && wcol_counter === pool_size - 1.U,
     block_counter === blocks - 1.U)
-  io.dma.req.bits.chunk_id := DontCare
+  io.dma.req.bits.chunk_id := mvout_rs2.mx_chunk_id
   io.dma.req.bits.max_j := io.loop_bound_j
   io.dma.req.bits.activation_mx_type := io.activation_mx_type
   io.dma.req.bits.output_mx_type := io.output_mx_type

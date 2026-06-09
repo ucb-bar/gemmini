@@ -68,6 +68,7 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
 
   val second_half = RegInit(false.B)
   val is_acc_write = io.in.bits.laddr.is_acc_addr && !io.in.bits.laddr.is_garbage()
+  val is_non_fp8_acc_write = is_acc_write && io.in.bits.activation_mx_type =/= 0.U
   val gmem_multiplier = Mux(io.in.bits.dest =/= 0.U, 1.U, 16.U)
 
   val address_second_half_wide = io.in.bits.vaddr + (gmem_multiplier * MuxCase(4.U, Seq(
@@ -81,24 +82,24 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
   )))
   val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, address_second_half_wide, address_second_half_narrow)
   val second_half_invalid = io.in.bits.len < 16.U
-  val out_chunk_id = Mux(is_acc_write, second_half.asUInt, 0.U)
+  val out_chunk_id = Mux(is_non_fp8_acc_write, second_half.asUInt, io.in.bits.chunk_id)
 
   io.out.valid := io.in.valid
   io.out.bits := io.in.bits
   io.out.bits.len := 16.U
   io.out.bits.chunk_id := out_chunk_id
-  io.out.bits.store_en := Mux(is_acc_write, !second_half || !second_half_invalid, io.in.bits.store_en)
-  io.out.bits.vaddr   := Mux(is_acc_write && second_half,
+  io.out.bits.store_en := Mux(is_non_fp8_acc_write, !second_half || !second_half_invalid, io.in.bits.store_en)
+  io.out.bits.vaddr   := Mux(is_non_fp8_acc_write && second_half,
     address_second_half,
     io.in.bits.vaddr)
 
-  io.in.ready := io.out.ready && (!is_acc_write || second_half)
+  io.in.ready := io.out.ready && (!is_non_fp8_acc_write || second_half)
 
   when (io.out.fire) {
-    when (is_acc_write && !second_half) {
-      second_half := true.B   // first half accepted; hold input for second half
+    when (is_non_fp8_acc_write && !second_half) {
+      second_half := true.B
     } .otherwise {
-      second_half := false.B  // second half (or non-acc) fired; reset
+      second_half := false.B
     }
   }
 
@@ -954,7 +955,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
             write_norm_q.io.enq.valid := true.B
             write_norm_q.io.enq.bits := write_dispatch_q.bits
             write_dispatch_q.ready := true.B
-            when (write_dispatch_q.bits.chunk_id === (numChunks - 1).U) {
+            // FP8: StC fires one command per chunk, so every command gets a resp.
+            // FP4/FP6: WRE fires two sub-commands per mvout; resp fires only on the last.
+            when (write_dispatch_q.bits.activation_mx_type === 0.U || write_dispatch_q.bits.chunk_id === (numChunks - 1).U) {
               io.dma.write.resp.valid := true.B
             }
           }
