@@ -529,7 +529,7 @@ class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val activation_mx_format = UInt(2.W)
 }
 
-class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int, mvout_rs2_t: MvoutRs2)
+class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int, tilesPerMxBlock: Int, mvout_rs2_t: MvoutRs2)
                    (implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new LoopMatmulStCReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, concurrent_loops)))
@@ -557,15 +557,15 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val req = Reg(new LoopMatmulStCReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, concurrent_loops))
 
-  when(state =/= idle) {
-    assert((req.max_i >= 2.U) && (req.max_i % 2.U === 0.U), "tiles need to be multiples of 32")
-    assert((req.max_j >= 2.U) && (req.max_j % 2.U === 0.U), "tiles need to be multiples of 32")
-  }
-
   val iter_max_j = Mux(req.activation_mx_format === 0.U, (req.max_j + 3.U) / 4.U, req.max_j)
   val iter_max_i = req.max_i
   val ex_j_compressed = Mux(req.activation_mx_format === 0.U, io.ex_j / 4.U, io.ex_j)
   val ex_i_compressed = io.ex_i
+
+  when(state =/= idle && req.activation_mx_format === 0.U) {
+    assert((iter_max_i >= tilesPerMxBlock.U) && (iter_max_i % tilesPerMxBlock.U === 0.U), "tiles need to be multiples of mxBlockSize")
+    assert((req.max_j >= tilesPerMxBlock.U) && (req.max_j % tilesPerMxBlock.U === 0.U), "tiles need to be multiples of mxBlockSize")
+  }
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
 
@@ -744,7 +744,7 @@ class LoopMatmulStCSpadReq(val block_size: Int, val iterator_bitwidth: Int, val 
 }
 
 class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int,
-                        input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int,
+                        input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int, tilesPerMxBlock: Int,
                         mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2)
                    (implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
@@ -773,15 +773,15 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
 
   val req = Reg(new LoopMatmulStCSpadReq(block_size, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops))
 
-  when(state =/= idle) {
-    assert((req.max_i >= 2.U) && (req.max_i % 2.U === 0.U), "tiles need to be multiples of 32")
-    assert((req.max_j >= 2.U) && (req.max_j % 2.U === 0.U), "tiles need to be multiples of 32")
-  }
-
   val iter_max_j = Mux(req.activation_mx_format === 0.U, (req.max_j + 3.U) / 4.U, req.max_j)
   val iter_max_i = req.max_i
   val ex_j_compressed = Mux(req.activation_mx_format === 0.U, io.ex_j / 4.U, io.ex_j)
   val ex_i_compressed = io.ex_i
+
+  when(state =/= idle && req.activation_mx_format === 0.U) {
+    assert((iter_max_i >= tilesPerMxBlock.U) && (iter_max_i % tilesPerMxBlock.U === 0.U), "tiles need to be multiples of mxBlockSize")
+    assert((req.max_j >= tilesPerMxBlock.U) && (req.max_j % tilesPerMxBlock.U === 0.U), "tiles need to be multiples of mxBlockSize")
+  }
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
   assert(max_block_len == 1, "there might be hw bugs if block length > 1, disabled for now")
@@ -954,6 +954,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
                  compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
+  val tilesPerMxBlock = 32 / block_size
   val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
   val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
   val max_block_size = 2 * block_size  // 32, for sizing pad fields
@@ -1002,8 +1003,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val ldB = Module(new LoopMatmulLdB(block_size, coreMaxAddrBits, iterator_bitwidth, max_all_addr, input_w, max_block_len, concurrent_loops, mvin_rs2_t))
   val ldD = Module(new LoopMatmulLdD(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, max_block_len, max_block_len_acc, concurrent_loops, mvin_rs2_t))
   val ex = Module(new LoopMatmulExecute(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t))
-  val stC = Module(new LoopMatmulStC(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, max_block_len, concurrent_loops, mvout_rs2_t))
-  val stC_spad = Module(new LoopMatmulStCSpad(block_size, iterator_bitwidth, max_addr, max_acc_addr, input_w, acc_w, 1, concurrent_loops, mvout_spad_rs1_t, mvout_rs2_t))
+  val stC = Module(new LoopMatmulStC(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, max_block_len, concurrent_loops, tilesPerMxBlock, mvout_rs2_t))
+  val stC_spad = Module(new LoopMatmulStCSpad(block_size, iterator_bitwidth, max_addr, max_acc_addr, input_w, acc_w, 1, concurrent_loops, tilesPerMxBlock, mvout_spad_rs1_t, mvout_rs2_t))
 
   // Create command queue
   val cmd = Queue(io.in)

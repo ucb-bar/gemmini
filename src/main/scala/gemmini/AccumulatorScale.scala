@@ -5,29 +5,29 @@ import chisel3._
 import chisel3.util._
 import Util._
 
-class AccumulatorReadRespWithFullData[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U, half_t: Vec[Vec[T]])
+class AccumulatorReadRespWithFullData[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Vec[T]], scale_t: U, chunk_t: Vec[Vec[T]])
   extends Bundle {
-  val resp = new AccumulatorReadResp(half_t, scale_t)
-  val full_data = half_t.cloneType
+  val resp = new AccumulatorReadResp(chunk_t, scale_t)
+  val full_data = chunk_t.cloneType
 }
 
-class AccumulatorScaleResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]], half_t: Vec[Vec[T]]) extends Bundle {
-  val full_data = half_t.cloneType
+class AccumulatorScaleResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]], chunk_t: Vec[Vec[T]]) extends Bundle {
+  val full_data = chunk_t.cloneType
   val data = rDataType.cloneType
   val acc_bank_id = UInt(2.W)
   val fromDMA = Bool()
-  val is_last_half = Bool()
+  val chunk_id = UInt(GemminiISA.MX_CHUNK_ID_BITS.W)
   val is_garbage = Bool()
 }
 
 class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
   fullDataType: Vec[Vec[T]], scale_t: U,
-  rDataType: Vec[Vec[T]], half_t: Vec[Vec[T]]
+  rDataType: Vec[Vec[T]], chunk_t: Vec[Vec[T]]
 ) extends Bundle {
-  val in = Flipped(Decoupled(new NormalizedOutput[T,U](fullDataType, scale_t, half_t)))
-  val out = Decoupled(new AccumulatorScaleResp[T](fullDataType, rDataType, half_t))
+  val in = Flipped(Decoupled(new NormalizedOutput[T,U](fullDataType, scale_t, chunk_t)))
+  val out = Decoupled(new AccumulatorScaleResp[T](fullDataType, rDataType, chunk_t))
   val mx_req_io = new MxRequantizerAccMemIO[T](
-    fullDataType, rDataType, half_t
+    fullDataType, rDataType, chunk_t
   )
   val output_mx_format = Input(UInt(2.W))
 }
@@ -105,16 +105,17 @@ class AccumulatorScale[T <: Data, U <: Data](
 
   import ev._
 
-  val half_t = if (use_mx_scaling) Vec(fullDataType.length / 2, fullDataType.head.cloneType)
-               else Vec(fullDataType.length, fullDataType.head.cloneType)
+  val numChunks = (fullDataType.length * fullDataType.head.length) / 8
+  val chunk_t = if (use_mx_scaling) Vec(fullDataType.length / numChunks, fullDataType.head.cloneType)
+                else Vec(fullDataType.length, fullDataType.head.cloneType)
 
   val io = IO(new AccumulatorScaleIO[T,U](
-    fullDataType, scale_t, rDataType, half_t
+    fullDataType, scale_t, rDataType, chunk_t
   )(ev))
   val t = io.in.bits.acc_read_resp.data(0)(0).cloneType
   val acc_read_data = io.in.bits.acc_read_resp.data
   val out = Wire(Decoupled(new AccumulatorScaleResp[T](
-    fullDataType, rDataType, half_t)(ev)))
+    fullDataType, rDataType, chunk_t)(ev)))
 
   if (num_scale_units == -1) {
     val data = io.in.bits.acc_read_resp.data
@@ -155,7 +156,7 @@ class AccumulatorScale[T <: Data, U <: Data](
       io.in.ready := io.mx_req_io.mx_data_in.ready
       io.mx_req_io.mx_data_in.bits.full_mx_data_in := acc_read_data
       io.mx_req_io.mx_data_in.bits.fromDMA := io.in.bits.acc_read_resp.fromDMA
-      io.mx_req_io.mx_data_in.bits.is_last_half := io.in.bits.acc_read_resp.is_last_half
+      io.mx_req_io.mx_data_in.bits.chunk_id := io.in.bits.acc_read_resp.chunk_id
       io.mx_req_io.mx_data_in.bits.acc_bank_id := io.in.bits.acc_read_resp.acc_bank_id
       io.mx_req_io.mx_mode := io.output_mx_format
 
@@ -166,14 +167,14 @@ class AccumulatorScale[T <: Data, U <: Data](
       out.bits.data := io.mx_req_io.mx_data_out.bits.quant_mx_data_out
       out.bits.fromDMA := io.mx_req_io.mx_data_out.bits.fromDMA
       out.bits.acc_bank_id := io.mx_req_io.mx_data_out.bits.acc_bank_id
-      out.bits.is_last_half := io.mx_req_io.mx_data_out.bits.is_last_half
+      out.bits.chunk_id := io.mx_req_io.mx_data_out.bits.chunk_id
     } else {
       io.mx_req_io.mx_data_in.valid := false.B
       io.mx_req_io.mx_data_in.bits := DontCare
       io.mx_req_io.mx_mode := 0.U
       io.mx_req_io.mx_data_out.ready := false.B
 
-      val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, half_t)(ev)))
+      val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, chunk_t)(ev)))
       in.valid := io.in.valid
       io.in.ready := in.ready
       in.bits.resp := io.in.bits.acc_read_resp
@@ -188,7 +189,7 @@ class AccumulatorScale[T <: Data, U <: Data](
       out.bits.data      := pipe_out.bits.resp.data
       out.bits.fromDMA   := pipe_out.bits.resp.fromDMA
       out.bits.acc_bank_id := pipe_out.bits.resp.acc_bank_id
-      out.bits.is_last_half := pipe_out.bits.resp.is_last_half
+      out.bits.chunk_id := pipe_out.bits.resp.chunk_id
       out.bits.is_garbage := false.B
     }
 
@@ -198,9 +199,9 @@ class AccumulatorScale[T <: Data, U <: Data](
     /*val regs = Reg(Vec(nEntries, Valid(new AccumulatorReadResp[T,U](
       fullDataType, scale_t)(ev))))*/
     val regs = Reg(Vec(nEntries, Valid(new NormalizedOutput[T,U](
-      fullDataType, scale_t, half_t)(ev))))
+      fullDataType, scale_t, chunk_t)(ev))))
     val out_regs = Reg(Vec(nEntries, new AccumulatorScaleResp[T](
-      fullDataType, rDataType, half_t)(ev)))
+      fullDataType, rDataType, chunk_t)(ev)))
 
     val fired_masks = Reg(Vec(nEntries, Vec(width, Bool())))
     val completed_masks = Reg(Vec(nEntries, Vec(width, Bool())))

@@ -53,7 +53,7 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
   val pool_en = Bool()
   val store_en = Bool()
 
-  val is_second_half = Bool()
+  val chunk_id = UInt(GemminiISA.MX_CHUNK_ID_BITS.W)
 
   val activation_mx_type = UInt(2.W)
   val output_mx_type = UInt(2.W)
@@ -81,13 +81,13 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
   )))
   val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, address_second_half_wide, address_second_half_narrow)
   val second_half_invalid = io.in.bits.len < 16.U
-  val is_second_half = Mux(is_acc_write, second_half, false.B)
+  val out_chunk_id = Mux(is_acc_write, second_half.asUInt, 0.U)
 
   io.out.valid := io.in.valid
   io.out.bits := io.in.bits
   io.out.bits.len := 16.U
-  io.out.bits.is_second_half := is_second_half
-  io.out.bits.store_en := Mux(is_acc_write, !is_second_half || !second_half_invalid, io.in.bits.store_en)
+  io.out.bits.chunk_id := out_chunk_id
+  io.out.bits.store_en := Mux(is_acc_write, !second_half || !second_half_invalid, io.in.bits.store_en)
   io.out.bits.vaddr   := Mux(is_acc_write && second_half,
     address_second_half,
     io.in.bits.vaddr)
@@ -154,25 +154,25 @@ class ScratchpadWriteIO(val n: Int, val w: Int, val mask_len: Int) extends Bundl
   def fire = valid && ready
 }
 
-class MxRequantizerAccMemDataOut[T <: Data: Arithmetic](rDataType: Vec[Vec[T]], half_t: Vec[Vec[T]]) extends Bundle {
+class MxRequantizerAccMemDataOut[T <: Data: Arithmetic](rDataType: Vec[Vec[T]], chunk_t: Vec[Vec[T]]) extends Bundle {
   val quant_mx_data_out = rDataType.cloneType
-  val full_mx_data_out = half_t.cloneType
+  val full_mx_data_out = chunk_t.cloneType
   val fromDMA = Bool()
-  val is_last_half = Bool()
+  val chunk_id = UInt(GemminiISA.MX_CHUNK_ID_BITS.W)
   val acc_bank_id = UInt(2.W)
   val is_garbage = Bool()
 }
 
-class MxRequantizerAccMemDataIn[T <: Data: Arithmetic](rDataType: Vec[Vec[T]], half_t: Vec[Vec[T]]) extends Bundle {
-  val full_mx_data_in = half_t.cloneType
+class MxRequantizerAccMemDataIn[T <: Data: Arithmetic](rDataType: Vec[Vec[T]], chunk_t: Vec[Vec[T]]) extends Bundle {
+  val full_mx_data_in = chunk_t.cloneType
   val fromDMA = Bool()
-  val is_last_half = Bool()
+  val chunk_id = UInt(GemminiISA.MX_CHUNK_ID_BITS.W)
   val acc_bank_id = UInt(2.W)
 }
 
-class MxRequantizerAccMemIO[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]], half_t: Vec[Vec[T]]) extends Bundle {
-  val mx_data_out = Flipped(Decoupled(new MxRequantizerAccMemDataOut[T](rDataType, half_t)))
-  val mx_data_in = Decoupled(new MxRequantizerAccMemDataIn[T](rDataType, half_t))
+class MxRequantizerAccMemIO[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]], chunk_t: Vec[Vec[T]]) extends Bundle {
+  val mx_data_out = Flipped(Decoupled(new MxRequantizerAccMemDataOut[T](rDataType, chunk_t)))
+  val mx_data_in = Decoupled(new MxRequantizerAccMemDataIn[T](rDataType, chunk_t))
   val mx_mode = Output(UInt(2.W))
 }
 
@@ -300,8 +300,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val reader = LazyModule(new StreamReader(config, max_in_flight_mem_reqs, dataBits, maxBytes, spad_w, acc_w, aligned_to,
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter,
     use_firesim_simulation_counters))
-  val writer_data_width = if (use_mx_scaling) { if (acc_read_full_width) acc_w/2 else 2*spad_w }
-                          else                { if (acc_read_full_width) acc_w   else spad_w   }
+  val fp8_chunk_bits = 8 * accType.getWidth
+  val writer_data_width = if (use_mx_scaling) { if (acc_read_full_width) fp8_chunk_bits else 2*spad_w }
+                          else                { if (acc_read_full_width) acc_w           else spad_w   }
   val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
     writer_data_width, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters))
@@ -322,8 +323,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
     val spad_row_t = if (use_mx_scaling) Vec(2*meshColumns, Vec(tileColumns, weightTypeProjected))
                      else Vec(meshColumns, Vec(tileColumns, inputType))
-    val half_t = if (use_mx_scaling) Vec(meshColumns / 2, Vec(tileColumns, accType))
-                 else Vec(meshColumns, Vec(tileColumns, accType))
+    val numChunks = (meshColumns * tileColumns) / 8
+    val chunk_t = if (use_mx_scaling) Vec(meshColumns / numChunks, Vec(tileColumns, accType))
+                  else Vec(meshColumns, Vec(tileColumns, accType))
 
     val io = IO(new Bundle {
       // DMA ports
@@ -381,7 +383,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val mx_req_io = new MxRequantizerAccMemIO(
         fullDataType = acc_row_t,
         rDataType = spad_row_t,
-        half_t = half_t
+        chunk_t = chunk_t
       )
       val weight_mx_format = Input(UInt(2.W))
       val act_mx_format = Input(UInt(2.W))
@@ -399,7 +401,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       single_write.valid := io.dma.write.req.valid
       io.dma.write.req.ready := single_write.ready
       single_write.bits := io.dma.write.req.bits
-      single_write.bits.is_second_half := true.B
+      single_write.bits.chunk_id := (numChunks - 1).U
       Queue(single_write)
     }
 
@@ -934,7 +936,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.scale := ex_read_req.bits.scale
           bio.read.req.bits.full := false.B
           bio.read.req.bits.fromDMA := false.B
-          bio.read.req.bits.is_last_half := DontCare
+          bio.read.req.bits.chunk_id := DontCare
         }.elsewhen (dmawrite) {
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.acc_row()
           bio.read.req.bits.full := write_dispatch_q.bits.laddr.read_full_acc_row
@@ -945,14 +947,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.iexp_qln2_inv := write_dispatch_q.bits.acc_iexp_qln2_inv.asTypeOf(bio.read.req.bits.iexp_qln2_inv)
           bio.read.req.bits.scale := write_dispatch_q.bits.acc_scale.asTypeOf(bio.read.req.bits.scale)
           bio.read.req.bits.fromDMA := true.B
-          bio.read.req.bits.is_last_half := write_dispatch_q.bits.is_second_half
+          bio.read.req.bits.chunk_id := write_dispatch_q.bits.chunk_id
 
 
           when (bio.read.req.fire) {
             write_norm_q.io.enq.valid := true.B
             write_norm_q.io.enq.bits := write_dispatch_q.bits
             write_dispatch_q.ready := true.B
-            when (write_dispatch_q.bits.is_second_half) {
+            when (write_dispatch_q.bits.chunk_id === (numChunks - 1).U) {
               io.dma.write.resp.valid := true.B
             }
           }

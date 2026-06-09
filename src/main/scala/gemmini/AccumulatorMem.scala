@@ -16,8 +16,8 @@ class AccumulatorReadReq[T <: Data: Arithmetic, U <: Data](n: Int, acc_t: T, sca
   val weight_mx_format = UInt(2.W)
   val act = UInt(Activation.bitwidth.W) // TODO magic number
   val full = Bool() // Whether or not we return the full bitwidth output
-  val is_last_half = Bool()
-  
+  val chunk_id = UInt(GemminiISA.MX_CHUNK_ID_BITS.W)
+
   val fromDMA = Bool()
 
 }
@@ -32,12 +32,12 @@ class AccumulatorReadResp[T <: Data: Arithmetic, U <: Data](fullDataType: Vec[Ve
   val iexp_qln2_inv = fullDataType.head.head.cloneType
   val act = UInt(Activation.bitwidth.W) // TODO magic number
   val acc_bank_id = UInt(2.W) // TODO magic number
-  val is_last_half = Bool()
+  val chunk_id = UInt(GemminiISA.MX_CHUNK_ID_BITS.W)
 }
 
-class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, fullDataType: Vec[Vec[T]], scale_t: U, half_t: Vec[Vec[T]]) extends Bundle {
+class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, fullDataType: Vec[Vec[T]], scale_t: U, chunk_t: Vec[Vec[T]]) extends Bundle {
   val req = Decoupled(new AccumulatorReadReq[T, U](n, fullDataType.head.head.cloneType, scale_t))
-  val resp = Flipped(Decoupled(new AccumulatorReadResp[T, U](half_t, scale_t)))
+  val resp = Flipped(Decoupled(new AccumulatorReadResp[T, U](chunk_t, scale_t)))
 }
 
 class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
@@ -45,14 +45,14 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
   val data = t.cloneType
   val acc = Bool()
   val mask = Vec(t.getWidth / 8, Bool()) // TODO Use aligned_to here
-  val offset = UInt(4.W) // TODO(nicolas): not hardcoded
+  val offset = UInt(log2Up(t.length*t.head.length).W) // TODO(nicolas): not hardcoded
 }
 
 
-class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U, half_t: Vec[Vec[T]],
+class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U, chunk_t: Vec[Vec[T]],
   acc_sub_banks: Int, use_shared_ext_mem: Boolean, use_mx_scaling: Boolean, meshRows: Int, tileRows: Int
 ) extends Bundle {
-  val read = Flipped(new AccumulatorReadIO(n, t, scale_t, half_t))
+  val read = Flipped(new AccumulatorReadIO(n, t, scale_t, chunk_t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
 
   val ext_mem = if (use_shared_ext_mem) Some(Vec(acc_sub_banks, new ExtMemIO)) else None
@@ -131,11 +131,12 @@ class AccumulatorMem[T <: Data, U <: Data](
   
   import ev._
 
-  val half_t = if (use_mx_scaling) Vec(t.length / 2, t.head.cloneType)
-               else Vec(t.length, t.head.cloneType)
+  val numChunks = (t.length * t.head.length) / 8  // DIM/8; each chunk = 8 acc elems = 512b
+  val chunk_t = if (use_mx_scaling) Vec(t.length / numChunks, t.head.cloneType)
+                else Vec(t.length, t.head.cloneType)
 
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t, scale_t, half_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows))
+  val io = IO(new AccumulatorMemIO(n, t, scale_t, chunk_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows))
 
   val scaleFactorMem = scale_mem.map { conf =>
     // println(s"[ScalingFactorMem Config]")
@@ -215,7 +216,8 @@ class AccumulatorMem[T <: Data, U <: Data](
     })
   }
  
-    require (acc_latency >= 2)
+    require(acc_latency >= 2)
+  require(!acc_singleported || !use_mx_scaling, "MX scaling requires non-singleported accumulator")
     val dataType = io.dataType_out
     
     val scaled_data = WireInit(0.U.asTypeOf(t)) //fee
@@ -270,26 +272,25 @@ class AccumulatorMem[T <: Data, U <: Data](
       scale_mem.io.read_req.bits.scaling_enable := true.B
       scale_mem.io.read_req.bits.addr := calculateScaleAddr(io.write.bits.addr)
     }
+    val dim = meshRows * tileRows
     when(scale_mem.io.read_resp.valid) {
       when(dataType === 0.U) {
-        for (i <- 0 until 16) {
+        for (i <- 0 until dim) {
           val dataElement = Wire(UInt(64.W))
           val offset = pipelined_writes(0).bits.offset
-          dontTouch(offset)
           dataElement := pipelined_writes(0).bits.data(i).asUInt
 
           val scaled_result = WireInit(0.U(64.W))
-          when(i.U >= offset && i.U < (offset +& 4.U)) {
+          when(i.U >= offset && i.U < (offset +& (dim / 4).U)) {
             scaled_result:= VecInit(dataElement.asTypeOf(Vec(4, UInt(16.W))).zipWithIndex.map {
               case (e, j) =>
               val scale = scale_mem.io.read_resp.bits.combined_scales((i.U - offset)*4.U +& j.U)(8, 0)
-              dontTouch(scale)
               applyE9M0Scale(e, scale, 8, 7) }).asUInt
           }
           scaled_data(i) := scaled_result.asTypeOf(pipelined_writes(0).bits.data(i))
         }
       }.otherwise {
-        for (i <- 0 until 16) {
+        for (i <- 0 until dim) {
           val scaled_chunks = Wire(Vec(4, UInt(16.W)))
           val dataElement = Wire(UInt(64.W))
           dataElement := pipelined_writes(0).bits.data(i).asUInt
@@ -320,7 +321,7 @@ class AccumulatorMem[T <: Data, U <: Data](
 
   val rdata_for_adder = Wire(t)
   rdata_for_adder := DontCare
-  val rdata_for_read_resp = Wire(half_t)
+  val rdata_for_read_resp = Wire(chunk_t)
   rdata_for_read_resp := DontCare
   
   val adder_sum = io.adder.sum
@@ -395,7 +396,7 @@ class AccumulatorMem[T <: Data, U <: Data](
 
     println("Creating Accumulator memory with sizes: acc_num_entries " + n + " len " + mask_len + "\n")
 
-    val mem = AsymmetricTwoPortSyncMem(n, t, mask_len) // TODO We assume byte-alignment here. Use aligned_to instead
+    val mem = AsymmetricTwoPortSyncMem(n, t, mask_len, if (use_mx_scaling) numChunks else 2) // TODO We assume byte-alignment here. Use aligned_to instead
 
     // write
     mem.io.waddr := oldest_pipelined_write.bits.addr
@@ -411,10 +412,12 @@ class AccumulatorMem[T <: Data, U <: Data](
 
       // half-width read
       // address for halfwidth port = {addr, bank_sel}
-      mem.io.raddr_half := Cat(io.read.req.bits.addr, io.read.req.bits.is_last_half.asUInt)
+      // chunk_id is MX_CHUNK_ID_BITS wide; port only takes bankSelBits = log2Up(numChunks) bits
+      val bankSelBits = if (numChunks > 1) log2Up(numChunks) else 1
+      mem.io.raddr_half := Cat(io.read.req.bits.addr, io.read.req.bits.chunk_id(bankSelBits - 1, 0))
       mem.io.ren_half := io.read.req.fire
 
-      rdata_for_read_resp := mem.io.rdata_half.asTypeOf(half_t)
+      rdata_for_read_resp := mem.io.rdata_half.asTypeOf(chunk_t)
     } else {
       // Non-MX build: full-width read response. The full read port is shared
       // between accumulation RMW and the read response (write-accumulate wins);
@@ -422,7 +425,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       mem.io.raddr_full := Mux(io.write.fire && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
       mem.io.ren_full := (io.write.fire && io.write.bits.acc) || io.read.req.fire
       rdata_for_adder := mem.io.rdata_full
-      rdata_for_read_resp := mem.io.rdata_full.asTypeOf(half_t)
+      rdata_for_read_resp := mem.io.rdata_full.asTypeOf(chunk_t)
 
       mem.io.raddr_half := 0.U
       mem.io.ren_half := false.B
@@ -586,8 +589,8 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
   }
 
-  val q = Module(new Queue(new AccumulatorReadResp(half_t, scale_t), 1, true, true))
-  q.io.enq.bits.data := rdata_for_read_resp.asTypeOf(half_t)
+  val q = Module(new Queue(new AccumulatorReadResp(chunk_t, scale_t), 1, true, true))
+  q.io.enq.bits.data := rdata_for_read_resp.asTypeOf(chunk_t)
 
   if (is_dummy) {
     rdata_for_read_resp := DontCare
@@ -602,7 +605,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   q.io.enq.bits.act := RegNext(io.read.req.bits.act)
   q.io.enq.bits.fromDMA := RegNext(io.read.req.bits.fromDMA)
   q.io.enq.bits.acc_bank_id := DontCare
-  q.io.enq.bits.is_last_half := RegNext(io.read.req.bits.is_last_half)
+  q.io.enq.bits.chunk_id := RegNext(io.read.req.bits.chunk_id)
   q.io.enq.valid := RegNext(io.read.req.fire)
 
   val p = q.io.deq
@@ -617,7 +620,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   io.read.resp.bits.scale := p.bits.scale
   io.read.resp.bits.acc_bank_id := DontCare // This is set in Scratchpad
   io.read.resp.valid := p.valid
-  io.read.resp.bits.is_last_half := p.bits.is_last_half
+  io.read.resp.bits.chunk_id := p.bits.chunk_id
   p.ready := io.read.resp.ready
 
   val q_will_be_empty = (q.io.count +& q.io.enq.fire) - q.io.deq.fire === 0.U

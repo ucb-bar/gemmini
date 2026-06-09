@@ -112,10 +112,12 @@ object GemminiISA {
   val MVOUT_RS2_ADDR_WIDTH = 32
   val MVOUT_RS2_COLS_WIDTH = 16
   val MVOUT_RS2_ROWS_WIDTH = 16
+  val MX_CHUNK_ID_BITS = 3  // log2(maxChunks=8), supports DIM up to 64
 
   class MvoutRs2(mvout_rows_bits: Int, mvout_cols_bits: Int, local_addr_t: LocalAddr) extends Bundle {
-    val _spacer2 = UInt((MVOUT_RS2_ROWS_WIDTH - mvout_rows_bits).W)
-    val num_rows = UInt(mvout_rows_bits.W)
+    val _spacer2    = UInt((MVOUT_RS2_ROWS_WIDTH - mvout_rows_bits - MX_CHUNK_ID_BITS).W)
+    val mx_chunk_id = UInt(MX_CHUNK_ID_BITS.W)
+    val num_rows    = UInt(mvout_rows_bits.W)
     val _spacer1 = UInt((MVOUT_RS2_COLS_WIDTH - mvout_cols_bits).W)
     val num_cols = UInt(mvout_cols_bits.W)
     val _spacer0 = UInt((MVOUT_RS2_ADDR_WIDTH - local_addr_t.getWidth).W)

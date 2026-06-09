@@ -226,7 +226,7 @@ class MxRequantizer[T <: Data](
     pipe_in.bits.mx_mode := io.mxacc_req.mx_mode
     pipe_in.bits.out.full_mx_data_out := io.mxacc_req.mx_data_in.bits.full_mx_data_in
     pipe_in.bits.out.fromDMA := io.mxacc_req.mx_data_in.bits.fromDMA
-    pipe_in.bits.out.is_last_half := io.mxacc_req.mx_data_in.bits.is_last_half
+    pipe_in.bits.out.chunk_id := io.mxacc_req.mx_data_in.bits.chunk_id
     pipe_in.bits.out.acc_bank_id := io.mxacc_req.mx_data_in.bits.acc_bank_id
     pipe_in.bits.is_gpu := false.B
     pipe_in.bits.gpu_addr := 0.U
@@ -376,7 +376,7 @@ class MxRequantizer[T <: Data](
   io.mxacc_req.mx_data_out.valid := (final_pipe_out.valid || full_precision_valid) && !final_pipe_out.bits.is_gpu
   io.mxacc_req.mx_data_out.bits.fromDMA := final_pipe_out.bits.out.fromDMA
   io.mxacc_req.mx_data_out.bits.acc_bank_id := final_pipe_out.bits.out.acc_bank_id
-  io.mxacc_req.mx_data_out.bits.is_last_half := final_pipe_out.bits.out.is_last_half
+  io.mxacc_req.mx_data_out.bits.chunk_id := final_pipe_out.bits.out.chunk_id
 
 
   final_pipe_out.ready := Mux(final_pipe_out.bits.is_gpu,

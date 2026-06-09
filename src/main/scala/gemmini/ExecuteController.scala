@@ -612,7 +612,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       } else {
         io.acc.read_req(i).bits.weight_mx_format := DontCare
         io.acc.read_req(i).bits.activation_mx_format := DontCare
-        io.acc.read_req(i).bits.is_last_half := DontCare
+        io.acc.read_req(i).bits.chunk_id := DontCare
       }
       io.acc.read_req(i).valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
       io.acc.read_req(i).bits.scale := acc_scale
@@ -646,7 +646,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.read_req(i).bits.addr := DontCare
       io.acc.read_req(i).bits.activation_mx_format := DontCare
       io.acc.read_req(i).bits.weight_mx_format := DontCare
-      io.acc.read_req(i).bits.is_last_half := DontCare
+      io.acc.read_req(i).bits.chunk_id := DontCare
     }
 
     io.acc.read_resp(i).ready := false.B

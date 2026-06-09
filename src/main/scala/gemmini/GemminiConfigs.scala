@@ -55,10 +55,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              acc_sub_banks: Int = -1,
                                                                              acc_capacity: GemminiMemCapacity = CapacityInKilobytes(64),
                                                                              acc_latency: Int = 2,
-                                                                             
 
-                                                                            //  scaleMem_write_data_width: Int = 128,
-                                                                            //  scaleMem_write_data_addr_width: Int = 32,
                                                                              scaleSize: Int = 32,
                                                                              
                                                                              dma_maxbytes: Int = 64, // TODO get this from cacheblockbytes
@@ -121,7 +118,6 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              testConfig: Boolean = false,
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
-  // require(inputType.getWidth == weightType.getWidth)
   val sp_width = meshColumns * tileColumns * weightType.getWidth //weightType!! TODO: double check with different precision writes!
   val sp_width_projected = meshColumns * tileColumns * weightTypeProjected.getWidth //weightType!! TODO: double check with different precision writes!
   val sp_bank_entries = sp_capacity match {
@@ -220,6 +216,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val LOG2_DIM        = log2Up(DIM)
   val LOG2_DIM_COUNT  = log2Up(DIM + 1)
   require(DIM >= 2, "the systolic array must have DIM of at least 2")
+  val tilesPerMxBlock = scaleSize / DIM
+  require(scaleSize % DIM == 0, "mx block size needs to be multiple of DIM")
 
   //==========================================================================
   // cisc-gemmini miscellaneous constants (some redundant with above)
