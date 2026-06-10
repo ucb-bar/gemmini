@@ -805,6 +805,8 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val j = Reg(UInt(iterator_bitwidth.W))
   val i = Reg(UInt(iterator_bitwidth.W))
   val chunk_id = RegInit(0.U(GemminiISA.MX_CHUNK_ID_BITS.W))
+  val fp8_tiles_this_j = Mux(j === iter_max_j - 1.U && req.max_j % 4.U =/= 0.U, req.max_j % 4.U, 4.U)
+  val chunks_this_j = fp8_tiles_this_j / tilesPerMxBlock.U
 
   val acc_addr_start = req.src_addr
 
@@ -866,7 +868,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   io.loop_id := req.loop_id
 
   when (io.cmd.fire && state === st) {
-    when (req.activation_mx_format === 0.U && chunk_id < (numChunks - 1).U) {
+    when (req.activation_mx_format === 0.U && chunk_id < (chunks_this_j - 1.U)) {
       chunk_id := chunk_id + 1.U
     }.otherwise {
       chunk_id := 0.U
