@@ -753,6 +753,9 @@ class LoopMatmulStCSpadReq(val block_size: Int, val iterator_bitwidth: Int, val 
   val is_resadd = Bool()
   val output_mx_format = UInt(2.W)
   val activation_mx_format = UInt(2.W)
+  // True when the output (C) scratchpad region overlaps the A/B operand region this loop still
+  // reads (decided at dispatch). Only then does the store WAR-gate on full execute drain.
+  val dst_overlaps_operands = Bool()
 }
 
 class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int,
@@ -853,15 +856,39 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   io.i := i
   io.idle := state === idle
 
-  // The order here is k, j, i when not doing LAYERNORM or SOFTMAX
+  // FP8 store j-group = 4 execute tiles; gate on the UNCOMPRESSED ex_j reaching the
+  // group's last execute-tile (ej_high) so we don't read before all tiles' final-k accumulate.
+  val last_group = j + blocks - 1.U
+  val ej_high = Mux(req.activation_mx_format === 0.U,
+    Mux((last_group === iter_max_j - 1.U) && (req.max_j % 4.U =/= 0.U),
+      req.max_j - 1.U,             // partial last group ends at max_j-1
+      last_group * 4.U + 3.U),     // full group = 4 execute tiles
+    last_group)                    // non-FP8: one execute tile per group
+  // terminal j-group (with earlier groups) has no drain margin: route it through the
+  // drain-gated ex_completed instead of the early ex_i window.
+  val terminal_needs_drain = (last_group === iter_max_j - 1.U) && (iter_max_j > 1.U)
+  // WAR hazard: when the output is written back into the SAME scratchpad region that still holds
+  // an operand (output row aliases an A/B row read by a later execute tile), the early
+  // issue-position window would release the store while those rows are still being read, and the
+  // store DMA then overwrites the live operand. Only when such an overlap actually exists do we
+  // release ONLY via io.ex_completed (execute idle + fully retired = every operand read done), so
+  // the write waits for all reads regardless of DMA latency. With no overlap there is no WAR and
+  // the fast early-release window is kept (no needless stall). The overlap is decided at dispatch
+  // (req.dst_overlaps_operands).
+  val dest_overlaps_live_operands = req.dst_overlaps_operands
+  dontTouch(ej_high)
+  dontTouch(terminal_needs_drain)
+  dontTouch(dest_overlaps_live_operands)
   val ex_ahead = WireInit(io.ex_completed ||
     ((req.act =/= Activation.LAYERNORM) && (req.act =/= Activation.SOFTMAX) &&
+      !dest_overlaps_live_operands &&
       (io.ex_k === req.max_k - 1.U &&
-        (ex_j_compressed >= j + blocks ||
-          ((ex_j_compressed === j + blocks - 1.U) && ex_i_compressed > i)))))
+        (io.ex_j > ej_high ||
+          ((io.ex_j === ej_high) && ex_i_compressed > i && !terminal_needs_drain)))))
   when(req.is_resadd){
     ex_ahead := io.ex_completed || (ex_i_compressed > i || (ex_i_compressed === i && ex_j_compressed >= j + blocks))
   }
+  dontTouch(ex_ahead)
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && ex_ahead
   io.cmd.bits := mvout_cmd
@@ -1350,6 +1377,29 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC_spad.io.req.bits.is_resadd := is_resadd
   stC_spad.io.req.bits.output_mx_format := io.output_mx_format
   stC_spad.io.req.bits.activation_mx_format := io.activation_mx_format
+
+  // WAR overlap: decide here, where the A/B operand and C output spad regions are all known,
+  // whether the output C region this loop writes overlaps the A or B operand region the mesh
+  // still reads. Only then does the store WAR-gate on full execute drain (LoopMatmulStCSpad
+  // ex_ahead); a disjoint output keeps the fast early-release window. Operand bases mirror the
+  // execute spad_id remap so we compare the exact rows the mesh reads. Sizes: A = max_i*max_k
+  // tiles, B = max_k*max_j tiles, each block_size spad rows. C footprint is the FP8 output span
+  // (= max_i*max_j*block_size, verified against the store footprint); BF16/full output is 2x wide.
+  val st_a_lo = Mux(loop_requesting_st.spad_only || loop_requesting_st.a_ex_spad_id === 0.U,
+    loop_requesting_st.a_addr_start, (loop_requesting_st.a_ex_spad_id - 1.U) * (max_addr / concurrent_loops).U)
+  val st_a_hi = st_a_lo +& (loop_requesting_st.max_i * loop_requesting_st.max_k * block_size.U)
+  val st_b_hi = Mux(loop_requesting_st.spad_only || loop_requesting_st.b_ex_spad_id === 0.U,
+    loop_requesting_st.b_addr_end, loop_requesting_st.b_ex_spad_id * (max_addr / concurrent_loops).U)
+  val st_b_lo = st_b_hi -& (loop_requesting_st.max_k * loop_requesting_st.max_j * block_size.U)
+  val st_c_lo = loop_requesting_st.c_spad_addr
+  val st_c_span = Mux(io.output_mx_format === 3.U || loop_requesting_st.full_c,
+    2.U * loop_requesting_st.max_i * loop_requesting_st.max_j * block_size.U,
+    loop_requesting_st.max_i * loop_requesting_st.max_j * block_size.U)
+  val st_c_hi = st_c_lo +& st_c_span
+  val st_c_overlaps_a = (st_c_lo < st_a_hi) && (st_a_lo < st_c_hi)
+  val st_c_overlaps_b = (st_c_lo < st_b_hi) && (st_b_lo < st_c_hi)
+  stC_spad.io.req.bits.dst_overlaps_operands := st_c_overlaps_a || st_c_overlaps_b
+  dontTouch(stC_spad.io.req.bits.dst_overlaps_operands)
 
   stC.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started &&
     loop_requesting_st.configured && !loop_requesting_st.spad_only

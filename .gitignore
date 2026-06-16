@@ -346,3 +346,5 @@ waveforms/
 project/
 
 .vscode
+__pycache__/
+fsdb*
