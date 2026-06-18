@@ -116,7 +116,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              enable_lut: Boolean = true,
                                                                              use_mx_scaling: Boolean = true,
                                                                              testConfig: Boolean = false,
-                                                                             headerFileName: String = "gemmini_params.h"
+                                                                             headerFileName: String = "gemmini_params.h",
+                                                                             // Standalone MX MMIO regmap base (mx_mmio_node); None => tl_ext_mem_base + 0x100000.
+                                                                             mx_mmio_base: Option[BigInt] = None
                                                        ) {
   val sp_width = meshColumns * tileColumns * weightType.getWidth //weightType!! TODO: double check with different precision writes!
   val sp_width_projected = meshColumns * tileColumns * weightTypeProjected.getWidth //weightType!! TODO: double check with different precision writes!

@@ -324,7 +324,24 @@ object GemminiMxFPConfigs {
     enable_lut = true,
     lut = Some(GemminiLUTConfig())
   )
- 
+
+  // Faithful standalone twin of the Radiance MX flow (WithRadianceMxGemmini): same functional
+  // params, but internal scratchpad + MMIO requant path instead of shared SRAM.
+  val standaloneMxFPConfig = defaultMxFPConfig.copy(
+    ex_read_from_acc = false,
+    ex_write_to_spad = false,
+    sp_singleported = false,
+    spad_read_delay = 4,
+    tile_latency = 0,
+    mesh_output_delay = 1,
+    acc_latency = 3,
+    num_counter = 0,
+    lut = Some(GemminiLUTConfig()),
+    // Flat scale-factor RAM window base/size (easy to change here). 0x20000000..0x20003fff:
+    // weight scales at +0x0000, activation scales at +0x2000 (top addr bit selects).
+    scale_mem = Some(defaultMxFPConfig.scale_mem.get.copy(baseAddr = 0x20000000L)),
+    mx_mmio_base = Some(0x20010000L)   // LUT/requant regmap, relocated off the scale window
+  )
 }
 
 // =========== MxFP Config ==========
@@ -334,6 +351,16 @@ class GemminiMxFPDefaultConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiMxFPConfigs.defaultMxFPConfig))
+    }
+  )
+})
+
+class GemminiMxFPStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiMxFPConfigs.standaloneMxFPConfig))
     }
   )
 })

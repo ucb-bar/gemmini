@@ -12,6 +12,7 @@ import freechips.rocketchip.tilelink._
 import GemminiISA._
 import Util._
 import freechips.rocketchip.diplomacy.{AddressSet, IdRange, SimpleDevice, TransferSizes}
+import freechips.rocketchip.subsystem.CacheBlockBytes
 import freechips.rocketchip.regmapper.{RegField, RegReadFn, RegWriteFn}
 import freechips.rocketchip.tilelink.TLRegisterNode
 import org.chipsalliance.diplomacy.lazymodule.LazyModule
@@ -97,12 +98,12 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
 
   val node = if (config.use_dedicated_tl_port) tlNode else atlNode
 
-  // Standalone MMIO path to mx_io endpoints; parent config attaches to cbus.
+  // Standalone MMIO path to mx_io endpoints; parent config attaches to pbus.
   // Disabled in radiance builds (use_shared_ext_mem=true), which use mx_io.
   val use_mx_mmio = config.use_mx_scaling && !config.use_shared_ext_mem
   val mx_mmio_node = Option.when(use_mx_mmio) {
     TLRegisterNode(
-      address     = Seq(AddressSet(config.tl_ext_mem_base + 0x100000L, 0xfffL)),
+      address     = Seq(AddressSet(config.mx_mmio_base.getOrElse(config.tl_ext_mem_base + 0x100000L), 0xfffL)),
       device      = new SimpleDevice("gemmini-mx-mmio", Seq("ucbbar,gemmini-mx-mmio")),
       beatBytes   = 8,
       concurrency = 1)
@@ -141,6 +142,35 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
       ))
     )))
   }
+
+  // Flat scale-factor RAM window (port of radiance scalingFacManager): CPU writes 64b beats;
+  // top addr bit selects weight(0)/activation(1). Base/size from the scale_mem config.
+  val mx_scale_mgr_node = Option.when(use_mx_mmio) {
+    val s = config.scale_mem.get
+    TLManagerNode(Seq(TLSlavePortParameters.v1(
+      managers = Seq(TLSlaveParameters.v2(
+        address    = Seq(AddressSet(s.baseAddr, s.sizeInBytes - 1)),
+        fifoId     = Some(0),
+        supports   = TLMasterToSlaveTransferSizes(
+          get        = TransferSizes(1, 8),
+          putFull    = TransferSizes(1, 8),
+          putPartial = TransferSizes(1, 8)))),
+      beatBytes = 8)))
+  }
+
+  // Attach the standalone MX nodes via the standard LazyRoCC hooks (like the DMA master):
+  // slaves (LUT/requant regmap + scale window) <- stlNode (tile slave port, cbus-reachable);
+  // out clients -> tlNode -> sbus.
+  if (use_mx_mmio) {
+    val mx_slave_xbar = TLXbar()
+    mx_slave_xbar := stlNode
+    mx_mmio_node.foreach      { _ := TLFragmenter(8, p(CacheBlockBytes)) := mx_slave_xbar }
+    // Fragmenter (not just a width widget) so the window advertises [1,64] upstream and stays
+    // homogeneous with DRAM for the gemmini DMA's TLB page lookup; it still sees <=8B beats.
+    mx_scale_mgr_node.foreach { _ := TLFragmenter(8, p(CacheBlockBytes)) := mx_slave_xbar }
+  }
+  mx_requant_out_client.foreach   { client => tlNode := TLBuffer() := client }
+  mx_scale_fac_out_client.foreach { client => tlNode := TLBuffer() := client }
 }
 
 class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
@@ -295,7 +325,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     })
   }
 
-  val (mmio_scale_mem_write_w, mmio_scale_mem_write_act, mmio_requant_in_gpu, mmio_lut0, mmio_lut1, mmio_lut2, mmio_requant_out, mmio_scale_factor_out) =
+  val (mmio_requant_in_gpu, mmio_lut0, mmio_lut1, mmio_lut2, mmio_requant_out, mmio_scale_factor_out) =
     if (outer.use_mx_mmio) {
       val s = outer.config.scale_mem.get
       val q = outer.config.requantizer.get
@@ -328,29 +358,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
             when (wvalid && !staged) { staged := true.B }
             !staged
           })))
-      }
-
-      // ------ scale-mem write port (W or A) ------
-      def scaleMemPort(base: Int): (DecoupledIO[ScalingFactorWriteReq], Seq[(Int, Seq[RegField])]) = {
-        val addrW = s.addrBits
-        val dataW = s.ScaleMemWriteDataWidth
-        val w = Wire(Decoupled(new ScalingFactorWriteReq(s)))
-
-        val staged   = RegInit(false.B)
-        val addr_reg = RegInit(0.U(addrW.W))
-        val data_reg = RegInit(0.U(dataW.W))
-
-        w.valid     := staged
-        w.bits.addr := addr_reg
-        w.bits.data := data_reg
-        when (w.fire) { staged := false.B }
-
-        val fields = Seq(
-          (base + 0x000) -> Seq(RegField(addrW, addr_reg)),
-          goField(base, 0x028, staged)
-        ) ++ dataRegFields(base, data_reg, dataW, 0x008)
-
-        (w, fields)
       }
 
       // ------ requantizer-in port (data Vec + address + dataType + go) ------
@@ -461,23 +468,39 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         w
       }
 
-      val (w_wire, w_fields)     = scaleMemPort(0x000)
-      val (a_wire, a_fields)     = scaleMemPort(0x040)
       val (rin_wire, rin_fields) = requantInPort(0x080)
       val (l0_wire, l0_fields)   = lutPort(0x100, 0)
       val (l1_wire, l1_fields)   = lutPort(0x500, 1)
       val (l2_wire, l2_fields)   = lutPort(0x900, 2)
 
       outer.mx_mmio_node.get.regmap(
-        (w_fields ++ a_fields ++ rin_fields ++
-         l0_fields ++ l1_fields ++ l2_fields): _*)
+        (rin_fields ++ l0_fields ++ l1_fields ++ l2_fields): _*)
 
-      (Some(w_wire), Some(a_wire), Some(rin_wire),
+      (Some(rin_wire),
        Some(l0_wire), Some(l1_wire), Some(l2_wire),
        Some(rout_wire), Some(sfout_wire))
     } else {
-      (None, None, None, None, None, None, None, None)
+      (None, None, None, None, None, None)
     }
+  // Flat scale window -> scale_mem_write_w/act (port of radiance GemminiTile scalingFacManager):
+  // one 64b CPU write per beat; top addr bit picks weight(0)/act(1), rest is the scale-mem address.
+  val (scale_win_w, scale_win_act) = if (outer.use_mx_mmio) {
+    val s = outer.config.scale_mem.get
+    val (node, edge) = outer.mx_scale_mgr_node.get.in.head
+    val reqs = Seq.fill(2)(Wire(Decoupled(new ScalingFactorWriteReq(s.addrBits - 1, 8 * 8))))
+    val wen = node.a.fire
+    val typeSel = node.a.bits.address(s.addrBits - 1)
+    reqs.head.valid := wen && !typeSel
+    reqs.last.valid := wen &&  typeSel
+    reqs.foreach(_.bits.addr := node.a.bits.address(s.addrBits - 2, 0))
+    reqs.foreach(_.bits.data := node.a.bits.data)
+    val typeReady = Mux(typeSel, reqs.last.ready, reqs.head.ready)
+    node.a.ready := node.d.ready && typeReady
+    node.d.valid := node.a.valid && typeReady
+    node.d.bits  := edge.AccessAck(node.a.bits)
+    (Some(reqs.head), Some(reqs.last))
+  } else (None, None)
+
   if (outer.config.use_mx_scaling) {
     if (outer.config.use_shared_ext_mem) {
       val b = mx_io.get
@@ -490,8 +513,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_requantizer.get.io.lut1_write <> b.lut1
       mx_requantizer.get.io.lut2_write <> b.lut2
     } else {
-      spad.module.io.scale_mem_write_w.get   <> mmio_scale_mem_write_w.get
-      spad.module.io.scale_mem_write_act.get <> mmio_scale_mem_write_act.get
+      spad.module.io.scale_mem_write_w.get   <> scale_win_w.get
+      spad.module.io.scale_mem_write_act.get <> scale_win_act.get
       mx_requantizer.get.io.requant_data_in_gpu <> mmio_requant_in_gpu.get
       mx_requantizer.get.io.requant_data_out    <> mmio_requant_out.get
       mmio_scale_factor_out.get                 <> mx_requantizer.get.io.scaleMem_write

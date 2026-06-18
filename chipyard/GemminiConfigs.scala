@@ -47,7 +47,7 @@ class GemminiShuttleConfig extends Config(
   new chipyard.config.AbstractConfig)
 
 class MxGemminiRocketConfig extends Config(
-  new gemmini.GemminiMxFPDefaultConfig ++                         // use FP32Gemmini systolic array GEMM accelerator
+  new gemmini.GemminiMxFPStandaloneConfig ++                      // standalone MX twin (internal spad + MMIO requant)
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++
   new chipyard.config.WithSystemBusWidth(128) ++
   new chipyard.config.AbstractConfig)
