@@ -420,26 +420,42 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         val (node, edge) = outer.mx_requant_out_client.get.out.head
         val fullWidth = q.numOutputLanes
         val halfWidth = q.numOutputLanes / 2
-        val isFP4 = w.bits.dataType === RequantizerDataType.FP4
+        val beatBytes  = node.params.dataBits / 8
+        val nBeatsFull = (fullWidth + beatBytes - 1) / beatBytes
+        val nBeatsHalf = (halfWidth + beatBytes - 1) / beatBytes
 
+        // Accept-then-burst: latch the request, then drive a (possibly multibeat) Put from the
+        // latched copy. A 256b payload on a narrow bus splits into beatBytes-sized beats; TL
+        // forbids the source changing mid-burst, so we hold ONE source across the beats, slice
+        // the data per beat, and advance the source only after the LAST beat. Latching is required
+        // so w.ready (= !busy, a reg) never feeds back combinationally into w.bits.dataType (the
+        // requantizer's output bits depend on ready) -> no combinational loop. Single-beat buses
+        // (beat >= payload) reduce to one beat/Put.
+        val busy   = RegInit(false.B)
+        val req    = Reg(new RequantizerOutBundle(numLanes, laneBits))
+        val beat   = RegInit(0.U(log2Ceil(nBeatsFull + 1).W))
         val source = RegInit(0.U(q.outputIdBits.W))
-        when (node.a.fire) { source := source + 1.U }
+        w.ready := !busy
+        when (w.fire) { req := w.bits; busy := true.B; beat := 0.U }
 
-        node.a.bits := edge.Put(
-          fromSource = source,
-          toAddress  = w.bits.address,
-          lgSize     = Mux(isFP4, log2Ceil(halfWidth).U, log2Ceil(fullWidth).U),
-          data       = Mux(isFP4,
-            Mux(w.bits.address(log2Ceil(halfWidth)),
-              (w.bits.data(halfWidth - 1, 0) << halfWidth).asTypeOf(UInt(fullWidth.W)),
-              w.bits.data),
-            w.bits.data
-          )
-        )._2
-        node.a.valid := w.valid
-        w.ready      := node.a.ready
-        node.d.ready := true.B
-
+        val isFP4 = req.dataType === RequantizerDataType.FP4 || req.dataType === RequantizerDataType.FP6
+        val putData = Mux(isFP4,
+          Mux(req.address(log2Ceil(halfWidth)),
+            (req.data(halfWidth - 1, 0) << halfWidth).asTypeOf(UInt(fullWidth.W)),
+            req.data),
+          req.data)
+        val dataVec = putData.asTypeOf(Vec(nBeatsFull, UInt((beatBytes * 8).W)))
+        val last = beat === Mux(isFP4, (nBeatsHalf - 1).U, (nBeatsFull - 1).U)
+        node.a.valid     := busy
+        node.a.bits      := edge.Put(fromSource = source, toAddress = req.address,
+                              lgSize = Mux(isFP4, log2Ceil(halfWidth).U, log2Ceil(fullWidth).U),
+                              data = dataVec(0))._2
+        node.a.bits.data := dataVec(beat)
+        node.d.ready     := true.B
+        when (busy && node.a.fire) {
+          beat := beat + 1.U
+          when (last) { busy := false.B; beat := 0.U; source := source + 1.U }
+        }
         w
       }
 
@@ -451,20 +467,30 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
         val (node, edge) = outer.mx_scale_fac_out_client.get.out.head
         val dataBytes = s.ScaleMemWriteDataWidth / 8
+        val beatBytes = node.params.dataBits / 8
+        val nBeats    = (dataBytes + beatBytes - 1) / beatBytes
 
+        // Accept-then-burst (see rout_wire): latch the request, then drive a (possibly multibeat)
+        // fixed-size Put holding ONE source across all beats, slicing data per beat, advancing the
+        // source only after the last beat. Latching keeps w.ready (= !busy) off w.bits.
+        val busy   = RegInit(false.B)
+        val req    = Reg(new ScalingFactorWriteReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))
+        val beat   = RegInit(0.U(log2Ceil(nBeats + 1).W))
         val source = RegInit(0.U(4.W))
-        when (node.a.fire) { source := source + 1.U }
+        w.ready := !busy
+        when (w.fire) { req := w.bits; busy := true.B; beat := 0.U }
 
-        node.a.bits := edge.Put(
-          fromSource = source,
-          toAddress  = w.bits.addr,
-          lgSize     = log2Ceil(dataBytes).U,
-          data       = w.bits.data
-        )._2
-        node.a.valid := w.valid
-        w.ready      := node.a.ready
-        node.d.ready := true.B
-
+        val dataVec = req.data.asTypeOf(Vec(nBeats, UInt((beatBytes * 8).W)))
+        val last = beat === (nBeats - 1).U
+        node.a.valid     := busy
+        node.a.bits      := edge.Put(fromSource = source, toAddress = req.addr,
+                              lgSize = log2Ceil(dataBytes).U, data = dataVec(0))._2
+        node.a.bits.data := dataVec(beat)
+        node.d.ready     := true.B
+        when (busy && node.a.fire) {
+          beat := beat + 1.U
+          when (last) { busy := false.B; beat := 0.U; source := source + 1.U }
+        }
         w
       }
 

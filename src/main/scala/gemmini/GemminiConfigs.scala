@@ -117,7 +117,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              use_mx_scaling: Boolean = true,
                                                                              testConfig: Boolean = false,
                                                                              headerFileName: String = "gemmini_params.h",
-                                                                             // Standalone MX MMIO regmap base (mx_mmio_node); None => tl_ext_mem_base + 0x100000.
+                                                                             // Base of the standalone LUT/requant-in MMIO regmap (mx_mmio_node). Scale
+                                                                             // factors use a separate flat window at scale_mem.baseAddr, not this.
+                                                                             // None => tl_ext_mem_base + 0x100000.
                                                                              mx_mmio_base: Option[BigInt] = None
                                                        ) {
   val sp_width = meshColumns * tileColumns * weightType.getWidth //weightType!! TODO: double check with different precision writes!
