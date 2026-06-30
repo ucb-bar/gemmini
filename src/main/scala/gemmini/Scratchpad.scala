@@ -459,6 +459,17 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writeData.bits := DontCare
     val fullAccWriteData = Wire(UInt(acc_write_w.W))
     fullAccWriteData := DontCare
+
+    // V1 (MX ex_write_to_spad): write the requant FP8 output (writeData, 256b = 2 bank rows) into
+    // the INTERNAL scratchpad banks via a new bio.write source (driven in spad_mems below), the
+    // standalone replacement for the absent spad_writer. requant_to_spad selects this mode; the
+    // 2-beat bank write asserts requant_spad_consume on its 2nd beat to consume the requantizer out.
+    val requant_to_spad = if (use_mx_scaling && ex_write_to_spad) {
+      write_issue_q.io.deq.valid && write_issue_q.io.deq.bits.dest.asBool &&
+        write_issue_q.io.deq.bits.laddr.is_acc_addr && !write_issue_q.io.deq.bits.laddr.is_garbage()
+    } else false.B
+    val requant_spad_consume = WireDefault(false.B)
+
     val writeData_is_full_width = if (use_mx_scaling) {
       !write_issue_q.io.deq.bits.laddr.is_garbage() && (!io.enable_MXQuant)
     } else {
@@ -495,8 +506,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
     writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en && (!acc_scale_unit.io.out.bits.is_garbage)
 
-    write_issue_q.io.deq.ready := writer.module.io.req.ready &&
-      spad_writer.map(_.module.io.req.ready).getOrElse(true.B) && writeData.valid
+    write_issue_q.io.deq.ready := Mux(requant_to_spad,
+      requant_spad_consume,
+      writer.module.io.req.ready && spad_writer.map(_.module.io.req.ready).getOrElse(true.B)) && writeData.valid
     
     // when (acc_scale_unit.io.out.valid && acc_scale_unit.io.out.bits.is_garbage) {
     //   acc_scale_unit.io.out.ready    := true.B   // drain scale unit
@@ -744,6 +756,15 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         io.srams.read(i).resp <> ex_read_pipe.io.deq
       }
 
+      // V1 requant-to-spad: 2-beat write of the 256b FP8 requant output into 2 consecutive bank
+      // rows (writeData[127:0] -> row r, writeData[255:128] -> row r+1). Destination bank/row come
+      // from the store's vaddr (= the spad dest addr the loop store passes in, StoreController:186).
+      val requant_half = RegInit(0.U(1.W))
+      val requant_dst  = WireInit(0.U.asTypeOf(local_addr_t))
+      requant_dst.data := write_issue_q.io.deq.bits.vaddr
+      val requant_dst_bank = requant_dst.sp_bank()
+      val requant_dst_row  = requant_dst.sp_row()
+
       // Writing to the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
         val exwrite = io.srams.write(i).valid
@@ -766,7 +787,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           !((mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last)) &&
           bio.write.ready
 
-        bio.write.valid := exwrite || dmaread || zerowrite
+        // Source directly from acc_scale_unit.io.out (registered valid), NOT writeData, so this does
+        // not depend on dma_resp_ready (which depends back on requant_spad_consume) -> no comb cycle.
+        val requantwrite = requant_to_spad && acc_scale_unit.io.out.valid &&
+          acc_scale_unit.io.out.bits.fromDMA && (requant_dst_bank === i.U) && bio.write.ready
+
+        bio.write.valid := exwrite || dmaread || zerowrite || requantwrite
 
         when (exwrite) {
           bio.write.addr := io.srams.write(i).addr
@@ -784,6 +810,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.mask := zero_writer_pixel_repeater.io.resp.bits.mask
 
           zero_writer_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
+        }.elsewhen (requantwrite) {
+          // Beat 0 -> row r (low 128b), beat 1 -> row r+1 (high 128b); consume on beat 1.
+          val requant_data = acc_scale_unit.io.out.bits.data.asUInt
+          bio.write.addr := requant_dst_row + requant_half
+          bio.write.data := Mux(requant_half === 0.U, requant_data(spad_w - 1, 0), requant_data(2*spad_w - 1, spad_w))
+          bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
+          requant_half := requant_half + 1.U
+          when (requant_half === 1.U) { requant_spad_consume := true.B }
         }.otherwise {
           bio.write.addr := DontCare
           bio.write.data := DontCare
@@ -831,13 +865,16 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     acc_scale_unit.io.out.ready := false.B
     
     val dma_resp_ready =
-      (writer.module.io.req.ready && spad_writer.map(_.module.io.req.ready).getOrElse(true.B)) &&
+      Mux(requant_to_spad,
+        requant_spad_consume,
+        writer.module.io.req.ready && spad_writer.map(_.module.io.req.ready).getOrElse(true.B)) &&
         write_issue_q.io.deq.bits.laddr.is_acc_addr &&
-        !write_issue_q.io.deq.bits.laddr.is_garbage() 
+        !write_issue_q.io.deq.bits.laddr.is_garbage()
     val dma_read_resp_wire = WireDefault(dma_resp_ready)
     dontTouch(dma_read_resp_wire)
     when (acc_scale_unit.io.out.bits.fromDMA && dma_resp_ready) {
-      // Send the acc-scale result into the DMA
+      // Send the acc-scale result into the DMA. For requant_to_spad, dma_resp_ready = the bank
+      // write's 2nd-beat consume, so out is consumed only once both bank rows are written.
       acc_scale_unit.io.out.ready := true.B
       writeData.valid := acc_scale_unit.io.out.valid
       writeData.bits  := acc_scale_unit.io.out.bits.data.asUInt

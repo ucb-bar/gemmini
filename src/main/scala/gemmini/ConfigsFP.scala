@@ -329,7 +329,7 @@ object GemminiMxFPConfigs {
   // params, but internal scratchpad + MMIO requant path instead of shared SRAM.
   val standaloneMxFPConfig = defaultMxFPConfig.copy(
     ex_read_from_acc = false,
-    ex_write_to_spad = false,
+    ex_write_to_spad = true,   // V1: requant FP8 -> internal spad (Scratchpad requantwrite source); MX meaning, not raw-mesh clip
     sp_singleported = false,
     spad_read_delay = 4,
     tile_latency = 0,

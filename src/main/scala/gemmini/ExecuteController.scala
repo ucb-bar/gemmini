@@ -1142,7 +1142,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       e_act
     })))
 
-    if (ex_write_to_spad) {
+    // In MX mode, the requant FP8 output reaches the spad via a dedicated bank-write source
+    // (V1.2, sourced from the requantizer), NOT this raw pre-accumulator mesh-clip port. Gating
+    // on !use_mx_scaling also avoids elaborating the byte-mask below, which is malformed for the
+    // 12-bit (non-byte-aligned) MX weightType (Vec sp_width/8=24 vs Seq block_size*wTP/8=16).
+    if (ex_write_to_spad && !use_mx_scaling) {
       io.srams.write(i).valid := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
       io.srams.write(i).addr := w_row
       io.srams.write(i).data := activated_wdata.asUInt
