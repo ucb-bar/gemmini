@@ -10,3 +10,6 @@
 [submodule "mxgen"]
 	path = mxgen
 	url = https://github.com/ucb-bar/MxGen.git
+[submodule "npu-exploration"]
+	path = npu-exploration
+	url = git@github.com:ucb-bar/npu-exploration.git

@@ -469,6 +469,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         write_issue_q.io.deq.bits.laddr.is_acc_addr && !write_issue_q.io.deq.bits.laddr.is_garbage()
     } else false.B
     val requant_spad_consume = WireDefault(false.B)
+    // FP4/FP6 emit a garbage 1st beat per 2-fire result: skip the bank write but still drain+dequeue.
+    val requant_garbage = requant_to_spad && acc_scale_unit.io.out.valid &&
+      acc_scale_unit.io.out.bits.fromDMA && acc_scale_unit.io.out.bits.is_garbage
 
     val writeData_is_full_width = if (use_mx_scaling) {
       !write_issue_q.io.deq.bits.laddr.is_garbage() && (!io.enable_MXQuant)
@@ -759,11 +762,33 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // V1 requant-to-spad: 2-beat write of the 256b FP8 requant output into 2 consecutive bank
       // rows (writeData[127:0] -> row r, writeData[255:128] -> row r+1). Destination bank/row come
       // from the store's vaddr (= the spad dest addr the loop store passes in, StoreController:186).
-      val requant_half = RegInit(0.U(1.W))
+      val requant_half = RegInit(0.U(2.W))   // beat counter: FP8 uses beats 0-1, BF16 uses 0-3
       val requant_dst  = WireInit(0.U.asTypeOf(local_addr_t))
       requant_dst.data := write_issue_q.io.deq.bits.vaddr
       val requant_dst_bank = requant_dst.sp_bank()
       val requant_dst_row  = requant_dst.sp_row()
+
+      // FP4/FP6 (sub-byte): the requantizer emits each combined 256b VALID FOR ONE CYCLE (its 2-fire
+      // counter is input-driven, so unlike FP8 the output does NOT hold under back-pressure). The 128b
+      // bank port can't take 256b in one cycle, so latch the high half on the valid cycle and drain it
+      // the next cycle (the interleaved garbage cycle). beat0 -> dst_row, beat1 -> dst_row+1; the store
+      // dst rows are stride-2, so this lands row-major-contiguous. FP8 keeps the requant_half scheme.
+      val requant_subbyte = io.output_mx_format === 1.U || io.output_mx_format === 2.U
+      val requant_bf16 = io.output_mx_format === 3.U   // non-requant BF16 out: full-width, 4 beats
+      val requant_valid_fire = requant_to_spad && acc_scale_unit.io.out.valid &&
+        acc_scale_unit.io.out.bits.fromDMA && !acc_scale_unit.io.out.bits.is_garbage
+      val requant_pend    = RegInit(false.B)
+      val requant_hi_data = Reg(UInt(spad_w.W))
+      val requant_hi_row  = Reg(chiselTypeOf(requant_dst_row))
+      val requant_hi_bank = Reg(chiselTypeOf(requant_dst_bank))
+      when (requant_subbyte && requant_valid_fire && !requant_pend) {
+        requant_hi_data := acc_scale_unit.io.out.bits.data.asUInt(2*spad_w - 1, spad_w)
+        requant_hi_row  := requant_dst_row + 1.U
+        requant_hi_bank := requant_dst_bank
+        requant_pend    := true.B
+      }.elsewhen (requant_pend) {
+        requant_pend := false.B
+      }
 
       // Writing to the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
@@ -789,10 +814,18 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
         // Source directly from acc_scale_unit.io.out (registered valid), NOT writeData, so this does
         // not depend on dma_resp_ready (which depends back on requant_spad_consume) -> no comb cycle.
-        val requantwrite = requant_to_spad && acc_scale_unit.io.out.valid &&
-          acc_scale_unit.io.out.bits.fromDMA && (requant_dst_bank === i.U) && bio.write.ready
+        // FP8: 2-beat held scheme (output holds under back-pressure). FP4/FP6: beat0 on the valid
+        // cycle, beat1 drained from the latch next cycle (output does not hold). Data written verbatim
+        // -> spad keeps the mesh-input interleaved i0j0 i1j0 i0j1... format.
+        val requantwrite = requant_to_spad && !requant_subbyte && acc_scale_unit.io.out.valid &&
+          acc_scale_unit.io.out.bits.fromDMA && !acc_scale_unit.io.out.bits.is_garbage &&
+          (requant_dst_bank === i.U) && bio.write.ready
+        val requant_beat0 = requant_subbyte && requant_valid_fire &&
+          (requant_dst_bank === i.U) && bio.write.ready
+        val requant_beat1 = requant_subbyte && requant_pend &&
+          (requant_hi_bank === i.U) && bio.write.ready
 
-        bio.write.valid := exwrite || dmaread || zerowrite || requantwrite
+        bio.write.valid := exwrite || dmaread || zerowrite || requantwrite || requant_beat0 || requant_beat1
 
         when (exwrite) {
           bio.write.addr := io.srams.write(i).addr
@@ -811,19 +844,38 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
           zero_writer_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
         }.elsewhen (requantwrite) {
-          // Beat 0 -> row r (low 128b), beat 1 -> row r+1 (high 128b); consume on beat 1.
-          val requant_data = acc_scale_unit.io.out.bits.data.asUInt
+          // FP8 (narrow 256b -> 2 beats) or non-requant BF16 (full_data 512b -> 4 beats). Both hold
+          // under back-pressure (no 2-fire counter), so drain into consecutive bank rows and consume on
+          // the last beat. BF16 sources full_data directly (registered) -> no comb cycle, same 128b port.
+          val narrowVec = acc_scale_unit.io.out.bits.data.asUInt.asTypeOf(Vec(2, UInt(spad_w.W)))
+          val wideVec   = acc_scale_unit.io.out.bits.full_data.asUInt.asTypeOf(Vec(acc_write_w / spad_w, UInt(spad_w.W)))
+          val last_beat = Mux(requant_bf16, (acc_write_w / spad_w - 1).U, 1.U)
           bio.write.addr := requant_dst_row + requant_half
-          bio.write.data := Mux(requant_half === 0.U, requant_data(spad_w - 1, 0), requant_data(2*spad_w - 1, spad_w))
+          bio.write.data := Mux(requant_bf16, wideVec(requant_half), narrowVec(requant_half(0)))
           bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
-          requant_half := requant_half + 1.U
-          when (requant_half === 1.U) { requant_spad_consume := true.B }
+          requant_half := Mux(requant_half === last_beat, 0.U, requant_half + 1.U)
+          when (requant_half === last_beat) { requant_spad_consume := true.B }
+        }.elsewhen (requant_beat0) {
+          // FP4/FP6 beat0: low 128b -> dst_row (high 128b latched for beat1 next cycle).
+          bio.write.addr := requant_dst_row
+          bio.write.data := acc_scale_unit.io.out.bits.data.asUInt(spad_w - 1, 0)
+          bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
+        }.elsewhen (requant_beat1) {
+          // FP4/FP6 beat1: latched high 128b -> dst_row+1.
+          bio.write.addr := requant_hi_row
+          bio.write.data := requant_hi_data
+          bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
         }.otherwise {
           bio.write.addr := DontCare
           bio.write.data := DontCare
           bio.write.mask := DontCare
         }
       }
+      // FP4/FP6: consume the valid out on the beat0 cycle (high half already latched for beat1).
+      when (requant_subbyte && requant_valid_fire) { requant_spad_consume := true.B }
+      // Garbage cycle: consume the garbage out (+dequeue). For FP4/FP6 the beat1 drain write happens
+      // in the bank loop (requant_beat1) this same cycle; for FP8 no bank write here.
+      when (requant_garbage) { requant_spad_consume := true.B }
       banks
     }
 
