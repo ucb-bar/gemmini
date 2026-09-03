@@ -131,6 +131,11 @@ class ScratchpadReadReq(val n: Int) extends Bundle {
   val fromDMA = Bool()
   val weight_mx_format = UInt(2.W)
   val input_mx_format = UInt(2.W)
+  // Finding 12: carry the read-operand kind with the request so it returns ALIGNED with the read
+  // data (instead of QuantLut gating on a hardcoded-latency ShiftRegister of read_a/read_d). Lets the
+  // FP6 deprojection fire/advance its codebook counter exactly when the projected data arrives.
+  val read_a = Bool()
+  val read_d = Bool()
 }
 
 class ScratchpadReadResp(val w: Int) extends Bundle {
@@ -138,7 +143,9 @@ class ScratchpadReadResp(val w: Int) extends Bundle {
   val fromDMA = Bool()
   val weight_mx_format = UInt(2.W)
   val input_mx_format = UInt(2.W)
-
+  // Finding 12: read-operand kind, carried through the read pipeline aligned with `data`.
+  val read_a = Bool()
+  val read_d = Bool()
 }
 
 class ScratchpadReadIO(val n: Int, val w: Int) extends Bundle {
@@ -194,6 +201,8 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   val fromDMA = io.read.req.bits.fromDMA
   val weight_mx_format = io.read.req.bits.weight_mx_format
   val input_mx_format = io.read.req.bits.input_mx_format
+  val read_a_tag = io.read.req.bits.read_a
+  val read_d_tag = io.read.req.bits.read_d
 
 
   // Make a queue which buffers the result of an SRAM read if it can't immediately be consumed
@@ -208,6 +217,8 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.bits.fromDMA := RegNext(fromDMA)
     q.io.enq.bits.weight_mx_format := RegNext(weight_mx_format)
     q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
+    q.io.enq.bits.read_a := RegNext(read_a_tag)
+    q.io.enq.bits.read_d := RegNext(read_d_tag)
     io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
   } else if (use_shared_ext_mem) { // use ready-valid interface
     val ext_mem = io.ext_mem.get
@@ -218,18 +229,26 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     io.read.req.ready := q_will_be_empty && ext_mem.read_req.ready
 
     // TODO (richard): the number of entries here should be configurable
-    val dma_q = Module(new Queue(Bool(), 4, false, true))
+    // Carry fromDMA + the read_a/read_d tag through the SAME latency-tracking queue as the (variable-
+    // latency) shared-mem read, so the operand-kind tag returns aligned with its data on the radiance
+    // path too (Finding 12).
+    class ReadMeta extends Bundle { val fromDMA = Bool(); val read_a = Bool(); val read_d = Bool() }
+    val dma_q = Module(new Queue(new ReadMeta, 4, false, true))
     dma_q.io.enq.valid := ren
-    dma_q.io.enq.bits := fromDMA
+    dma_q.io.enq.bits.fromDMA := fromDMA
+    dma_q.io.enq.bits.read_a := read_a_tag
+    dma_q.io.enq.bits.read_d := read_d_tag
     dma_q.io.deq.ready := q.io.enq.fire
     assert(dma_q.io.enq.fire === ren, "DMA queue does not have enough entries") // TODO (richard): do backpressure
     assert(dma_q.io.deq.fire === q.io.enq.fire, "fromDMA should be dequeued only when read resp comes back")
 
     q.io.enq.valid := ext_mem.read_resp.valid
     q.io.enq.bits.data := ext_mem.read_resp.bits
-    q.io.enq.bits.fromDMA := dma_q.io.deq.bits
+    q.io.enq.bits.fromDMA := dma_q.io.deq.bits.fromDMA
     q.io.enq.bits.weight_mx_format := RegNext(weight_mx_format)
     q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
+    q.io.enq.bits.read_a := dma_q.io.deq.bits.read_a
+    q.io.enq.bits.read_d := dma_q.io.deq.bits.read_d
     ext_mem.read_resp.ready := q.io.enq.ready
 
     /* WRITE */
@@ -261,6 +280,8 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.bits.fromDMA := RegNext(fromDMA)
     q.io.enq.bits.weight_mx_format := RegNext(weight_mx_format)
     q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
+    q.io.enq.bits.read_a := RegNext(read_a_tag)
+    q.io.enq.bits.read_d := RegNext(read_d_tag)
 
     io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
 
@@ -717,11 +738,16 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.fromDMA := false.B
           bio.read.req.bits.weight_mx_format := ex_read_req.bits.weight_mx_format
           bio.read.req.bits.input_mx_format := ex_read_req.bits.input_mx_format
+          // Finding 12: carry the operand-kind tag from the ExecuteController read request.
+          bio.read.req.bits.read_a := ex_read_req.bits.read_a
+          bio.read.req.bits.read_d := ex_read_req.bits.read_d
         }.elsewhen (dmawrite) {
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.sp_row()
           bio.read.req.bits.fromDMA := true.B
           bio.read.req.bits.weight_mx_format := ex_read_req.bits.weight_mx_format  // Default FP8 for DMA
           bio.read.req.bits.input_mx_format := ex_read_req.bits.input_mx_format
+          bio.read.req.bits.read_a := false.B  // DMA reads are not deproj operand reads
+          bio.read.req.bits.read_d := false.B
           when (bio.read.req.fire) {
             write_dispatch_q.ready := true.B
             write_norm_q.io.enq.valid := true.B

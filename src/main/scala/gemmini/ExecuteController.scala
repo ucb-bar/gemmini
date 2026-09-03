@@ -555,6 +555,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     if (ex_read_from_spad) {
       io.srams.read(i).req.valid := (read_a || read_b || read_d) && cntl_ready
       io.srams.read(i).req.bits.fromDMA := false.B
+      // Finding 12: tag the read with its operand kind so QuantLut gates the deproj on a signal that
+      // returns ALIGNED with the projected data, instead of a hardcoded-latency delayed read_a.
+      io.srams.read(i).req.bits.read_a := read_a
+      io.srams.read(i).req.bits.read_d := read_d
       io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
         Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
           read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter_mulpre)))
@@ -581,6 +585,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.srams.read(i).req.bits.addr := DontCare
       io.srams.read(i).req.bits.input_mx_format := DontCare
       io.srams.read(i).req.bits.weight_mx_format := DontCare
+      io.srams.read(i).req.bits.read_a := false.B
+      io.srams.read(i).req.bits.read_d := false.B
     }
 
     io.srams.read(i).resp.ready := false.B

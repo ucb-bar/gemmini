@@ -128,6 +128,7 @@ class QuantLut(
   dontTouch(counter_act)
   dontTouch(used_lut_act_0)
   dontTouch(used_lut_act_1)
+
   for (i <- 0 until sp_banks) {
     // Each bank has its own deprojected_bits
     val deprojected_bits = WireDefault(VecInit(Seq.fill(outputnumLanes)(0.U(rdataWidth.W))))
@@ -142,6 +143,9 @@ class QuantLut(
     io.spad_deprojected_data(i).resp.bits.fromDMA := false.B
     io.spad_deprojected_data(i).resp.bits.weight_mx_format := 1.U
     io.spad_deprojected_data(i).resp.bits.input_mx_format := 1.U
+    // read_a/read_d are input-side tags only; not meaningful on the deprojected output (mesh ignores them)
+    io.spad_deprojected_data(i).resp.bits.read_a := false.B
+    io.spad_deprojected_data(i).resp.bits.read_d := false.B
     val lut_idx = (counter_i << 1.U) >> io.quant_lut_update_granularity
     val lut_idx_wire = WireDefault(lut_idx)
     val lut_idx_1 = ((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity
@@ -151,38 +155,44 @@ class QuantLut(
     
     
     when(io.spad_projected_data(i).resp.valid) {
-      when(io.read_a) {
+      // Finding 12: gate on the per-response operand tag (carried aligned with the read data) instead
+      // of the hardcoded-latency io.read_a. This fires the deproj + advances counter_i exactly when the
+      // projected data arrives -> no dropped/zeroed leading beats and no codebook-row phase offset.
+      when(io.spad_projected_data(i).resp.bits.read_a) {
         when(counter_i === ((io.loop_bound_i << 4.U) - 1.U)){
           counter_i := 0.U
         }.otherwise{
           counter_i := counter_i + 1.U
         } 
-        if (i < (sp_banks / 2)) {
-          used_lut_act_0 := lutCache_act_in((counter_i << 1.U) >> io.quant_lut_update_granularity)
-          used_lut_act_1 := lutCache_act_in(((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity)
-          for (k <- 0 until 16) { //act data layout is k15a1, k15a0, k14a1, k14a0,...,k0a1,k0a0, each 4 bit, total 32*4
-            val chunk_4bit_0 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 3, 2*k*4)
-            val chunk_4bit_1 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 7, 2*k*4 + 4)
-            val deprojected_bit_0 = used_lut_act_0(chunk_4bit_0)
-            val deprojected_bit_1 = used_lut_act_1(chunk_4bit_1)
-            deprojected_bits(2*k) := deprojected_bit_0
-            deprojected_bits(2*k + 1) := deprojected_bit_1
-          }
+        // W3 (placement-agnostic): route by the runtime read_a tag, not a hardwired bank half.
+        // The old `if (i < sp_banks/2)` pinned activation deproj to the lower bank half, forcing the
+        // SW to place the weight operand in the upper half. Any bank whose read carries read_a now does
+        // the activation deprojection, so the operand may live in ANY scratchpad bank.
+        used_lut_act_0 := lutCache_act_in((counter_i << 1.U) >> io.quant_lut_update_granularity)
+        used_lut_act_1 := lutCache_act_in(((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity)
+        for (k <- 0 until 16) { //act data layout is k15a1, k15a0, k14a1, k14a0,...,k0a1,k0a0, each 4 bit, total 32*4
+          val chunk_4bit_0 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 3, 2*k*4)
+          val chunk_4bit_1 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 7, 2*k*4 + 4)
+          val deprojected_bit_0 = used_lut_act_0(chunk_4bit_0)
+          val deprojected_bit_1 = used_lut_act_1(chunk_4bit_1)
+          deprojected_bits(2*k) := deprojected_bit_0
+          deprojected_bits(2*k + 1) := deprojected_bit_1
         }
       }
-      when(io.read_d) {
+      when(io.spad_projected_data(i).resp.bits.read_d) {
        when(counter_j === ((io.loop_bound_j << 4.U) - 1.U)){
           counter_j := 0.U
         }.otherwise{
           counter_j := counter_j + 1.U
         }
-        if (i >= (sp_banks / 2)) {
-          for (k <- 0 until 32) {
-            val used_lut_w = lutCache_weight((((counter_j >> 4.U) << 5.U) + k.U) >> io.quant_lut_update_granularity)
-            val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-            deprojected_bits(k) := used_lut_w(chunk_4bit)
-         
-          }
+        // W3 (placement-agnostic): route by the runtime read_d tag, not a hardwired bank half.
+        // The old `if (i >= sp_banks/2)` pinned weight deproj to the upper bank half. Any bank whose
+        // read carries read_d now does the weight deprojection, so weights may live in ANY bank.
+        for (k <- 0 until 32) {
+          val used_lut_w = lutCache_weight((((counter_j >> 4.U) << 5.U) + k.U) >> io.quant_lut_update_granularity)
+          val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
+          deprojected_bits(k) := used_lut_w(chunk_4bit)
+
         }
         // when (counter_w === (lutConfig(1)._1 - 1).U){
         //   counter_w := 0.U

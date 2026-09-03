@@ -598,6 +598,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       read_projected(b).resp.bits.fromDMA := spad.module.io.srams.read(b).resp.bits.fromDMA
       read_projected(b).resp.bits.weight_mx_format := spad.module.io.srams.read(b).resp.bits.weight_mx_format
       read_projected(b).resp.bits.input_mx_format := spad.module.io.srams.read(b).resp.bits.input_mx_format
+      // Finding 12: carry the operand-kind tag (aligned with the read data) to the requantizer/QuantLut.
+      read_projected(b).resp.bits.read_a := spad.module.io.srams.read(b).resp.bits.read_a
+      read_projected(b).resp.bits.read_d := spad.module.io.srams.read(b).resp.bits.read_d
       read_projected(b).resp.valid := spad.module.io.srams.read(b).resp.valid
       read_projected(b).resp.bits.data := spad.module.io.srams.read(b).resp.bits.data
       spad.module.io.srams.read(b).resp.ready := read_projected(b).resp.ready
@@ -629,6 +632,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         sram_read_buffer(b).resp.bits.fromDMA := read_projected(b).resp.bits.fromDMA
         sram_read_buffer(b).resp.bits.weight_mx_format := read_projected(b).resp.bits.weight_mx_format
         sram_read_buffer(b).resp.bits.input_mx_format := read_projected(b).resp.bits.input_mx_format
+        sram_read_buffer(b).resp.bits.read_a := read_projected(b).resp.bits.read_a
+        sram_read_buffer(b).resp.bits.read_d := read_projected(b).resp.bits.read_d
         read_projected(b).resp.ready := sram_read_buffer(b).resp.ready
         mx_requantizer.get.io.spad_projected_data(b).resp.valid := false.B
         mx_requantizer.get.io.spad_projected_data(b).resp.bits := DontCare
