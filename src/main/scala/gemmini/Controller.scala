@@ -164,20 +164,8 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
         sourceId = IdRange(0, 1))))))
   }
 
-  // Flat scale-factor RAM window (port of radiance scalingFacManager): CPU writes 64b beats;
-  // top addr bit selects weight(0)/activation(1). Base/size from the scale_mem config.
-  val mx_scale_mgr_node = Option.when(use_mx_mmio) {
-    val s = config.scale_mem.get
-    TLManagerNode(Seq(TLSlavePortParameters.v1(
-      managers = Seq(TLSlaveParameters.v2(
-        address    = Seq(AddressSet(s.baseAddr, s.sizeInBytes - 1)),
-        fifoId     = Some(0),
-        supports   = TLMasterToSlaveTransferSizes(
-          get        = TransferSizes(1, 8),
-          putFull    = TransferSizes(1, 8),
-          putPartial = TransferSizes(1, 8)))),
-      beatBytes = 8)))
-  }
+  // (retired) The flat scale-factor RAM window is gone: funct-27 MX_LOAD_SCALES (mx_scale_loader_client)
+  // now drives scale_mem_write directly. Radiance is unaffected (use_shared_ext_mem -> mx_io path).
 
   // Attach the standalone MX nodes via the standard LazyRoCC hooks (like the DMA master):
   // slaves (LUT/requant regmap + scale window) <- stlNode (tile slave port, cbus-reachable);
@@ -185,10 +173,9 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   if (use_mx_mmio) {
     val mx_slave_xbar = TLXbar()
     mx_slave_xbar := stlNode
-    mx_mmio_node.foreach      { _ := TLFragmenter(8, p(CacheBlockBytes)) := mx_slave_xbar }
-    // Fragmenter (not just a width widget) so the window advertises [1,64] upstream and stays
+    // Fragmenter (not just a width widget) so the regmap advertises [1,64] upstream and stays
     // homogeneous with DRAM for the gemmini DMA's TLB page lookup; it still sees <=8B beats.
-    mx_scale_mgr_node.foreach { _ := TLFragmenter(8, p(CacheBlockBytes)) := mx_slave_xbar }
+    mx_mmio_node.foreach      { _ := TLFragmenter(8, p(CacheBlockBytes)) := mx_slave_xbar }
   }
   mx_requant_out_client.foreach   { client => tlNode := TLBuffer() := client }
   mx_scale_fac_out_client.foreach { client => tlNode := TLBuffer() := client }
@@ -348,7 +335,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     })
   }
 
-  val (mmio_requant_in_gpu, mmio_lut0, mmio_lut1, mmio_lut2, mmio_requant_out, mmio_scale_factor_out) =
+  val (mmio_requant_in_gpu, mmio_requant_out, mmio_scale_factor_out) =
     if (outer.use_mx_mmio) {
       val s = outer.config.scale_mem.get
       val q = outer.config.requantizer.get
@@ -517,39 +504,16 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         w
       }
 
+      // (retired) LUT regmap ports: funct-29 MX_LOAD_LUT (mx_lut_loader_client) now drives
+      // mx_requantizer.io.lut{0,1,2}_write directly. Only the requant-in regmap remains.
       val (rin_wire, rin_fields) = requantInPort(0x080)
-      val (l0_wire, l0_fields)   = lutPort(0x100, 0)
-      val (l1_wire, l1_fields)   = lutPort(0x500, 1)
-      val (l2_wire, l2_fields)   = lutPort(0x900, 2)
 
-      outer.mx_mmio_node.get.regmap(
-        (rin_fields ++ l0_fields ++ l1_fields ++ l2_fields): _*)
+      outer.mx_mmio_node.get.regmap(rin_fields: _*)
 
-      (Some(rin_wire),
-       Some(l0_wire), Some(l1_wire), Some(l2_wire),
-       Some(rout_wire), Some(sfout_wire))
+      (Some(rin_wire), Some(rout_wire), Some(sfout_wire))
     } else {
-      (None, None, None, None, None, None)
+      (None, None, None)
     }
-  // Flat scale window -> scale_mem_write_w/act (port of radiance GemminiTile scalingFacManager):
-  // one 64b CPU write per beat; top addr bit picks weight(0)/act(1), rest is the scale-mem address.
-  val (scale_win_w, scale_win_act) = if (outer.use_mx_mmio) {
-    val s = outer.config.scale_mem.get
-    val (node, edge) = outer.mx_scale_mgr_node.get.in.head
-    val reqs = Seq.fill(2)(Wire(Decoupled(new ScalingFactorWriteReq(s.addrBits - 1, 8 * 8))))
-    val wen = node.a.fire
-    val typeSel = node.a.bits.address(s.addrBits - 1)
-    reqs.head.valid := wen && !typeSel
-    reqs.last.valid := wen &&  typeSel
-    reqs.foreach(_.bits.addr := node.a.bits.address(s.addrBits - 2, 0))
-    reqs.foreach(_.bits.data := node.a.bits.data)
-    val typeReady = Mux(typeSel, reqs.last.ready, reqs.head.ready)
-    node.a.ready := node.d.ready && typeReady
-    node.d.valid := node.a.valid && typeReady
-    node.d.bits  := edge.AccessAck(node.a.bits)
-    (Some(reqs.head), Some(reqs.last))
-  } else (None, None)
-
   // ---- funct-27 MX_LOAD_SCALES: DMA loader (8-byte Gets from DRAM -> scale-mem write beats) ----
   // Replays the EXACT (addr = i*8, data = little-endian 64b) beat sequence the CPU flat window
   // produces, so the ScaleFactorMem pairing/decode is byte-identical. sel=1 -> weight port,
@@ -721,38 +685,20 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_requantizer.get.io.lut1_write <> b.lut1
       mx_requantizer.get.io.lut2_write <> b.lut2
     } else {
-      // scale-mem write source: funct-27 DMA loader while it is busy, else the CPU flat window.
-      val sw_w = spad.module.io.scale_mem_write_w.get
-      val sw_a = spad.module.io.scale_mem_write_act.get
-      when (scale_loader_busy) {
-        sw_w.valid := scale_loader_w.get.valid;   sw_w.bits := scale_loader_w.get.bits
-        scale_loader_w.get.ready := sw_w.ready;    scale_win_w.get.ready := false.B
-        sw_a.valid := scale_loader_act.get.valid;  sw_a.bits := scale_loader_act.get.bits
-        scale_loader_act.get.ready := sw_a.ready;  scale_win_act.get.ready := false.B
-      } .otherwise {
-        sw_w.valid := scale_win_w.get.valid;       sw_w.bits := scale_win_w.get.bits
-        scale_win_w.get.ready := sw_w.ready;        scale_loader_w.get.ready := false.B
-        sw_a.valid := scale_win_act.get.valid;     sw_a.bits := scale_win_act.get.bits
-        scale_win_act.get.ready := sw_a.ready;      scale_loader_act.get.ready := false.B
-      }
+      // scale-mem write source: the funct-27 DMA loader (idle -> valid=false, no spurious writes).
+      spad.module.io.scale_mem_write_w.get   <> scale_loader_w.get
+      spad.module.io.scale_mem_write_act.get <> scale_loader_act.get
       mx_requantizer.get.io.requant_data_in_gpu <> mmio_requant_in_gpu.get
       mx_requantizer.get.io.requant_data_out    <> mmio_requant_out.get
       mmio_scale_factor_out.get                 <> mx_requantizer.get.io.scaleMem_write
       // LUT write source: funct-29 DMA loader (for the selected table) while busy, else CPU regmap.
+      // LUT write source: the funct-29 DMA loader fires the sel'd port; the other two stay idle.
       val r0 = mx_requantizer.get.io.lut0_write
       val r1 = mx_requantizer.get.io.lut1_write
       val r2 = mx_requantizer.get.io.lut2_write
-      Seq((r0, mmio_lut0.get, 0), (r1, mmio_lut1.get, 1), (r2, mmio_lut2.get, 2)).foreach {
-        case (port, mmio, n) =>
-          when (lut_loader_busy && lut_out_sel.get === n.U) {
-            port.valid := lut_out.get.valid
-            port.bits  := lut_out.get.bits
-            mmio.ready := false.B
-          } .otherwise {
-            port.valid := mmio.valid
-            port.bits  := mmio.bits
-            mmio.ready := port.ready
-          }
+      Seq((r0, 0), (r1, 1), (r2, 2)).foreach { case (port, n) =>
+        port.valid := lut_out.get.valid && (lut_out_sel.get === n.U)
+        port.bits  := lut_out.get.bits
       }
       lut_out.get.ready := Mux(lut_out_sel.get === 0.U, r0.ready,
                            Mux(lut_out_sel.get === 1.U, r1.ready, r2.ready))
