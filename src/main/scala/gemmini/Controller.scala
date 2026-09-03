@@ -143,6 +143,27 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     )))
   }
 
+  // Pull-side master for funct-27 MX_LOAD_SCALES: gemmini issues 8-byte TL Gets from DRAM
+  // (physical addr in rs1) and replays them as scale-mem write beats. ISA parity with the
+  // Spike model's mx_load_scales; replaces the CPU flat window as the SW scale front-end.
+  val mx_scale_loader_client = Option.when(use_mx_mmio) {
+    TLClientNode(Seq(TLMasterPortParameters.v1(
+      clients = Seq(TLMasterParameters.v1(
+        name     = "gemmini-mx-scale-loader",
+        sourceId = IdRange(0, 1))))))
+  }
+
+  // Pull-side master for funct-29 MX_LOAD_LUT: gemmini issues 8-byte TL Gets from DRAM (physical
+  // addr in rs1), assembles num_luts*96b into the LUT buffer, and fires the selected requantizer
+  // lut{0,1,2}_write once. ISA parity with the Spike model's mx_load_lut; replaces the CPU regmap
+  // LUT front-end (mx_load_lut).
+  val mx_lut_loader_client = Option.when(use_mx_mmio) {
+    TLClientNode(Seq(TLMasterPortParameters.v1(
+      clients = Seq(TLMasterParameters.v1(
+        name     = "gemmini-mx-lut-loader",
+        sourceId = IdRange(0, 1))))))
+  }
+
   // Flat scale-factor RAM window (port of radiance scalingFacManager): CPU writes 64b beats;
   // top addr bit selects weight(0)/activation(1). Base/size from the scale_mem config.
   val mx_scale_mgr_node = Option.when(use_mx_mmio) {
@@ -171,6 +192,8 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   }
   mx_requant_out_client.foreach   { client => tlNode := TLBuffer() := client }
   mx_scale_fac_out_client.foreach { client => tlNode := TLBuffer() := client }
+  mx_scale_loader_client.foreach  { client => tlNode := TLBuffer() := client }
+  mx_lut_loader_client.foreach    { client => tlNode := TLBuffer() := client }
 }
 
 class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
@@ -527,6 +550,165 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     (Some(reqs.head), Some(reqs.last))
   } else (None, None)
 
+  // ---- funct-27 MX_LOAD_SCALES: DMA loader (8-byte Gets from DRAM -> scale-mem write beats) ----
+  // Replays the EXACT (addr = i*8, data = little-endian 64b) beat sequence the CPU flat window
+  // produces, so the ScaleFactorMem pairing/decode is byte-identical. sel=1 -> weight port,
+  // sel=0 -> activation port (Spike mx_load_scales polarity). Physical-only (bare-metal) addressing.
+  val scale_loader_busy = WireDefault(false.B)
+  val (scale_loader_w, scale_loader_act, scale_loader_start) = if (outer.use_mx_mmio) {
+    val s = outer.config.scale_mem.get
+    val (gnode, gedge) = outer.mx_scale_loader_client.get.out.head
+    val beatBytes = gnode.params.dataBits / 8
+    val nLanes    = math.max(beatBytes / 8, 1)
+    val laneRegW  = if (nLanes > 1) log2Ceil(nLanes) else 1
+
+    val start = Wire(Decoupled(new Bundle {
+      val addr = UInt(coreMaxAddrBits.W)
+      val len  = UInt(32.W)   // bytes
+      val sel  = Bool()       // 1 = weight, 0 = activation
+    }))
+    start.valid := false.B
+    start.bits  := DontCare
+
+    val w_out   = Wire(Decoupled(new ScalingFactorWriteReq(s.addrBits - 1, 8 * 8)))
+    val act_out = Wire(Decoupled(new ScalingFactorWriteReq(s.addrBits - 1, 8 * 8)))
+    w_out.valid   := false.B; w_out.bits   := DontCare
+    act_out.valid := false.B; act_out.bits := DontCare
+
+    val sIdle :: sReq :: sResp :: Nil = Enum(3)
+    val state       = RegInit(sIdle)
+    val base        = Reg(UInt(coreMaxAddrBits.W))
+    val total_words = Reg(UInt(29.W))   // len bytes / 8
+    val word_idx    = Reg(UInt(29.W))
+    val sel_r       = Reg(Bool())
+    val lane_r      = Reg(UInt(laneRegW.W))
+
+    // TL-A/D defaults (overridden per-state below)
+    gnode.a.valid := false.B
+    gnode.a.bits  := DontCare
+    gnode.d.ready := false.B
+
+    start.ready := state === sIdle
+    when (state === sIdle && start.fire) {
+      base        := start.bits.addr
+      total_words := start.bits.len(31, 3)
+      word_idx    := 0.U
+      sel_r       := start.bits.sel
+      state       := Mux(start.bits.len(31, 3) === 0.U, sIdle, sReq)
+    }
+
+    val get_addr = base + (word_idx << 3)
+    when (state === sReq) {
+      gnode.a.valid := true.B
+      gnode.a.bits  := gedge.Get(fromSource = 0.U, toAddress = get_addr, lgSize = 3.U)._2
+      when (gnode.a.fire) {
+        lane_r := (if (nLanes > 1) get_addr(log2Ceil(beatBytes) - 1, 3) else 0.U)
+        state  := sResp
+      }
+    }
+
+    val dataLanes = gnode.d.bits.data.asTypeOf(Vec(nLanes, UInt(64.W)))
+    val word_data = if (nLanes > 1) dataLanes(lane_r) else gnode.d.bits.data(63, 0)
+    when (state === sResp) {
+      when (sel_r) {
+        w_out.valid     := gnode.d.valid
+        w_out.bits.addr := (word_idx << 3)
+        w_out.bits.data := word_data
+        gnode.d.ready   := w_out.ready
+      } .otherwise {
+        act_out.valid     := gnode.d.valid
+        act_out.bits.addr := (word_idx << 3)
+        act_out.bits.data := word_data
+        gnode.d.ready     := act_out.ready
+      }
+      when (gnode.d.fire) {
+        word_idx := word_idx + 1.U
+        state    := Mux(word_idx + 1.U === total_words, sIdle, sReq)
+      }
+    }
+
+    scale_loader_busy := state =/= sIdle
+    (Some(w_out), Some(act_out), Some(start))
+  } else (None, None, None)
+
+  // ---- funct-29 MX_LOAD_LUT: DMA loader (8-byte Gets from DRAM -> one lutN_write bundle fire) ----
+  // Assembles num_luts*12 bytes (num_luts*96b) into the LUT buffer, then fires the selected
+  // requantizer lut port ONCE with data = buffer view -- byte-identical to the regmap GO fire.
+  // sel: 0 = B/weight -> lut0, 1 = A/act-in -> lut1, 2 = C/act-out -> lut2 (Spike polarity).
+  val lut_loader_busy = WireDefault(false.B)
+  val (lut_out, lut_out_sel, lut_loader_start) = if (outer.use_mx_mmio) {
+    val (gnode, gedge) = outer.mx_lut_loader_client.get.out.head
+    val beatBytes = gnode.params.dataBits / 8
+    val nLanes    = math.max(beatBytes / 8, 1)
+    val laneRegW  = if (nLanes > 1) log2Ceil(nLanes) else 1
+    val (numEntries, numBits) = outer.config.lut.get(0)
+    val bufWords  = (numEntries * numBits + 63) / 64   // 6144/64 = 96
+
+    val start = Wire(Decoupled(new Bundle {
+      val addr = UInt(coreMaxAddrBits.W)
+      val num  = UInt(32.W)   // num_luts
+      val sel  = UInt(2.W)    // 0=B/weight, 1=A/act-in, 2=C/act-out
+    }))
+    start.valid := false.B
+    start.bits  := DontCare
+
+    val out = Wire(Decoupled(new QuantLutWriteBundle(numEntries, numBits)))
+    out.valid := false.B
+    out.bits  := DontCare
+    val sel_out = RegInit(0.U(2.W))
+
+    val sIdle :: sReq :: sResp :: sFire :: Nil = Enum(4)
+    val state     = RegInit(sIdle)
+    val base      = Reg(UInt(coreMaxAddrBits.W))
+    val num_words = Reg(UInt(log2Ceil(bufWords + 1).W))
+    val word_idx  = Reg(UInt(log2Ceil(bufWords + 1).W))
+    val lane_r    = Reg(UInt(laneRegW.W))
+    val buffer    = Reg(Vec(bufWords, UInt(64.W)))
+
+    gnode.a.valid := false.B
+    gnode.a.bits  := DontCare
+    gnode.d.ready := false.B
+
+    start.ready := state === sIdle
+    when (state === sIdle && start.fire) {
+      base      := start.bits.addr
+      num_words := ((start.bits.num * 12.U) + 7.U) >> 3   // num_luts*12 bytes -> u64 words
+      word_idx  := 0.U
+      sel_out   := start.bits.sel
+      state     := Mux(start.bits.num === 0.U, sIdle, sReq)
+    }
+
+    val get_addr = base + (word_idx << 3)
+    when (state === sReq) {
+      gnode.a.valid := true.B
+      gnode.a.bits  := gedge.Get(fromSource = 0.U, toAddress = get_addr, lgSize = 3.U)._2
+      when (gnode.a.fire) {
+        lane_r := (if (nLanes > 1) get_addr(log2Ceil(beatBytes) - 1, 3) else 0.U)
+        state  := sResp
+      }
+    }
+
+    val dataLanes = gnode.d.bits.data.asTypeOf(Vec(nLanes, UInt(64.W)))
+    val word_data = if (nLanes > 1) dataLanes(lane_r) else gnode.d.bits.data(63, 0)
+    when (state === sResp) {
+      gnode.d.ready := true.B
+      when (gnode.d.fire) {
+        buffer(word_idx) := word_data
+        word_idx := word_idx + 1.U
+        state    := Mux(word_idx + 1.U === num_words, sFire, sReq)
+      }
+    }
+
+    when (state === sFire) {
+      out.valid     := true.B
+      out.bits.data := buffer.asUInt.asTypeOf(Vec(numEntries, UInt(numBits.W)))
+      when (out.fire) { state := sIdle }
+    }
+
+    lut_loader_busy := state =/= sIdle
+    (Some(out), Some(sel_out), Some(start))
+  } else (None, None, None)
+
   if (outer.config.use_mx_scaling) {
     if (outer.config.use_shared_ext_mem) {
       val b = mx_io.get
@@ -539,14 +721,41 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_requantizer.get.io.lut1_write <> b.lut1
       mx_requantizer.get.io.lut2_write <> b.lut2
     } else {
-      spad.module.io.scale_mem_write_w.get   <> scale_win_w.get
-      spad.module.io.scale_mem_write_act.get <> scale_win_act.get
+      // scale-mem write source: funct-27 DMA loader while it is busy, else the CPU flat window.
+      val sw_w = spad.module.io.scale_mem_write_w.get
+      val sw_a = spad.module.io.scale_mem_write_act.get
+      when (scale_loader_busy) {
+        sw_w.valid := scale_loader_w.get.valid;   sw_w.bits := scale_loader_w.get.bits
+        scale_loader_w.get.ready := sw_w.ready;    scale_win_w.get.ready := false.B
+        sw_a.valid := scale_loader_act.get.valid;  sw_a.bits := scale_loader_act.get.bits
+        scale_loader_act.get.ready := sw_a.ready;  scale_win_act.get.ready := false.B
+      } .otherwise {
+        sw_w.valid := scale_win_w.get.valid;       sw_w.bits := scale_win_w.get.bits
+        scale_win_w.get.ready := sw_w.ready;        scale_loader_w.get.ready := false.B
+        sw_a.valid := scale_win_act.get.valid;     sw_a.bits := scale_win_act.get.bits
+        scale_win_act.get.ready := sw_a.ready;      scale_loader_act.get.ready := false.B
+      }
       mx_requantizer.get.io.requant_data_in_gpu <> mmio_requant_in_gpu.get
       mx_requantizer.get.io.requant_data_out    <> mmio_requant_out.get
       mmio_scale_factor_out.get                 <> mx_requantizer.get.io.scaleMem_write
-      mx_requantizer.get.io.lut0_write <> mmio_lut0.get
-      mx_requantizer.get.io.lut1_write <> mmio_lut1.get
-      mx_requantizer.get.io.lut2_write <> mmio_lut2.get
+      // LUT write source: funct-29 DMA loader (for the selected table) while busy, else CPU regmap.
+      val r0 = mx_requantizer.get.io.lut0_write
+      val r1 = mx_requantizer.get.io.lut1_write
+      val r2 = mx_requantizer.get.io.lut2_write
+      Seq((r0, mmio_lut0.get, 0), (r1, mmio_lut1.get, 1), (r2, mmio_lut2.get, 2)).foreach {
+        case (port, mmio, n) =>
+          when (lut_loader_busy && lut_out_sel.get === n.U) {
+            port.valid := lut_out.get.valid
+            port.bits  := lut_out.get.bits
+            mmio.ready := false.B
+          } .otherwise {
+            port.valid := mmio.valid
+            port.bits  := mmio.bits
+            mmio.ready := port.ready
+          }
+      }
+      lut_out.get.ready := Mux(lut_out_sel.get === 0.U, r0.ready,
+                           Mux(lut_out_sel.get === 1.U, r1.ready, r2.ready))
     }
 
     spad.module.io.enable_MXQuant := ex_controller.io.mx.get.enable_MXQuant
@@ -967,7 +1176,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   reservation_station_completed_arb.io.out.ready := true.B
 
   // Wire up global RoCC signals
-  io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || reservation_station.io.busy || spad.module.io.busy || unrolled_cmd.valid || loop_cmd.valid || conv_cmd.valid
+  io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || reservation_station.io.busy || spad.module.io.busy || unrolled_cmd.valid || loop_cmd.valid || conv_cmd.valid || scale_loader_busy || lut_loader_busy
 
   io.interrupt := tlb.io.exp.map(_.interrupt).reduce(_ || _)
 
@@ -1004,6 +1213,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val is_flush = risc_funct === FLUSH_CMD
     val is_counter_op = risc_funct === COUNTER_OP
     val is_clock_gate_en = risc_funct === CLKGATE_EN
+    val is_mx_load_scales = risc_funct === MX_LOAD_SCALES
+    val is_mx_load_lut = risc_funct === MX_LOAD_LUT
 
     /*
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
@@ -1032,11 +1243,32 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     }
 
     .otherwise {
-      reservation_station.io.alloc.valid := true.B
-
-      when(reservation_station.io.alloc.fire) {
-        // compressed_cmd.ready := true.B
-        unrolled_cmd.ready := true.B
+      if (outer.use_mx_mmio) {
+        // funct-27 MX_LOAD_SCALES: kick the DMA loader instead of the reservation station.
+        // The command dequeues when the (idle) loader accepts it; io.busy holds via
+        // scale_loader_busy until the load finishes, so gemmini_fence orders it.
+        when (is_mx_load_scales) {
+          scale_loader_start.get.valid     := unrolled_cmd.valid
+          scale_loader_start.get.bits.addr := unrolled_cmd.bits.cmd.rs1(coreMaxAddrBits - 1, 0)
+          scale_loader_start.get.bits.len  := unrolled_cmd.bits.cmd.rs2(31, 0)
+          scale_loader_start.get.bits.sel  := unrolled_cmd.bits.cmd.rs2(32).asBool
+          unrolled_cmd.ready := scale_loader_start.get.ready
+        } .elsewhen (is_mx_load_lut) {
+          lut_loader_start.get.valid     := unrolled_cmd.valid
+          lut_loader_start.get.bits.addr := unrolled_cmd.bits.cmd.rs1(coreMaxAddrBits - 1, 0)
+          lut_loader_start.get.bits.num  := unrolled_cmd.bits.cmd.rs2(31, 0)
+          lut_loader_start.get.bits.sel  := unrolled_cmd.bits.cmd.rs2(33, 32)
+          unrolled_cmd.ready := lut_loader_start.get.ready
+        } .otherwise {
+          reservation_station.io.alloc.valid := true.B
+          when(reservation_station.io.alloc.fire) { unrolled_cmd.ready := true.B }
+        }
+      } else {
+        reservation_station.io.alloc.valid := true.B
+        when(reservation_station.io.alloc.fire) {
+          // compressed_cmd.ready := true.B
+          unrolled_cmd.ready := true.B
+        }
       }
     }
   }
