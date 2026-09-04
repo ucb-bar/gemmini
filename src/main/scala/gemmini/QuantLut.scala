@@ -91,19 +91,37 @@ class QuantLut(
   val used_lut_act_out = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
   dontTouch(used_lut_act_out)
   val minIdx = WireDefault(0.U(raddrWidth.W))
-  val fp6Finders = Seq.fill(32)(Module(new FP6E3M2NearestFinder()))
+  // Projection nearest-finders (act_out): pick the decoder by LUT format.
+  // Uniform driver wires keep the surrounding control logic format-agnostic;
+  // the FP6 default path drives identical values to before.
+  val proj_in      = WireDefault(VecInit(Seq.fill(32)(0.U(rdataWidth.W))))
+  val proj_lut     = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
+  val proj_nearest = Wire(Vec(32, UInt(raddrWidth.W)))
 
-  for (i <- 0 until 32) {
-    fp6Finders(i).io.in_lut := VecInit(Seq.fill(16)(0.U(rdataWidth.W)))
-    fp6Finders(i).io.in_fp6 := 0.U(6.W)
+  lutConfig.projFormat match {
+    case LutFP8E4M3 | LutFP8E5M2 =>
+      val altfmt = lutConfig.projFormat == LutFP8E5M2
+      val finders = Seq.fill(32)(Module(new FP8NearestFinder(altfmt)))
+      for (i <- 0 until 32) {
+        finders(i).io.in     := proj_in(i)
+        finders(i).io.in_lut := proj_lut
+        proj_nearest(i)      := finders(i).io.nearestIdx
+      }
+    case _ => // LutFP6E3M2 (default)
+      val finders = Seq.fill(32)(Module(new FP6E3M2NearestFinder()))
+      for (i <- 0 until 32) {
+        finders(i).io.in_fp6 := proj_in(i)
+        finders(i).io.in_lut := proj_lut
+        proj_nearest(i)      := finders(i).io.nearestIdx
+      }
   }
 
   when(io.quant_fp6.valid) {
+    used_lut_act_out := lutCache_act_out(counter_act_out >> io.quant_lut_update_granularity)
+    proj_lut := used_lut_act_out
     for (i <- 0 until 32) {
-      used_lut_act_out := lutCache_act_out(counter_act_out >> io.quant_lut_update_granularity)
-      fp6Finders(i).io.in_lut := used_lut_act_out
-      fp6Finders(i).io.in_fp6 := io.quant_fp6.bits(i)
-      projectedIndices(i) := fp6Finders(i).io.nearestIdx
+      proj_in(i) := io.quant_fp6.bits(i)
+      projectedIndices(i) := proj_nearest(i)
     }
     projectedDataValid := true.B
     when (counter_act_out === ((io.loop_bound_i << 5.U) - 1.U)){

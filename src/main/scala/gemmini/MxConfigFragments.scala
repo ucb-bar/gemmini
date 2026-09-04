@@ -37,13 +37,31 @@ case class GemminiRequantizerConfig(
   pipelineLatency: Int = 2,
 )
 
+// Source floating-point format that the LUT projects into 4-bit indices.
+// Fixed at elaboration; defaults to FP6 so existing configs are unchanged.
+sealed trait LutProjFormat
+case object LutFP6E3M2 extends LutProjFormat
+case object LutFP8E4M3 extends LutProjFormat
+case object LutFP8E5M2 extends LutProjFormat
+
 case class GemminiLUTConfig(
   numBits: Seq[Int] = Seq(96, 96, 96),
   numEntries: Seq[Int] = Seq(64, 64, 64),
   rdataWidth: Int = 6,
-  raddrWidth: Int = 4, 
+  raddrWidth: Int = 4,
   lutUpdateRegularityWidth: Int = 16,
+  projFormat: LutProjFormat = LutFP6E3M2,
 ) {
+  def isFp8Proj = projFormat == LutFP8E4M3 || projFormat == LutFP8E5M2
+
+  require(!isFp8Proj || rdataWidth == 8,
+    "FP8 LUT projection requires rdataWidth == 8")
+
+  // Each LUT holds 16 entries (2^raddrWidth) of rdataWidth bits, so every write
+  // word must be exactly 16 * rdataWidth wide (96 for FP6, 128 for FP8).
+  require(numBits.forall(_ == 16 * rdataWidth),
+    s"GemminiLUTConfig.numBits must each equal 16 * rdataWidth (= ${16 * rdataWidth}); got $numBits")
+
   def apply(table: Int) = {
     (numEntries(table), numBits(table))
   }
