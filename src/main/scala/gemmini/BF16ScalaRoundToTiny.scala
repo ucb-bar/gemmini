@@ -89,7 +89,7 @@ object E3M1Tofp4 {
     val outMinNorm = sign ## "b010".U(3.W)
 
     Mux(mapToZero,
-      0.U(4.W),
+      Cat(sign, 0.U(3.W)),   // underflow keeps its sign, as the reference does
       Mux(mapToMax,
         sign ## FP4Max,
         Mux(mapToSubnorm,
@@ -147,7 +147,7 @@ object E4M2ToFp6 {
 
     val out = Wire(UInt(6.W))
     when (mapToZero) {
-      out := 0.U(6.W)
+      out := Cat(sign, 0.U(5.W))   // underflow keeps its sign, as the reference does
     } .elsewhen (mapToMax) {
       out := outMax
     } .elsewhen (mapToSubnorm) {
@@ -215,9 +215,52 @@ object E5M3ToFp8 {
       outSub := Mux(sig === "b111".U, outMinNorm, sign ## 0.U(4.W) ## k)
     }
 
-    Mux(mapToZero, 0.U(8.W), 
-      Mux(mapToMax, sign ## FP8Max, 
+    // NOTE: no longer used for FP8 -- BF16ToE4M3 replaced it (it double-rounded through E5M3).
+    // Kept because the FP6/FP4 paths share this file's structure.
+    Mux(mapToZero, Cat(sign, 0.U(7.W)),
+      Mux(mapToMax, sign ## FP8Max,
         Mux(mapToSubnorm, outSub, outNorm)))
+  }
+}
+
+// BF16 -> E4M3 code in ONE rounding step, ties away from zero, E4M3 subnormals allowed,
+// saturating to +-448. Matches microxcaling's _quantize_elemwise(round="nearest",
+// saturate_normals=true, allow_denorm=true), which is what MXQuant's e2e quantizer uses.
+//
+// hardfloat cannot target E4M3: with expWidth=4 it reserves exp field 15 for Inf/NaN, but E4M3
+// uses exp=15 with mantissa 0..6 as normals up to 448. Routing through E5M3 instead (what this
+// replaces) double-rounds, because E5M3's 3 fraction bits are coarser than E4M3's subnormal
+// quantum -- e.g. 6.6875 * 2^-9 came out as 6 quanta instead of 7.
+object BF16ToE4M3 {
+  def apply(in: UInt): UInt = {
+    require(in.getWidth == 16)
+    val sign = in(15)
+    val e8   = in(14, 7)
+    val frac = in(6, 0)
+
+    // Normal target (unbiased exp >= -6): keep 3 of 7 fraction bits. Adding half the dropped
+    // weight before truncating IS round-half-away-from-zero on a magnitude.
+    val kn_raw = (frac +& 8.U)(7, 4)                       // 0..8
+    val carry  = kn_raw === 8.U
+    val kn     = Mux(carry, 0.U(3.W), kn_raw(2, 0))
+    val expf   = (e8 +& carry.asUInt).zext.asSInt - 120.S  // (e8 + carry - 127) + 7
+    val satN   = (expf > 15.S) || ((expf === 15.S) && (kn === 7.U))
+    val magN   = Mux(satN, 0x7E.U(7.W), Cat(expf.asUInt(3, 0), kn))
+
+    // Subnormal target (unbiased exp < -6, i.e. e8 < 121): quantum 2^-9, so
+    // k = round_half_away(sig8 / 2^sh) with sh = -(e8 - 127) - 2 = 125 - e8, which is >= 5 here.
+    // sh is clamped to 9 because anything beyond that rounds to 0 regardless.
+    val sig8   = Cat(1.U(1.W), frac)                       // value = sig8 * 2^(e8-127-7)
+    val sh_raw = 125.U(8.W) - e8
+    val sh     = Mux(sh_raw < 5.U, 5.U(4.W), Mux(sh_raw > 9.U, 9.U(4.W), sh_raw(3, 0)))
+    val half   = (1.U(10.W) << (sh - 1.U))(9, 0)
+    val ks     = ((sig8 +& half) >> sh)(4, 0)              // 0..8
+    val magS   = Mux(ks >= 8.U, 0x08.U(7.W), Cat(0.U(4.W), ks(2, 0)))
+
+    val useSub = e8 < 121.U
+    Mux(e8.andR, 0x7F.U(8.W),                              // NaN/Inf -> E4M3 NaN, sign dropped
+      Mux(e8 === 0.U, Cat(sign, 0.U(7.W)),                 // zero / BF16 subnormal -> signed zero
+        Cat(sign, Mux(useSub, magS, magN))))
   }
 }
 
@@ -236,7 +279,8 @@ object roundToMx {
     roundAnyRawFNToRecFN.io.invalidExc    := false.B
     roundAnyRawFNToRecFN.io.infiniteExc   := false.B
     roundAnyRawFNToRecFN.io.in            := raw_in
-    roundAnyRawFNToRecFN.io.roundingMode  := consts.round_near_even
+    // The MX reference moves ties AWAY from zero, not to even.
+    roundAnyRawFNToRecFN.io.roundingMode  := consts.round_near_maxMag
     roundAnyRawFNToRecFN.io.detectTininess:= consts.tininess_afterRounding
 
     val rec_format = roundAnyRawFNToRecFN.io.out
@@ -256,6 +300,11 @@ class BF16ScaleRoundToTiny(
     val in_bf16      = Input(Vec(outputnumLanes, UInt(16.W)))
     val scale_e8m0   = Input(UInt(inputexpWidth.W))
     val dataType   = Input(UInt(2.W))
+    // The reference divides the block by its own max, so a non-finite max poisons the block:
+    // /nan sends every element to NaN, /inf sends the finite ones to zero. This datapath
+    // multiplies by a finite power of two, so it has to select that behaviour explicitly.
+    val block_has_nan = Input(Bool())
+    val block_has_inf = Input(Bool())
     val out      = Output(Vec(outputnumLanes, UInt(8.W)))
   })
 
@@ -290,9 +339,16 @@ class BF16ScaleRoundToTiny(
     sig := input_sig
 
     when (isNaN) {
-      scaled_exp := ((1 << (inputexpWidth)) - 1).U(inputexpWidth.W) 
+      scaled_exp := ((1 << (inputexpWidth)) - 1).U(inputexpWidth.W)
     } .elsewhen (isInf) {
-      scaled_exp := ((1 << (inputexpWidth)) - 1).U(inputexpWidth.W) 
+      scaled_exp := ((1 << (inputexpWidth)) - 1).U(inputexpWidth.W)
+      sig := 0.U((inputsigWidth - 1).W)
+    } .elsewhen (input_exp === 0.U) {
+      // Zero or a BF16 subnormal. The exponent-only scaling below would treat it as 1.sig and
+      // hand back a nonzero value -- an exact zero came out as 2^-9*scale once the block max fell
+      // below ~2^-110. Flush, which is also what the reference does (its eps-floored scale sends
+      // any BF16 subnormal to zero).
+      scaled_exp := 0.U
       sig := 0.U((inputsigWidth - 1).W)
     } .elsewhen (underflow) {
       scaled_exp := 0.U
@@ -321,12 +377,17 @@ class BF16ScaleRoundToTiny(
     val rounded = Mux(io.dataType === 1.U,
                       roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp6, (in: UInt) => E4M2ToFp6(in)),
                       Mux(io.dataType === 0.U,
-                        roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp8, (in: UInt) => E5M3ToFp8(in)),
+                        BF16ToE4M3(scaled_bf16),
                         roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp4, (in: UInt) => E3M1Tofp4(in))
                       )
                     )
 
+    // Block poisoned by a non-finite max (see the io comment). NaN wins over Inf, matching the
+    // reference's `X = nan` taking precedence over `X = inf`.
+    val poisoned = Mux(io.block_has_nan, 0x7F.U(8.W),
+                   Mux(isNaN || isInf, 0x7F.U(8.W), Cat(sign, 0.U(7.W))))
+
     val dbg_rounded     = WireDefault(rounded);          dontTouch(dbg_rounded)
-    quantized_buffer(i) := rounded
+    quantized_buffer(i) := Mux(io.block_has_nan || io.block_has_inf, poisoned, rounded)
   }
 }

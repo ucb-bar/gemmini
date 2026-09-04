@@ -32,11 +32,13 @@ object MxFloatFormat {
       BF16 -> 65024.U
     ))
 
-    val log2_pmax_floor = MuxLookup(bits, 8.U)(Seq(
-      FP4 -> 2.U,
-      FP6 -> 4.U,
-      FP8 -> 8.U,
-      BF16 -> 16.U
+    // 0 puts the block max in [1,2), matching MXQuant's e2e convention (_po2). Was the format's
+    // emax (OCP Alg. 1), which peaked at 448 and overflowed the mesh accumulator when chained.
+    val log2_pmax_floor = MuxLookup(bits, 0.U)(Seq(
+      FP4 -> 0.U,
+      FP6 -> 0.U,
+      FP8 -> 0.U,
+      BF16 -> 0.U
     ))
     
     (exp_bits, mant_bits, pmax, log2_pmax_floor)
@@ -435,13 +437,25 @@ class MxRequantizer[T <: Data](
       x => (0 until 4).map(i => x(16*(i+1)-1, 16*i))
     )
   )
+  // NaN and Inf are tracked separately because the reference divides the block by its own max:
+  // /nan sends every element to NaN, /inf sends the finite ones to zero. See BF16ToE4M3's caller.
+  val block_has_nan = WireDefault(false.B)
+  val block_has_inf = WireDefault(false.B)
+  dontTouch(block_has_nan)
+  dontTouch(block_has_inf)
   when(should_compute) {
-    block_max := reshaped_pipelined_out_0.map { e =>
-      val mag        = abs(e.asUInt)
-      val isNanOrInf = mag(14, 7).andR   // BF16: exp field all-ones → NaN or Inf
-      Mux(isNanOrInf, 0.U, mag)
-    }.reduce { (a, b) => Mux(a > b, a, b) }
+    val mags = reshaped_pipelined_out_0.map { e =>
+      val mag   = abs(e.asUInt)
+      val expOnes = mag(14, 7).andR     // BF16: exp field all-ones → NaN or Inf
+      val isNan = expOnes && mag(6, 0).orR
+      val isInf = expOnes && !mag(6, 0).orR
+      (Mux(expOnes, 0.U, mag), isNan, isInf)
+    }
+    block_max     := mags.map(_._1).reduce { (a, b) => Mux(a > b, a, b) }
+    block_has_nan := mags.map(_._2).reduce(_ || _)
+    block_has_inf := mags.map(_._3).reduce(_ || _)
   }
+  val block_nonfinite = block_has_nan || block_has_inf
   
   val block_max_uint = block_max.asUInt
   val block_max_uint_wire = WireDefault(block_max_uint)
@@ -453,35 +467,44 @@ class MxRequantizer[T <: Data](
   dontTouch(neg_e8m0_clamped)
   scale_exponent := 0.S
   
-  when(block_max_uint === 0.U || block_max_uint(14, 7) === 0.U) {
-    scale_exponent := 0.S
-    scale_e8m0 := 127.U 
-  }.otherwise {
-    val max_biased_exp = block_max_uint(14, 7)
-    scale_exponent := max_biased_exp.zext.asSInt - 127.S - log2_pmax_floor.zext.asSInt
+  // _po2 floors amax at fp32 eps (2^-23), whose BF16 biased exponent is 104. That subsumes the
+  // all-zero and subnormal-max cases, so there is no separate sentinel -- and no ambiguity between
+  // "all zero" and "overflowed".
+  //
+  // GATED ON should_compute. This module is shared with the BF16 (non-requant) path, which runs
+  // with should_compute low and block_max stuck at 0. Driving these wires unconditionally changed
+  // neg_e8m0_clamped from its default 0 to 150 on every idle cycle, which flips
+  // BF16ScaleRoundToTiny's scale_exp_unbiased sign bit and sends the shared element logic down the
+  // add branch instead of the subtract branch. Keep the idle values bit-identical to the
+  // pre-change design; conformance only matters while should_compute is high.
+  val EPS_BIASED_EXP = 104.U(8.W)
+  val max_biased_exp = block_max_uint(14, 7)
+  when (should_compute) {
+    val clamped_exp = Mux(max_biased_exp < EPS_BIASED_EXP, EPS_BIASED_EXP, max_biased_exp)
+    scale_exponent := clamped_exp.zext.asSInt - 127.S - log2_pmax_floor.zext.asSInt
+
     val std_e8m0 = scale_exponent + 127.S
-    when(std_e8m0 < 0.S){
-      scale_e8m0 := 0.U
-    }.elsewhen(std_e8m0 > 255.S){ 
-      scale_e8m0 := 255.U
-    }.otherwise{ 
-      scale_e8m0 := std_e8m0.asUInt(7, 0)}
+    val std_clamped = Mux(std_e8m0 < 0.S, 0.U(8.W),
+                      Mux(std_e8m0 > 254.S, 254.U(8.W), std_e8m0.asUInt(7, 0)))
+    // A non-finite anywhere in the block propagates as E8M0 255 (NaN). Valid codes stop at 254 so
+    // that 255 is reserved; it used to be a reachable clamp value.
+    scale_e8m0 := Mux(block_nonfinite, 255.U, std_clamped)
 
     val neg_e8m0 = 127.S(9.W) - scale_exponent
-    
-    when(neg_e8m0 < 0.S) {
-      neg_e8m0_clamped := 0.U
-    }.elsewhen(neg_e8m0 > 254.S) {
-      neg_e8m0_clamped := 254.U
-    }.otherwise {
-      neg_e8m0_clamped := neg_e8m0.asUInt(7, 0)
-    }
+    neg_e8m0_clamped := Mux(neg_e8m0 < 0.S, 0.U(8.W),
+                        Mux(neg_e8m0 > 254.S, 254.U(8.W), neg_e8m0.asUInt(7, 0)))
+  } .otherwise {
+    scale_exponent := 0.S
+    scale_e8m0 := 127.U
+    // neg_e8m0_clamped deliberately left at its WireDefault(0), as before.
   }
   
   val BF16ScaleRoundToTiny = Module(new BF16ScaleRoundToTiny(outputnumLanes = io.outputnumLanes))
   BF16ScaleRoundToTiny.io.in_bf16 := reshaped_pipelined_out_0
-  BF16ScaleRoundToTiny.io.scale_e8m0 := neg_e8m0_clamped 
+  BF16ScaleRoundToTiny.io.scale_e8m0 := neg_e8m0_clamped
   BF16ScaleRoundToTiny.io.dataType := format_reg
+  BF16ScaleRoundToTiny.io.block_has_nan := block_has_nan
+  BF16ScaleRoundToTiny.io.block_has_inf := block_has_inf
   quantized_buffer := RegNext(BF16ScaleRoundToTiny.io.out)
   
 
@@ -529,9 +552,20 @@ class MxRequantizer[T <: Data](
   
   val scale_write_counter = RegInit(0.U(log2Ceil(scaleSize).W))
   val scale_buffer_full = RegInit(false.B)
+  // Scales arrive block-major within a tile-row: scale_write_counter = bi*DIM + row_in_tile
+  // (all DIM rows of block 0, then all rows of block 1, ...). The reference / mvout side-channel
+  // lays scales out ROW-MAJOR (byte m*N_blocks + bi). Remap the buffer slot so each block's scale
+  // lands at its row-major position -- a bit-field swap of the (row, block) fields of the counter.
+  val scaleDim     = meshColumns * tileColumns
+  val log2ScaleDim = log2Ceil(scaleDim)
+  val log2ScaleSz  = log2Ceil(scaleSize)
+  val scale_wr_pos =
+    if (log2ScaleSz > log2ScaleDim)
+      Cat(scale_write_counter(log2ScaleDim - 1, 0), scale_write_counter(log2ScaleSz - 1, log2ScaleDim))
+    else scale_write_counter
   when(should_compute) {
     for (i <- 0 until scaleSize) {
-      when(i.U === scale_write_counter) {
+      when(i.U === scale_wr_pos) {
         scale_buffer(i) := scale_e8m0
       }
     }
