@@ -89,7 +89,7 @@ object E3M1Tofp4 {
     val outMinNorm = sign ## "b010".U(3.W)
 
     Mux(mapToZero,
-      Cat(sign, 0.U(3.W)),   // underflow keeps its sign, as the reference does
+      0.U(4.W),   // reference canonicalizes zero to +0 (bf16_bits_to_fp4_e2m1_code returns 0, no sign)
       Mux(mapToMax,
         sign ## FP4Max,
         Mux(mapToSubnorm,
@@ -279,8 +279,10 @@ object roundToMx {
     roundAnyRawFNToRecFN.io.invalidExc    := false.B
     roundAnyRawFNToRecFN.io.infiniteExc   := false.B
     roundAnyRawFNToRecFN.io.in            := raw_in
-    // The MX reference moves ties AWAY from zero, not to even.
-    roundAnyRawFNToRecFN.io.roundingMode  := consts.round_near_maxMag
+    // The nibble-format golden (fp4/fp6 use out_requant="model") rounds ties to EVEN (RNE):
+    // Spike bf16_bits_to_e3m1/e4m2_rne use round_up = guard & (sticky | lsb). FP8 keeps ties-away
+    // but goes through BF16ToE4M3, not roundToMx, so it is unaffected by this.
+    roundAnyRawFNToRecFN.io.roundingMode  := consts.round_near_even
     roundAnyRawFNToRecFN.io.detectTininess:= consts.tininess_afterRounding
 
     val rec_format = roundAnyRawFNToRecFN.io.out

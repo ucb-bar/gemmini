@@ -32,11 +32,15 @@ object MxFloatFormat {
       BF16 -> 65024.U
     ))
 
-    // 0 puts the block max in [1,2), matching MXQuant's e2e convention (_po2). Was the format's
-    // emax (OCP Alg. 1), which peaked at 448 and overflowed the mesh accumulator when chained.
+    // Per-format block-scale convention. FP8 was migrated to MXQuant's e2e convention (_po2):
+    // pmax=0 puts the block max in [1,2) (using the format emax 448 overflowed the mesh accumulator
+    // when chained). The nibble formats (FP4/FP6) still use the OCP emax convention, so their scale
+    // carries log2_pmax = emax: FP4 E2M1 emax=2, FP6 E3M2 emax=4. This must match the golden
+    // generator (Format.out_pmax) and Spike (gemmini.cc log2_pmax) or the fp4/fp6 requant output and
+    // its E8M0 scales come out 2^pmax too small / high.
     val log2_pmax_floor = MuxLookup(bits, 0.U)(Seq(
-      FP4 -> 0.U,
-      FP6 -> 0.U,
+      FP4 -> 2.U,
+      FP6 -> 4.U,
       FP8 -> 0.U,
       BF16 -> 0.U
     ))
@@ -550,53 +554,94 @@ class MxRequantizer[T <: Data](
   }
 
   
-  val scale_write_counter = RegInit(0.U(log2Ceil(scaleSize).W))
-  val scale_buffer_full = RegInit(false.B)
-  // Scales arrive block-major within a tile-row: scale_write_counter = bi*DIM + row_in_tile
-  // (all DIM rows of block 0, then all rows of block 1, ...). The reference / mvout side-channel
-  // lays scales out ROW-MAJOR (byte m*N_blocks + bi). Remap the buffer slot so each block's scale
-  // lands at its row-major position -- a bit-field swap of the (row, block) fields of the counter.
-  val scaleDim     = meshColumns * tileColumns
-  val log2ScaleDim = log2Ceil(scaleDim)
-  val log2ScaleSz  = log2Ceil(scaleSize)
-  val scale_wr_pos =
-    if (log2ScaleSz > log2ScaleDim)
-      Cat(scale_write_counter(log2ScaleDim - 1, 0), scale_write_counter(log2ScaleSz - 1, log2ScaleDim))
-    else scale_write_counter
-  when(should_compute) {
-    for (i <- 0 until scaleSize) {
-      when(i.U === scale_wr_pos) {
-        scale_buffer(i) := scale_e8m0
-      }
-    }
-    when((scale_write_counter === (scaleSize - 1).U)) {
-      scale_write_counter := 0.U
-      scale_buffer_full := true.B
-    }.otherwise {
-      scale_write_counter := scale_write_counter + 1.U
-      when(io.scaleMem_write.fire){
-        scale_buffer_full := false.B
-      }
-    }
-  }.elsewhen(io.scaleMem_write.fire){
-      scale_buffer_full := false.B
+  // ===========================================================================
+  // Scale-factor COALESCER (row-major write-back)
+  // ---------------------------------------------------------------------------
+  // The mvout streams one E8M0 block scale per should_compute beat, in SUPER-BLOCK
+  // major order: two 32-col blocks per 16-row i-tile, all i-tiles for that block
+  // pair, then the next pair (last pair is a single block when GN is odd). Writing
+  // that stream as contiguous 32-byte flushes only lands ROW-MAJOR (byte m*GN+b,
+  // what the loader/reference expect) when GN=N/32 divides the 32-scale group --
+  // i.e. GN=2. For GN=3/4/... it misordered the scales.
+  //
+  // Instead, buffer the whole tile's scales in a row-major coalescer indexed by
+  // m*GN+b, driven by an address generator that mirrors the mvout iteration using
+  // the same loop bounds (loop_bound_i i-tiles, GN = loop_bound_j/2 blocks), then
+  // flush contiguous 32-byte row-major chunks. Arrival nesting (fp8):
+  //   super-block(sb) > i-tile(g) > block-in-superblock(bib) > row(r)
+  //   block b = 2*sb + bib ; row-tile m = 16*g + r ; dest byte = m*GN + b.
+  // FP4/FP6 stream 2 rows per beat; the target layout stays row-major, only the
+  // arrival->(m,b) decode would differ (handled when those paths are enabled).
+  // Format-aware: a 32-col block spans TWO 16-col mesh tiles for fp8 (block = loop_bound_j/2), but
+  // ONE 32-col mesh tile for the nibble formats (block = loop_bound_j). Nibble formats also stream
+  // 2 rows per beat, so an i-tile is 32 rows (bib = row-half) and the GN blocks are delivered as GN
+  // OUTER passes; for fp8 an i-tile is 16 rows and the two blocks of a super-block interleave (bib).
+  //   fp8:    sb=super-block, bib=block-in-sb, m=16*g+row,        b=2*sb+bib
+  //   nibble: sb=block(b),    bib=row-half,    m=32*g+16*bib+row, b=sb
+  val ROWS_PER_HALF = meshColumns * tileColumns            // 16 rows per (bib) row-half
+  val isNibble      = (total_bits_per_element === 4.U) || (total_bits_per_element === 6.U)
+  val GN            = Mux(isNibble, io.loop_bound_j, (io.loop_bound_j >> 1).asUInt)
+  val tiles_I       = io.loop_bound_i
+  val num_super     = (GN + 1.U) >> 1                      // fp8: ceil(GN/2) super-blocks
+  val gn_odd        = GN(0)
+
+  val coalesceSize  = 2048                                 // >= max M*GN for supported MX matmuls
+  val coalescer     = RegInit(VecInit(Seq.fill(coalesceSize)(0.U(8.W))))
+
+  // address-generator counters (advance one per should_compute beat). Nesting sb > g > bib > row.
+  val ag_sb  = RegInit(0.U(9.W))
+  val ag_g   = RegInit(0.U(9.W))
+  val ag_bib = RegInit(0.U(1.W))
+  val ag_row = RegInit(0.U(log2Ceil(ROWS_PER_HALF).W))
+  val flushing = RegInit(false.B)
+
+  val blocks_in_sb = Mux(isNibble, 2.U,
+                       Mux((ag_sb === (num_super - 1.U)) && gn_odd, 1.U, 2.U))
+  val sb_count = Mux(isNibble, GN, num_super)
+  val cur_b    = Mux(isNibble, ag_sb, (ag_sb << 1).asUInt + ag_bib)
+  val cur_m    = Mux(isNibble, ag_g * 32.U + ag_bib * ROWS_PER_HALF.U + ag_row,
+                               ag_g * ROWS_PER_HALF.U + ag_row)
+  val cur_byte = cur_m * GN + cur_b
+
+  when(should_compute && !flushing) {
+    coalescer(cur_byte) := scale_e8m0
+    // increment nested counters: row -> bib -> i-tile -> sb (block for nibble, super-block for fp8)
+    when(ag_row === (ROWS_PER_HALF - 1).U) {
+      ag_row := 0.U
+      when(ag_bib === (blocks_in_sb - 1.U)) {
+        ag_bib := 0.U
+        when(ag_g === (tiles_I - 1.U)) {
+          ag_g := 0.U
+          when(ag_sb === (sb_count - 1.U)) {
+            ag_sb := 0.U
+            flushing := true.B                              // full tile collected -> flush
+          }.otherwise { ag_sb := ag_sb + 1.U }
+        }.otherwise { ag_g := ag_g + 1.U }
+      }.otherwise { ag_bib := ag_bib + 1.U }
+    }.otherwise { ag_row := ag_row + 1.U }
   }
-  
-  when(io.scaleMem_write.fire) {
-      when(scale_write_addr_counter === ((1 << 16) - 1).U) {
-        scale_write_addr_counter := 0.U
-      }.otherwise {
-        scale_write_addr_counter := scale_write_addr_counter + 1.U
-      }
+
+  // Flush: stream the coalescer out as contiguous 32-byte row-major chunks.
+  val total_scales   = tiles_I * Mux(isNibble, 32.U, ROWS_PER_HALF.U) * GN   // M*GN
+  val num_flush_rows = total_scales >> log2Ceil(scales_per_write)
+  val flush_row      = RegInit(0.U(16.W))
+  val flush_base     = flush_row << log2Ceil(scales_per_write)
+
+  io.scaleMem_write.valid     := false.B
+  io.scaleMem_write.bits.addr := scale_mem_mvout_base_addr_act + (flush_row << log2Ceil(scaleMem_data_width/8))
+  io.scaleMem_write.bits.data := Cat((0 until scales_per_write).map(i => coalescer(flush_base + i.U)).reverse)
+  when(flushing) {
+    io.scaleMem_write.valid := true.B
+    when(io.scaleMem_write.fire) {
+      when(flush_row === (num_flush_rows - 1.U)) {
+        flush_row := 0.U
+        flushing  := false.B
+      }.otherwise { flush_row := flush_row + 1.U }
+    }
   }
 
   when(io.scale_mem_counter_reset_flag) {
-    scale_write_addr_counter := 0.U
-  }
-
-  when(scale_buffer_full) {
-    io.scaleMem_write.valid := true.B
-    io.scaleMem_write.bits.addr := scale_mem_mvout_base_addr_act + (scale_write_addr_counter << (log2Ceil(scaleMem_data_width/8))) //byte address, scale 32B per write
-    io.scaleMem_write.bits.data := Cat(scale_buffer.reverse)
+    ag_sb := 0.U; ag_g := 0.U; ag_bib := 0.U; ag_row := 0.U
+    flush_row := 0.U; flushing := false.B
   }
 }
