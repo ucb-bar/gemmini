@@ -812,7 +812,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val requant_hi_bank = Reg(chiselTypeOf(requant_dst_bank))
       when (requant_subbyte && requant_valid_fire && !requant_pend) {
         requant_hi_data := acc_scale_unit.io.out.bits.data.asUInt(2*spad_w - 1, spad_w)
-        requant_hi_row  := requant_dst_row + 1.U
+        // GATED tiled (FP4/FP6): beat1 is the NEXT column-tile, one tile-row (16 spad rows) below
+        // beat0, not the flat +1. Flag=0 keeps the flat +1 -> bit-identical to the existing store.
+        requant_hi_row  := requant_dst_row + Mux(write_issue_q.io.deq.bits.reuse_tiled, 16.U, 1.U)
         requant_hi_bank := requant_dst_bank
         requant_pend    := true.B
       }.elsewhen (requant_pend) {

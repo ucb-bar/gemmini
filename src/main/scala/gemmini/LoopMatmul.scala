@@ -821,7 +821,12 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
 
   val acc_addr_start = req.src_addr
 
-  val dst_offset = MuxCase((i * req.max_j) * block_size.U * 2.U + j*(block_size/8).U, Seq(
+  val dst_offset = MuxCase(
+    // FP4/FP6 requant: flat = i*N + 2*j. GATED tiled = i*N + 32*j (j-term x16 -> within-tile-row-inner
+    // operand layout for in-place reuse). reuse_tiled is only set for the nibble requant case here.
+    Mux(req.reuse_tiled,
+      (i * req.max_j) * block_size.U * 2.U + j * (block_size * 2).U,
+      (i * req.max_j) * block_size.U * 2.U + j * (block_size / 8).U), Seq(
     (req.full_c || (req.output_mx_format === 3.U && req.activation_mx_format === 0.U)) -> ((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U),
     (req.activation_mx_format === 0.U && (req.output_mx_format === 0.U)) ->
       Mux(req.reuse_tiled,
