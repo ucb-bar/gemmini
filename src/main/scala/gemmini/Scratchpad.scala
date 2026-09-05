@@ -58,6 +58,9 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
   val activation_mx_type = UInt(2.W)
   val output_mx_type = UInt(2.W)
 
+  // GATED tiled requant->spad store (FP8). When set, the requant beat lands within-tile-row-inner
+  // (beat << 4) instead of the flat +beat. Default false => bit-identical to the flat store.
+  val reuse_tiled = Bool()
 }
 
 class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)(implicit p: Parameters) extends Module {
@@ -876,7 +879,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           val narrowVec = acc_scale_unit.io.out.bits.data.asUInt.asTypeOf(Vec(2, UInt(spad_w.W)))
           val wideVec   = acc_scale_unit.io.out.bits.full_data.asUInt.asTypeOf(Vec(acc_write_w / spad_w, UInt(spad_w.W)))
           val last_beat = Mux(requant_bf16, (acc_write_w / spad_w - 1).U, 1.U)
-          bio.write.addr := requant_dst_row + requant_half
+          // GATED tiled requant->spad (FP8 only): the two FP8 beats are the two halves of a tile row,
+          // so beat1 lands one tile-row (16 spad rows) below beat0 instead of the flat +1. Flag=0 (or
+          // BF16) keeps the flat +requant_half -> bit-identical to the existing store.
+          val tiled_beat = write_issue_q.io.deq.bits.reuse_tiled && (io.output_mx_format === 0.U)
+          bio.write.addr := requant_dst_row + Mux(tiled_beat, (requant_half << 4).asUInt, requant_half)
           bio.write.data := Mux(requant_bf16, wideVec(requant_half), narrowVec(requant_half(0)))
           bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
           requant_half := Mux(requant_half === last_beat, 0.U, requant_half + 1.U)

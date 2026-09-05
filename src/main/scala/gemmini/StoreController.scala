@@ -135,11 +135,15 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   // MX builds widen the spad-to-spad mvout stride based on the output format.
   // Non-MX builds keep the original unit stride.
   val mx_stride = if (config.use_mx_scaling) {
-    Mux(io.enable_wide_spad_write && io.activation_mx_type === 0.U, io.loop_bound_j / 2.U * 4.U,
-      Mux(io.enable_wide_spad_write, io.loop_bound_j * 8.U,
-        Mux(!io.enable_wide_spad_write && io.activation_mx_type === 0.U, io.loop_bound_j / 2.U * 2.U,
-          Mux(!io.enable_wide_spad_write && io.activation_mx_type =/= 0.U, io.loop_bound_j * 2.U,
-            1.U
+    // GATED tiled requant->spad (FP8): the tiled layout carries the row within the 16-row tile in the
+    // Scratchpad beat term, so the store's per-row stride collapses to 1. Flag=0 keeps the flat stride.
+    Mux(mvout_rs2.reuse_tiled, 1.U,
+      Mux(io.enable_wide_spad_write && io.activation_mx_type === 0.U, io.loop_bound_j / 2.U * 4.U,
+        Mux(io.enable_wide_spad_write, io.loop_bound_j * 8.U,
+          Mux(!io.enable_wide_spad_write && io.activation_mx_type === 0.U, io.loop_bound_j / 2.U * 2.U,
+            Mux(!io.enable_wide_spad_write && io.activation_mx_type =/= 0.U, io.loop_bound_j * 2.U,
+              1.U
+            )
           )
         )
       ))
@@ -206,6 +210,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.store_en := Mux(pooling_is_enabled, wrow_counter === pool_size - 1.U && wcol_counter === pool_size - 1.U,
     block_counter === blocks - 1.U)
   io.dma.req.bits.chunk_id := mvout_rs2.mx_chunk_id
+  io.dma.req.bits.reuse_tiled := mvout_rs2.reuse_tiled
   io.dma.req.bits.max_j := io.loop_bound_j
   io.dma.req.bits.activation_mx_type := io.activation_mx_type
   io.dma.req.bits.output_mx_type := io.output_mx_type

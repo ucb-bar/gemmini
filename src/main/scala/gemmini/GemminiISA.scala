@@ -121,7 +121,10 @@ object GemminiISA {
   val MX_CHUNK_ID_BITS = 3  // log2(maxChunks=8), supports DIM up to 64
 
   class MvoutRs2(mvout_rows_bits: Int, mvout_cols_bits: Int, local_addr_t: LocalAddr) extends Bundle {
-    val _spacer2    = UInt((MVOUT_RS2_ROWS_WIDTH - mvout_rows_bits - MX_CHUNK_ID_BITS).W)
+    // reuse_tiled stolen from _spacer2 (one bit narrower) so mx_chunk_id and all lower fields keep
+    // their exact bit positions. Set for the gated tiled requant->spad store (LOOP_WS rs2 bit 10).
+    val _spacer2    = UInt((MVOUT_RS2_ROWS_WIDTH - mvout_rows_bits - MX_CHUNK_ID_BITS - 1).W)
+    val reuse_tiled = Bool()
     val mx_chunk_id = UInt(MX_CHUNK_ID_BITS.W)
     val num_rows    = UInt(mvout_rows_bits.W)
     val _spacer1 = UInt((MVOUT_RS2_COLS_WIDTH - mvout_cols_bits).W)

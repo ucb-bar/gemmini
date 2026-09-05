@@ -609,6 +609,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   mvout_cmd_rs2.num_cols := cols.asUInt
   mvout_cmd_rs2.local_addr := cast_to_acc_addr(mvout_cmd_rs2.local_addr, sp_addr, accumulate = false.B, read_full = req.full_c)
   mvout_cmd_rs2.mx_chunk_id := chunk_id
+  mvout_cmd_rs2.reuse_tiled := false.B // DRAM store path never tiles (dst is not spad)
   mvout_cmd.rs2 := mvout_cmd_rs2.asUInt
 
   // Layernorm iterators and calculations
@@ -660,6 +661,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   ln_mvout_cmd_rs2.num_cols := cols.asUInt
   ln_mvout_cmd_rs2.local_addr := cast_to_acc_addr(ln_mvout_cmd_rs2.local_addr, ln_sp_addr, accumulate = false.B, read_full = req.full_c)
   ln_mvout_cmd_rs2.local_addr.norm_cmd := ln_norm_cmd
+  ln_mvout_cmd_rs2.reuse_tiled := false.B // layernorm store path never tiles
   ln_mvout_cmd.rs2 := ln_mvout_cmd_rs2.asUInt
 
   io.req.ready := state === idle
@@ -756,6 +758,9 @@ class LoopMatmulStCSpadReq(val block_size: Int, val iterator_bitwidth: Int, val 
   // True when the output (C) scratchpad region overlaps the A/B operand region this loop still
   // reads (decided at dispatch). Only then does the store WAR-gate on full execute drain.
   val dst_overlaps_operands = Bool()
+  // GATED tiled requant->spad store (LOOP_WS rs2 bit 10). When set (FP8 only) the requant output is
+  // deposited BLOCK-TILED (operand-A layout) so it can be reused in place as the next matmul's A.
+  val reuse_tiled = Bool()
 }
 
 class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int,
@@ -799,7 +804,10 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   }
 
   val numChunks = block_size / 8
-  val chunk_spad_stride = Mux(req.output_mx_format === 3.U || req.full_c, (2 * tilesPerMxBlock).U, tilesPerMxBlock.U)
+  // Flat FP8 chunk stride = tilesPerMxBlock (chunks land column-inner). GATED tiled (FP8 only): x16
+  // so successive chunks step whole tile-rows (32 = 16*tilesPerMxBlock), matching the tiled layout.
+  val chunk_spad_stride = Mux(req.output_mx_format === 3.U || req.full_c, (2 * tilesPerMxBlock).U,
+    Mux(req.reuse_tiled && req.output_mx_format === 0.U, (16 * tilesPerMxBlock).U, tilesPerMxBlock.U))
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
   assert(max_block_len == 1, "there might be hw bugs if block length > 1, disabled for now")
@@ -815,7 +823,12 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
 
   val dst_offset = MuxCase((i * req.max_j) * block_size.U * 2.U + j*(block_size/8).U, Seq(
     (req.full_c || (req.output_mx_format === 3.U && req.activation_mx_format === 0.U)) -> ((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U),
-    (req.activation_mx_format === 0.U && (req.output_mx_format === 0.U)) -> (((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U)/2.U),
+    (req.activation_mx_format === 0.U && (req.output_mx_format === 0.U)) ->
+      Mux(req.reuse_tiled,
+        // GATED tiled (FP8): i*tiles_N*16 + 64*j  (j-term x16 vs flat -> within-tile-row-inner layout)
+        ((i * req.max_j) * block_size.U + j * (block_size * 4).U),
+        // flat: i*tiles_N*16 + 4*j
+        (((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U)/2.U)),
     ((req.activation_mx_format === 1.U || req.activation_mx_format === 2.U) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*8.U + j * (block_size/4).U)
     ))
   val dst_addr = Mux(req.activation_mx_format === 0.U,
@@ -849,6 +862,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   mvout_cmd_rs2.num_cols := cols.asUInt
   mvout_cmd_rs2.local_addr := cast_to_acc_addr(mvout_cmd_rs2.local_addr, src_addr, accumulate = false.B, read_full = req.full_c)
   mvout_cmd_rs2.mx_chunk_id := chunk_id
+  mvout_cmd_rs2.reuse_tiled := req.reuse_tiled
   mvout_cmd.rs2 := mvout_cmd_rs2.asUInt
 
   io.req.ready := state === idle
@@ -943,6 +957,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val c_spad_addr = UInt(max_acc_addr.W)
   val inc_acc_addr = Bool()
   val spad_only = Bool()
+  val reuse_tiled = Bool()  // LOOP_WS rs2 bit 10: gated tiled requant->spad store (FP8)
 
   val a_transpose = Bool()
   val b_transpose = Bool()
@@ -996,6 +1011,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
     st_completed := false.B
 
     spad_only := false.B
+    reuse_tiled := false.B
     narrow_type := false.B
     //is_resadd := false.B
   }
@@ -1231,6 +1247,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.st_completed := cmd.bits.cmd.rs2(7)
         loop_being_configured.inc_acc_addr := cmd.bits.cmd.rs2(8)
         loop_being_configured.spad_only := cmd.bits.cmd.rs2(9)
+        loop_being_configured.reuse_tiled := cmd.bits.cmd.rs2(10) // LOOP_WS_REQUANT_TILED (gated tiled requant->spad)
 
         loop_being_configured.c_spad_addr := cmd.bits.cmd.rs2(63, 32)
 
@@ -1377,6 +1394,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC_spad.io.req.bits.is_resadd := is_resadd
   stC_spad.io.req.bits.output_mx_format := io.output_mx_format
   stC_spad.io.req.bits.activation_mx_format := io.activation_mx_format
+  stC_spad.io.req.bits.reuse_tiled := loop_requesting_st.reuse_tiled
 
   // WAR overlap: decide here, where the A/B operand and C output spad regions are all known,
   // whether the output C region this loop writes overlaps the A or B operand region the mesh
