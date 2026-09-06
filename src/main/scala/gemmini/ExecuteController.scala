@@ -27,6 +27,10 @@ class ExControllerMxScalingIO(
   val activation_mx_format_out = Output(UInt(2.W))
   val weight_mx_format_out = Output(UInt(2.W))
   val enable_MXQuant = Output(Bool())
+  // C8.3 MX_SCALE_RESIDENT: decoded from rs1 bit 62 of the mxquant scale-config (CONFIG_SCALE_MEM).
+  // When set, the requantizer also writes its output activation block-scales into the on-chip
+  // act-scale window (transposed) so the next matmul reads them in place -- no DRAM/SW reload.
+  val scale_resident = Output(Bool())
 }
 
 class ExControllerMxScalingRegs (scale_mem_write_addr_width: Int) extends Bundle {
@@ -43,6 +47,7 @@ class ExControllerMxScalingRegs (scale_mem_write_addr_width: Int) extends Bundle
   val scale_mem_read_act_sel = UInt(1.W)
   val scale_mem_read_w_sel = UInt(1.W)
   val scale_mem_counter_reset_flag = UInt(1.W)
+  val scale_resident = Bool()   // C8.3 MX_SCALE_RESIDENT (rs1 bit 62 of CONFIG_SCALE_MEM)
 
   // loop bounds
   val loop_bound_i = UInt(9.W)
@@ -148,18 +153,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
 
   val mx_state = if (use_mx_scaling) Some(RegInit((0.U).asTypeOf(new ExControllerMxScalingRegs(scale_mem.get.ScaleMemWriteAddrWidth)))) else None
-  when(functs(0) === CONFIG_SCALE_MEM) {
-      if (use_mx_scaling) {
-        mx_state.get.loop_bound_i := rs1s(0)(41,33)
-        mx_state.get.loop_bound_j := rs1s(0)(50,42)
-        mx_state.get.loop_bound_k := rs1s(0)(59,51)
-        mx_state.get.scale_mem_mvout_base_addr_act := rs1s(0)(32,0)
-        mx_state.get.scale_mem_read_act_sel := rs1s(0)(60)
-        mx_state.get.scale_mem_read_w_sel := rs1s(0)(61)
-        mx_state.get.scale_mem_counter_reset_flag := rs1s(0)(62)
-        mx_state.get.quant_lut_update_granularity :=  rs2s(0)(15,0)
-      }
-  }
+  // NOTE: the CONFIG_SCALE_MEM register latch lives in the main command decoder's gated branch
+  // (search "config_cmd_type === CONFIG_SCALE_MEM"), NOT here. It must fire ONLY when a *valid*
+  // config sits at the queue head (cmd.valid(0) && !matmul_in_progress && !pending). An ungated
+  // top-level `when(functs(0) === CONFIG_SCALE_MEM)` re-fired on the stale/invalid head the cycle
+  // AFTER the real config was popped, latching garbage loop bounds (e.g. i=96/j=46/k=137) and
+  // clearing scale_resident. That made the requantizer flush address-generator never reach its
+  // terminal count, so the block-scale coalescer never flushed -> all output scales read back 0
+  // and the tiled store was corrupted (observed on fp6 128x128 chained; latent for the others).
 
   if (use_mx_scaling) {
     io.mx.get.output_MxFormat := mx_state.get.output_mx_format
@@ -168,6 +169,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.mx.get.enable_MXQuant := mx_state.get.enable_mxquant
     io.mx.get.scale_mem_mvout_base_addr_act := mx_state.get.scale_mem_mvout_base_addr_act
     io.mx.get.quant_lut_update_granularity := mx_state.get.quant_lut_update_granularity
+    io.mx.get.scale_resident := mx_state.get.scale_resident
 
     // loop bounds
     io.mx.get.loop_bounds.i := mx_state.get.loop_bound_i
@@ -752,8 +754,21 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
         
         .elsewhen(functs(0) === CONFIG_SCALE_MEM && !matmul_in_progress &&
                     !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) {
-            // Registers are already updated at lines 135-144
-            // Just signal completion and pop the command
+            // Latch the CONFIG_SCALE_MEM registers HERE (gated on cmd.valid(0) via the enclosing
+            // when, plus !matmul_in_progress/!pending) so a stale/invalid queue head can never
+            // corrupt them. rs1 layout: dram 0-32, tiles_I 33-41, tiles_J 42-50, tiles_K 51-59,
+            // scale_act_sel 60, scale_wgt_sel 61, scale_mem_counter_reset 62, MX_SCALE_RESIDENT 63.
+            if (use_mx_scaling) {
+              mx_state.get.loop_bound_i := rs1s(0)(41,33)
+              mx_state.get.loop_bound_j := rs1s(0)(50,42)
+              mx_state.get.loop_bound_k := rs1s(0)(59,51)
+              mx_state.get.scale_mem_mvout_base_addr_act := rs1s(0)(32,0)
+              mx_state.get.scale_mem_read_act_sel := rs1s(0)(60)
+              mx_state.get.scale_mem_read_w_sel := rs1s(0)(61)
+              mx_state.get.scale_mem_counter_reset_flag := rs1s(0)(62)
+              mx_state.get.scale_resident := rs1s(0)(63)
+              mx_state.get.quant_lut_update_granularity := rs2s(0)(15,0)
+            }
             io.completed := cmd.bits(0).rob_id
             cmd.pop := 1.U
           }

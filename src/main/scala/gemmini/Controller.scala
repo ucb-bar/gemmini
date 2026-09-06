@@ -293,6 +293,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       sp_addr_width = log2Ceil(outer.config.sp_bank_entries),
       scaleMem_data_width = outer.config.scale_mem.get.ScaleMemWriteDataWidth,
       scaleMem_addr_width = outer.config.scale_mem.get.ScaleMemWriteAddrWidth,
+      // C8.3: on-chip act-scale write-port byte-addr width (same as scale_loader_act uses).
+      scaleMemActWriteAddrWidth = outer.config.scale_mem.get.addrBits - 1,
       scaleSize = outer.config.scaleSize,
       scaleMembasewrite = 0, // TODO: add this into the instruction
       lutConfig = l,
@@ -314,6 +316,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     req.io.scaleMem_write.ready := false.B
     req.io.scale_mem_mvout_base_addr_act := ex_controller.io.mx.get.scale_mem_mvout_base_addr_act
     req.io.quant_lut_update_granularity := ex_controller.io.mx.get.quant_lut_update_granularity
+    // C8.3: thread the residency flag; default the transposed act-write port idle. The standalone
+    // (use_mx_mmio, non-shared) branch below drives its ready via the scale_mem_write_act mux; the
+    // shared-ext-mem path leaves it idle (radiance never sets scale_resident).
+    req.io.scale_resident := ex_controller.io.mx.get.scale_resident
+    req.io.scaleMem_write_act_resident.ready := false.B
   }
 
 
@@ -687,7 +694,30 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     } else {
       // scale-mem write source: the funct-27 DMA loader (idle -> valid=false, no spurious writes).
       spad.module.io.scale_mem_write_w.get   <> scale_loader_w.get
-      spad.module.io.scale_mem_write_act.get <> scale_loader_act.get
+      // C8.3/C8.5: act-scale write source MUX, arbitrated by ACTIVITY (order-robust). The requantizer's
+      // transposed act flush drives the port ONLY while it actually has data to write
+      // (scale_resident && flush.valid); at ALL other times the funct-27 DMA loader (scale_loader_act)
+      // drives it -- so an operand A-scale load is never blocked, regardless of whether scale_resident
+      // was set before or after it. The flush's valid stays high for its whole run (set by flushing_act,
+      // only cleared on the last beat), so once it starts it holds the port until done; the loader and
+      // the flush are temporally disjoint in a chain (A-load at MM1 start, flush at MM1 store). When
+      // scale_resident=0 the flush never asserts valid -> this is bit-identical to `<> scale_loader_act`.
+      locally {
+        val sc_act_dst = spad.module.io.scale_mem_write_act.get
+        val sc_act_res = mx_requantizer.get.io.scaleMem_write_act_resident
+        val sc_act_ld  = scale_loader_act.get
+        when (ex_controller.io.mx.get.scale_resident && sc_act_res.valid) {
+          sc_act_dst.valid := sc_act_res.valid
+          sc_act_dst.bits  := sc_act_res.bits
+          sc_act_res.ready := sc_act_dst.ready
+          sc_act_ld.ready  := false.B
+        } .otherwise {
+          sc_act_dst.valid := sc_act_ld.valid
+          sc_act_dst.bits  := sc_act_ld.bits
+          sc_act_ld.ready  := sc_act_dst.ready
+          sc_act_res.ready := false.B
+        }
+      }
       mx_requantizer.get.io.requant_data_in_gpu <> mmio_requant_in_gpu.get
       mx_requantizer.get.io.requant_data_out    <> mmio_requant_out.get
       mmio_scale_factor_out.get                 <> mx_requantizer.get.io.scaleMem_write

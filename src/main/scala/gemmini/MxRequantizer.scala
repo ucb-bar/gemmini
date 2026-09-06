@@ -57,10 +57,11 @@ class MxRequantizerAccResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDa
 }
 
 class MxRequantizerIO[T <: Data: Arithmetic](
-  sp_data_width: Int,  
+  sp_data_width: Int,
   sp_addr_width: Int,
   scaleMem_data_width: Int,
   scaleMem_addr_width: Int,
+  scaleMemActWriteAddrWidth: Int,   // C8.3: byte-addr width of the on-chip act-scale write port
   scaleSize: Int,
   scaleMembasewrite: Int,
   lutConfig: GemminiLUTConfig,
@@ -93,14 +94,20 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val loop_bound_i = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_k = Input(UInt(iterator_bitwidth.W)) // from  controller
-  val scale_mem_counter_reset_flag = Input(Bool()) 
+  val scale_mem_counter_reset_flag = Input(Bool())
+  // C8.3 MX_SCALE_RESIDENT (from ex io.mx.scale_resident). When set, the coalescer additionally
+  // flushes its output act block-scales, TRANSPOSED to [GN][M], onto scaleMem_write_act_resident
+  // (the on-chip act-scale write port, 64b/beat like scale_loader_act). When false the port is idle.
+  val scale_resident = Input(Bool())
+  val scaleMem_write_act_resident = Decoupled(new ScalingFactorWriteReq(scaleMemActWriteAddrWidth, 64))
 }
    
 class MxRequantizer[T <: Data](
-  sp_data_width: Int, 
+  sp_data_width: Int,
   sp_addr_width: Int,
   scaleMem_data_width: Int,
   scaleMem_addr_width: Int,
+  scaleMemActWriteAddrWidth: Int,   // C8.3: byte-addr width of the on-chip act-scale write port
   scaleSize: Int,
   scaleMembasewrite: Int,
   lutConfig: GemminiLUTConfig,
@@ -121,11 +128,12 @@ class MxRequantizer[T <: Data](
   val half_acc_row_t = Vec(meshColumns/2, Vec(tileColumns, accType))
   val inputdataWidth = config.inputBits
   val io = IO(new MxRequantizerIO[T](
-    sp_data_width, 
-    sp_addr_width, 
+    sp_data_width,
+    sp_addr_width,
     scaleMem_data_width,
     scaleMem_addr_width,
-    scaleSize, 
+    scaleMemActWriteAddrWidth,
+    scaleSize,
     scaleMembasewrite,
     lutConfig,
     sp_bank_entries,
@@ -595,6 +603,11 @@ class MxRequantizer[T <: Data](
   val ag_row = RegInit(0.U(log2Ceil(ROWS_PER_HALF).W))
   val flushing = RegInit(false.B)
 
+  // C8.3 transposed act-scale residency flush state (gated on io.scale_resident; idle otherwise).
+  val flushing_act = RegInit(false.B)   // never set true unless scale_resident -> default-mode no-op
+  val flush_act_bi = RegInit(0.U(9.W))  // block-column index bi, 0..GN-1  (outer)
+  val flush_act_wm = RegInit(0.U(16.W)) // 64b word within a bi's M-row span, 0..(M/8 - 1)  (inner)
+
   val blocks_in_sb = Mux(isNibble, 2.U,
                        Mux((ag_sb === (num_super - 1.U)) && gn_odd, 1.U, 2.U))
   val sb_count = Mux(isNibble, GN, num_super)
@@ -603,7 +616,9 @@ class MxRequantizer[T <: Data](
                                ag_g * ROWS_PER_HALF.U + ag_row)
   val cur_byte = cur_m * GN + cur_b
 
-  when(should_compute && !flushing) {
+  // Hold off overwriting the coalescer until BOTH flushes finish (flushing_act is always false in
+  // default mode, so this term is a no-op there -> bit-identical).
+  when(should_compute && !flushing && !flushing_act) {
     coalescer(cur_byte) := scale_e8m0
     // increment nested counters: row -> bib -> i-tile -> sb (block for nibble, super-block for fp8)
     when(ag_row === (ROWS_PER_HALF - 1).U) {
@@ -615,6 +630,7 @@ class MxRequantizer[T <: Data](
           when(ag_sb === (sb_count - 1.U)) {
             ag_sb := 0.U
             flushing := true.B                              // full tile collected -> flush
+            flushing_act := io.scale_resident               // C8.3: also start the transposed act flush
           }.otherwise { ag_sb := ag_sb + 1.U }
         }.otherwise { ag_g := ag_g + 1.U }
       }.otherwise { ag_bib := ag_bib + 1.U }
@@ -640,8 +656,44 @@ class MxRequantizer[T <: Data](
     }
   }
 
+  // ===========================================================================
+  // C8.3 TRANSPOSED act-scale residency flush (gated on io.scale_resident)
+  // ---------------------------------------------------------------------------
+  // Reads the SAME row-major coalescer (coalescer(m*GN+b)) and streams it, in the
+  // on-chip A-scale operand layout [GN][M] (byte t = bi*M + m), onto the act-scale
+  // write port as 64b beats -- byte-identical to what the SW path produced (SW:
+  // a2_scales[bi*M+m] = c1_scales[m*GN+b], then scale_loader_act sends addr=w*8,
+  // data=little-endian 64b word). Emitting words w = 0,1,2,... in order (bi outer,
+  // wm inner) reproduces that exact beat sequence; ScaleFactorMem pairs two 64b
+  // beats into a 128b row write using the ODD beat's addr, same as scale_loader_act.
+  //   M (output rows) = tiles_I * (32 nibble | 16 fp8) ; words_per_bi = M/8.
+  //   word w = bi*words_per_bi + wm ; addr = w*8 ; m0 = wm*8.
+  //   data = Cat_{j=7..0} coalescer((m0 + j)*GN + bi)   (byte0 at LSB)
+  val M_rows       = tiles_I * Mux(isNibble, 32.U, ROWS_PER_HALF.U)   // == total_scales / GN
+  val words_per_bi = M_rows >> 3                                       // M/8 (M is a multiple of 8)
+  val act_m0       = flush_act_wm << 3
+  val act_word     = flush_act_bi * words_per_bi + flush_act_wm
+  val act_data     = Cat((0 until 8).reverse.map(j => coalescer((act_m0 + j.U) * GN + flush_act_bi)))
+
+  io.scaleMem_write_act_resident.valid     := false.B
+  io.scaleMem_write_act_resident.bits.addr := (act_word << 3)         // byte addr = w*8, 0-based
+  io.scaleMem_write_act_resident.bits.data := act_data
+  when(flushing_act) {
+    io.scaleMem_write_act_resident.valid := true.B
+    when(io.scaleMem_write_act_resident.fire) {
+      when(flush_act_wm === (words_per_bi - 1.U)) {
+        flush_act_wm := 0.U
+        when(flush_act_bi === (GN - 1.U)) {
+          flush_act_bi := 0.U
+          flushing_act := false.B
+        }.otherwise { flush_act_bi := flush_act_bi + 1.U }
+      }.otherwise { flush_act_wm := flush_act_wm + 1.U }
+    }
+  }
+
   when(io.scale_mem_counter_reset_flag) {
     ag_sb := 0.U; ag_g := 0.U; ag_bib := 0.U; ag_row := 0.U
     flush_row := 0.U; flushing := false.B
+    flush_act_bi := 0.U; flush_act_wm := 0.U; flushing_act := false.B
   }
 }
