@@ -248,7 +248,7 @@ object GemminiISA {
     val b_transpose = UInt(CONFIG_EX_RS1_B_TRANSPOSE_WIDTH.W)
     val a_transpose = UInt(CONFIG_EX_RS1_A_TRANSPOSE_WIDTH.W)
     val set_only_strides = UInt(CONFIG_EX_RS1_SET_ONLY_STRIDES_WIDTH.W)
-    val _spacer0 = UInt(1.W)
+    val mx_fp8_altfmt = UInt(1.W)   // bit 6: LUT-format slot uses the ALT sub-format (E5M2 vs FP6)
     val uselut = UInt(CONFIG_EX_RS1_LUT_ENABLE_WIDTH.W)
     val activation = UInt(CONFIG_EX_RS1_ACTIVATION_WIDTH.W)
     val dataflow = UInt(CONFIG_EX_RS1_DATAFLOW_WIDTH.W)

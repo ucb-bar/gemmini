@@ -359,6 +359,7 @@ class BF16ScaleRoundToTiny(
     val in_bf16      = Input(Vec(outputnumLanes, UInt(16.W)))
     val scale_e8m0   = Input(UInt(inputexpWidth.W))
     val dataType   = Input(UInt(2.W))
+    val mx_fp8_altfmt = Input(Bool())   // dataType 1: 1 = E5M2 cast, 0 = FP6 (only meaningful when e5m2Lut)
     // The reference divides the block by its own max, so a non-finite max poisons the block:
     // /nan sends every element to NaN, /inf sends the finite ones to zero. This datapath
     // multiplies by a finite power of two, so it has to select that behaviour explicitly.
@@ -433,9 +434,10 @@ class BF16ScaleRoundToTiny(
     val dbg_scaled_exp  = WireDefault(scaled_exp);       dontTouch(dbg_scaled_exp)
     val dbg_scaled_bf16 = WireDefault(scaled_bf16);      dontTouch(dbg_scaled_bf16)
 
-    // dataType 1 = LUT-format slot: FP6 normally, FP8 E5M2 in an E5M2 build (compile-time).
-    val lutSlot = if (e5m2Lut) BF16ToE5M2(scaled_bf16)
-                  else roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp6, (in: UInt) => E4M2ToFp6(in))
+    // dataType 1 = LUT-format slot. FP6 normally; in an E5M2-capable build (e5m2Lut) select FP6 vs E5M2 at
+    // RUNTIME via altfmt, so both sub-formats coexist. Non-E5M2 builds keep FP6 only (no BF16ToE5M2 hardware).
+    val fp6Slot = roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp6, (in: UInt) => E4M2ToFp6(in))
+    val lutSlot = if (e5m2Lut) Mux(io.mx_fp8_altfmt, BF16ToE5M2(scaled_bf16), fp6Slot) else fp6Slot
     val rounded = Mux(io.dataType === 1.U,
                       lutSlot,
                       Mux(io.dataType === 0.U,

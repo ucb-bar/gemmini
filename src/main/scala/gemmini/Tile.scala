@@ -36,6 +36,7 @@ class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df
     
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
+    val mx_fp8_altfmt = Input(Bool())
 
     val bad_dataflow = Output(Bool())
   })
@@ -50,6 +51,7 @@ class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df
       val pe = tile(r)(c)
       pe.io.activation_mx_format := io.activation_mx_format
       pe.io.weight_mx_format := io.weight_mx_format
+      pe.io.mx_fp8_altfmt := io.mx_fp8_altfmt
     }
   }
 

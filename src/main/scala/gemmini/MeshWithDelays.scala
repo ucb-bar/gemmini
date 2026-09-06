@@ -68,6 +68,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val tags_in_progress = Output(Vec(tagqlen, tagType))
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
+    val mx_fp8_altfmt = Input(Bool())
   })
 
   def shifted[T <: Data](x: Vec[Vec[T]], banks: Int, reverse: Boolean = false): Seq[Vec[T]] = {
@@ -183,6 +184,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   
   mesh.io.weight_mx_format := io.weight_mx_format
   mesh.io.activation_mx_format := io.activation_mx_format
+  mesh.io.mx_fp8_altfmt := io.mx_fp8_altfmt
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_b := shifted(b_shifter_in, upBanks)
   mesh.io.in_d := shifted(d_shifter_in, upBanks)

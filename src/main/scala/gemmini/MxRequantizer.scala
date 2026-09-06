@@ -156,6 +156,8 @@ class MxRequantizer[T <: Data](
   val quant_dataType = io.mxacc_req.mx_mode  //output data fromat
   val format_reg = RegInit(0.U(2.W))
   format_reg := quant_dataType.asUInt(1, 0)
+  val altfmt_reg = RegInit(false.B)          // code1 output sub-format: 1 = E5M2, 0 = FP6 (aligned w/ format_reg)
+  altfmt_reg := io.mxacc_req.mx_fp8_altfmt
   
   io.scaleMem_write.valid := false.B
   io.scaleMem_write.bits := DontCare
@@ -182,7 +184,8 @@ class MxRequantizer[T <: Data](
   // either way); only the block-scale exponent floor differs: 1<<(e_bits-1)=16 for E5M2 vs FP6's 4.
   val e5m2Lut = lutConfig.projFormat == LutFP8E5M2
   val (exp_bits, mant_bits, pmax, log2_pmax_floor_raw) = MxFloatFormat(format_reg)
-  val log2_pmax_floor = if (e5m2Lut) Mux(format_reg === 1.U, 16.U, log2_pmax_floor_raw)
+  // code1 (LUT output) is FP6 (log2_pmax_floor from MxFloatFormat = 4) or E5M2 (16) at RUNTIME via altfmt.
+  val log2_pmax_floor = if (e5m2Lut) Mux(format_reg === 1.U && altfmt_reg, 16.U, log2_pmax_floor_raw)
                         else log2_pmax_floor_raw
   val data_buffer_counter = RegInit(0.U(1.W))
   //buffer twice for 16-lane mode
@@ -521,6 +524,7 @@ class MxRequantizer[T <: Data](
   BF16ScaleRoundToTiny.io.in_bf16 := reshaped_pipelined_out_0
   BF16ScaleRoundToTiny.io.scale_e8m0 := neg_e8m0_clamped
   BF16ScaleRoundToTiny.io.dataType := format_reg
+  BF16ScaleRoundToTiny.io.mx_fp8_altfmt := altfmt_reg
   BF16ScaleRoundToTiny.io.block_has_nan := block_has_nan
   BF16ScaleRoundToTiny.io.block_has_inf := block_has_inf
   quantized_buffer := RegNext(BF16ScaleRoundToTiny.io.out)
@@ -555,6 +559,7 @@ class MxRequantizer[T <: Data](
   quantLut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
   quantLut.io.read_a := io.read_a
   quantLut.io.read_d := io.read_d
+  quantLut.io.mx_fp8_altfmt := altfmt_reg
   quantLut.io.loop_bound_i := io.loop_bound_i
   quantLut.io.loop_bound_j := io.loop_bound_j
   quantLut.io.loop_bound_k := io.loop_bound_k

@@ -619,6 +619,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val addr = UInt(coreMaxAddrBits.W)
       val num  = UInt(32.W)   // num_luts
       val sel  = UInt(2.W)    // 0=B/weight, 1=A/act-in, 2=C/act-out
+      val entry_bits = UInt(6.W)   // DRAM codebook entry width (datatype): FP6/E2M3=6, E5M2=8
     }))
     start.valid := false.B
     start.bits  := DontCare
@@ -635,6 +636,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val word_idx  = Reg(UInt(log2Ceil(bufWords + 1).W))
     val lane_r    = Reg(UInt(laneRegW.W))
     val buffer    = Reg(Vec(bufWords, UInt(64.W)))
+    val ent_bits  = Reg(UInt(6.W))   // latched DRAM codebook entry width
 
     gnode.a.valid := false.B
     gnode.a.bits  := DontCare
@@ -643,9 +645,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     start.ready := state === sIdle
     when (state === sIdle && start.fire) {
       base      := start.bits.addr
-      num_words := ((start.bits.num * (numBits / 8).U) + 7.U) >> 3   // num_luts * (numBits/8) bytes -> u64 words (FP6 96b=12, E5M2 128b=16)
+      // native DRAM codebook = num_luts * 16 entries * entry_bits bits -> u64 words. FP6 6b=12B, E5M2 8b=16B.
+      num_words := ((start.bits.num * (start.bits.entry_bits << 1).asUInt) + 7.U) >> 3
       word_idx  := 0.U
       sel_out   := start.bits.sel
+      ent_bits  := start.bits.entry_bits
       state     := Mux(start.bits.num === 0.U, sIdle, sReq)
     }
 
@@ -670,9 +674,22 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       }
     }
 
+    // Unpack the native codebook (16 entries of ent_bits each per table) and place each entry into the
+    // physical LUT slot (rdataW = numBits/16). Narrow formats (FP6 6b) get low-aligned into wider slots
+    // (8b), so the codebook is stored config-independently. entry_bits in {6,8}: static-width paths.
+    val rdataW  = numBits / 16
+    val bufBits = buffer.asUInt
+    def buildTables(ew: Int): UInt =
+      Cat((0 until numEntries).reverse.map { t =>
+        Cat((0 until 16).reverse.map { e =>
+          val lo = t * (ew * 16) + e * ew
+          bufBits(lo + ew - 1, lo).pad(rdataW)
+        })
+      })
     when (state === sFire) {
       out.valid     := true.B
-      out.bits.data := buffer.asUInt.asTypeOf(Vec(numEntries, UInt(numBits.W)))
+      out.bits.data := (if (rdataW >= 8) Mux(ent_bits === 8.U, buildTables(8), buildTables(6))
+                        else buildTables(rdataW)).asTypeOf(Vec(numEntries, UInt(numBits.W)))
       when (out.fire) { state := sIdle }
     }
 
@@ -799,16 +816,22 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
       // FP8 mode: bypass requantizer
       when (useMxB) {
-        // bypass requantizer: expand spad data to 16 x 12-bit for the execute stage
+        // Expand the stored 8-bit-slot operands onto the deprojected operand bus. Lane width =
+        // weightType.getWidth (the largest supported weight datatype): 12 (FP6-native cfg) or 16 (E5M2 cfg
+        // = 2x 8-bit slots). Each format fits into the lane's slots: E4M3 (single 8-bit) -> low 8 of the
+        // lane; FP4 (dual 4-bit) -> low 4 of each half-lane (slotW) slot. Generalizes the old hardcoded
+        // 12-bit lane so E4M3/FP4 coexist on any bus width (12-bit cfg reduces to pad(12) / 6-bit slots).
         val proj = read_projected(b).resp
-        val padded_data = WireInit(0.U((16 * 12).W))
+        val laneW = outer.config.weightType.getWidth
+        val slotW = laneW / 2
+        val padded_data = WireInit(0.U(sp_width.W))
         val spad_data_vec = proj.bits.data.asTypeOf(Vec(16, UInt(8.W)))
         when(ex_controller.io.mx.get.weight_mx_format_out === 0.U) {
-          padded_data := VecInit(spad_data_vec.map(_.pad(12))).asUInt
+          padded_data := VecInit(spad_data_vec.map(_.pad(laneW))).asUInt
         }.elsewhen(ex_controller.io.mx.get.weight_mx_format_out === 2.U) {
           padded_data := VecInit(spad_data_vec.map { byte =>
-            val nibble_lo = Cat(0.U(2.W), byte(3, 0))
-            val nibble_hi = Cat(0.U(2.W), byte(7, 4))
+            val nibble_lo = byte(3, 0).pad(slotW)
+            val nibble_hi = byte(7, 4).pad(slotW)
             Cat(nibble_hi, nibble_lo)
           }).asUInt
         }
@@ -938,6 +961,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     spad.module.io.j := loop_matmul.io.j
     spad.module.io.k := loop_matmul.io.k
     spad.module.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
+    spad.module.io.mx_fp8_altfmt := ex_controller.io.mx.get.mx_fp8_altfmt_out
   } else {
     // Non-MX build: ex_controller.io.mx and mx_requantizer are absent, so drive
     // the (unconditional) MX ports on loop_matmul/store_controller/spad to inert
@@ -957,6 +981,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     spad.module.io.j := loop_matmul.io.j
     spad.module.io.k := loop_matmul.io.k
     spad.module.io.output_mx_format := 0.U
+    spad.module.io.mx_fp8_altfmt := false.B
   }
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
@@ -1234,6 +1259,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
           lut_loader_start.get.bits.addr := unrolled_cmd.bits.cmd.rs1(coreMaxAddrBits - 1, 0)
           lut_loader_start.get.bits.num  := unrolled_cmd.bits.cmd.rs2(31, 0)
           lut_loader_start.get.bits.sel  := unrolled_cmd.bits.cmd.rs2(33, 32)
+          lut_loader_start.get.bits.entry_bits := unrolled_cmd.bits.cmd.rs2(39, 34)
           unrolled_cmd.ready := lut_loader_start.get.ready
         } .otherwise {
           reservation_station.io.alloc.valid := true.B

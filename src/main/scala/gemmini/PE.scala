@@ -20,10 +20,11 @@ class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFp
     val in_c  = Input(cType)
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
+    val mx_fp8_altfmt = Input(Bool())
     val out_d = Output(dType)
   })
 
-  io.out_d := io.in_c.mac_mx(io.in_a, io.in_b, meshFpProductPrecisionList, meshFpAccPrecisionList, io.activation_mx_format, io.weight_mx_format)
+  io.out_d := io.in_c.mac_mx(io.in_a, io.in_b, meshFpProductPrecisionList, meshFpAccPrecisionList, io.activation_mx_format, io.weight_mx_format, io.mx_fp8_altfmt)
 }
 
 // TODO update documentation
@@ -54,9 +55,10 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
 
     val in_valid = Input(Bool())
     val out_valid = Output(Bool())
-  
+
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
+    val mx_fp8_altfmt = Input(Bool())
 
     val bad_dataflow = Output(Bool())
   })
@@ -94,7 +96,8 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
 
   mac_unit.io.in_a := a
   mac_unit.io.activation_mx_format := io.activation_mx_format
-  mac_unit.io.weight_mx_format :=  io.weight_mx_format  
+  mac_unit.io.weight_mx_format :=  io.weight_mx_format
+  mac_unit.io.mx_fp8_altfmt := io.mx_fp8_altfmt
 
   val last_s = RegEnable(prop, valid)
   val flip = last_s =/= prop

@@ -29,6 +29,7 @@ class QuantLutIO(
   val read_a = Input(Bool())
   val read_d = Input(Bool())
   val quant_lut_update_granularity = Input(UInt(lutConfig.lutUpdateRegularityWidth.W))
+  val mx_fp8_altfmt = Input(Bool())   // act-out projection sub-format: 1 = E5M2 finder, 0 = FP6 finder
 }
 
 class QuantLut(
@@ -99,9 +100,22 @@ class QuantLut(
   val proj_nearest = Wire(Vec(32, UInt(raddrWidth.W)))
 
   lutConfig.projFormat match {
-    case LutFP8E4M3 | LutFP8E5M2 =>
-      val altfmt = lutConfig.projFormat == LutFP8E5M2
-      val finders = Seq.fill(32)(Module(new FP8NearestFinder(altfmt)))
+    case LutFP8E5M2 =>
+      // E5M2-capable build: instantiate BOTH finders and select at runtime by altfmt, so an FP6 output
+      // (altfmt=0) projects with the FP6 finder and an E5M2 output (altfmt=1) with the FP8 finder. LUT
+      // entries are rdataWidth (8) wide; the FP6 finder reads the low 6 bits (FP6 codes are 6-bit).
+      val fp8Finders = Seq.fill(32)(Module(new FP8NearestFinder(altfmt = true)))
+      val fp6Finders = Seq.fill(32)(Module(new FP6E3M2NearestFinder()))
+      val proj_lut6  = VecInit(proj_lut.map(_(5, 0)))
+      for (i <- 0 until 32) {
+        fp8Finders(i).io.in     := proj_in(i)
+        fp8Finders(i).io.in_lut := proj_lut
+        fp6Finders(i).io.in_fp6 := proj_in(i)(5, 0)
+        fp6Finders(i).io.in_lut := proj_lut6
+        proj_nearest(i) := Mux(io.mx_fp8_altfmt, fp8Finders(i).io.nearestIdx, fp6Finders(i).io.nearestIdx)
+      }
+    case LutFP8E4M3 =>
+      val finders = Seq.fill(32)(Module(new FP8NearestFinder(false)))
       for (i <- 0 until 32) {
         finders(i).io.in     := proj_in(i)
         finders(i).io.in_lut := proj_lut

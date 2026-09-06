@@ -30,6 +30,7 @@ class AccumulatorScaleIO[T <: Data: Arithmetic, U <: Data](
     fullDataType, rDataType, chunk_t
   )
   val output_mx_format = Input(UInt(2.W))
+  val mx_fp8_altfmt = Input(Bool())
 }
 
 class AccScaleDataWithIndex[T <: Data: Arithmetic, U <: Data](t: T, u: U) extends Bundle {
@@ -159,6 +160,7 @@ class AccumulatorScale[T <: Data, U <: Data](
       io.mx_req_io.mx_data_in.bits.chunk_id := io.in.bits.acc_read_resp.chunk_id
       io.mx_req_io.mx_data_in.bits.acc_bank_id := io.in.bits.acc_read_resp.acc_bank_id
       io.mx_req_io.mx_mode := io.output_mx_format
+      io.mx_req_io.mx_fp8_altfmt := io.mx_fp8_altfmt
 
       io.mx_req_io.mx_data_out.ready := out.ready
       out.valid := io.mx_req_io.mx_data_out.valid
@@ -172,6 +174,7 @@ class AccumulatorScale[T <: Data, U <: Data](
       io.mx_req_io.mx_data_in.valid := false.B
       io.mx_req_io.mx_data_in.bits := DontCare
       io.mx_req_io.mx_mode := 0.U
+      io.mx_req_io.mx_fp8_altfmt := false.B
       io.mx_req_io.mx_data_out.ready := false.B
 
       val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, chunk_t)(ev)))

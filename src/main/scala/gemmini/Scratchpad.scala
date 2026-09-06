@@ -185,6 +185,7 @@ class MxRequantizerAccMemIO[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rD
   val mx_data_out = Flipped(Decoupled(new MxRequantizerAccMemDataOut[T](rDataType, chunk_t)))
   val mx_data_in = Decoupled(new MxRequantizerAccMemDataIn[T](rDataType, chunk_t))
   val mx_mode = Output(UInt(2.W))
+  val mx_fp8_altfmt = Output(Bool())   // code1 requant output: 1 = E5M2, 0 = FP6
 }
 
 class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean, is_dummy: Boolean) extends Module {
@@ -413,6 +414,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val weight_mx_format = Input(UInt(2.W))
       val act_mx_format = Input(UInt(2.W))
       val output_mx_format = Input(UInt(2.W))
+      val mx_fp8_altfmt = Input(Bool())
       val enable_MXQuant = Input(Bool()) //determines if mxrequantizer gets used
       val loop_bounds = Input(new MaxBounds())
     })
@@ -941,6 +943,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       write_issue_q.io.enq.ready
     
     acc_scale_unit.io.output_mx_format :=  io.output_mx_format
+    acc_scale_unit.io.mx_fp8_altfmt := io.mx_fp8_altfmt
     acc_norm_unit_out.ready := acc_scale_unit.io.in.ready && acc_waiting_to_be_scaled
     acc_scale_unit.io.in.valid := acc_norm_unit_out.valid && acc_waiting_to_be_scaled
     acc_scale_unit.io.in.bits  := acc_norm_unit_out.bits

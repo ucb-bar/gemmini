@@ -26,6 +26,7 @@ class ExControllerMxScalingIO(
   val output_MxFormat = Output(UInt(2.W))
   val activation_mx_format_out = Output(UInt(2.W))
   val weight_mx_format_out = Output(UInt(2.W))
+  val mx_fp8_altfmt_out = Output(Bool())
   val enable_MXQuant = Output(Bool())
   // C8.3 MX_SCALE_RESIDENT: decoded from rs1 bit 62 of the mxquant scale-config (CONFIG_SCALE_MEM).
   // When set, the requantizer also writes its output activation block-scales into the on-chip
@@ -38,6 +39,7 @@ class ExControllerMxScalingRegs (scale_mem_write_addr_width: Int) extends Bundle
   val weight_mx_format = UInt(2.W)
   val output_mx_format = UInt(2.W)
   val uselut = Bool()
+  val mx_fp8_altfmt = Bool()
   val enable_mxquant = Bool()
 
   val scale_mem_mvin_base_addr_act = UInt(32.W)
@@ -166,6 +168,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.mx.get.output_MxFormat := mx_state.get.output_mx_format
     io.mx.get.activation_mx_format_out := mx_state.get.activation_mx_format
     io.mx.get.weight_mx_format_out := mx_state.get.weight_mx_format
+    io.mx.get.mx_fp8_altfmt_out := mx_state.get.mx_fp8_altfmt
     io.mx.get.enable_MXQuant := mx_state.get.enable_mxquant
     io.mx.get.scale_mem_mvout_base_addr_act := mx_state.get.scale_mem_mvout_base_addr_act
     io.mx.get.quant_lut_update_granularity := mx_state.get.quant_lut_update_granularity
@@ -279,9 +282,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   if (use_mx_scaling) {
     mesh.io.activation_mx_format := mx_state.get.activation_mx_format
     mesh.io.weight_mx_format := mx_state.get.weight_mx_format
+    mesh.io.mx_fp8_altfmt := mx_state.get.mx_fp8_altfmt
   } else {
     mesh.io.activation_mx_format := DontCare
     mesh.io.weight_mx_format := DontCare
+    mesh.io.mx_fp8_altfmt := DontCare
   }
 
   mesh.io.a.valid := false.B
@@ -720,6 +725,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
                 mx_state.get.weight_mx_format := config_ex_rs1.weight_mx_format
                 mx_state.get.output_mx_format := config_ex_rs1.output_mx_format
                 mx_state.get.uselut := config_ex_rs1.uselut
+                mx_state.get.mx_fp8_altfmt := config_ex_rs1.mx_fp8_altfmt
                 when(config_ex_rs1.output_mx_format =/= 3.U) {
                   mx_state.get.enable_mxquant := true.B
                 }.otherwise {

@@ -27,6 +27,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   val io = IO(new Bundle {
     val weight_mx_format = Input(UInt(2.W))
     val activation_mx_format = Input(UInt(2.W))
+    val mx_fp8_altfmt = Input(Bool())   // code1 LUT slot: 1 = E5M2 (exp5), 0 = FP6 (exp3)
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b = Input(Vec(meshColumns, Vec(tileColumns, outputType)))
     val in_d = Input(Vec(meshColumns, Vec(tileColumns, weightType))) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
@@ -62,6 +63,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
       val tile = mesh(r)(c)
       tile.io.activation_mx_format := io.activation_mx_format
       tile.io.weight_mx_format := io.weight_mx_format
+      tile.io.mx_fp8_altfmt := io.mx_fp8_altfmt
     }
   }
 
@@ -76,9 +78,9 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
                 Mux(io.activation_mx_format === 1.U, 3.U, 4.U))
   typeA.sig := Mux(io.activation_mx_format === 2.U, 2.U,
                 Mux(io.activation_mx_format === 1.U, 3.U, 4.U))
-  // code1 = LUT operand: element width = lane/2 (dual). FP6 -> 6, E5M2 -> 8.
+  // code1 = LUT operand, runtime sub-format: FP6 (altfmt=0) -> 6, E5M2 (altfmt=1) -> 8 significant bits.
   val typeA_size = Mux(io.activation_mx_format === 2.U, 4.U,
-                Mux(io.activation_mx_format === 1.U, (inputType.getWidth/2).U, 8.U))
+                Mux(io.activation_mx_format === 1.U, Mux(io.mx_fp8_altfmt, 8.U, 6.U), 8.U))
 
   val typeW = Wire(new MxTypeBundle)
   typeW.exp := Mux(io.weight_mx_format === 2.U, 2.U,
@@ -86,7 +88,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   typeW.sig := Mux(io.weight_mx_format === 2.U, 2.U,
                 Mux(io.weight_mx_format === 1.U, 3.U, 4.U))
   val typeW_size = Mux(io.weight_mx_format === 2.U, 4.U,
-                Mux(io.weight_mx_format === 1.U, (weightType.getWidth/2).U, 8.U))
+                Mux(io.weight_mx_format === 1.U, Mux(io.mx_fp8_altfmt, 8.U, 6.U), 8.U))
 
   val mode = requiredPEMode(typeA, typeW)
   
