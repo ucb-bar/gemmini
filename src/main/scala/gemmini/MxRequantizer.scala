@@ -177,7 +177,13 @@ class MxRequantizer[T <: Data](
     result
   }
   
-  val (exp_bits, mant_bits, pmax, log2_pmax_floor) = MxFloatFormat(format_reg)
+  // E5M2 build: the LUT-format slot (output code 1) is FP8 E5M2, not FP6. MxFloatFormat still reports
+  // FP6's total_bits=6 so the LUT-project branch/packing is reused (projected output is 4-bit indices
+  // either way); only the block-scale exponent floor differs: 1<<(e_bits-1)=16 for E5M2 vs FP6's 4.
+  val e5m2Lut = lutConfig.projFormat == LutFP8E5M2
+  val (exp_bits, mant_bits, pmax, log2_pmax_floor_raw) = MxFloatFormat(format_reg)
+  val log2_pmax_floor = if (e5m2Lut) Mux(format_reg === 1.U, 16.U, log2_pmax_floor_raw)
+                        else log2_pmax_floor_raw
   val data_buffer_counter = RegInit(0.U(1.W))
   //buffer twice for 16-lane mode
   val half_lanes = 16
@@ -511,7 +517,7 @@ class MxRequantizer[T <: Data](
     // neg_e8m0_clamped deliberately left at its WireDefault(0), as before.
   }
   
-  val BF16ScaleRoundToTiny = Module(new BF16ScaleRoundToTiny(outputnumLanes = io.outputnumLanes))
+  val BF16ScaleRoundToTiny = Module(new BF16ScaleRoundToTiny(outputnumLanes = io.outputnumLanes, e5m2Lut = e5m2Lut))
   BF16ScaleRoundToTiny.io.in_bf16 := reshaped_pipelined_out_0
   BF16ScaleRoundToTiny.io.scale_e8m0 := neg_e8m0_clamped
   BF16ScaleRoundToTiny.io.dataType := format_reg
@@ -533,10 +539,13 @@ class MxRequantizer[T <: Data](
   
  
 
-  val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
+  // Source for the LUT projection: FP6 feeds 6-bit codes; E5M2 feeds 8-bit codes (= lutConfig.rdataWidth,
+  // the QuantLut.quant_fp6 port width). Generic via rdataWidth so the FP6 build is bit-identical.
+  val rdataW = lutConfig.rdataWidth
+  val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
   dontTouch(quant_fp6)
-  quant_fp6 := Mux(total_bits_per_element === 6.U, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(5, 0))), 
-  VecInit(Seq.fill(io.outputnumLanes)(0.U(6.W))))
+  quant_fp6 := Mux(total_bits_per_element === 6.U, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(rdataW - 1, 0))),
+  VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
   //val quant_projected_data = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(4.W))))
 
  

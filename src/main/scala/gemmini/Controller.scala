@@ -643,7 +643,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     start.ready := state === sIdle
     when (state === sIdle && start.fire) {
       base      := start.bits.addr
-      num_words := ((start.bits.num * 12.U) + 7.U) >> 3   // num_luts*12 bytes -> u64 words
+      num_words := ((start.bits.num * (numBits / 8).U) + 7.U) >> 3   // num_luts * (numBits/8) bytes -> u64 words (FP6 96b=12, E5M2 128b=16)
       word_idx  := 0.U
       sel_out   := start.bits.sel
       state     := Mux(start.bits.num === 0.U, sIdle, sReq)

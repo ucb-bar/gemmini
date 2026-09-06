@@ -52,6 +52,12 @@ class MxGemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(128) ++
   new chipyard.config.AbstractConfig)
 
+class MxE5M2GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPE5M2StandaloneConfig ++                  // FP8 E5M2 via LUT (Option A variant)
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
 class TestMxGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPTestConfig ++                         // use FP32Gemmini systolic array GEMM accelerator
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++

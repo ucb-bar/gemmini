@@ -342,6 +342,23 @@ object GemminiMxFPConfigs {
     scale_mem = Some(defaultMxFPConfig.scale_mem.get.copy(baseAddr = 0x20000000L)),
     mx_mmio_base = Some(0x20010000L)   // LUT/requant regmap, relocated off the scale window
   )
+
+  // FP8 E5M2 via LUT (Option A variant): FP8 slot = E5M2, stored 4-bit and up-projected to 8-bit E5M2
+  // like FP6. Operand lane MxFloat(5,3,2) (2x 8-bit); stored type stays 4-bit. 8-bit LUT (LutFP8E5M2).
+  // Step 0 = elaboration only; code0->E5M2 routing lands in Step 1.
+  val e5m2MxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat(5, 3, 2, pad=false),
+    weightType = MxFloat(5, 3, 2, pad=false),
+    spatialArrayInputType  = MxFloat(5, 3, 2, pad=false),
+    spatialArrayWeightType = MxFloat(5, 3, 2, pad=false),
+    lut = Some(GemminiLUTConfig(
+      numBits    = Seq(128, 128, 128),
+      numEntries = Seq(64, 64, 64),
+      rdataWidth = 8,
+      raddrWidth = 4,
+      projFormat = LutFP8E5M2,
+    )),
+  )
 }
 
 // =========== MxFP Config ==========
@@ -361,6 +378,16 @@ class GemminiMxFPStandaloneConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiMxFPConfigs.standaloneMxFPConfig))
+    }
+  )
+})
+
+class GemminiMxFPE5M2StandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiMxFPConfigs.e5m2MxFPConfig))
     }
   )
 })

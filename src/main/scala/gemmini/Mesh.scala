@@ -76,8 +76,9 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
                 Mux(io.activation_mx_format === 1.U, 3.U, 4.U))
   typeA.sig := Mux(io.activation_mx_format === 2.U, 2.U,
                 Mux(io.activation_mx_format === 1.U, 3.U, 4.U))
+  // code1 = LUT operand: element width = lane/2 (dual). FP6 -> 6, E5M2 -> 8.
   val typeA_size = Mux(io.activation_mx_format === 2.U, 4.U,
-                Mux(io.activation_mx_format === 1.U, 6.U, 8.U))
+                Mux(io.activation_mx_format === 1.U, (inputType.getWidth/2).U, 8.U))
 
   val typeW = Wire(new MxTypeBundle)
   typeW.exp := Mux(io.weight_mx_format === 2.U, 2.U,
@@ -85,7 +86,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   typeW.sig := Mux(io.weight_mx_format === 2.U, 2.U,
                 Mux(io.weight_mx_format === 1.U, 3.U, 4.U))
   val typeW_size = Mux(io.weight_mx_format === 2.U, 4.U,
-                Mux(io.weight_mx_format === 1.U, 6.U, 8.U))
+                Mux(io.weight_mx_format === 1.U, (weightType.getWidth/2).U, 8.U))
 
   val mode = requiredPEMode(typeA, typeW)
   
