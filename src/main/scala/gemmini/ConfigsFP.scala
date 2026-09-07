@@ -359,6 +359,23 @@ object GemminiMxFPConfigs {
       projFormat = LutFP8E5M2,
     )),
   )
+
+  // FP8 E4M3 at 4 elements/cycle via the LUT (quad / 16-MACU mode9 PE). E4M3 stored 4-bit and
+  // up-projected to 8-bit E4M3, 2 per operand lane (MxFloat(4,4,2) = 16b). Runtime lut_en promotes
+  // E4M3 to the 4-wide path; lut_en=0 keeps plain 1-wide E4M3. Mirrors e5m2MxFPConfig with LutFP8E4M3.
+  val e4m3LutMxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat(4, 4, 2, pad=false),
+    weightType = MxFloat(4, 4, 2, pad=false),
+    spatialArrayInputType  = MxFloat(4, 4, 2, pad=false),
+    spatialArrayWeightType = MxFloat(4, 4, 2, pad=false),
+    lut = Some(GemminiLUTConfig(
+      numBits    = Seq(128, 128, 128),
+      numEntries = Seq(64, 64, 64),
+      rdataWidth = 8,
+      raddrWidth = 4,
+      projFormat = LutFP8E4M3,
+    )),
+  )
 }
 
 // =========== MxFP Config ==========
@@ -388,6 +405,16 @@ class GemminiMxFPE5M2StandaloneConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiMxFPConfigs.e5m2MxFPConfig))
+    }
+  )
+})
+
+class GemminiMxFPE4M3LutStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiMxFPConfigs.e4m3LutMxFPConfig))
     }
   )
 })

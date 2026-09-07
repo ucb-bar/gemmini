@@ -34,7 +34,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
    tagType: U, df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int, output_delay: Int,
    tileRows: Int, tileColumns: Int, meshRows: Int, meshColumns: Int,
    leftBanks: Int, upBanks: Int, meshProdPrecisionList : Seq[T],
-   meshAccPrecisionList : Seq[T], use_mx_scaling: Boolean = true, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1)
+   meshAccPrecisionList : Seq[T], use_mx_scaling: Boolean = true, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1,
+   e4m3QuadThroughput: Boolean = false)
   extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
@@ -69,6 +70,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())
+    val lut_en = Input(Bool())   // G1: runtime LUT-usage flag
   })
 
   def shifted[T <: Data](x: Vec[Vec[T]], banks: Int, reverse: Boolean = false): Seq[Vec[T]] = {
@@ -174,7 +176,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val transposer_out = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
 
   // Wire up mesh's IO to this module's IO
-  val mesh = Module(new Mesh(inputType, weightType, outputType, accType, df, tree_reduction, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns, meshProdPrecisionList, meshAccPrecisionList, use_mx_scaling))
+  val mesh = Module(new Mesh(inputType, weightType, outputType, accType, df, tree_reduction, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns, meshProdPrecisionList, meshAccPrecisionList, use_mx_scaling, e4m3QuadThroughput))
 
   // TODO wire only to *_buf here, instead of io.*.bits
   val a_shifter_in = WireInit(Mux(a_is_from_transposer, transposer_out.asTypeOf(A_TYPE), a_buf))
@@ -185,6 +187,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   mesh.io.weight_mx_format := io.weight_mx_format
   mesh.io.activation_mx_format := io.activation_mx_format
   mesh.io.mx_fp8_altfmt := io.mx_fp8_altfmt
+  mesh.io.lut_en := io.lut_en
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_b := shifted(b_shifter_in, upBanks)
   mesh.io.in_d := shifted(d_shifter_in, upBanks)

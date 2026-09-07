@@ -56,6 +56,7 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
   val chunk_id = UInt(GemminiISA.MX_CHUNK_ID_BITS.W)
 
   val activation_mx_type = UInt(2.W)
+  val mx_multi_elem = Bool()   // throughput: 2 elements/lane (datatype-independent)
   val output_mx_type = UInt(2.W)
 
   // GATED tiled requant->spad store (FP8). When set, the requant beat lands within-tile-row-inner
@@ -71,17 +72,17 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
 
   val second_half = RegInit(false.B)
   val is_acc_write = io.in.bits.laddr.is_acc_addr && !io.in.bits.laddr.is_garbage()
-  val is_non_fp8_acc_write = is_acc_write && io.in.bits.activation_mx_type =/= 0.U
+  val is_non_fp8_acc_write = is_acc_write && io.in.bits.mx_multi_elem
   val gmem_multiplier = Mux(io.in.bits.dest =/= 0.U, 1.U, 16.U)
 
   val address_second_half_wide = io.in.bits.vaddr + (gmem_multiplier * MuxCase(4.U, Seq(
-    (io.in.bits.max_j <= 2.U && io.in.bits.activation_mx_type === 0.U) -> ((acc_t_bits/16).U * 16.U),
-    (io.in.bits.activation_mx_type === 1.U || io.in.bits.activation_mx_type === 2.U) -> (4.U * io.in.bits.max_j)
+    (io.in.bits.max_j <= 2.U && !io.in.bits.mx_multi_elem) -> ((acc_t_bits/16).U * 16.U),
+    (io.in.bits.mx_multi_elem) -> (4.U * io.in.bits.max_j)
     )))
 
   val address_second_half_narrow = io.in.bits.vaddr + (gmem_multiplier * MuxCase(2.U, Seq(
-    (io.in.bits.max_j <= 2.U && io.in.bits.activation_mx_type === 0.U) -> ((acc_t_bits/16).U * 16.U / 2.U),
-    (io.in.bits.activation_mx_type === 1.U || io.in.bits.activation_mx_type === 2.U) -> 0.U
+    (io.in.bits.max_j <= 2.U && !io.in.bits.mx_multi_elem) -> ((acc_t_bits/16).U * 16.U / 2.U),
+    (io.in.bits.mx_multi_elem) -> 0.U
   )))
   val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, address_second_half_wide, address_second_half_narrow)
   val second_half_invalid = io.in.bits.len < 16.U
@@ -415,6 +416,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val act_mx_format = Input(UInt(2.W))
       val output_mx_format = Input(UInt(2.W))
       val mx_fp8_altfmt = Input(Bool())
+      val mx_multi_elem = Input(Bool())   // throughput: 2 elements/lane (datatype-independent)
       val enable_MXQuant = Input(Bool()) //determines if mxrequantizer gets used
       val loop_bounds = Input(new MaxBounds())
     })
@@ -1020,6 +1022,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.counter_j := io.counter_j
         bio.counter_k := io.counter_k
         bio.dataType_out := io.act_mx_format
+        bio.mx_multi_elem := io.mx_multi_elem
         // bio.scaleMemCntl <> io.scaleMemCntl.get
         bio.scaleMemCntl.foreach { bioCnlt =>          
           io.scaleMemCntl.foreach { ioCnlt =>
@@ -1084,7 +1087,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
             write_dispatch_q.ready := true.B
             // FP8: StC fires one command per chunk, so every command gets a resp.
             // FP4/FP6: WRE fires two sub-commands per mvout; resp fires only on the last.
-            when (write_dispatch_q.bits.activation_mx_type === 0.U || write_dispatch_q.bits.chunk_id === (numChunks - 1).U) {
+            when (!write_dispatch_q.bits.mx_multi_elem || write_dispatch_q.bits.chunk_id === (numChunks - 1).U) {
               io.dma.write.resp.valid := true.B
             }
           }

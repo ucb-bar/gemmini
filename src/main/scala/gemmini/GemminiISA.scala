@@ -44,6 +44,7 @@ object GemminiISA {
   val MX_LOAD_SCALES = 27.U     // rs1 = DRAM addr, rs2[31:0] = len bytes, rs2[32] = sel (0=A/act,1=B/wgt)
   val MX_READ_SMEM   = 28.U     // (Step 4.3) drain outputs from spad/smem to DRAM
   val MX_LOAD_LUT    = 29.U     // (Step 4.2) DMA-load FP6 LUTs
+  val MX_LUT_DISABLE = 30.U     // (G1) clear runtime LUT-usage flag (MX_LOAD_LUT sets it; default off)
 
   
   // rs1[2:0] values

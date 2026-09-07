@@ -31,6 +31,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     val loop_bound_j = Input(UInt(8.W))
 
     val activation_mx_type = Input(UInt(2.W))
+    val mx_multi_elem = Input(Bool())   // throughput: 2 elements/lane (datatype-independent)
     val output_mx_type = Input(UInt(2.W))
   })
 
@@ -138,10 +139,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     // GATED tiled requant->spad (FP8): the tiled layout carries the row within the 16-row tile in the
     // Scratchpad beat term, so the store's per-row stride collapses to 1. Flag=0 keeps the flat stride.
     Mux(mvout_rs2.reuse_tiled, 1.U,
-      Mux(io.enable_wide_spad_write && io.activation_mx_type === 0.U, io.loop_bound_j / 2.U * 4.U,
+      Mux(io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j / 2.U * 4.U,
         Mux(io.enable_wide_spad_write, io.loop_bound_j * 8.U,
-          Mux(!io.enable_wide_spad_write && io.activation_mx_type === 0.U, io.loop_bound_j / 2.U * 2.U,
-            Mux(!io.enable_wide_spad_write && io.activation_mx_type =/= 0.U, io.loop_bound_j * 2.U,
+          Mux(!io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j / 2.U * 2.U,
+            Mux(!io.enable_wide_spad_write && io.mx_multi_elem, io.loop_bound_j * 2.U,
               1.U
             )
           )
@@ -213,6 +214,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.reuse_tiled := mvout_rs2.reuse_tiled
   io.dma.req.bits.max_j := io.loop_bound_j
   io.dma.req.bits.activation_mx_type := io.activation_mx_type
+  io.dma.req.bits.mx_multi_elem := io.mx_multi_elem
   io.dma.req.bits.output_mx_type := io.output_mx_type
 
   // Command tracker IO

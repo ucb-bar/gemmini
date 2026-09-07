@@ -21,10 +21,11 @@ class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFp
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())
+    val lut_en = Input(Bool())   // G1: runtime LUT-usage flag (consumed by mac_mx in M1)
     val out_d = Output(dType)
   })
 
-  io.out_d := io.in_c.mac_mx(io.in_a, io.in_b, meshFpProductPrecisionList, meshFpAccPrecisionList, io.activation_mx_format, io.weight_mx_format, io.mx_fp8_altfmt)
+  io.out_d := io.in_c.mac_mx(io.in_a, io.in_b, meshFpProductPrecisionList, meshFpAccPrecisionList, io.activation_mx_format, io.weight_mx_format, io.mx_fp8_altfmt, io.lut_en)
 }
 
 // TODO update documentation
@@ -59,6 +60,7 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())
+    val lut_en = Input(Bool())   // G1: runtime LUT-usage flag
 
     val bad_dataflow = Output(Bool())
   })
@@ -98,6 +100,7 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
   mac_unit.io.activation_mx_format := io.activation_mx_format
   mac_unit.io.weight_mx_format :=  io.weight_mx_format
   mac_unit.io.mx_fp8_altfmt := io.mx_fp8_altfmt
+  mac_unit.io.lut_en := io.lut_en
 
   val last_s = RegEnable(prop, valid)
   val flip = last_s =/= prop

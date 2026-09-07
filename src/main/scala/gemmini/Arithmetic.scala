@@ -90,7 +90,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def relu: T
   def zero: T
   def minimum: T
-  def mac_mx(m1: T, m2: T, meshFpProductPrecisionList: T, meshFpAccPrecisionList: T, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool): T
+  def mac_mx(m1: T, m2: T, meshFpProductPrecisionList: T, meshFpAccPrecisionList: T, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, lut_en: Bool): T
 
   // Optional parameters, which only need to be defined if you want to enable various optimizations for transformers
   def divider(denom_t: UInt, options: Int = 0): Option[(DecoupledIO[UInt], DecoupledIO[T])] = None
@@ -153,7 +153,7 @@ object Arithmetic {
       override def zero: UInt = 0.U
       override def identity: UInt = 1.U
       override def minimum: UInt = 0.U
-      override def mac_mx(m1: UInt, m2: UInt, fpProductPrecision: UInt, fpAccPrecision: UInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool): UInt = {
+      override def mac_mx(m1: UInt, m2: UInt, fpProductPrecision: UInt, fpAccPrecision: UInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, lut_en: Bool): UInt = {
         this.mac(m1, m2)
       }
 
@@ -167,7 +167,7 @@ object Arithmetic {
       override def +(t: SInt) = self + t
       override def -(t: SInt) = self - t
 
-      override def mac_mx(m1: SInt, m2: SInt, fpProductPrecision: SInt, fpAccPrecision: SInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool): SInt = {
+      override def mac_mx(m1: SInt, m2: SInt, fpProductPrecision: SInt, fpAccPrecision: SInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, lut_en: Bool): SInt = {
         this.mac(m1, m2)
       }
 
@@ -466,7 +466,7 @@ object Arithmetic {
         out
       }
 
-      override def mac_mx(m1: Float, m2: Float, fpProductPrecision: Float, fpAccPrecision: Float, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool): Float = {
+      override def mac_mx(m1: Float, m2: Float, fpProductPrecision: Float, fpAccPrecision: Float, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, lut_en: Bool): Float = {
         this.mac(m1, m2)
       }
 
@@ -612,7 +612,7 @@ object Arithmetic {
     override implicit def cast(self: DummySInt) = new ArithmeticOps(self) {
       override def *(t: DummySInt) = self.dontCare
       override def mac(m1: DummySInt, m2: DummySInt) = self.dontCare
-      override def mac_mx(m1:DummySInt, m2: DummySInt, fpProductPrecision: DummySInt, fpAccPrecision: DummySInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool) = self.dontCare
+      override def mac_mx(m1:DummySInt, m2: DummySInt, fpProductPrecision: DummySInt, fpAccPrecision: DummySInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, lut_en: Bool) = self.dontCare
       override def +(t: DummySInt) = self.dontCare
       override def -(t: DummySInt) = self.dontCare
       override def >>(t: UInt) = self.dontCare
@@ -629,10 +629,16 @@ object Arithmetic {
   implicit object MxFloatArithmetic extends Arithmetic[MxFloat] {
     override implicit def cast(self: MxFloat): ArithmeticOps[MxFloat] = new ArithmeticOps(self) {
 
-      override def mac_mx(m1: MxFloat, m2: MxFloat, fpProductPrecision: MxFloat, fpAccPrecision: MxFloat, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool): MxFloat = {
+      override def mac_mx(m1: MxFloat, m2: MxFloat, fpProductPrecision: MxFloat, fpAccPrecision: MxFloat, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, lut_en: Bool): MxFloat = {
         require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
-        // E5M2 operands (expWidth 5) need the wider PE config; non-E5M2 builds stay on mxGemmini.
-        val peBaseConfig = if (m1.expWidth >= 5 || m2.expWidth >= 5) MxConfig.mxGemminiE5M2 else MxConfig.mxGemmini
+        // Config select (by the BUILD's declared operand type, an elaboration constant):
+        //   expWidth>=5 -> E5M2 (wider exp).  sigWidth>=4 -> E4M3-quad (16-MACU mode9 PE, sig4 lane).
+        //   else -> plain mxGemmini. Only the E4M3-quad build has hasMode9=true, so lut_en can promote
+        //   E4M3 to 4-wide only there (see the requiredPEMode gate below).
+        val peBaseConfig =
+          if (m1.expWidth >= 5 || m2.expWidth >= 5) MxConfig.mxGemminiE5M2
+          else if (m1.sigWidth >= 4 || m2.sigWidth >= 4) MxConfig.mxGemminiE4M3Lut
+          else MxConfig.mxGemmini
         val macConfig = peBaseConfig.copy(
           inActBusWidth    = m1.bits.getWidth,
           inWeiBusWidth    = m2.bits.getWidth,
@@ -643,21 +649,27 @@ object Arithmetic {
         val macc = Module(new mxgen.MxFpMul(macConfig, lut = false))
         val result = Wire(MxFloat(macc.cType.exp, macc.cType.sig, 4, true))
 
-        // code1 = LUT operand, runtime sub-format: FP6 (altfmt=0) -> (exp3,sig3), E5M2 (altfmt=1) -> (exp5,sig3).
-        // requiredPEMode keys on sig only (both sig=3 -> same mode4); only the exponent/bias differs.
+        // Symmetric encoding: altfmt = sub-format within each code.
+        //   fp8 (code0): altfmt0 -> E4M3 (exp4,sig4); altfmt1 -> E5M2 (exp5,sig3)
+        //   fp6 (code1): altfmt0 -> E3M2 (exp3,sig3); altfmt1 -> E2M3 (exp2,sig4)
+        //   fp4 (code2): E2M1 (exp2,sig2)
+        // requiredPEMode keys on sig: sig4 (E4M3,E2M3) -> mode8/mode9; sig3 (E5M2,E3M2) -> mode4; sig2 -> mode0.
+        def mxExp(fmt: UInt): UInt = Mux(fmt === 2.U, 2.U,
+          Mux(fmt === 1.U, Mux(mx_fp8_altfmt, 2.U, 3.U), Mux(mx_fp8_altfmt, 5.U, 4.U)))
+        def mxSig(fmt: UInt): UInt = Mux(fmt === 2.U, 2.U,
+          Mux(fmt === 1.U, Mux(mx_fp8_altfmt, 4.U, 3.U), Mux(mx_fp8_altfmt, 3.U, 4.U)))
         val typeA = Wire(new MxTypeBundle)
-        typeA.exp := Mux(activation_mx_format === 2.U, 2.U,
-                      Mux(activation_mx_format === 1.U, Mux(mx_fp8_altfmt, 5.U, 3.U), 4.U))
-        typeA.sig := Mux(activation_mx_format === 2.U, 2.U,
-                      Mux(activation_mx_format === 1.U, 3.U, 4.U))
+        typeA.exp := mxExp(activation_mx_format)
+        typeA.sig := mxSig(activation_mx_format)
 
         val typeW = Wire(new MxTypeBundle)
-        typeW.exp := Mux(weight_mx_format === 2.U, 2.U,
-                      Mux(weight_mx_format === 1.U, Mux(mx_fp8_altfmt, 5.U, 3.U), 4.U))
-        typeW.sig := Mux(weight_mx_format === 2.U, 2.U,
-                      Mux(weight_mx_format === 1.U, 3.U, 4.U))
+        typeW.exp := mxExp(weight_mx_format)
+        typeW.sig := mxSig(weight_mx_format)
 
-        val mode = requiredPEMode(typeA, typeW)
+        // M1: lut_en + E4M3×E4M3 (both sig=4) selects the 4-wide LUT mode (mode9); else the sig table.
+        // Gated on the elaborated config actually having mode9 -- a non-mode9 build (plain mxGemmini /
+        // mxGemminiE5M2) can never be promoted to mode9 at runtime, so E4M3 stays 1-wide (mode8).
+        val mode = requiredPEMode(typeA, typeW, if (macConfig.hasMode9) lut_en else false.B)
 
         val rec_c = if (self.isRecoded) self.bits else VecInit(self.bits.asTypeOf(Vec(4, UInt((self.expWidth + self.sigWidth).W))).map(f => recFNFromFN(self.expWidth, self.sigWidth, f))).asUInt
 

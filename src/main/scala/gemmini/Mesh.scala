@@ -22,12 +22,14 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
                                    val meshRows: Int, val meshColumns: Int,
                                    meshProdPrecisionList : Seq[T],
                                    meshAccPrecisionList : Seq[T],
-                                   use_mx_scaling: Boolean = true) extends Module {
+                                   use_mx_scaling: Boolean = true,
+                                   e4m3QuadThroughput: Boolean = false) extends Module {
 
   val io = IO(new Bundle {
     val weight_mx_format = Input(UInt(2.W))
     val activation_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())   // code1 LUT slot: 1 = E5M2 (exp5), 0 = FP6 (exp3)
+    val lut_en = Input(Bool())          // G1: runtime LUT-usage flag (consumed by mode-select in M1)
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b = Input(Vec(meshColumns, Vec(tileColumns, outputType)))
     val in_d = Input(Vec(meshColumns, Vec(tileColumns, weightType))) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
@@ -64,6 +66,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
       tile.io.activation_mx_format := io.activation_mx_format
       tile.io.weight_mx_format := io.weight_mx_format
       tile.io.mx_fp8_altfmt := io.mx_fp8_altfmt
+      tile.io.lut_en := io.lut_en
     }
   }
 
@@ -73,24 +76,30 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   //   tile.io.weight_mx_format := io.weight_mx_format
   // }
 
+  // Symmetric encoding: altfmt = sub-format within each code.
+  //   fp8 (code0): altfmt0 -> E4M3 (exp4,sig4); altfmt1 -> E5M2 (exp5,sig3)
+  //   fp6 (code1): altfmt0 -> E3M2 (exp3,sig3); altfmt1 -> E2M3 (exp2,sig4)
+  //   fp4 (code2): E2M1 (exp2,sig2)
+  // sig drives requiredPEMode (mode select) so it MUST honor altfmt; size = bits/element by code (fp8=8,fp6=6,fp4=4).
+  def mxExp(fmt: UInt): UInt = Mux(fmt === 2.U, 2.U,
+    Mux(fmt === 1.U, Mux(io.mx_fp8_altfmt, 2.U, 3.U), Mux(io.mx_fp8_altfmt, 5.U, 4.U)))
+  def mxSig(fmt: UInt): UInt = Mux(fmt === 2.U, 2.U,
+    Mux(fmt === 1.U, Mux(io.mx_fp8_altfmt, 4.U, 3.U), Mux(io.mx_fp8_altfmt, 3.U, 4.U)))
+  def mxSize(fmt: UInt): UInt = Mux(fmt === 2.U, 4.U, Mux(fmt === 1.U, 6.U, 8.U))
+
   val typeA = Wire(new MxTypeBundle)
-  typeA.exp := Mux(io.activation_mx_format === 2.U, 2.U,
-                Mux(io.activation_mx_format === 1.U, 3.U, 4.U))
-  typeA.sig := Mux(io.activation_mx_format === 2.U, 2.U,
-                Mux(io.activation_mx_format === 1.U, 3.U, 4.U))
-  // code1 = LUT operand, runtime sub-format: FP6 (altfmt=0) -> 6, E5M2 (altfmt=1) -> 8 significant bits.
-  val typeA_size = Mux(io.activation_mx_format === 2.U, 4.U,
-                Mux(io.activation_mx_format === 1.U, Mux(io.mx_fp8_altfmt, 8.U, 6.U), 8.U))
+  typeA.exp := mxExp(io.activation_mx_format)
+  typeA.sig := mxSig(io.activation_mx_format)
+  val typeA_size = mxSize(io.activation_mx_format)
 
   val typeW = Wire(new MxTypeBundle)
-  typeW.exp := Mux(io.weight_mx_format === 2.U, 2.U,
-                Mux(io.weight_mx_format === 1.U, 3.U, 4.U))
-  typeW.sig := Mux(io.weight_mx_format === 2.U, 2.U,
-                Mux(io.weight_mx_format === 1.U, 3.U, 4.U))
-  val typeW_size = Mux(io.weight_mx_format === 2.U, 4.U,
-                Mux(io.weight_mx_format === 1.U, Mux(io.mx_fp8_altfmt, 8.U, 6.U), 8.U))
+  typeW.exp := mxExp(io.weight_mx_format)
+  typeW.sig := mxSig(io.weight_mx_format)
+  val typeW_size = mxSize(io.weight_mx_format)
 
-  val mode = requiredPEMode(typeA, typeW)
+  // Only a build with the quad (16-MACU) PE may promote E4M3 to the 4-wide mode9 at runtime; a
+  // plain build ignores lut_en for mode selection so E4M3 stays 1-wide (mode8), exactly as before.
+  val mode = requiredPEMode(typeA, typeW, if (e4m3QuadThroughput) io.lut_en else false.B)
   
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage

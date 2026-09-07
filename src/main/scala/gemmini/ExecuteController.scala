@@ -27,6 +27,7 @@ class ExControllerMxScalingIO(
   val activation_mx_format_out = Output(UInt(2.W))
   val weight_mx_format_out = Output(UInt(2.W))
   val mx_fp8_altfmt_out = Output(Bool())
+  val mx_multi_elem = Output(Bool())   // throughput: 2 elements/lane (vs 1 for single E4M3). Datatype-independent.
   val enable_MXQuant = Output(Bool())
   // C8.3 MX_SCALE_RESIDENT: decoded from rs1 bit 62 of the mxquant scale-config (CONFIG_SCALE_MEM).
   // When set, the requantizer also writes its output activation block-scales into the on-chip
@@ -101,6 +102,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val read_a = Output(Bool())
 
     val mx = if (use_mx_scaling) { Some(new ExControllerMxScalingIO(scale_mem.get.ScaleMemWriteAddrWidth, meshRows, tileRows))} else {None}
+
+    // G1: runtime LUT-usage flag from the Controller (set by MX_LOAD_LUT, cleared by MX_LUT_DISABLE).
+    val lut_en = Input(Bool())
   })
 
 
@@ -155,6 +159,17 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
 
   val mx_state = if (use_mx_scaling) Some(RegInit((0.U).asTypeOf(new ExControllerMxScalingRegs(scale_mem.get.ScaleMemWriteAddrWidth)))) else None
+
+  // E4M3-quad build detection (operand lane MxFloat(4,4,2), sig4). Elaboration constant.
+  val e4m3QuadThroughput = spatialArrayInputType match {
+    case mf: MxFloat => mf.sigWidth >= 4 && mf.expWidth < 5
+    case _ => false
+  }
+  // THROUGHPUT (elements packed per operand lane), decoupled from the datatype (format code):
+  //   1/lane -> single E4M3 (code0 without lut_en); 2/lane -> FP4/FP6/E5M2 (code!=0) and E4M3-quad
+  //   (code0 + lut_en on this build). Downstream column/stride/chunk layout keys off THIS, never the
+  //   format code -- the code stays datatype-only. Exposed on io.mx for the layout modules.
+  val mx_multi_elem = if (use_mx_scaling) (mx_state.get.activation_mx_format =/= 0.U) || (e4m3QuadThroughput.B && io.lut_en) else false.B
   // NOTE: the CONFIG_SCALE_MEM register latch lives in the main command decoder's gated branch
   // (search "config_cmd_type === CONFIG_SCALE_MEM"), NOT here. It must fire ONLY when a *valid*
   // config sits at the queue head (cmd.valid(0) && !matmul_in_progress && !pending). An ungated
@@ -169,6 +184,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.mx.get.activation_mx_format_out := mx_state.get.activation_mx_format
     io.mx.get.weight_mx_format_out := mx_state.get.weight_mx_format
     io.mx.get.mx_fp8_altfmt_out := mx_state.get.mx_fp8_altfmt
+    io.mx.get.mx_multi_elem := mx_multi_elem
     io.mx.get.enable_MXQuant := mx_state.get.enable_mxquant
     io.mx.get.scale_mem_mvout_base_addr_act := mx_state.get.scale_mem_mvout_base_addr_act
     io.mx.get.quant_lut_update_granularity := mx_state.get.quant_lut_update_granularity
@@ -275,18 +291,23 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val cntl_valid = mesh_cntl_signals_q.io.deq.valid
   val cntl = mesh_cntl_signals_q.io.deq.bits
 
+  // E4M3-quad build: the operand lane is MxFloat(4,4,2) (sig4). This mirrors mac_mx's config select and
+  // enables the mesh to promote E4M3 to the 4-wide mode9 when lut_en is set. Other builds -> false.
   // Instantiate the actual mesh
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
-    tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecision, meshAccPrecision, use_mx_scaling))
+    tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecision, meshAccPrecision, use_mx_scaling,
+    e4m3QuadThroughput = e4m3QuadThroughput))
  
   if (use_mx_scaling) {
     mesh.io.activation_mx_format := mx_state.get.activation_mx_format
     mesh.io.weight_mx_format := mx_state.get.weight_mx_format
     mesh.io.mx_fp8_altfmt := mx_state.get.mx_fp8_altfmt
+    mesh.io.lut_en := io.lut_en
   } else {
     mesh.io.activation_mx_format := DontCare
     mesh.io.weight_mx_format := DontCare
     mesh.io.mx_fp8_altfmt := DontCare
+    mesh.io.lut_en := DontCare
   }
 
   mesh.io.a.valid := false.B
@@ -1153,7 +1174,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     w_total_output_rows - 1.U - output_counter < w_matrix_rows)
 
   val w_mask = if (use_mx_scaling) {
-    Mux(mx_state.get.activation_mx_format === 0.U, VecInit((0 until block_size).map(e => offset <= e.U && e.U < (offset +& w_matrix_cols / 4.U))),
+    // Single-throughput (E4M3 1/lane) uses the fmt0 element mask; multi (incl. E4M3-quad) uses the full mask.
+    Mux(!mx_multi_elem, VecInit((0 until block_size).map(e => offset <= e.U && e.U < (offset +& w_matrix_cols / 4.U))),
       VecInit((0 until block_size).map(_.U < w_matrix_cols))) // This is an element-wise mask, rather than a byte-wise mask
   } else {
       VecInit((0 until block_size).map(_.U < w_matrix_cols))
@@ -1210,7 +1232,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
           VecInit(row0Words ++ row1Words).asUInt.asTypeOf(io.acc.write(i).bits.data)
         }
-        io.acc.write(i).bits.data := Mux(activation_mx_format === 0.U, fmt0_data, packed_data)
+        // Single-throughput E4M3 uses fmt0; multi-element (FP4/FP6/E5M2 and E4M3-quad) uses the packed layout.
+        io.acc.write(i).bits.data := Mux(!mx_multi_elem, fmt0_data, packed_data)
       }
 
       io.acc.write(i).bits.acc := w_address_sp.accumulate

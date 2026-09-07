@@ -607,6 +607,18 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // requantizer lut port ONCE with data = buffer view -- byte-identical to the regmap GO fire.
   // sel: 0 = B/weight -> lut0, 1 = A/act-in -> lut1, 2 = C/act-out -> lut2 (Spike polarity).
   val lut_loader_busy = WireDefault(false.B)
+
+  // G1: runtime LUT-usage flag. MX_LOAD_LUT sets it, MX_LUT_DISABLE clears it, default off.
+  val mx_lut_en = RegInit(false.B)
+  ex_controller.io.lut_en := mx_lut_en
+
+  // G2: this build routes E4M3 (code0) operands through the LUT deproject (4-bit -> 2x8b E4M3) when
+  // lut_en is set. True only on the E4M3-quad build (operand lane MxFloat(4,4,2), sig4). Elaboration const.
+  val e4m3QuadThroughput = outer.config.spatialArrayInputType match {
+    case mf: MxFloat => mf.sigWidth >= 4 && mf.expWidth < 5
+    case _ => false
+  }
+
   val (lut_out, lut_out_sel, lut_loader_start) = if (outer.use_mx_mmio) {
     val (gnode, gedge) = outer.mx_lut_loader_client.get.out.head
     val beatBytes = gnode.params.dataBits / 8
@@ -756,6 +768,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     spad.module.io.weight_mx_format := ex_controller.io.mx.get.weight_mx_format_out
     spad.module.io.act_mx_format := ex_controller.io.mx.get.activation_mx_format_out
+    spad.module.io.mx_multi_elem := ex_controller.io.mx.get.mx_multi_elem
   } else {
     // Non-MX build: drive the (unconditional) MX ports to inert defaults.
     spad.module.io.enable_MXQuant := false.B
@@ -763,6 +776,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     spad.module.io.weight_mx_format := 0.U
     spad.module.io.act_mx_format := 0.U
+    spad.module.io.mx_multi_elem := false.B
   }
 
 
@@ -788,7 +802,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     for (b <- 0 until sp_banks) {
       mx_sel(b) := false.B
       when(read_projected(b).resp.valid) {
-        mx_sel(b) := (ex_controller.io.mx.get.weight_mx_format_out === 1.U)
+        // Deproject (LUT-stored operand) fires for: code1/fp6 (E3M2, E2M3 -- always LUT); fp8 E5M2
+        // (code0 + altfmt -- always LUT); and E4M3-quad (code0 + !altfmt + lut_en on a quad build).
+        // fp8 E4M3-single (code0 + !altfmt + !lut_en) and fp4 (code2) stay the direct path (useMxB).
+        val wfmt = ex_controller.io.mx.get.weight_mx_format_out
+        val walt = ex_controller.io.mx.get.mx_fp8_altfmt_out
+        mx_sel(b) := (wfmt === 1.U) ||
+          (wfmt === 0.U && walt) ||
+          (e4m3QuadThroughput.B && mx_lut_en && wfmt === 0.U && !walt)
       }
 
       // req to srams
@@ -936,6 +957,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   
   if (use_mx_scaling) {
     loop_matmul.io.activation_mx_format := ex_controller.io.mx.get.activation_mx_format_out
+    loop_matmul.io.mx_multi_elem := ex_controller.io.mx.get.mx_multi_elem
     loop_matmul.io.weight_mx_format := ex_controller.io.mx.get.weight_mx_format_out
     loop_matmul.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
 
@@ -945,6 +967,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     store_controller.io.loop_bound_j := ex_controller.io.mx.get.loop_bounds.j
     store_controller.io.activation_mx_type := ex_controller.io.mx.get.activation_mx_format_out
+    store_controller.io.mx_multi_elem := ex_controller.io.mx.get.mx_multi_elem
     store_controller.io.output_mx_type := ex_controller.io.mx.get.output_MxFormat
 
     mx_requantizer.get.io.read_a := ex_controller.io.read_a
@@ -967,11 +990,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // the (unconditional) MX ports on loop_matmul/store_controller/spad to inert
     // defaults. The loop counters still come from loop_matmul, which always has them.
     loop_matmul.io.activation_mx_format := 0.U
+    loop_matmul.io.mx_multi_elem := false.B
     loop_matmul.io.weight_mx_format := 0.U
     loop_matmul.io.output_mx_format := 0.U
 
     store_controller.io.loop_bound_j := 0.U
     store_controller.io.activation_mx_type := 0.U
+    store_controller.io.mx_multi_elem := false.B
     store_controller.io.output_mx_type := 0.U
 
     spad.module.io.counter_i := loop_matmul.io.counter_i
@@ -1216,6 +1241,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val is_clock_gate_en = risc_funct === CLKGATE_EN
     val is_mx_load_scales = risc_funct === MX_LOAD_SCALES
     val is_mx_load_lut = risc_funct === MX_LOAD_LUT
+    val is_mx_lut_disable = risc_funct === MX_LUT_DISABLE
 
     /*
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
@@ -1243,6 +1269,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       unrolled_cmd.ready := true.B
     }
 
+    .elsewhen (is_mx_lut_disable) {
+      mx_lut_en := false.B
+      unrolled_cmd.ready := true.B
+    }
+
     .otherwise {
       if (outer.use_mx_mmio) {
         // funct-27 MX_LOAD_SCALES: kick the DMA loader instead of the reservation station.
@@ -1261,6 +1292,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
           lut_loader_start.get.bits.sel  := unrolled_cmd.bits.cmd.rs2(33, 32)
           lut_loader_start.get.bits.entry_bits := unrolled_cmd.bits.cmd.rs2(39, 34)
           unrolled_cmd.ready := lut_loader_start.get.ready
+          when (unrolled_cmd.valid && lut_loader_start.get.ready) { mx_lut_en := true.B }
         } .otherwise {
           reservation_station.io.alloc.valid := true.B
           when(reservation_station.io.alloc.fire) { unrolled_cmd.ready := true.B }
