@@ -67,6 +67,37 @@ class MxAllGemminiRocketConfig extends Config(
 // Back-compat alias: the old E4M3-LUT build is now a strict subset of the all-formats build.
 class MxE4M3LutGemminiRocketConfig extends MxAllGemminiRocketConfig
 
+// Single-format builds: each supports ONLY its MX format; all other format hardware is elaboration-gated.
+class MxFp4OnlyGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPFp4OnlyStandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+class MxE3M2OnlyGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPE3M2OnlyStandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+class MxE2M3OnlyGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPE2M3OnlyStandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+class MxE4M3OnlyGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPE4M3OnlyStandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+class MxE5M2OnlyGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPE5M2OnlyStandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
 class TestMxGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPTestConfig ++                         // use FP32Gemmini systolic array GEMM accelerator
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++

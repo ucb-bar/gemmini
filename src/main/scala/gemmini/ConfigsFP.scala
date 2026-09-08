@@ -215,6 +215,7 @@ class GemminiBF16Default8Config extends Config((site, here, up) => {
 
 object GemminiMxFPConfigs {
   import Arithmetic.MxFloatArithmetic._
+  import mxgen.MxConfig
   val defaultMxFPConfig = GemminiArrayConfig[MxFloat, Float, Float](
     opcodes = OpcodeSet.custom3,
     tileRows = 1,
@@ -378,6 +379,47 @@ object GemminiMxFPConfigs {
   )
   // Back-compat alias.
   val e4m3LutMxFPConfig = allMxFPConfig
+
+  // Single-format builds: the operand descriptor carries an explicit MxConfig (MxFloat.withConfig), so the
+  // PE elaborates ONLY that format's decode + mode(s). The LUT projFormat picks that format's finder(s).
+  // FP4 (direct 4-bit) and E3M2 (fp6) requant use the default fp6 LUT (LutFP6E3M2, rdataWidth=6).
+  val fp4OnlyMxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+    weightType = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+    spatialArrayInputType  = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+    spatialArrayWeightType = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+  )
+  val e3m2OnlyMxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+    weightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+    spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+    spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+  )
+  // E2M3-only: 6-bit LUT (up-project 4-bit indices to 6-bit E2M3), 12-bit operand lane (2x6). Its own
+  // single-finder projFormat so no E4M3/E5M2/E3M2 finders elaborate.
+  val e2m3OnlyMxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(2, 4, 2, MxConfig.e2m3Only),
+    weightType = MxFloat.withConfig(2, 4, 2, MxConfig.e2m3Only),
+    spatialArrayInputType  = MxFloat.withConfig(2, 4, 2, MxConfig.e2m3Only),
+    spatialArrayWeightType = MxFloat.withConfig(2, 4, 2, MxConfig.e2m3Only),
+    lut = Some(GemminiLUTConfig(projFormat = LutFP6E2M3)),
+  )
+  val e4m3OnlyMxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3Only),
+    weightType = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3Only),
+    spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3Only),
+    spatialArrayWeightType = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3Only),
+    lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
+      projFormat = LutFP8E4M3)),
+  )
+  val e5m2OnlyMxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
+    weightType = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
+    spatialArrayInputType  = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
+    spatialArrayWeightType = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
+    lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
+      projFormat = LutFP8E5M2)),
+  )
 }
 
 // =========== MxFP Config ==========
@@ -423,6 +465,38 @@ class GemminiMxFPAllStandaloneConfig extends Config((site, here, up) => {
 
 // Back-compat alias: the old E4M3-LUT fragment is now the all-formats build.
 class GemminiMxFPE4M3LutStandaloneConfig extends GemminiMxFPAllStandaloneConfig
+
+// Single-format builds (one MX format each; all other format hardware elaboration-gated).
+class GemminiMxFPFp4OnlyStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.fp4OnlyMxFPConfig))
+  })
+})
+class GemminiMxFPE3M2OnlyStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.e3m2OnlyMxFPConfig))
+  })
+})
+class GemminiMxFPE2M3OnlyStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.e2m3OnlyMxFPConfig))
+  })
+})
+class GemminiMxFPE4M3OnlyStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.e4m3OnlyMxFPConfig))
+  })
+})
+class GemminiMxFPE5M2OnlyStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.e5m2OnlyMxFPConfig))
+  })
+})
 
 class GemminiMxFPTestConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq(

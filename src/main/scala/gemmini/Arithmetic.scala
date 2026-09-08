@@ -16,13 +16,24 @@ case class Float(expWidth: Int, sigWidth: Int, isRecoded: Boolean = false) exten
 }
 
 
-case class MxFloat(expWidth: Int, sigWidth: Int, count: Int, isRecoded: Boolean = false, pad: Boolean = true) extends Bundle {
+// meshConfig, when set, is the explicit PE format/mode set for this operand's mesh -- mac_mx uses it
+// directly instead of guessing from exp/sig widths, so a config selects exactly which formats the PE
+// elaborates (e.g. a single-format build). Scala metadata only, not hardware.
+case class MxFloat(expWidth: Int, sigWidth: Int, count: Int, isRecoded: Boolean = false, pad: Boolean = true,
+                   meshConfig: Option[MxConfig] = None) extends Bundle {
   val bits = if (pad) {
     UInt((1<<log2Ceil(count * (expWidth + sigWidth + (if (isRecoded) 1 else 0)))).W)
   } else {
     UInt((count * (expWidth + sigWidth + (if (isRecoded) 1 else 0))).W)
   }
   val bias: Int = (1 << (expWidth-1)) - 1
+}
+
+object MxFloat {
+  // Operand descriptor carrying an explicit PE MxConfig (single-format / custom builds). pad=false to
+  // match the other operand descriptors.
+  def withConfig(expWidth: Int, sigWidth: Int, count: Int, cfg: MxConfig): MxFloat =
+    MxFloat(expWidth, sigWidth, count, false, false, Some(cfg))
 }
 
 case class DummySInt(w: Int) extends Bundle {
@@ -631,15 +642,15 @@ object Arithmetic {
 
       override def mac_mx(m1: MxFloat, m2: MxFloat, fpProductPrecision: MxFloat, fpAccPrecision: MxFloat, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, lut_en: Bool): MxFloat = {
         require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
-        // Config select (by the BUILD's declared operand type, an elaboration constant):
-        //   expWidth>=5 -> E5M2-only build (wider exp, no mode9).  sigWidth>=4 -> the all-formats build
-        //   (16-MACU mode9 PE, sig4 lane; also carries E5M2 via the decoupled 5-bit exp slots).
-        //   else -> plain mxGemmini. hasMode9=true only on the all build, so lut_en promotes E4M3 to
-        //   4-wide only there (see the requiredPEMode gate below).
-        val peBaseConfig =
+        // PE format/mode set. An operand may carry it EXPLICITLY (meshConfig) -- the config picks exactly
+        // which formats the PE elaborates (single-format / custom builds). Otherwise fall back to guessing
+        // from the operand widths: expWidth>=5 -> E5M2-only build; sigWidth>=4 -> all-formats build (mode9
+        // quad, E5M2 via decoupled exp slots); else -> plain mxGemmini.
+        val peBaseConfig = m1.meshConfig.orElse(m2.meshConfig).getOrElse {
           if (m1.expWidth >= 5 || m2.expWidth >= 5) MxConfig.mxGemminiE5M2
           else if (m1.sigWidth >= 4 || m2.sigWidth >= 4) MxConfig.mxGemminiAll
           else MxConfig.mxGemmini
+        }
         val macConfig = peBaseConfig.copy(
           inActBusWidth    = m1.bits.getWidth,
           inWeiBusWidth    = m2.bits.getWidth,

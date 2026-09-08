@@ -41,6 +41,7 @@ case class GemminiRequantizerConfig(
 // Fixed at elaboration; defaults to FP6 so existing configs are unchanged.
 sealed trait LutProjFormat
 case object LutFP6E3M2 extends LutProjFormat
+case object LutFP6E2M3 extends LutProjFormat
 case object LutFP8E4M3 extends LutProjFormat
 case object LutFP8E5M2 extends LutProjFormat
 

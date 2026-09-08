@@ -138,6 +138,13 @@ class QuantLut(
         val fp8Idx = Mux(io.mx_fp8_altfmt, fp8e5Finders(i).io.nearestIdx, fp8e4Finders(i).io.nearestIdx)
         proj_nearest(i) := Mux(io.output_mx_format === 1.U, fp6Idx, fp8Idx)
       }
+    case LutFP6E2M3 => // single-format E2M3 build: 6-bit codes, only the E2M3 finder
+      val finders = Seq.fill(32)(Module(new FP6E2M3NearestFinder()))
+      for (i <- 0 until 32) {
+        finders(i).io.in_fp6 := proj_in(i)
+        finders(i).io.in_lut := proj_lut
+        proj_nearest(i)      := finders(i).io.nearestIdx
+      }
     case _ => // LutFP6E3M2 (default)
       val finders = Seq.fill(32)(Module(new FP6E3M2NearestFinder()))
       for (i <- 0 until 32) {
