@@ -100,6 +100,9 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   // (the on-chip act-scale write port, 64b/beat like scale_loader_act). When false the port is idle.
   val scale_resident = Input(Bool())
   val scaleMem_write_act_resident = Decoupled(new ScalingFactorWriteReq(scaleMemActWriteAddrWidth, 64))
+  // Runtime LUT-enable (from ex io.mx.lut_en_out). Discriminates E4M3-quad requant output (4-bit LUT
+  // index) from E4M3-single (8-bit code): both are output format0/altfmt0, split only by lut_en.
+  val lut_en = Input(Bool())
 }
    
 class MxRequantizer[T <: Data](
@@ -158,7 +161,11 @@ class MxRequantizer[T <: Data](
   format_reg := quant_dataType.asUInt(1, 0)
   val altfmt_reg = RegInit(false.B)          // code1 output sub-format: 1 = E5M2, 0 = FP6 (aligned w/ format_reg)
   altfmt_reg := io.mxacc_req.mx_fp8_altfmt
-  
+  // lut_en is quasi-static (set at LUT-load, held across the matmul+requant); latch it in the same
+  // input stage as format_reg/altfmt_reg so E4M3-quad (format0/!altfmt + lut_en) selects the 4-bit path.
+  val lut_en_reg = RegInit(false.B)
+  lut_en_reg := io.lut_en
+
   io.scaleMem_write.valid := false.B
   io.scaleMem_write.bits := DontCare
 
@@ -190,8 +197,10 @@ class MxRequantizer[T <: Data](
   //   code2/fp4 -> 2 (from MxFloatFormat). The altfmt overrides only fire on configs that support the
   //   sub-format (E5M2 build never sees code0/altfmt E4M3-quad; E4M3Lut never sees code0/altfmt E5M2).
   val log2_pmax_floor = MuxCase(log2_pmax_floor_raw, Seq(
-    (format_reg === 0.U && altfmt_reg) -> 16.U,   // E5M2
-    (format_reg === 1.U && altfmt_reg) ->  2.U    // E2M3
+    (format_reg === 0.U && altfmt_reg) -> 16.U,                    // E5M2
+    (format_reg === 0.U && !altfmt_reg && lut_en_reg) -> 8.U,     // E4M3-quad (LUT nibble): OCP emax=8,
+                                                                   // NOT the E4M3-single _po2 raw=0
+    (format_reg === 1.U && altfmt_reg) ->  2.U                     // E2M3
   ))
   val data_buffer_counter = RegInit(0.U(1.W))
   //buffer twice for 16-lane mode
@@ -215,16 +224,18 @@ class MxRequantizer[T <: Data](
   // E5M2 (code0/altfmt1) keeps its 8-bit codes for encode/finder, but rides the 6-bit LUT datapath for
   // input buffering, packing, coalescer cadence, and isNibble grouping -- the proven FP6 path. The ISA
   // output code stays 0 (E5M2 = code0/altfmt); only this internal pack-structure signal is remapped.
-  total_bits_per_element := Mux(format_reg === 0.U && altfmt_reg, 6.U, total_bits_raw)
+  // E4M3-quad (code0/altfmt0 + lut_en) emits 4-bit LUT indices too, so it also rides the 6-bit LUT datapath;
+  // only E4M3-single (code0/altfmt0/!lut_en) keeps the 8-bit direct-code datapath (total_bits_raw = 8).
+  total_bits_per_element := Mux(format_reg === 0.U && (altfmt_reg || lut_en_reg), 6.U, total_bits_raw)
 
   // Requant output packing mode (symmetric, "always 4-bit LUT index" for the lut sub-formats):
-  //   E4M3-single (fp8/code0, altfmt0) -> 8-bit direct codes; E5M2 (code0/altfmt1) and E3M2/E2M3
-  //   (code1) -> 4-bit LUT indices (nibble-packed via the LUT projection); FP4 (code2) -> 4-bit direct.
-  // (E4M3-quad 4-bit output is deferred -- it needs lut_en, not wired to the requantizer; E4M3 stays
-  //  8-bit here regardless of quad, so E4M3-quad requant currently emits 8-bit like E4M3-single.)
+  //   E4M3-single (fp8/code0, altfmt0, !lut_en) -> 8-bit direct codes; E4M3-quad (code0/altfmt0 + lut_en),
+  //   E5M2 (code0/altfmt1) and E3M2/E2M3 (code1) -> 4-bit LUT indices (nibble-packed via the LUT
+  //   projection); FP4 (code2) -> 4-bit direct. E4M3-single is the ONLY 8-bit output; it and E4M3-quad
+  //   share output format0/altfmt0 and are split only by the (latched) runtime lut_en.
   val out_is_fp4  = format_reg === 2.U
-  val out_is_lut4 = (format_reg === 1.U) || (format_reg === 0.U && altfmt_reg)
-  val out_is_8bit = (format_reg === 0.U && !altfmt_reg)
+  val out_is_lut4 = (format_reg === 1.U) || (format_reg === 0.U && (altfmt_reg || lut_en_reg))
+  val out_is_8bit = (format_reg === 0.U && !altfmt_reg && !lut_en_reg)
 
   val extracted_data = WireDefault((0.U((io.outputnumLanes*8).W))) // 256bits / 128bits
   val quant_data_held = RegInit(0.U((io.outputnumLanes*8).W))

@@ -28,6 +28,9 @@ class ExControllerMxScalingIO(
   val weight_mx_format_out = Output(UInt(2.W))
   val mx_fp8_altfmt_out = Output(Bool())
   val mx_multi_elem = Output(Bool())   // throughput: 2 elements/lane (vs 1 for single E4M3). Datatype-independent.
+  // Runtime LUT-enable, forwarded to the requant OUTPUT path. Discriminates E4M3-quad (4-bit LUT
+  // index output) from E4M3-single (8-bit code) -- both are output format0/altfmt0, split only by lut_en.
+  val lut_en_out = Output(Bool())
   val enable_MXQuant = Output(Bool())
   // C8.3 MX_SCALE_RESIDENT: decoded from rs1 bit 62 of the mxquant scale-config (CONFIG_SCALE_MEM).
   // When set, the requantizer also writes its output activation block-scales into the on-chip
@@ -190,6 +193,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.mx.get.weight_mx_format_out := mx_state.get.weight_mx_format
     io.mx.get.mx_fp8_altfmt_out := mx_state.get.mx_fp8_altfmt
     io.mx.get.mx_multi_elem := mx_multi_elem
+    io.mx.get.lut_en_out := io.lut_en
     io.mx.get.enable_MXQuant := mx_state.get.enable_mxquant
     io.mx.get.scale_mem_mvout_base_addr_act := mx_state.get.scale_mem_mvout_base_addr_act
     io.mx.get.quant_lut_update_granularity := mx_state.get.quant_lut_update_granularity

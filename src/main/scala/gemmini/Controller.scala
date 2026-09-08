@@ -321,6 +321,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // shared-ext-mem path leaves it idle (radiance never sets scale_resident).
     req.io.scale_resident := ex_controller.io.mx.get.scale_resident
     req.io.scaleMem_write_act_resident.ready := false.B
+    // E4M3-quad requant output (4-bit LUT) vs E4M3-single (8-bit): both output format0/altfmt0, split by lut_en.
+    req.io.lut_en := ex_controller.io.mx.get.lut_en_out
   }
 
 
@@ -985,6 +987,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     spad.module.io.k := loop_matmul.io.k
     spad.module.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
     spad.module.io.mx_fp8_altfmt := ex_controller.io.mx.get.mx_fp8_altfmt_out
+    spad.module.io.mx_lut_en := ex_controller.io.mx.get.lut_en_out
   } else {
     // Non-MX build: ex_controller.io.mx and mx_requantizer are absent, so drive
     // the (unconditional) MX ports on loop_matmul/store_controller/spad to inert
@@ -1007,6 +1010,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     spad.module.io.k := loop_matmul.io.k
     spad.module.io.output_mx_format := 0.U
     spad.module.io.mx_fp8_altfmt := false.B
+    spad.module.io.mx_lut_en := false.B
   }
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
