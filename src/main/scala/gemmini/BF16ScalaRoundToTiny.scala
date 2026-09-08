@@ -320,6 +320,63 @@ object BF16ToE5M2 {
   }
 }
 
+// BF16 -> 6-bit FP6 E2M3 code (1 sign | 2 exp(bias 1) | 3 mant). Chisel port of
+// mx_fp_math.h::bf16_bits_to_fp6_e2m3_code, consistent with MxQuant (npu-exploration/MXQuant
+// microxcaling fp6_e2m3): ebits=2, mbits=5 (3 mantissa), emax=2, bias=1, max_norm 7.5, quantum
+// 2^-3=0.125, subnormals encoded, RNE. exp field runs 1..3 (E_used 0..2). Output is a 6-bit code in
+// the low 6 bits of an 8-bit lane (the FP6 LUT path reads the low 6).
+object BF16ToE2M3 {
+  def apply(in: UInt): UInt = {
+    require(in.getWidth == 16)
+    val sign = in(15)                                         // 1-bit sign -> code bit 5
+    val E    = in(14, 7)
+    val M    = in(6, 0)
+    val e    = E.zext - 127.S                                  // unbiased bf16 exponent
+
+    // Normal (e in [0,2]): 3 mantissa bits, RNE ties-to-even. E_used = min(e, 2).
+    val q       = M(6, 4)                                      // top 3 mantissa bits
+    val r       = M(3)                                         // round bit
+    val sticky  = M(2, 0).orR
+    val lsb     = q(0)
+    val roundUp = r & (sticky | lsb)                           // ties-to-even
+    val mantSum = q +& roundUp                                 // 0..8
+    val carry   = mantSum(3)
+    val mant    = Mux(carry, 0.U(3.W), mantSum(2, 0))
+    val eClip   = Mux(e > 2.S, 2.S, e)                         // clip to emax before carry
+    val expOut  = eClip + carry.zext.asSInt                    // 1..3 after +carry
+    val normOvf = expOut > 2.S                                 // carried past emax -> saturate 7.5
+    val expField = (Mux(normOvf, 2.S, expOut) + 1.S).asUInt    // unbiased 0->1,1->2,2->3
+    val mantOut  = Mux(normOvf, 7.U(3.W), mant)
+    val normCode = Cat(sign, expField(1, 0), mantOut)         // 6-bit code (sign at bit 5)
+
+    // Subnormal (e < 0): quantum 2^-3. k = RNE(av / 0.125) = RNE(sig8 / 2^(4-e)), sig8 = 1.M (8 bits).
+    // Any value with e <= -5 (shSub >= 9) rounds to 0 (av*8 < 0.5), so flush -- this also avoids the
+    // 16-bit `stepU` shift overflowing for very small e (shSub >= 16), which would spuriously yield k=1.
+    val sig8  = Cat(1.U(1.W), M)                               // 8 bits
+    val shSub = (4.S - e).asUInt                               // >= 5
+    val flushSub = shSub >= 9.U
+    val stepU = (1.U(16.W) << shSub)
+    val halfU = (stepU >> 1)
+    val remU  = sig8 & (stepU - 1.U)(15, 0)
+    val kBase = (sig8 >> shSub)
+    val kUp   = kBase + Mux(remU > halfU(15,0), 1.U, Mux(remU === halfU(15,0), kBase(0), 0.U))  // RNE
+    val kSub  = Mux(flushSub, 0.U(4.W), kUp(3, 0))
+    val subCode = Mux(kSub === 0.U, Cat(sign, 0.U(5.W)),
+                  Mux(kSub >= 8.U, Cat(sign, "b01000".U(5.W)),   // -> min normal (exp field 1, mant 0)
+                                   Cat(sign, 0.U(2.W), kSub(2, 0))))  // subnormal exp field 0, mant k
+
+    val out = Wire(UInt(8.W))
+    when (E === 0.U || E.andR) {
+      out := Cat(sign, 0.U(5.W))                               // zero / bf16-subnormal / non-finite -> code 0
+    }.elsewhen (e < 0.S) {
+      out := subCode
+    }.otherwise {
+      out := normCode                                          // normals + overflow (saturate 7.5)
+    }
+    out
+  }
+}
+
 object roundToMx {
   def apply(scaled_bf16: UInt, inputexpWidth: Int, inputsigWidth: Int, format: FType, pack_function: UInt => UInt): UInt = {
     val out = Wire(UInt(8.W))
@@ -434,14 +491,19 @@ class BF16ScaleRoundToTiny(
     val dbg_scaled_exp  = WireDefault(scaled_exp);       dontTouch(dbg_scaled_exp)
     val dbg_scaled_bf16 = WireDefault(scaled_bf16);      dontTouch(dbg_scaled_bf16)
 
-    // dataType 1 = LUT-format slot. FP6 normally; in an E5M2-capable build (e5m2Lut) select FP6 vs E5M2 at
-    // RUNTIME via altfmt, so both sub-formats coexist. Non-E5M2 builds keep FP6 only (no BF16ToE5M2 hardware).
+    // Runtime-symmetric requant element encode, selected by (dataType code, altfmt). All encoders are
+    // cheap combinational objects, always instantiated, so ONE build can requant to any sub-format:
+    //   code0/fp8: altfmt0 -> E4M3 (8-bit code), altfmt1 -> E5M2 (8-bit code)
+    //   code1/fp6: altfmt0 -> E3M2 (6-bit code), altfmt1 -> E2M3 (6-bit code)
+    //   code2/fp4: E2M1 (4-bit)
+    // The 6-bit fp6 codes and 8-bit E5M2/E4M3 codes feed the packing/LUT-projection downstream.
     val fp6Slot = roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp6, (in: UInt) => E4M2ToFp6(in))
-    val lutSlot = if (e5m2Lut) Mux(io.mx_fp8_altfmt, BF16ToE5M2(scaled_bf16), fp6Slot) else fp6Slot
+    val fp6_out = Mux(io.mx_fp8_altfmt, BF16ToE2M3(scaled_bf16), fp6Slot)
+    val fp8_out = Mux(io.mx_fp8_altfmt, BF16ToE5M2(scaled_bf16), BF16ToE4M3(scaled_bf16))
     val rounded = Mux(io.dataType === 1.U,
-                      lutSlot,
+                      fp6_out,
                       Mux(io.dataType === 0.U,
-                        BF16ToE4M3(scaled_bf16),
+                        fp8_out,
                         roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp4, (in: UInt) => E3M1Tofp4(in))
                       )
                     )

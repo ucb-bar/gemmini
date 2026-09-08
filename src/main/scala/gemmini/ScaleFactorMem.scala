@@ -21,6 +21,7 @@ class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: 
   val read_resp = Decoupled(new ScalingFactorReadResp(numRows, numCols))
   val dataType = Input(UInt(2.W))
   val mx_multi_elem = Input(Bool())   // throughput: 2 elements/lane (E4M3-quad included), datatype-independent
+  val mx_fp8_altfmt = Input(Bool())   // code0 sub-format: 1 = E5M2 (4-bit LUT output, nibble scale layout)
   val scaleMemCntl = Input(new ScalingFactorCntl(meshRows*tileRows)) // dummy output to match interface
   val counter_i = Input(UInt(16.W))
   val counter_j = Input(UInt(16.W))  
@@ -118,7 +119,10 @@ class ScalingFactorMem(
   // fp8Mode selects the single-throughput E4M3 scale structure (write banking, read banking, combine layout).
   // E4M3-quad is code0 but MULTI throughput -> it uses the non-fp8 (2-element) scale layout like E5M2, matching
   // how its scales are loaded. Gate on !mx_multi_elem so only single E4M3 takes the fp8 path.
-  val fp8Mode = io.dataType === 0.U && !io.mx_multi_elem
+  // fp8Mode = E4M3-single only (code0, 8-bit direct, 16-wide scale layout). E5M2 (code0/altfmt1) is a
+  // 4-bit LUT output whose scales use the nibble (32-wide) layout, matching the requant coalescer's
+  // isNibble grouping -- so it must NOT take the fp8 scale path.
+  val fp8Mode = io.dataType === 0.U && !io.mx_multi_elem && !io.mx_fp8_altfmt
   
   val write_addr_w = io.scale_mem_write_w.bits.addr
   val write_weight_counter  = RegInit(0.U(2.W))

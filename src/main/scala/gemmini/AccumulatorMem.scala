@@ -71,6 +71,7 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   val k = Input(UInt(16.W)) //for scaling factor memory control
   val dataType_out = Input(UInt(2.W)) //this is the output mxformat datatype
   val mx_multi_elem = Input(Bool()) // throughput: 2 elements/lane (E4M3-quad included), datatype-independent
+  val mx_fp8_altfmt = Input(Bool()) // code0 sub-format: 1 = E5M2 (4-bit LUT output), 0 = E4M3
   val scale_mem_write_act = if (use_mx_scaling) {
     Some(Flipped(Decoupled(new ScalingFactorWriteReq(13, 64))))
   } else None
@@ -246,6 +247,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     val scale_mem = scaleFactorMem.get
     scale_mem.io.dataType := io.dataType_out
     scale_mem.io.mx_multi_elem := io.mx_multi_elem
+    scale_mem.io.mx_fp8_altfmt := io.mx_fp8_altfmt
     //wirte scale_mem
     scale_mem.io.scale_mem_write_w <> io.scale_mem_write_w.get
     scale_mem.io.scale_mem_write_act <> io.scale_mem_write_act.get
@@ -276,10 +278,11 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
     val dim = meshRows * tileRows
     when(scale_mem.io.read_resp.valid) {
-      // dataType===0 (E4M3) uses the single-throughput FP8 windowed scaling (dim/4 elements at `offset`).
-      // E4M3-quad is code0 but MULTI throughput (2x-wide output) -> it must take the full-width path below,
-      // else the dim/4 window zeros 3/4 of the mode9 output. Gate the narrow window on !mx_multi_elem.
-      when(dataType === 0.U && !io.mx_multi_elem) {
+      // dataType===0 (E4M3-single) uses the single-throughput FP8 windowed scaling (dim/4 elements at
+      // `offset`). E4M3-quad is code0 but MULTI throughput (2x-wide output), and E5M2 (code0/altfmt1) is a
+      // 4-bit LUT output -- both take the full-width path below, else the dim/4 window zeros 3/4 of the
+      // output. Gate the narrow window on !mx_multi_elem AND !mx_fp8_altfmt (E4M3-single only).
+      when(dataType === 0.U && !io.mx_multi_elem && !io.mx_fp8_altfmt) {
         for (i <- 0 until dim) {
           val dataElement = Wire(UInt(64.W))
           val offset = pipelined_writes(0).bits.offset

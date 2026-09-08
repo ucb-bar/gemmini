@@ -508,8 +508,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         write_issue_q.io.deq.bits.laddr.is_acc_addr &&
         write_issue_q.io.deq.bits.laddr.read_full_acc_row
     }
-    val writeData_is_fp8 = !write_issue_q.io.deq.bits.laddr.is_garbage() && (io.output_mx_format === 0.U)
-    val writeData_is_fp4orfp6 = !write_issue_q.io.deq.bits.laddr.is_garbage() && (io.output_mx_format === 2.U || io.output_mx_format === 1.U)
+    // E5M2 requant output is fp8/code0 BUT emits 4-bit LUT indices (like fp6), so it is NOT 8-bit fp8.
+    // Only E4M3 (code0, altfmt0) is the wide 8-bit output; E5M2 (code0/altfmt1) joins the 4-bit group.
+    val out_e5m2_4bit = (io.output_mx_format === 0.U) && io.mx_fp8_altfmt
+    val writeData_is_fp8 = !write_issue_q.io.deq.bits.laddr.is_garbage() && (io.output_mx_format === 0.U) && !io.mx_fp8_altfmt
+    val writeData_is_fp4orfp6 = !write_issue_q.io.deq.bits.laddr.is_garbage() && (io.output_mx_format === 2.U || io.output_mx_format === 1.U || out_e5m2_4bit)
     val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()
 
     writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && !write_issue_q.io.deq.bits.dest.asBool && (!acc_scale_unit.io.out.bits.is_garbage)
@@ -806,7 +809,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // bank port can't take 256b in one cycle, so latch the high half on the valid cycle and drain it
       // the next cycle (the interleaved garbage cycle). beat0 -> dst_row, beat1 -> dst_row+1; the store
       // dst rows are stride-2, so this lands row-major-contiguous. FP8 keeps the requant_half scheme.
-      val requant_subbyte = io.output_mx_format === 1.U || io.output_mx_format === 2.U
+      // 4-bit LUT outputs (2 rows/beat, latch-and-drain): E3M2/E2M3 (code1), FP4 (code2), and E5M2
+      // (code0/altfmt1). E4M3 (code0/altfmt0) is the 8-bit path (not subbyte).
+      val requant_subbyte = io.output_mx_format === 1.U || io.output_mx_format === 2.U ||
+                            (io.output_mx_format === 0.U && io.mx_fp8_altfmt)
       val requant_bf16 = io.output_mx_format === 3.U   // non-requant BF16 out: full-width, 4 beats
       val requant_valid_fire = requant_to_spad && acc_scale_unit.io.out.valid &&
         acc_scale_unit.io.out.bits.fromDMA && !acc_scale_unit.io.out.bits.is_garbage
@@ -888,7 +894,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           // GATED tiled requant->spad (FP8 only): the two FP8 beats are the two halves of a tile row,
           // so beat1 lands one tile-row (16 spad rows) below beat0 instead of the flat +1. Flag=0 (or
           // BF16) keeps the flat +requant_half -> bit-identical to the existing store.
-          val tiled_beat = write_issue_q.io.deq.bits.reuse_tiled && (io.output_mx_format === 0.U)
+          // 8-bit E4M3 only (code0/altfmt0). E5M2 (code0/altfmt1) is 4-bit and uses the subbyte beat path.
+          val tiled_beat = write_issue_q.io.deq.bits.reuse_tiled && (io.output_mx_format === 0.U) && !io.mx_fp8_altfmt
           bio.write.addr := requant_dst_row + Mux(tiled_beat, (requant_half << 4).asUInt, requant_half)
           bio.write.data := Mux(requant_bf16, wideVec(requant_half), narrowVec(requant_half(0)))
           bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
@@ -1023,6 +1030,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.counter_k := io.counter_k
         bio.dataType_out := io.act_mx_format
         bio.mx_multi_elem := io.mx_multi_elem
+        bio.mx_fp8_altfmt := io.mx_fp8_altfmt
         // bio.scaleMemCntl <> io.scaleMemCntl.get
         bio.scaleMemCntl.foreach { bioCnlt =>          
           io.scaleMemCntl.foreach { ioCnlt =>

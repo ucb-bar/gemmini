@@ -184,9 +184,15 @@ class MxRequantizer[T <: Data](
   // either way); only the block-scale exponent floor differs: 1<<(e_bits-1)=16 for E5M2 vs FP6's 4.
   val e5m2Lut = lutConfig.projFormat == LutFP8E5M2
   val (exp_bits, mant_bits, pmax, log2_pmax_floor_raw) = MxFloatFormat(format_reg)
-  // code1 (LUT output) is FP6 (log2_pmax_floor from MxFloatFormat = 4) or E5M2 (16) at RUNTIME via altfmt.
-  val log2_pmax_floor = if (e5m2Lut) Mux(format_reg === 1.U && altfmt_reg, 16.U, log2_pmax_floor_raw)
-                        else log2_pmax_floor_raw
+  // Symmetric block-scale floor = 1<<(e_bits-1), selected at RUNTIME by (format code, altfmt):
+  //   code0/fp8: E4M3 -> 0 (MXQuant _po2 convention, from MxFloatFormat); E5M2 (altfmt) -> 16.
+  //   code1/fp6: E3M2 -> 4 (from MxFloatFormat); E2M3 (altfmt) -> 2.
+  //   code2/fp4 -> 2 (from MxFloatFormat). The altfmt overrides only fire on configs that support the
+  //   sub-format (E5M2 build never sees code0/altfmt E4M3-quad; E4M3Lut never sees code0/altfmt E5M2).
+  val log2_pmax_floor = MuxCase(log2_pmax_floor_raw, Seq(
+    (format_reg === 0.U && altfmt_reg) -> 16.U,   // E5M2
+    (format_reg === 1.U && altfmt_reg) ->  2.U    // E2M3
+  ))
   val data_buffer_counter = RegInit(0.U(1.W))
   //buffer twice for 16-lane mode
   val half_lanes = 16
@@ -201,8 +207,24 @@ class MxRequantizer[T <: Data](
   val quant_half_counter = RegInit(false.B)
   val first_half_buf     = RegInit(0.U(128.W))
 
+  // NOTE (future rename): this is really the DATAPATH PACK STRUCTURE, not the literal element bit-width.
+  // E5M2 has 8-bit codes but its requant OUTPUT uses the 6-bit/nibble 4-bit-LUT datapath (same as FP6),
+  // so we force it to 6 here. Consider renaming total_bits_per_element -> datapath_pack_mode.
+  val total_bits_raw = 1.U +& exp_bits +& mant_bits
   val total_bits_per_element = WireDefault(0.U(5.W))
-  total_bits_per_element := 1.U  +&  exp_bits  +&  mant_bits 
+  // E5M2 (code0/altfmt1) keeps its 8-bit codes for encode/finder, but rides the 6-bit LUT datapath for
+  // input buffering, packing, coalescer cadence, and isNibble grouping -- the proven FP6 path. The ISA
+  // output code stays 0 (E5M2 = code0/altfmt); only this internal pack-structure signal is remapped.
+  total_bits_per_element := Mux(format_reg === 0.U && altfmt_reg, 6.U, total_bits_raw)
+
+  // Requant output packing mode (symmetric, "always 4-bit LUT index" for the lut sub-formats):
+  //   E4M3-single (fp8/code0, altfmt0) -> 8-bit direct codes; E5M2 (code0/altfmt1) and E3M2/E2M3
+  //   (code1) -> 4-bit LUT indices (nibble-packed via the LUT projection); FP4 (code2) -> 4-bit direct.
+  // (E4M3-quad 4-bit output is deferred -- it needs lut_en, not wired to the requantizer; E4M3 stays
+  //  8-bit here regardless of quad, so E4M3-quad requant currently emits 8-bit like E4M3-single.)
+  val out_is_fp4  = format_reg === 2.U
+  val out_is_lut4 = (format_reg === 1.U) || (format_reg === 0.U && altfmt_reg)
+  val out_is_8bit = (format_reg === 0.U && !altfmt_reg)
 
   val extracted_data = WireDefault((0.U((io.outputnumLanes*8).W))) // 256bits / 128bits
   val quant_data_held = RegInit(0.U((io.outputnumLanes*8).W))
@@ -335,11 +357,11 @@ class MxRequantizer[T <: Data](
   final_pipe_out.bits.out.quant_mx_data_out := 0.U.asTypeOf(spad_row_t)
   final_pipe_out.bits.out.is_garbage := false.B
   val lut_valid = quantLut.io.projected_data.valid
-  when(total_bits_per_element === 8.U) {
+  when(out_is_8bit) {
     final_pipe_out.valid := oldest_pipe_out.valid
     final_pipe_out.bits.out.quant_mx_data_out := Mux(quantize_valid, extracted_data, quant_data_held).asTypeOf(spad_row_t)
     final_pipe_out.bits.out.is_garbage := false.B
-  }.elsewhen(total_bits_per_element === 6.U) {
+  }.elsewhen(out_is_lut4) {
     when(lut_valid) {
       when(!quant_half_counter) {
         first_half_buf     := fp6_lut_out
@@ -352,7 +374,7 @@ class MxRequantizer[T <: Data](
     final_pipe_out.valid :=  (oldest_pipe_out.valid)  
     final_pipe_out.bits.out.quant_mx_data_out := Mux(lut_valid, fp6_combined, quant_data_held).asTypeOf(spad_row_t)
 
-  }.elsewhen(total_bits_per_element === 4.U) {
+  }.elsewhen(out_is_fp4) {
     when(quantize_valid) {
       when(!quant_half_counter) {
         first_half_buf     := extracted_data(127, 0)
@@ -361,26 +383,26 @@ class MxRequantizer[T <: Data](
         quant_half_counter := false.B
       }
     }
-    final_pipe_out.valid := (oldest_pipe_out.valid) 
+    final_pipe_out.valid := (oldest_pipe_out.valid)
     final_pipe_out.bits.out.is_garbage := !quant_half_counter && oldest_pipe_out.valid
     final_pipe_out.bits.out.quant_mx_data_out := Mux(quantize_valid, fp4_combined, quant_data_held).asTypeOf(spad_row_t)
   }
-  
+
   when(quantize_valid) {
-    when(total_bits_per_element === 4.U){
+    when(out_is_fp4){
       extracted_data := Cat((0 until io.outputnumLanes).map(i => quantized_buffer(i)(3, 0)).reverse)
-    }.elsewhen(total_bits_per_element === 8.U){
+    }.elsewhen(out_is_8bit){
       extracted_data := Cat(quantized_buffer.reverse)
     }.otherwise{
       extracted_data := 0.U((io.outputnumLanes*8).W)
     }
   }
 
-  when(quantize_valid && total_bits_per_element === 8.U) {
+  when(quantize_valid && out_is_8bit) {
     quant_data_held := extracted_data
-  }.elsewhen(lut_valid && total_bits_per_element === 6.U){
+  }.elsewhen(lut_valid && out_is_lut4){
     quant_data_held := (fp6_combined)
-  }.elsewhen(quantize_valid && total_bits_per_element === 4.U){
+  }.elsewhen(quantize_valid && out_is_fp4){
     quant_data_held := (fp4_combined)
   }
 
@@ -548,7 +570,9 @@ class MxRequantizer[T <: Data](
   val rdataW = lutConfig.rdataWidth
   val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
   dontTouch(quant_fp6)
-  quant_fp6 := Mux(total_bits_per_element === 6.U, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(rdataW - 1, 0))),
+  // Feed the LUT projection for every 4-bit-LUT output (E3M2/E2M3 6-bit codes AND E5M2 8-bit codes on
+  // code0/altfmt). rdataW (8) low bits carry the code: full 8-bit for E5M2, low-6 (padded) for fp6.
+  quant_fp6 := Mux(out_is_lut4, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(rdataW - 1, 0))),
   VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
   //val quant_projected_data = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(4.W))))
 
@@ -560,6 +584,7 @@ class MxRequantizer[T <: Data](
   quantLut.io.read_a := io.read_a
   quantLut.io.read_d := io.read_d
   quantLut.io.mx_fp8_altfmt := altfmt_reg
+  quantLut.io.output_mx_format := format_reg
   quantLut.io.loop_bound_i := io.loop_bound_i
   quantLut.io.loop_bound_j := io.loop_bound_j
   quantLut.io.loop_bound_k := io.loop_bound_k
@@ -570,8 +595,8 @@ class MxRequantizer[T <: Data](
   quantLut.io.lut_write_act_in <> io.lut1_write
   quantLut.io.lut_write_act_out <> io.lut2_write
 
-  when(quantize_valid && (total_bits_per_element === 6.U)) {
-      quantLut.io.quant_fp6.valid := true.B 
+  when(quantize_valid && out_is_lut4) {
+      quantLut.io.quant_fp6.valid := true.B
       quantLut.io.quant_fp6.bits := quant_fp6
   }
 
@@ -601,7 +626,7 @@ class MxRequantizer[T <: Data](
   //   fp8:    sb=super-block, bib=block-in-sb, m=16*g+row,        b=2*sb+bib
   //   nibble: sb=block(b),    bib=row-half,    m=32*g+16*bib+row, b=sb
   val ROWS_PER_HALF = meshColumns * tileColumns            // 16 rows per (bib) row-half
-  val isNibble      = (total_bits_per_element === 4.U) || (total_bits_per_element === 6.U)
+  val isNibble      = out_is_fp4 || out_is_lut4   // 4-bit-packed outputs: FP4, E3M2/E2M3, and E5M2 (code0/altfmt)
   val GN            = Mux(isNibble, io.loop_bound_j, (io.loop_bound_j >> 1).asUInt)
   val tiles_I       = io.loop_bound_i
   val num_super     = (GN + 1.U) >> 1                      // fp8: ceil(GN/2) super-blocks

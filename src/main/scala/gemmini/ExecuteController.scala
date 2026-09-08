@@ -166,10 +166,15 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     case _ => false
   }
   // THROUGHPUT (elements packed per operand lane), decoupled from the datatype (format code):
-  //   1/lane -> single E4M3 (code0 without lut_en); 2/lane -> FP4/FP6/E5M2 (code!=0) and E4M3-quad
-  //   (code0 + lut_en on this build). Downstream column/stride/chunk layout keys off THIS, never the
+  //   1/lane -> single E4M3 ONLY (code0, altfmt0, no lut_en). 2/lane -> FP4/FP6 (code!=0),
+  //   E5M2 (code0 + altfmt1 -- same 8b/sig3/mode4 dual layout as E3M2), and E4M3-quad (code0 +
+  //   lut_en on the quad build). Downstream column/stride/chunk layout keys off THIS, never the
   //   format code -- the code stays datatype-only. Exposed on io.mx for the layout modules.
-  val mx_multi_elem = if (use_mx_scaling) (mx_state.get.activation_mx_format =/= 0.U) || (e4m3QuadThroughput.B && io.lut_en) else false.B
+  val mx_multi_elem = if (use_mx_scaling)
+    (mx_state.get.activation_mx_format =/= 0.U) ||
+    (mx_state.get.activation_mx_format === 0.U && mx_state.get.mx_fp8_altfmt) ||   // E5M2 (code0/altfmt1) is dual
+    (e4m3QuadThroughput.B && io.lut_en)
+    else false.B
   // NOTE: the CONFIG_SCALE_MEM register latch lives in the main command decoder's gated branch
   // (search "config_cmd_type === CONFIG_SCALE_MEM"), NOT here. It must fire ONLY when a *valid*
   // config sits at the queue head (cmd.valid(0) && !matmul_in_progress && !pending). An ungated
