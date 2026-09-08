@@ -632,12 +632,13 @@ object Arithmetic {
       override def mac_mx(m1: MxFloat, m2: MxFloat, fpProductPrecision: MxFloat, fpAccPrecision: MxFloat, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, lut_en: Bool): MxFloat = {
         require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
         // Config select (by the BUILD's declared operand type, an elaboration constant):
-        //   expWidth>=5 -> E5M2 (wider exp).  sigWidth>=4 -> E4M3-quad (16-MACU mode9 PE, sig4 lane).
-        //   else -> plain mxGemmini. Only the E4M3-quad build has hasMode9=true, so lut_en can promote
-        //   E4M3 to 4-wide only there (see the requiredPEMode gate below).
+        //   expWidth>=5 -> E5M2-only build (wider exp, no mode9).  sigWidth>=4 -> the all-formats build
+        //   (16-MACU mode9 PE, sig4 lane; also carries E5M2 via the decoupled 5-bit exp slots).
+        //   else -> plain mxGemmini. hasMode9=true only on the all build, so lut_en promotes E4M3 to
+        //   4-wide only there (see the requiredPEMode gate below).
         val peBaseConfig =
           if (m1.expWidth >= 5 || m2.expWidth >= 5) MxConfig.mxGemminiE5M2
-          else if (m1.sigWidth >= 4 || m2.sigWidth >= 4) MxConfig.mxGemminiE4M3Lut
+          else if (m1.sigWidth >= 4 || m2.sigWidth >= 4) MxConfig.mxGemminiAll
           else MxConfig.mxGemmini
         val macConfig = peBaseConfig.copy(
           inActBusWidth    = m1.bits.getWidth,

@@ -360,10 +360,10 @@ object GemminiMxFPConfigs {
     )),
   )
 
-  // FP8 E4M3 at 4 elements/cycle via the LUT (quad / 16-MACU mode9 PE). E4M3 stored 4-bit and
-  // up-projected to 8-bit E4M3, 2 per operand lane (MxFloat(4,4,2) = 16b). Runtime lut_en promotes
-  // E4M3 to the 4-wide path; lut_en=0 keeps plain 1-wide E4M3. Mirrors e5m2MxFPConfig with LutFP8E4M3.
-  val e4m3LutMxFPConfig = standaloneMxFPConfig.copy(
+  // ALL MX formats in one mesh {FP4, E3M2, E2M3, E4M3, E5M2}, modes {0,4,8,9}. Operand lane MxFloat(4,4,2)
+  // = 16b routes mac_mx -> mxGemminiAll; E5M2 (exp5) rides mode4 via the decoupled 5-bit exp slots. Runtime
+  // lut_en promotes E4M3 to the 4-wide quad path. LutFP8E4M3 projection covers E4M3/E2M3/E3M2 outputs.
+  val allMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat(4, 4, 2, pad=false),
     weightType = MxFloat(4, 4, 2, pad=false),
     spatialArrayInputType  = MxFloat(4, 4, 2, pad=false),
@@ -376,6 +376,8 @@ object GemminiMxFPConfigs {
       projFormat = LutFP8E4M3,
     )),
   )
+  // Back-compat alias.
+  val e4m3LutMxFPConfig = allMxFPConfig
 }
 
 // =========== MxFP Config ==========
@@ -409,15 +411,18 @@ class GemminiMxFPE5M2StandaloneConfig extends Config((site, here, up) => {
   )
 })
 
-class GemminiMxFPE4M3LutStandaloneConfig extends Config((site, here, up) => {
+class GemminiMxFPAllStandaloneConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq(
       (p: Parameters) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
-        LazyModule(new Gemmini(GemminiMxFPConfigs.e4m3LutMxFPConfig))
+        LazyModule(new Gemmini(GemminiMxFPConfigs.allMxFPConfig))
     }
   )
 })
+
+// Back-compat alias: the old E4M3-LUT fragment is now the all-formats build.
+class GemminiMxFPE4M3LutStandaloneConfig extends GemminiMxFPAllStandaloneConfig
 
 class GemminiMxFPTestConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq(

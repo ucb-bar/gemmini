@@ -116,22 +116,27 @@ class QuantLut(
         proj_nearest(i) := Mux(io.mx_fp8_altfmt, fp8Finders(i).io.nearestIdx, fp6Finders(i).io.nearestIdx)
       }
     case LutFP8E4M3 =>
-      // E4M3-LUT build (mxGemminiE4M3Lut): requant output is E4M3-quad (fp8/code0, 8-bit code) OR a
-      // 6-bit fp6 sub-format (E3M2 = code1/altfmt0, E2M3 = code1/altfmt1). Pick the finder family by the
-      // output code: fp8 -> E4M3 (8-bit), fp6 -> E2M3 if altfmt else E3M2 (6-bit codes in the low 6).
-      val fp8Finders   = Seq.fill(32)(Module(new FP8NearestFinder(false)))
+      // All-formats build (mxGemminiAll): requant output is a code0 fp8 sub-format (E4M3 = altfmt0, E5M2 =
+      // altfmt1, both 8-bit codes) OR a code1 fp6 sub-format (E3M2 = altfmt0, E2M3 = altfmt1, 6-bit codes in
+      // the low 6). Pick the finder family by output code, then the sub-format by mx_fp8_altfmt (symmetric
+      // with the input decode). fp8 finders take the full 8-bit codebook; fp6 finders the low 6 bits.
+      val fp8e4Finders = Seq.fill(32)(Module(new FP8NearestFinder(false)))  // E4M3 (exp4)
+      val fp8e5Finders = Seq.fill(32)(Module(new FP8NearestFinder(true)))   // E5M2 (exp5)
       val fp6e3Finders = Seq.fill(32)(Module(new FP6E3M2NearestFinder()))
       val fp6e2Finders = Seq.fill(32)(Module(new FP6E2M3NearestFinder()))
       val proj_lut6    = VecInit(proj_lut.map(_(5, 0)))
       for (i <- 0 until 32) {
-        fp8Finders(i).io.in       := proj_in(i)
-        fp8Finders(i).io.in_lut   := proj_lut
+        fp8e4Finders(i).io.in     := proj_in(i)
+        fp8e4Finders(i).io.in_lut := proj_lut
+        fp8e5Finders(i).io.in     := proj_in(i)
+        fp8e5Finders(i).io.in_lut := proj_lut
         fp6e3Finders(i).io.in_fp6 := proj_in(i)(5, 0)
         fp6e3Finders(i).io.in_lut := proj_lut6
         fp6e2Finders(i).io.in_fp6 := proj_in(i)(5, 0)
         fp6e2Finders(i).io.in_lut := proj_lut6
         val fp6Idx = Mux(io.mx_fp8_altfmt, fp6e2Finders(i).io.nearestIdx, fp6e3Finders(i).io.nearestIdx)
-        proj_nearest(i) := Mux(io.output_mx_format === 1.U, fp6Idx, fp8Finders(i).io.nearestIdx)
+        val fp8Idx = Mux(io.mx_fp8_altfmt, fp8e5Finders(i).io.nearestIdx, fp8e4Finders(i).io.nearestIdx)
+        proj_nearest(i) := Mux(io.output_mx_format === 1.U, fp6Idx, fp8Idx)
       }
     case _ => // LutFP6E3M2 (default)
       val finders = Seq.fill(32)(Module(new FP6E3M2NearestFinder()))

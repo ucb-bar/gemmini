@@ -58,11 +58,14 @@ class MxE5M2GemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(128) ++
   new chipyard.config.AbstractConfig)
 
-class MxE4M3LutGemminiRocketConfig extends Config(
-  new gemmini.GemminiMxFPE4M3LutStandaloneConfig ++              // FP8 E4M3 at 4 elem/cycle via LUT (mode9 quad PE)
+class MxAllGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAllStandaloneConfig ++                  // ALL MX formats {FP4,E3M2,E2M3,E4M3,E5M2}, modes {0,4,8,9}
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++
   new chipyard.config.WithSystemBusWidth(128) ++
   new chipyard.config.AbstractConfig)
+
+// Back-compat alias: the old E4M3-LUT build is now a strict subset of the all-formats build.
+class MxE4M3LutGemminiRocketConfig extends MxAllGemminiRocketConfig
 
 class TestMxGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPTestConfig ++                         // use FP32Gemmini systolic array GEMM accelerator
