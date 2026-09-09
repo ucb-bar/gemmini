@@ -414,6 +414,44 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
       projFormat = LutFP8E5M2)),
   )
+
+  // Asymmetric FP4-act x FP6_E3M2-wei (mode1): activation fed direct (4-bit), weight LUT-deprojected to
+  // 6-bit E3M2. Inherits the default LutFP6E3M2 codebook from standaloneMxFPConfig.
+  val asymFp4Fp6MxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4Fp6),
+    weightType = MxFloat.withConfig(3, 3, 2, MxConfig.asymFp4Fp6),
+    spatialArrayInputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4Fp6),
+    spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.asymFp4Fp6),
+  )
+
+  // Opposite asymmetric: FP6_E3M2-act (LUT-deprojected) x FP4-wei (direct), mode3. Default LutFP6E3M2
+  // codebook (inherited) up-projects the fp6 activation.
+  val asymFp6Fp4MxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymFp6Fp4),
+    weightType = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp6Fp4),
+    spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymFp6Fp4),
+    spatialArrayWeightType = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp6Fp4),
+  )
+
+  // Asymmetric: FP8_E5M2-act (LUT-deprojected to 8-bit) x FP4-wei (direct), mode3. E5M2 LUT codebook.
+  val asymE5M2Fp4MxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2Fp4),
+    weightType = MxFloat.withConfig(2, 2, 2, MxConfig.asymE5M2Fp4),
+    spatialArrayInputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2Fp4),
+    spatialArrayWeightType = MxFloat.withConfig(2, 2, 2, MxConfig.asymE5M2Fp4),
+    lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
+      projFormat = LutFP8E5M2)),
+  )
+
+  // Opposite: FP4-act (direct) x FP8_E5M2-wei (LUT-deprojected to 8-bit), mode1. E5M2 LUT codebook.
+  val asymFp4E5M2MxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4E5M2),
+    weightType = MxFloat.withConfig(5, 3, 2, MxConfig.asymFp4E5M2),
+    spatialArrayInputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4E5M2),
+    spatialArrayWeightType = MxFloat.withConfig(5, 3, 2, MxConfig.asymFp4E5M2),
+    lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
+      projFormat = LutFP8E5M2)),
+  )
 }
 
 // =========== MxFP Config ==========
@@ -489,6 +527,30 @@ class GemminiMxFPE5M2OnlyStandaloneConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq((p: Parameters) => {
     implicit val q = p; implicit val v = implicitly[ValName]
     LazyModule(new Gemmini(GemminiMxFPConfigs.e5m2OnlyMxFPConfig))
+  })
+})
+class GemminiMxFPAsymFp4Fp6StandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.asymFp4Fp6MxFPConfig))
+  })
+})
+class GemminiMxFPAsymFp6Fp4StandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.asymFp6Fp4MxFPConfig))
+  })
+})
+class GemminiMxFPAsymE5M2Fp4StandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.asymE5M2Fp4MxFPConfig))
+  })
+})
+class GemminiMxFPAsymFp4E5M2StandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.asymFp4E5M2MxFPConfig))
   })
 })
 

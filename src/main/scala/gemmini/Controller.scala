@@ -42,7 +42,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   val num_ids = 32 // TODO (richard): move to config
   val spad_base = config.tl_ext_mem_base
   val spad_data_len = config.sp_width_projected / 8
-  val acc_data_len = config.sp_width / config.weightType.getWidth * config.accType.getWidth / 8
+  val acc_data_len = config.meshColumns * config.tileColumns * config.accType.getWidth / 8
   val max_data_len = spad_data_len // max acc_data_len
 
   val mem_depth = config.sp_bank_entries * spad_data_len / max_data_len
@@ -773,13 +773,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     for (b <- 0 until sp_banks) {
       mx_sel(b) := false.B
       when(read_projected(b).resp.valid) {
-        // Deproject (LUT-stored operand) fires for fp6 (always), fp8 E5M2 (always), and E4M3-quad
-        // (lut_en on a quad build); fp8 E4M3-single and fp4 stay the direct path (useMxB).
-        val wfmt = ex_controller.io.mx.get.weight_mx_format_out
+        // Per-operand routing: act reads gate on act fmt, weight/other reads on weight fmt.
+        val opfmt = Mux(read_projected(b).resp.bits.read_a,
+          ex_controller.io.mx.get.activation_mx_format_out,
+          ex_controller.io.mx.get.weight_mx_format_out)
         val walt = ex_controller.io.mx.get.mx_fp8_altfmt_out
-        mx_sel(b) := (wfmt === 1.U) ||
-          (wfmt === 0.U && walt) ||
-          (e4m3QuadThroughput.B && mx_lut_en && wfmt === 0.U && !walt)
+        mx_sel(b) := (opfmt === 1.U) ||
+          (opfmt === 0.U && walt) ||
+          (e4m3QuadThroughput.B && mx_lut_en && opfmt === 0.U && !walt)
       }
 
       // req to srams
@@ -806,22 +807,23 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
       // FP8 mode: bypass requantizer
       when (useMxB) {
-        // Expand the stored 8-bit-slot operands onto the deprojected bus, lane width = weightType.getWidth:
-        // E4M3 -> low 8 of the lane; FP4 (dual 4-bit) -> low 4 of each slotW half-lane.
+        // Direct-path expansion, per operand: act uses inputType width + act fmt, weight uses weightType
+        // width + weight fmt. E4M3 -> low 8 of the lane; FP4 (dual 4-bit) -> low 4 of each half-lane.
         val proj = read_projected(b).resp
-        val laneW = outer.config.weightType.getWidth
-        val slotW = laneW / 2
-        val padded_data = WireInit(0.U(sp_width.W))
         val spad_data_vec = proj.bits.data.asTypeOf(Vec(16, UInt(8.W)))
-        when(ex_controller.io.mx.get.weight_mx_format_out === 0.U) {
-          padded_data := VecInit(spad_data_vec.map(_.pad(laneW))).asUInt
-        }.elsewhen(ex_controller.io.mx.get.weight_mx_format_out === 2.U) {
-          padded_data := VecInit(spad_data_vec.map { byte =>
-            val nibble_lo = byte(3, 0).pad(slotW)
-            val nibble_hi = byte(7, 4).pad(slotW)
-            Cat(nibble_hi, nibble_lo)
-          }).asUInt
+        def expand(laneW: Int, fmt: UInt): UInt = {
+          val slotW = laneW / 2
+          val out = WireInit(0.U(sp_width.W))
+          when(fmt === 0.U) {
+            out := VecInit(spad_data_vec.map(_.pad(laneW))).asUInt
+          }.elsewhen(fmt === 2.U) {
+            out := VecInit(spad_data_vec.map(byte => Cat(byte(7, 4).pad(slotW), byte(3, 0).pad(slotW)))).asUInt
+          }
+          out
         }
+        val padded_data = Mux(proj.bits.read_a,
+          expand(outer.config.inputType.getWidth,  ex_controller.io.mx.get.activation_mx_format_out),
+          expand(outer.config.weightType.getWidth, ex_controller.io.mx.get.weight_mx_format_out))
         sram_read_buffer(b).resp.valid := read_projected(b).resp.valid
         sram_read_buffer(b).resp.bits.data := padded_data
         sram_read_buffer(b).resp.bits.fromDMA := read_projected(b).resp.bits.fromDMA

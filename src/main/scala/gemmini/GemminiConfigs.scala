@@ -122,7 +122,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              // None => tl_ext_mem_base + 0x100000.
                                                                              mx_mmio_base: Option[BigInt] = None
                                                        ) {
-  val sp_width = meshColumns * tileColumns * weightType.getWidth
+  // Deprojected operand-row width: sized to the wider of the two operands so an asymmetric build whose
+  // activation (inputType) is wider than its weight still fits (symmetric/weight-wide builds unchanged).
+  val sp_width = meshColumns * tileColumns * (weightType.getWidth max inputType.getWidth)
   val sp_width_projected = meshColumns * tileColumns * weightTypeProjected.getWidth
   val sp_bank_entries = sp_capacity match {
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (sp_banks * sp_width_projected)

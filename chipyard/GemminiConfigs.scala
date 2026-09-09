@@ -98,6 +98,34 @@ class MxE5M2OnlyGemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(128) ++
   new chipyard.config.AbstractConfig)
 
+// Asymmetric FP4-act x FP6_E3M2-wei build (mode1, 4 products/PE).
+class MxAsymFp4Fp6GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymFp4Fp6StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+// Opposite asymmetric FP6_E3M2-act x FP4-wei build (mode3).
+class MxAsymFp6Fp4GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymFp6Fp4StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+// Asymmetric FP8_E5M2-act x FP4-wei build (mode3, wide E5M2 activation).
+class MxAsymE5M2Fp4GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE5M2Fp4StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+// Opposite asymmetric FP4-act x FP8_E5M2-wei build (mode1, wide E5M2 weight).
+class MxAsymFp4E5M2GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymFp4E5M2StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
 class TestMxGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPTestConfig ++                         // use FP32Gemmini systolic array GEMM accelerator
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++

@@ -162,8 +162,9 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   // TODO: Improve this function to actually reduce the size of MXFormats
   def toInput(x: Data): T = {
-    val u = x.asUInt
-    u(inputType.getWidth - 1, 0).asTypeOf(inputType) 
+    // pad so a narrower operand (asymmetric weightType < inputType) still fills inputType width
+    val u = x.asUInt.pad(inputType.getWidth)
+    u(inputType.getWidth - 1, 0).asTypeOf(inputType)
   }
 
   transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
