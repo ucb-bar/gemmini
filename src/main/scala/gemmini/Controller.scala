@@ -590,12 +590,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val mx_lut_en = RegInit(false.B)
   ex_controller.io.lut_en := mx_lut_en
 
-  // True only on the E4M3-quad build, which routes E4M3 (code0) operands through the LUT deproject
-  // (4-bit -> 2x8b E4M3) when lut_en is set.
-  val e4m3QuadThroughput = outer.config.spatialArrayInputType match {
+  // True on the E4M3-quad build (either operand lane is E4M3), which routes E4M3 (code0) operands through
+  // the LUT deproject (4-bit -> 2x8b E4M3) when lut_en is set.
+  private def isE4M3Lane(t: Any): Boolean = t match {
     case mf: MxFloat => mf.sigWidth >= 4 && mf.expWidth < 5
     case _ => false
   }
+  val e4m3QuadThroughput = isE4M3Lane(outer.config.spatialArrayInputType) ||
+    isE4M3Lane(outer.config.spatialArrayWeightType)
 
   val (lut_out, lut_out_sel, lut_loader_start) = if (outer.use_mx_mmio) {
     val (gnode, gedge) = outer.mx_lut_loader_client.get.out.head

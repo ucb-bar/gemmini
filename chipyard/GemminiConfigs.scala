@@ -140,6 +140,77 @@ class MxAsymE3M2E5M2GemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(128) ++
   new chipyard.config.AbstractConfig)
 
+// Mixed-quad asymmetric FP8_E4M3-act x FP4-wei build (mode10, E4M3 via quad LUT).
+class MxAsymE4M3Fp4GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE4M3Fp4StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+// Opposite mixed-quad asymmetric FP4-act x FP8_E4M3-wei build (mode11, E4M3 weight via quad LUT).
+class MxAsymFp4E4M3GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymFp4E4M3StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+// E4M3-quad x sig3 dual-LUT builds (mode10 / mode11), both directions x {e3m2, e5m2}.
+class MxAsymE4M3E3M2GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE4M3E3M2StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+class MxAsymE4M3E5M2GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE4M3E5M2StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+class MxAsymE3M2E4M3GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE3M2E4M3StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+class MxAsymE5M2E4M3GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE5M2E4M3StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+// E2M3 mixed-quad builds (mode10/mode11), E2M3 x {fp4, e3m2, e5m2} both directions.
+class MxAsymE2M3Fp4GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE2M3Fp4StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+class MxAsymE2M3E3M2GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE2M3E3M2StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+class MxAsymE2M3E5M2GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE2M3E5M2StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+class MxAsymFp4E2M3GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymFp4E2M3StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+class MxAsymE3M2E2M3GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE3M2E2M3StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+class MxAsymE5M2E2M3GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE5M2E2M3StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
 class TestMxGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPTestConfig ++                         // use FP32Gemmini systolic array GEMM accelerator
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++

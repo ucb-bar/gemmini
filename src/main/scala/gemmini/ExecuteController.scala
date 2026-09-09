@@ -150,11 +150,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val mx_state = if (use_mx_scaling) Some(RegInit((0.U).asTypeOf(new ExControllerMxScalingRegs(scale_mem.get.ScaleMemWriteAddrWidth)))) else None
 
-  // E4M3-quad build detection (operand lane MxFloat(4,4,2), sig4). Elaboration constant.
-  val e4m3QuadThroughput = spatialArrayInputType match {
+  // E4M3-quad build detection (either operand lane is E4M3 MxFloat(4,4,2), sig4). Elaboration constant.
+  private def isE4M3Lane(t: Any): Boolean = t match {
     case mf: MxFloat => mf.sigWidth >= 4 && mf.expWidth < 5
     case _ => false
   }
+  val e4m3QuadThroughput = isE4M3Lane(spatialArrayInputType) || isE4M3Lane(spatialArrayWeightType)
   // Elements packed per operand lane: 1/lane only for single E4M3; 2/lane for FP4/FP6, E5M2 and
   // E4M3-quad. Downstream column/stride/chunk layout keys off this, not the datatype format code.
   val mx_multi_elem = if (use_mx_scaling)
