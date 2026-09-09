@@ -31,13 +31,10 @@ object MxFloatFormat {
       BF16 -> 65024.U
     ))
 
-    // Block-scale floor: FP8 uses the _po2 convention (pmax=0); FP4/FP6 use OCP emax (FP4=2, FP6=4).
-    val log2_pmax_floor = MuxLookup(bits, 0.U)(Seq(
-      FP4 -> 2.U,
-      FP6 -> 4.U,
-      FP8 -> 0.U,
-      BF16 -> 0.U
-    ))
+    // Block-scale floor = 0 for every format (_po2 convention): a block max normalizes into [1,2) so a
+    // chained requant output (which becomes the next matmul's A operand) never overflows the acc. Non-zero
+    // floors (old FP4=2, FP6=4) pushed chained values past the accumulator/finder range.
+    val log2_pmax_floor = 0.U
     
     (exp_bits, mant_bits, pmax, log2_pmax_floor)
   }
@@ -179,13 +176,8 @@ class MxRequantizer[T <: Data](
   
   val e5m2Lut = lutConfig.projFormat == LutFP8E5M2
   val (exp_bits, mant_bits, pmax, log2_pmax_floor_raw) = MxFloatFormat(format_reg)
-  // Block-scale floor overrides by (format code, altfmt): E5M2 -> 16, E4M3-quad -> 8, E2M3 -> 2;
-  // everything else uses the MxFloatFormat default.
-  val log2_pmax_floor = MuxCase(log2_pmax_floor_raw, Seq(
-    (format_reg === 0.U && altfmt_reg) -> 16.U,                    // E5M2
-    (format_reg === 0.U && !altfmt_reg && lut_en_reg) -> 8.U,      // E4M3-quad (LUT nibble)
-    (format_reg === 1.U && altfmt_reg) ->  2.U                     // E2M3
-  ))
+  // Block-scale floor = 0 for every (format, altfmt) so chained requant outputs stay in acc/finder range.
+  val log2_pmax_floor = log2_pmax_floor_raw
   val data_buffer_counter = RegInit(0.U(1.W))
   //buffer twice for 16-lane mode
   val half_lanes = 16
