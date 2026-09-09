@@ -404,16 +404,8 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val ceil_max_j4 = ((req.max_j + 3.U) / 4.U) * 4.U
   val c_addr = Mux(req.narrow_type, c_addr_start + (i * req.max_j + j) * block_size.U,
     c_addr_start + (i * ceil_max_j4 + j) * (block_size / 4).U)
-  //  val c_addr_wire = WireDefault(c_addr)
-  //  dontTouch(c_addr_wire)
-  // val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
-  // val a_rows = block_size.U - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)
-  // val b_cols = block_size.U - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)
-  // val b_rows = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
-  // val c_cols = block_size.U - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)
-  // val c_rows = block_size.U - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)
 
-  val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)   
+  val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
   val a_rows = block_ij - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)       
   val b_cols = block_ij - Mux(j === req.max_j - 1.U, req.pad_j, 0.U)       
   val b_rows = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)   
@@ -455,8 +447,6 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
   val comp_cmd_rs2 = Wire(compute_rs2_t.cloneType)
   comp_cmd_rs2 := DontCare
-  // comp_cmd_rs2.num_rows := block_size.U
-  // comp_cmd_rs2.num_cols := block_size.U
   comp_cmd_rs2.num_rows := block_ij
   comp_cmd_rs2.num_cols := block_ij
   comp_cmd_rs2.local_addr := garbage_addr(comp_cmd_rs2.local_addr)
@@ -757,11 +747,10 @@ class LoopMatmulStCSpadReq(val block_size: Int, val iterator_bitwidth: Int, val 
   val output_mx_format = UInt(2.W)
   val activation_mx_format = UInt(2.W)
   val mx_multi_elem = Bool()   // throughput: 2 elements/lane (datatype-independent)
-  // True when the output (C) scratchpad region overlaps the A/B operand region this loop still
-  // reads (decided at dispatch). Only then does the store WAR-gate on full execute drain.
+  // Output C region overlaps an A/B operand region this loop still reads (decided at dispatch);
+  // gates the store on full execute drain.
   val dst_overlaps_operands = Bool()
-  // GATED tiled requant->spad store (LOOP_WS rs2 bit 10). When set (FP8 only) the requant output is
-  // deposited BLOCK-TILED (operand-A layout) so it can be reused in place as the next matmul's A.
+  // FP8 gated tiled requant->spad store: output deposited block-tiled (operand-A layout) for in-place reuse.
   val reuse_tiled = Bool()
 }
 
@@ -806,8 +795,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   }
 
   val numChunks = block_size / 8
-  // Flat FP8 chunk stride = tilesPerMxBlock (chunks land column-inner). GATED tiled (FP8 only): x16
-  // so successive chunks step whole tile-rows (32 = 16*tilesPerMxBlock), matching the tiled layout.
+  // FP8 chunk stride: flat = tilesPerMxBlock (column-inner); gated tiled = x16 (steps whole tile-rows).
   val chunk_spad_stride = Mux(req.output_mx_format === 3.U || req.full_c, (2 * tilesPerMxBlock).U,
     Mux(req.reuse_tiled && req.output_mx_format === 0.U, (16 * tilesPerMxBlock).U, tilesPerMxBlock.U))
 
@@ -824,8 +812,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val acc_addr_start = req.src_addr
 
   val dst_offset = MuxCase(
-    // FP4/FP6 requant: flat = i*N + 2*j. GATED tiled = i*N + 32*j (j-term x16 -> within-tile-row-inner
-    // operand layout for in-place reuse). reuse_tiled is only set for the nibble requant case here.
+    // FP4/FP6 requant: flat = i*N + 2*j; gated tiled = i*N + 32*j (j-term x16 -> tiled operand layout).
     Mux(req.reuse_tiled,
       (i * req.max_j) * block_size.U * 2.U + j * (block_size * 2).U,
       (i * req.max_j) * block_size.U * 2.U + j * (block_size / 8).U), Seq(
@@ -885,17 +872,11 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
       req.max_j - 1.U,             // partial last group ends at max_j-1
       last_group * 4.U + 3.U),     // full group = 4 execute tiles
     last_group)                    // non-FP8: one execute tile per group
-  // terminal j-group (with earlier groups) has no drain margin: route it through the
-  // drain-gated ex_completed instead of the early ex_i window.
+  // terminal j-group has no drain margin: route it through drain-gated ex_completed, not the early ex_i window.
   val terminal_needs_drain = (last_group === iter_max_j - 1.U) && (iter_max_j > 1.U)
-  // WAR hazard: when the output is written back into the SAME scratchpad region that still holds
-  // an operand (output row aliases an A/B row read by a later execute tile), the early
-  // issue-position window would release the store while those rows are still being read, and the
-  // store DMA then overwrites the live operand. Only when such an overlap actually exists do we
-  // release ONLY via io.ex_completed (execute idle + fully retired = every operand read done), so
-  // the write waits for all reads regardless of DMA latency. With no overlap there is no WAR and
-  // the fast early-release window is kept (no needless stall). The overlap is decided at dispatch
-  // (req.dst_overlaps_operands).
+  // WAR hazard: if the output aliases an A/B row a later execute tile still reads, releasing the store on
+  // the early window lets the DMA overwrite the live operand. On overlap, release only via io.ex_completed
+  // (all operand reads done); otherwise keep the fast early-release window.
   val dest_overlaps_live_operands = req.dst_overlaps_operands
   dontTouch(ej_high)
   dontTouch(terminal_needs_drain)
@@ -1406,13 +1387,9 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC_spad.io.req.bits.mx_multi_elem := io.mx_multi_elem
   stC_spad.io.req.bits.reuse_tiled := loop_requesting_st.reuse_tiled
 
-  // WAR overlap: decide here, where the A/B operand and C output spad regions are all known,
-  // whether the output C region this loop writes overlaps the A or B operand region the mesh
-  // still reads. Only then does the store WAR-gate on full execute drain (LoopMatmulStCSpad
-  // ex_ahead); a disjoint output keeps the fast early-release window. Operand bases mirror the
-  // execute spad_id remap so we compare the exact rows the mesh reads. Sizes: A = max_i*max_k
-  // tiles, B = max_k*max_j tiles, each block_size spad rows. C footprint is the FP8 output span
-  // (= max_i*max_j*block_size, verified against the store footprint); BF16/full output is 2x wide.
+  // WAR overlap: with all A/B operand and C output spad regions known, test whether C overlaps A or B
+  // (operand bases mirror the execute spad_id remap). A = max_i*max_k tiles, B = max_k*max_j tiles,
+  // each block_size rows; C span = FP8 output width (BF16/full is 2x). Overlap gates the WAR drain below.
   val st_a_lo = Mux(loop_requesting_st.spad_only || loop_requesting_st.a_ex_spad_id === 0.U,
     loop_requesting_st.a_addr_start, (loop_requesting_st.a_ex_spad_id - 1.U) * (max_addr / concurrent_loops).U)
   val st_a_hi = st_a_lo +& (loop_requesting_st.max_i * loop_requesting_st.max_k * block_size.U)

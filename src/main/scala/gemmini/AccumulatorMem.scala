@@ -63,14 +63,15 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
     val op2 = Output(t.cloneType)
     val sum = Input(t.cloneType)
   }
-  val counter_i = Input(UInt(16.W)) //for scaling factor memory control
-  val counter_j = Input(UInt(16.W)) //for scaling factor memory control
-  val counter_k = Input(UInt(16.W)) //for scaling factor memory control
-  val i = Input(UInt(16.W)) //for scaling factor memory control
-  val j = Input(UInt(16.W)) //for scaling factor memory control
-  val k = Input(UInt(16.W)) //for scaling factor memory control
-  val dataType_out = Input(UInt(2.W)) //this is the output mxformat datatype
-  val mx_multi_elem = Input(Bool()) // throughput: 2 elements/lane (E4M3-quad included), datatype-independent
+  // Scaling-factor memory control
+  val counter_i = Input(UInt(16.W))
+  val counter_j = Input(UInt(16.W))
+  val counter_k = Input(UInt(16.W))
+  val i = Input(UInt(16.W))
+  val j = Input(UInt(16.W))
+  val k = Input(UInt(16.W))
+  val dataType_out = Input(UInt(2.W)) // output mx format datatype
+  val mx_multi_elem = Input(Bool()) // throughput: 2 elements/lane, datatype-independent
   val mx_fp8_altfmt = Input(Bool()) // code0 sub-format: 1 = E5M2 (4-bit LUT output), 0 = E4M3
   val scale_mem_write_act = if (use_mx_scaling) {
     Some(Flipped(Decoupled(new ScalingFactorWriteReq(13, 64))))
@@ -141,11 +142,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   val io = IO(new AccumulatorMemIO(n, t, scale_t, chunk_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows))
 
   val scaleFactorMem = scale_mem.map { conf =>
-    // println(s"[ScalingFactorMem Config]")
-    // println(s"  depth = ${conf.depth}")
-    // println(s"  subbankLineSizeInBytes = ${conf.subbankLineSizeInBytes}")
-    // println(s"  bankWidthBits = ${conf.bankWidthBits}")
-    // println(s"  numBanks = ${conf.numBanks}")
     Module(new ScalingFactorMem(
       depth = conf.depth,
       sramWidth = conf.subbankLineSizeInBytes*8,
@@ -158,7 +154,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   }
  
   def calculateScaleAddr(write_addr: UInt): UInt = {
-    (write_addr & (~("h_f".U)).asUInt).asUInt  // TODO: Using the accmulator write addr to caculate the scaling memory read addr, for simplification
+    (write_addr & (~("h_f".U)).asUInt).asUInt  // derive the scale-mem read addr from the accumulator write addr
   }
 
   def applyE9M0Scale[T <: Data](
@@ -184,7 +180,6 @@ class AccumulatorMem[T <: Data, U <: Data](
 
     val scaleS:  SInt = Cat(0.U(1.W), scale_e9m0).asSInt
     val expS:    SInt = Cat(0.U(1.W), exp).asSInt
-    printf(p"[AccumulatorMem] combined_scales=${scaleS}\n")
     // scale = 2^(a+b-254) where a,b are fpe8m0 codes; scaleOffset = (a+b) - 254
     val scaleOffset: SInt = scaleS - 254.S
     val newExp: SInt      = expS + scaleOffset
@@ -222,21 +217,11 @@ class AccumulatorMem[T <: Data, U <: Data](
   require(!acc_singleported || !use_mx_scaling, "MX scaling requires non-singleported accumulator")
     val dataType = io.dataType_out
     
-    val scaled_data = WireInit(0.U.asTypeOf(t)) //fee
+    val scaled_data = WireInit(0.U.asTypeOf(t))
     val scalecounter = RegInit(0.U(1.W))
     val pipelined_writes = Reg(Vec(acc_latency, Valid(new AccumulatorWriteReq(n, t))))
     val oldest_pipelined_write = Wire(Valid(new AccumulatorWriteReq(n, t)))
-    
-    // if(use_mx_scaling){
-    //   when(dataType === 0.U){
-    //     oldest_pipelined_write := pipelined_writes(acc_latency-1)
-    //   }.otherwise{
-    //     oldest_pipelined_write := pipelined_writes(acc_latency - 1)
-    //     oldest_pipelined_write.bits.data := scaled_data
-    //   }
-    // }else{
     oldest_pipelined_write := pipelined_writes(acc_latency-1)
-    //}
 
     pipelined_writes(0).valid := io.write.fire
     pipelined_writes(0).bits  := io.write.bits
@@ -248,14 +233,8 @@ class AccumulatorMem[T <: Data, U <: Data](
     scale_mem.io.dataType := io.dataType_out
     scale_mem.io.mx_multi_elem := io.mx_multi_elem
     scale_mem.io.mx_fp8_altfmt := io.mx_fp8_altfmt
-    //wirte scale_mem
     scale_mem.io.scale_mem_write_w <> io.scale_mem_write_w.get
     scale_mem.io.scale_mem_write_act <> io.scale_mem_write_act.get
-    // scale_mem.io.write.valid := false.B
-    // scale_mem.io.write.bits := DontCare
-    
-    //val waiting_for_scale = RegInit(true.B)
-    //read_scale_mem
     scale_mem.io.counter_i := io.counter_i
     scale_mem.io.counter_j := io.counter_j
     scale_mem.io.counter_k := io.counter_k
@@ -268,20 +247,15 @@ class AccumulatorMem[T <: Data, U <: Data](
     scale_mem.io.read_req.bits.addr := DontCare
     scale_mem.io.read_req.bits.scaling_enable := false.B
     scale_mem.io.read_resp.ready := true.B
-    //scale_buffer = RegInit(VecInit(Seq.fill(4)(0.U(9.W))))
-    
-    when(io.write.fire) { //when accmulation buffer gets the write signal
-      //printf(p"[AccumulatorMem] here!!!\n")
+
+    when(io.write.fire) {
       scale_mem.io.read_req.valid := true.B
       scale_mem.io.read_req.bits.scaling_enable := true.B
       scale_mem.io.read_req.bits.addr := calculateScaleAddr(io.write.bits.addr)
     }
     val dim = meshRows * tileRows
     when(scale_mem.io.read_resp.valid) {
-      // dataType===0 (E4M3-single) uses the single-throughput FP8 windowed scaling (dim/4 elements at
-      // `offset`). E4M3-quad is code0 but MULTI throughput (2x-wide output), and E5M2 (code0/altfmt1) is a
-      // 4-bit LUT output -- both take the full-width path below, else the dim/4 window zeros 3/4 of the
-      // output. Gate the narrow window on !mx_multi_elem AND !mx_fp8_altfmt (E4M3-single only).
+      // Narrow dim/4 window only for E4M3-single; E4M3-quad and E5M2 use the full-width path below.
       when(dataType === 0.U && !io.mx_multi_elem && !io.mx_fp8_altfmt) {
         for (i <- 0 until dim) {
           val dataElement = Wire(UInt(64.W))
@@ -337,10 +311,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   
   io.adder.op1 := rdata_for_adder
   if(use_mx_scaling){
-    // when(dataType === 0.U){
-    //   io.adder.op2 := scaled_data
-    //   io.adder.valid := pipelined_writes(0).valid && pipelined_writes(0).bits.acc
-    // }.otherwise{
     io.adder.op2 := scaled_data
     io.adder.valid := pipelined_writes(0).valid && pipelined_writes(0).bits.acc
   }
@@ -418,18 +388,15 @@ class AccumulatorMem[T <: Data, U <: Data](
       mem.io.ren_full := io.write.fire && io.write.bits.acc
       rdata_for_adder := mem.io.rdata_full
 
-      // half-width read
-      // address for halfwidth port = {addr, bank_sel}
-      // chunk_id is MX_CHUNK_ID_BITS wide; port only takes bankSelBits = log2Up(numChunks) bits
+      // half-width read: address = {addr, bank_sel}, taking bankSelBits of chunk_id
       val bankSelBits = if (numChunks > 1) log2Up(numChunks) else 1
       mem.io.raddr_half := Cat(io.read.req.bits.addr, io.read.req.bits.chunk_id(bankSelBits - 1, 0))
       mem.io.ren_half := io.read.req.fire
 
       rdata_for_read_resp := mem.io.rdata_half.asTypeOf(chunk_t)
     } else {
-      // Non-MX build: full-width read response. The full read port is shared
-      // between accumulation RMW and the read response (write-accumulate wins);
-      // io.read.req.ready already prevents a read while accumulating.
+      // Non-MX build: full read port is shared between accumulation RMW and read response
+      // (write-accumulate wins; io.read.req.ready already blocks reads while accumulating).
       mem.io.raddr_full := Mux(io.write.fire && io.write.bits.acc, io.write.bits.addr, io.read.req.bits.addr)
       mem.io.ren_full := (io.write.fire && io.write.bits.acc) || io.read.req.fire
       rdata_for_adder := mem.io.rdata_full

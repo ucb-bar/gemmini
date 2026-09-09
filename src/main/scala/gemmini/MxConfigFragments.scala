@@ -23,7 +23,7 @@ case class GemminiScalingFactorMemConfig(
 case class GemminiRequantizerConfig(
   baseAddr: BigInt = 0x10000000L + 0x8000,
   numGPUInputLanes: Int = 16,
-  numInputLanes: Int = 64, // TODO: note 16 only for fp8, 64 for fp6/fp4
+  numInputLanes: Int = 64, // 16 for fp8, 64 for fp6/fp4
   numOutputLanes: Int = 32,
   gpuMaxFactor: Int = 2, // maximum fp16->fp8 for gpus, determines address space size
   gpuWordSize: Int = 4,
@@ -31,7 +31,7 @@ case class GemminiRequantizerConfig(
   minOutputBits: Int = 4,
   maxOutputBits: Int = 8,
   outputIdBits: Int = 3,
-  lutUpdateRegularityW : Int = 128,  // means how many elements updatScalingFactorCntle once the lut
+  lutUpdateRegularityW : Int = 128,  // how many elements the LUT updates at once
   lutUpdateRegularityActIn : Int = 128,
   lutUpdateRegularityActOut : Int = 128,
   pipelineLatency: Int = 2,

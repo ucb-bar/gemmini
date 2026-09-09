@@ -3,17 +3,10 @@ package gemmini
 import chisel3._
 import chisel3.util._
 
-// Nearest-neighbour finder for FP8 non-uniform quantization.
-// Given an FP8 value and a 16-entry LUT of FP8 values, it returns the 4-bit
-// index of the LUT entry closest in magnitude. Projecting FP8 -> 4-bit index
-// is what lets NUQ data be stored with 4-bit memory accesses, like the FP6 path.
-//
-// The FP8 sub-format is fixed at elaboration (compile-time capability):
-//   altfmt = false => E4M3 (4-bit exp, bias 7,  3-bit mantissa)
-//   altfmt = true  => E5M2 (5-bit exp, bias 15, 2-bit mantissa)
-// Using a Scala Boolean (not a Chisel Bool) specializes the module: only the
-// selected decoder is generated, and the fixed-point datapath is sized to the
-// chosen format (E4M3: 18-bit, E5M2: 32-bit) rather than the max of both.
+// Nearest-neighbour finder for FP8 NUQ: maps an FP8 value to the 4-bit index of the closest entry in
+// a 16-entry FP8 LUT (so NUQ data can be stored with 4-bit accesses, like the FP6 path).
+// altfmt is a Scala Boolean fixed at elaboration, so only the selected decoder/datapath is generated:
+//   altfmt = false => E4M3 (4-bit exp, bias 7, 3-bit mantissa);  true => E5M2 (5-bit exp, bias 15, 2-bit mantissa)
 class FP8NearestFinder(altfmt: Boolean) extends RawModule {
   private val expW              = if (altfmt) 5 else 4
   private val mantW             = if (altfmt) 2 else 3

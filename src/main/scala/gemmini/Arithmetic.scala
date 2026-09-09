@@ -16,9 +16,8 @@ case class Float(expWidth: Int, sigWidth: Int, isRecoded: Boolean = false) exten
 }
 
 
-// meshConfig, when set, is the explicit PE format/mode set for this operand's mesh -- mac_mx uses it
-// directly instead of guessing from exp/sig widths, so a config selects exactly which formats the PE
-// elaborates (e.g. a single-format build). Scala metadata only, not hardware.
+// meshConfig, when set, fixes this operand's PE format/mode explicitly instead of inferring it from
+// the exp/sig widths (Scala metadata only, not hardware).
 case class MxFloat(expWidth: Int, sigWidth: Int, count: Int, isRecoded: Boolean = false, pad: Boolean = true,
                    meshConfig: Option[MxConfig] = None) extends Bundle {
   val bits = if (pad) {
@@ -30,8 +29,7 @@ case class MxFloat(expWidth: Int, sigWidth: Int, count: Int, isRecoded: Boolean 
 }
 
 object MxFloat {
-  // Operand descriptor carrying an explicit PE MxConfig (single-format / custom builds). pad=false to
-  // match the other operand descriptors.
+  // Operand descriptor carrying an explicit PE MxConfig (single-format / custom builds).
   def withConfig(expWidth: Int, sigWidth: Int, count: Int, cfg: MxConfig): MxFloat =
     MxFloat(expWidth, sigWidth, count, false, false, Some(cfg))
 }
@@ -44,44 +42,6 @@ case class DummySInt(w: Int) extends Bundle {
     o
   }
 }
-
-// case class MxFloat(mxParams: MxParams, modeId: Int = 0) extends Bundle {
-//   val bits = UInt(mxParams.multOutWidth.W)
-//   def currentMode: PE_MxMode = mxParams.modesSupported(modeId)
-//   def Width_act: Int = currentMode.actWidth  
-//   def Width_w: Int = currentMode.weiWidth 
-//   def Width_out: Int = currentMode.outTotalWidth 
-// }
-
-// case class MxFloat(mxParams: MxParams, modeId: Int = 0) extends Bundle {
-//   def currentMode: PE_MxMode = mxParams.modesSupported(modeId)
-//   val numOutputs: Int = currentMode.numOutputs //TODO: add this in Mxparameters
-//   val bits = if (numOutputs == 1) {
-//     UInt(mxParams.multOutWidth.W)
-//   } else {
-//     Vec(numOutputs, UInt((mxParams.outTotalWidth / numOutputs).W))
-//   }
-  
-//   def Width_act: Int = currentMode.actWidth  
-//   def Width_w: Int = currentMode.weiWidth 
-//   def Width_out: Int = currentMode.outTotalWidth 
-//   def getSlice(index: Int): UInt = {
-//     if (numOutputs == 1) {
-//       bits.asUInt
-//     } else {
-//       require(index < numOutputs, s"Index $index out of range for numOutputs $numOutputs")
-//       bits(index)
-//     }
-//   }
-  
-//   def getAllSlices: Seq[UInt] = {
-//     if (numOutputs == 1) {
-//       Seq(bits.asUInt)
-//     } else {
-//       bits
-//     }
-//   }
-// }
 
 // The Arithmetic typeclass which implements various arithmetic operations on custom datatypes
 abstract class Arithmetic[T <: Data] {
@@ -642,10 +602,7 @@ object Arithmetic {
 
       override def mac_mx(m1: MxFloat, m2: MxFloat, fpProductPrecision: MxFloat, fpAccPrecision: MxFloat, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, lut_en: Bool): MxFloat = {
         require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
-        // PE format/mode set. An operand may carry it EXPLICITLY (meshConfig) -- the config picks exactly
-        // which formats the PE elaborates (single-format / custom builds). Otherwise fall back to guessing
-        // from the operand widths: expWidth>=5 -> E5M2-only build; sigWidth>=4 -> all-formats build (mode9
-        // quad, E5M2 via decoupled exp slots); else -> plain mxGemmini.
+        // Use the operand's explicit config if present, else infer the build from the operand widths.
         val peBaseConfig = m1.meshConfig.orElse(m2.meshConfig).getOrElse {
           if (m1.expWidth >= 5 || m2.expWidth >= 5) MxConfig.mxGemminiE5M2
           else if (m1.sigWidth >= 4 || m2.sigWidth >= 4) MxConfig.mxGemminiAll
@@ -656,16 +613,13 @@ object Arithmetic {
           inWeiBusWidth    = m2.bits.getWidth,
           productFormat    = MxFormat(fpProductPrecision.expWidth, fpProductPrecision.sigWidth),
           accFormat        = MxFormat(fpAccPrecision.expWidth, fpAccPrecision.sigWidth),
-          useMxPEAddRecFN  = false,   // true = fused (B-style, peMag/peExp → MxPEAddRecFN); false = legacy useDefault chain
+          useMxPEAddRecFN  = false,
         )
         val macc = Module(new mxgen.MxFpMul(macConfig, lut = false))
         val result = Wire(MxFloat(macc.cType.exp, macc.cType.sig, 4, true))
 
-        // Symmetric encoding: altfmt = sub-format within each code.
-        //   fp8 (code0): altfmt0 -> E4M3 (exp4,sig4); altfmt1 -> E5M2 (exp5,sig3)
-        //   fp6 (code1): altfmt0 -> E3M2 (exp3,sig3); altfmt1 -> E2M3 (exp2,sig4)
-        //   fp4 (code2): E2M1 (exp2,sig2)
-        // requiredPEMode keys on sig: sig4 (E4M3,E2M3) -> mode8/mode9; sig3 (E5M2,E3M2) -> mode4; sig2 -> mode0.
+        // Format code -> (exp,sig), altfmt selects the sub-format:
+        //   fp8 (0): E4M3(4,4) / E5M2(5,3);  fp6 (1): E3M2(3,3) / E2M3(2,4);  fp4 (2): E2M1(2,2)
         def mxExp(fmt: UInt): UInt = Mux(fmt === 2.U, 2.U,
           Mux(fmt === 1.U, Mux(mx_fp8_altfmt, 2.U, 3.U), Mux(mx_fp8_altfmt, 5.U, 4.U)))
         def mxSig(fmt: UInt): UInt = Mux(fmt === 2.U, 2.U,
@@ -678,9 +632,7 @@ object Arithmetic {
         typeW.exp := mxExp(weight_mx_format)
         typeW.sig := mxSig(weight_mx_format)
 
-        // M1: lut_en + E4M3×E4M3 (both sig=4) selects the 4-wide LUT mode (mode9); else the sig table.
-        // Gated on the elaborated config actually having mode9 -- a non-mode9 build (plain mxGemmini /
-        // mxGemminiE5M2) can never be promoted to mode9 at runtime, so E4M3 stays 1-wide (mode8).
+        // lut_en promotes E4M3xE4M3 to the 4-wide LUT mode (mode9), but only if the build elaborated it.
         val mode = requiredPEMode(typeA, typeW, if (macConfig.hasMode9) lut_en else false.B)
 
         val rec_c = if (self.isRecoded) self.bits else VecInit(self.bits.asTypeOf(Vec(4, UInt((self.expWidth + self.sigWidth).W))).map(f => recFNFromFN(self.expWidth, self.sigWidth, f))).asUInt
@@ -690,93 +642,16 @@ object Arithmetic {
         macc.io.mode := mode
         macc.io.in_weights := m2.bits
         macc.io.type_w := typeW
-        macc.io.enable := true.B  // TODO：do we need an enable signal here?
+        macc.io.enable := true.B
         macc.io.rec_c := rec_c
-        // macc.io.weight_mx_format :=  weight_mx_format
-        // macc.io.input_mx_format := activation_mx_format
         result := macc.io.out.asTypeOf(self)
         result
       }
 
-      // TODO: fix the inputs to the multiplier and mac modules
-      override def *(t: MxFloat): MxFloat = {
-        self
-        // require(!self.isRecoded && !t.isRecoded)
-        // val fpProductPrecision = (8, 8)
-        // val fpAccPrecision = (8, 8)
-        // val multiplier = Module(new MxFpMul(lut = false)(fpProductPrecision, fpAccPrecision))
-        // val result = Wire(MxFloat(multiplier.ts.cType.exp, multiplier.ts.cType.sig, 4, true))
+      // * and mac are unused for MxFloat (mac_mx is the MX datapath); these are pass-through stubs.
+      override def *(t: MxFloat): MxFloat = self
 
-        // val typeA = Wire(new MxTypes)
-        // typeA.exp := self.expWidth.U
-        // typeA.sig := self.sigWidth.U
-
-        // val typeW = Wire(new MxTypes)
-        // typeW.exp := t.expWidth.U
-        // typeW.sig := t.sigWidth.U
-
-        // val mode = Wire(new mxMode)
-        // mode.actWidth := self.expWidth.U
-        // mode.weiWidth := t.expWidth.U
-        // mode.actInputs := self.count.U
-        // mode.weiInputs := t.count.U
-        // mode.numOutputs := t.count.U
-        // mode.shift(0)(0) := 0.U
-        // mode.shift(1)(0) := 0.U
-        // mode.shift(0)(1) := 0.U
-        // mode.shift(1)(1) := 0.U
-
-        // multiplier.io.in_activation := self.bits(self.expWidth + self.sigWidth-1, 0)
-        // multiplier.io.type_a := typeA
-        // multiplier.io.mode := mode
-        // multiplier.io.in_weights := t.bits(t.expWidth + t.sigWidth-1, 0)
-        // multiplier.io.type_w := typeW
-        // multiplier.io.enable := true.B  // TODO：do we need an enable signal here?
-        // result := multiplier.io.out.asTypeOf(self)
-        // result
-      }
-
-      override def mac(m1: MxFloat, m2: MxFloat): MxFloat = {
-        self
-        // require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
-        // val macc = Module(new MxFpMul(lut = false)((8, 8), (8, 8)))
-        // val result = Wire(MxFloat(macc.ts.cType.exp, macc.ts.cType.sig, 4, true))
-
-        // val typeA = Wire(new MxTypes)
-        // typeA.exp := m1.expWidth.U
-        // typeA.sig := m1.sigWidth.U
-
-        // val typeW = Wire(new MxTypes)
-        // typeW.exp := m2.expWidth.U
-        // typeW.sig := m2.sigWidth.U
-
-        // val mode = Wire(new mxMode)
-        // mode.actWidth := m1.expWidth.U
-        // mode.weiWidth := m2.expWidth.U
-        // mode.actInputs := m1.count.U
-        // mode.weiInputs := m2.count.U
-        // mode.numOutputs := m2.count.U
-        // mode.shift(0)(0) := 0.U
-        // mode.shift(1)(0) := 0.U
-        // mode.shift(0)(1) := 0.U
-        // mode.shift(1)(1) := 0.U
-
-        // val rec_c = if (self.isRecoded) self.bits else VecInit(self.bits.asTypeOf(Vec(4, UInt((self.expWidth + self.sigWidth).W))).map(f => recFNFromFN(self.expWidth, self.sigWidth, f))).asUInt
-
-        // macc.io.in_activation := m1.bits((m1.count)*(m1.expWidth + m1.sigWidth) - 1, 0)
-        // macc.io.type_a := typeA
-        // macc.io.mode := mode
-        // macc.io.in_weights := m2.bits((m2.count)*(m2.expWidth + m2.sigWidth) - 1, 0)
-        // macc.io.type_w := typeW
-        // macc.io.enable := true.B  // TODO：do we need an enable signal here?
-        // macc.io.rec_c := rec_c
-        // result := macc.io.out.asTypeOf(self)
-        // result
-      }
-
-      // TODO: Replace placeholder arithmetic
-      // Currently just returns self.bits to get things to compile
-
+      override def mac(m1: MxFloat, m2: MxFloat): MxFloat = self
 
       override def +(t: MxFloat): MxFloat = {
         require(self.count == t.count)
@@ -833,60 +708,11 @@ object Arithmetic {
         sum
       }
 
-      override def -(t: MxFloat): MxFloat = {
-        self
-        // val t_sgn = t.bits(t.getWidth-1)
-        // val neg_t = Cat(~t_sgn, t.bits(t.getWidth-2,0)).asTypeOf(t)
-        // self + neg_t
-      }
+      override def -(t: MxFloat): MxFloat = self
 
-      override def >>(u: UInt): MxFloat = {
-        self
-        // Recode self
-        // val self_rec = if (self.isRecoded) self.bits else recFNFromFN(self.expWidth, self.sigWidth, self.bits)
+      override def >>(u: UInt): MxFloat = self
 
-        // // Get 2^(-u) as a recoded float
-        // val shift_exp = Wire(UInt(self.expWidth.W))
-        // shift_exp := self.bias.U - u
-        // val shift_fn = Cat(0.U(1.W), shift_exp, 0.U((self.sigWidth-1).W))
-        // val shift_rec = recFNFromFN(self.expWidth, self.sigWidth, shift_fn)
-
-        // assert(shift_exp =/= 0.U, "scaling by denormalized numbers is not currently supported")
-
-        // // Multiply self and 2^(-u)
-        // val muladder = Module(new MulRecFN(self.expWidth, self.sigWidth))
-
-        // muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-        // muladder.io.detectTininess := consts.tininess_afterRounding
-
-        // muladder.io.a := self_rec
-        // muladder.io.b := shift_rec
-
-        // val result = Wire(Float(self.expWidth, self.sigWidth, self.isRecoded))
-        // result.bits := (if (result.isRecoded) muladder.io.out else fNFromRecFN(self.expWidth, self.sigWidth, muladder.io.out))
-        // result
-      }
-
-      override def >(t: MxFloat): Bool = {
-        false.B
-        // Recode all operands
-        // val t_rec = if (t.isRecoded) t.bits else recFNFromFN(t.expWidth, t.sigWidth, t.bits)
-        // val self_rec = if (self.isRecoded) self.bits else recFNFromFN(self.expWidth, self.sigWidth, self.bits)
-
-        // // Resize t to self's width
-        // val t_resizer = Module(new RecFNToRecFN(t.expWidth, t.sigWidth, self.expWidth, self.sigWidth))
-        // t_resizer.io.in := t_rec
-        // t_resizer.io.roundingMode := consts.round_near_even
-        // t_resizer.io.detectTininess := consts.tininess_afterRounding
-        // val t_rec_resized = t_resizer.io.out
-
-        // val comparator = Module(new CompareRecFN(self.expWidth, self.sigWidth))
-        // comparator.io.a := self_rec
-        // comparator.io.b := t_rec_resized
-        // comparator.io.signaling := false.B
-
-        // comparator.io.gt
-      }
+      override def >(t: MxFloat): Bool = false.B
 
       override def withWidthOf(t: MxFloat): MxFloat = {
 
@@ -911,139 +737,17 @@ object Arithmetic {
         } else {
           self
         }
-
- 
       }
 
+      override def clippedToWidthOf(t: MxFloat): MxFloat = self
 
-      //override def withWidthOf(t: MxFloat): MxFloat = {
-       // self
-        // val self_rec = if (self.isRecoded) self.bits else recFNFromFN(self.expWidth, self.sigWidth, self.bits)
-
-        // val resizer = Module(new RecFNToRecFN(self.expWidth, self.sigWidth, t.expWidth, t.sigWidth))
-        // resizer.io.in := self_rec
-        // resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-        // resizer.io.detectTininess := consts.tininess_afterRounding
-
-        // val result = Wire(Float(t.expWidth, t.sigWidth, t.isRecoded))
-        // result.bits := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
-        // result
-      // }
-
-      override def clippedToWidthOf(t: MxFloat): MxFloat = {
-        self
-        // TODO check for overflow. Right now, we just assume that overflow doesn't happen
-        // val self_rec = if (self.isRecoded) self.bits else recFNFromFN(self.expWidth, self.sigWidth, self.bits)
-
-        // val resizer = Module(new RecFNToRecFN(self.expWidth, self.sigWidth, t.expWidth, t.sigWidth))
-        // resizer.io.in := self_rec
-        // resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-        // resizer.io.detectTininess := consts.tininess_afterRounding
-
-        // val result = Wire(Float(t.expWidth, t.sigWidth, t.isRecoded))
-        // result.bits := (if (result.isRecoded) resizer.io.out else fNFromRecFN(t.expWidth, t.sigWidth, resizer.io.out))
-        // result
-      }
-
-      override def relu: MxFloat = {
-        self
-        // val raw = if (self.isRecoded) rawFloatFromRecFN(self.expWidth, self.sigWidth, self.bits) else rawFloatFromFN(self.expWidth, self.sigWidth, self.bits)
-
-        // val result = Wire(Float(self.expWidth, self.sigWidth, self.isRecoded))
-        // result.bits := Mux(!raw.isZero && raw.sign, 0.U, self.bits)
-        // result
-      }
+      override def relu: MxFloat = self
 
       override def zero: MxFloat = 0.U.asTypeOf(self)
-      override def identity: MxFloat = {
-        self
-        // require(!self.isRecoded)
-        // Cat(0.U(2.W), ~(0.U((self.expWidth-1).W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
-      }
-      override def minimum: MxFloat = {
-        self
-        // require(!self.isRecoded)
-        // Cat(1.U, ~(0.U(self.expWidth.W)), 0.U((self.sigWidth-1).W)).asTypeOf(self)
-      }
+      override def identity: MxFloat = self
+      override def minimum: MxFloat = self
       
     }
 
   }
- 
-
-  // implicit class MxFloatArithmetic(mxParams: MxParams) extends Arithmetic[MxFloat] {
-  //   override implicit def cast(self: MxFloat): ArithmeticOps[MxFloat] = new ArithmeticOps(self) {
-      
-  //     override def *(t: MxFloat): MxFloat = {
-  //       val result = Wire(new MxFloat(self.mxParams, self.modeId)) 
-  //       val mode = self.currentMode
-  //       result.bits := mode.outTotalWidth.U // Placeholder
-  //       result
-  //     }
-
-  //     override def mac(m1: MxFloat, m2: MxFloat): MxFloat = {
-  //       // Perform multiply
-  //       val mul = Module(new MxFpMul(supportedTypes: TypeSupport, lut: false))
-        
-  //       mul.io.in_activation = m1.bits
-  //       mul.io.in_a_type = 
-  //       mul.io.a_altfmt = 
-  //       mul.io.in_weights = 
-  //       mul.io.in_w_type =
-  //       mul.io.w_altfmt = 
-  //       mul.io.enable = true.B  // TODO：do we need an enable signal here?
-  //       val mul_result :=  cat(mul.io.out_s, mul.io.out_exp) //
-        
-  //       if (mode.numOutputs == 1) {
-    
-  //         val mul_resizer = Module(new RawFPToRecFN(
-  //         inExpWidth = getMultResultExpWidth(mode),
-  //         inSigWidth = getMultResultSigWidth(mode), 
-  //         outExpWidth = self.Width_act,
-  //         outSigWidth = self.Width_w))
-    
-  //         mul_resizer.io.in := mul_result
-  //         mul_resizer.io.roundingMode := consts.round_near_even
-  //         mul_resizer.io.detectTininess := consts.tininess_afterRounding
-  //         result.bits := mul_resizer.io.out
-    
-  //       } else {
- 
-  //         val outputWidth = mode.outTotalWidth / mode.numOutputs
-  //         val selfSliceWidth = if (self.numOutputs == 1) {
-  //           self.bits.getWidth
-  //         } else {
-  //           self.bits(0).getWidth  
-  //         }
-  //         val mul_resizers = Seq.tabulate(mode.numOutputs) { i =>
-  //         Module(new RawFPToRecFN(
-  //         inExpWidth = getMultResultExpWidth(mode, outputWidth),
-  //         inSigWidth = getMultResultSigWidth(mode, outputWidth),
-  //         outExpWidth = getSelfSliceExpWidth(selfSliceWidth),
-  //         outSigWidth = getSelfSliceSigWidth(selfSliceWidth)
-  //         ))
-  //       }
-
-  //       for (i <- 0 until mode.numOutputs) {
-  //         val startBit = i * outputWidth
-  //         val endBit = startBit + outputWidth - 1
-  //         val sliced_mul_result = mul_result(endBit, startBit)
-  //         val self_slice = getSlice(i % self.numOutputs) 
-      
-  //         mul_resizers(i).io.in := sliced_mul_result
-  //         mul_resizers(i).io.roundingMode := consts.round_near_even
-  //         mul_resizers(i).io.detectTininess := consts.tininess_afterRounding
-
-  //         result.bits(i) := mul_resizers(i).io.out
-  //         }
-  //       }
-  
-  //       result
-  //     }
-      
-  //   }
-
-  // }
-
-
 }

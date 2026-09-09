@@ -122,8 +122,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              // None => tl_ext_mem_base + 0x100000.
                                                                              mx_mmio_base: Option[BigInt] = None
                                                        ) {
-  val sp_width = meshColumns * tileColumns * weightType.getWidth //weightType!! TODO: double check with different precision writes!
-  val sp_width_projected = meshColumns * tileColumns * weightTypeProjected.getWidth //weightType!! TODO: double check with different precision writes!
+  val sp_width = meshColumns * tileColumns * weightType.getWidth
+  val sp_width_projected = meshColumns * tileColumns * weightTypeProjected.getWidth
   val sp_bank_entries = sp_capacity match {
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (sp_banks * sp_width_projected)
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / sp_banks

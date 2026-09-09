@@ -113,21 +113,14 @@ class ScalingFactorMem(
   val combined_scales_buffer_reg = RegInit(VecInit(Seq.fill(2*meshRows*tileRows)(
   VecInit(Seq.fill(2*meshRows*tileRows)(0.U(9.W))))))
   val combined_scales_valid = WireDefault(false.B)
-  //val bankDataT = Vec(bytesPerBank, UInt(8.W))
-  //val banks =RegInit(VecInit(Seq.fill(scaleMemSizeFactor*doubleBufferFactor*8*numBanks)(VecInit(Seq.fill(bytesPerBank)(0.U(8.W))))))
 
-  // fp8Mode selects the single-throughput E4M3 scale structure (write banking, read banking, combine layout).
-  // E4M3-quad is code0 but MULTI throughput -> it uses the non-fp8 (2-element) scale layout like E5M2, matching
-  // how its scales are loaded. Gate on !mx_multi_elem so only single E4M3 takes the fp8 path.
-  // fp8Mode = E4M3-single only (code0, 8-bit direct, 16-wide scale layout). E5M2 (code0/altfmt1) is a
-  // 4-bit LUT output whose scales use the nibble (32-wide) layout, matching the requant coalescer's
-  // isNibble grouping -- so it must NOT take the fp8 scale path.
+  // fp8Mode = E4M3-single only (16-wide scale layout). E4M3-quad and E5M2 are multi-throughput and use
+  // the non-fp8 (32-wide nibble) layout, so gate on !mx_multi_elem && !mx_fp8_altfmt.
   val fp8Mode = io.dataType === 0.U && !io.mx_multi_elem && !io.mx_fp8_altfmt
-  
+
   val write_addr_w = io.scale_mem_write_w.bits.addr
   val write_weight_counter  = RegInit(0.U(2.W))
   val write_weight_full_row = RegInit(0.U(sramWidth.W))
-  //val write_row_addr_w = WireInit(write_addr_w(log2Ceil(bytesPerBank) + log2Ceil(half_sfMem_rows) ,log2Ceil(bytesPerBank)))
   // FP8 mode
   val write_row_addr_w_fp8 = WireInit(write_addr_w(log2Ceil(bytesPerBank) + log2Ceil(depth_sram) - 1, log2Ceil(bytesPerBank)))
   val bank_idx_w_fp8 = WireInit(write_addr_w(log2Ceil(bytesPerBank) + log2Ceil(depth_sram) + 1, log2Ceil(bytesPerBank) + log2Ceil(depth_sram)))
@@ -227,12 +220,7 @@ class ScalingFactorMem(
   val read_fire_real = WireDefault(false.B) 
   val read_fire_real_d = RegNext(read_fire_real)
   
-  read_fire_real := read_fire && (scale_counter === 0.U) 
-  
-  // val act_bank_data_vec = WireInit(VecInit(Seq.fill(meshRows*tileRows*2)(0.U(8.W))))
-  // val weight_bank_data_vec = WireInit(VecInit(Seq.fill(meshRows*tileRows*2)(0.U(8.W))))
-  // dontTouch(act_bank_data_vec)
-  // dontTouch(weight_bank_data_vec)
+  read_fire_real := read_fire && (scale_counter === 0.U)
 
   val read_fire_banks = VecInit(Seq(
     read_fire_real && (Mux(fp8Mode, (read_bank_idx_w === 0.U) && !double_buffer_w_sel   , !double_buffer_w_sel  )),  
@@ -309,42 +297,11 @@ class ScalingFactorMem(
   }
 
 
-  // val bank_data_0_act = VecInit((0 until 4).map { i => if (testConfig) defaultRow  else banks(i).read(read_row_addr_act, read_fire_banks(i))})
-  // val bank_data_0_w = VecInit((0 until 4).map { i => if (testConfig) defaultRow  else banks(i+4).read(read_row_addr_w, read_fire_banks(i+4))})
-
-  // when(fp8Mode){
-  //   when(read_fire_d1){
-  //     for (i <- 0 until meshRows*tileRows) {
-  //       act_bank_data_vec(i) := bank_data_0_act(i)
-  //     }
-  //     for (i <- 0 until meshRows*tileRows) {
-  //       weight_bank_data_vec(i) := bank_data_0_w(i)
-  //     }
-  //   }
-  // }.otherwise{
-  //   when(read_fire_d1) {
-  //     for (i <- 0 until meshRows*tileRows) {
-  //       act_bank_data_vec(i) := bank_data_0_act(i)
-  //       act_bank_data_vec(meshRows*tileRows+i) := banks(read_row_addr_act + 1.U)(i)
-  //     }
-  //     for (i <- 0 until meshRows*tileRows) {
-  //       weight_bank_data_vec(i) := bank_data_0_w(i)
-  //       weight_bank_data_vec(meshRows*tileRows+i) := banks(read_row_addr_w + 1.U)(i)
-  //     }
-  //   }
-  // }
-
-
   io.read_resp.bits.combined_scales.foreach(_ := 0.U)
   io.read_resp.valid := false.B
-  io.read_req.ready := io.read_req.bits.scaling_enable 
+  io.read_req.ready := io.read_req.bits.scaling_enable
 
-  // for(i <- 0 until 2*meshRows*tileRows) {
-  //   act_scales(i) := act_bank_data_vec(i)
-  //   weight_scales(i) := weight_bank_data_vec(i)
-  // }
-
-  for(i <- 0 until 2*meshRows*tileRows) {     
+  for(i <- 0 until 2*meshRows*tileRows) {
     for(j <- 0 until 2*meshRows*tileRows) {
       when(read_fire_d1) {
         combined_scales_buffer(i)(j) := multiplyScalesE8M0(act_scales(i), weight_scales(j))

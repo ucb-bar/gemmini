@@ -22,7 +22,6 @@ class GemminiCmd(rob_entries: Int)(implicit p: Parameters) extends Bundle {
   val rob_id = UDValid(UInt(log2Up(rob_entries).W))
   val from_matmul_fsm = Bool()
   val from_conv_fsm = Bool()
-  //val output_mx_format = UInt(2.W)
 }
 
 class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiArrayConfig[T, U, V])
@@ -68,7 +67,6 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(
       name = s"spad_read_node_$i",
       sourceId = IdRange(0, num_ids),
-      // visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
       supportsProbe = TransferSizes(mem_width, mem_width),
       supportsGet = TransferSizes(mem_width, mem_width)
     )))
@@ -78,7 +76,6 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(
       name = s"spad_write_node_$i",
       sourceId = IdRange(0, num_ids),
-      // visibility = Seq(AddressSet(spad_base + i * mem_width * mem_depth, mem_width * mem_depth - 1)),
       supportsProbe = TransferSizes(mem_width, mem_width),
       supportsPutFull = TransferSizes(mem_width, mem_width),
       supportsPutPartial = TransferSizes(mem_width, mem_width)
@@ -108,9 +105,7 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
       beatBytes   = 8,
       concurrency = 1)
   }
-  // Push-side master for requantizer output: gemmini issues TL Puts to
-  // out.bits.address whenever the requantizer produces a result, mirroring
-  // radiance's requantizerSmemClient. Standalone config attaches to sysbus.
+  // Push-side master for requantizer output: issues a TL Put to out.bits.address on each result.
   val mx_requant_out_client = Option.when(use_mx_mmio) {
     val q = config.requantizer.get
     val minBytes = q.numOutputLanes * q.minOutputBits / 8
@@ -143,9 +138,8 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     )))
   }
 
-  // Pull-side master for funct-27 MX_LOAD_SCALES: gemmini issues 8-byte TL Gets from DRAM
-  // (physical addr in rs1) and replays them as scale-mem write beats. ISA parity with the
-  // Spike model's mx_load_scales; replaces the CPU flat window as the SW scale front-end.
+  // Pull-side master for funct-27 MX_LOAD_SCALES: issues 8-byte TL Gets from DRAM (addr in rs1)
+  // and replays them as scale-mem write beats. Replaces the CPU flat window as the SW scale front-end.
   val mx_scale_loader_client = Option.when(use_mx_mmio) {
     TLClientNode(Seq(TLMasterPortParameters.v1(
       clients = Seq(TLMasterParameters.v1(
@@ -153,10 +147,8 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
         sourceId = IdRange(0, 1))))))
   }
 
-  // Pull-side master for funct-29 MX_LOAD_LUT: gemmini issues 8-byte TL Gets from DRAM (physical
-  // addr in rs1), assembles num_luts*96b into the LUT buffer, and fires the selected requantizer
-  // lut{0,1,2}_write once. ISA parity with the Spike model's mx_load_lut; replaces the CPU regmap
-  // LUT front-end (mx_load_lut).
+  // Pull-side master for funct-29 MX_LOAD_LUT: issues 8-byte TL Gets from DRAM (addr in rs1),
+  // assembles num_luts*96b into the LUT buffer, and fires the selected requantizer lut port once.
   val mx_lut_loader_client = Option.when(use_mx_mmio) {
     TLClientNode(Seq(TLMasterPortParameters.v1(
       clients = Seq(TLMasterParameters.v1(
@@ -164,12 +156,8 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
         sourceId = IdRange(0, 1))))))
   }
 
-  // (retired) The flat scale-factor RAM window is gone: funct-27 MX_LOAD_SCALES (mx_scale_loader_client)
-  // now drives scale_mem_write directly. Radiance is unaffected (use_shared_ext_mem -> mx_io path).
-
-  // Attach the standalone MX nodes via the standard LazyRoCC hooks (like the DMA master):
-  // slaves (LUT/requant regmap + scale window) <- stlNode (tile slave port, cbus-reachable);
-  // out clients -> tlNode -> sbus.
+  // Attach the standalone MX nodes via the standard LazyRoCC hooks: slaves (LUT/requant regmap +
+  // scale window) <- stlNode (tile slave port); out clients -> tlNode -> sbus.
   if (use_mx_mmio) {
     val mx_slave_xbar = TLXbar()
     mx_slave_xbar := stlNode
@@ -293,7 +281,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       sp_addr_width = log2Ceil(outer.config.sp_bank_entries),
       scaleMem_data_width = outer.config.scale_mem.get.ScaleMemWriteDataWidth,
       scaleMem_addr_width = outer.config.scale_mem.get.ScaleMemWriteAddrWidth,
-      // C8.3: on-chip act-scale write-port byte-addr width (same as scale_loader_act uses).
+      // on-chip act-scale write-port byte-addr width (same as scale_loader_act uses)
       scaleMemActWriteAddrWidth = outer.config.scale_mem.get.addrBits - 1,
       scaleSize = outer.config.scaleSize,
       scaleMembasewrite = 0, // TODO: add this into the instruction
@@ -316,9 +304,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     req.io.scaleMem_write.ready := false.B
     req.io.scale_mem_mvout_base_addr_act := ex_controller.io.mx.get.scale_mem_mvout_base_addr_act
     req.io.quant_lut_update_granularity := ex_controller.io.mx.get.quant_lut_update_granularity
-    // C8.3: thread the residency flag; default the transposed act-write port idle. The standalone
-    // (use_mx_mmio, non-shared) branch below drives its ready via the scale_mem_write_act mux; the
-    // shared-ext-mem path leaves it idle (radiance never sets scale_resident).
+    // Thread the residency flag; the transposed act-write port defaults idle (the standalone
+    // use_mx_mmio branch below drives its ready via the scale_mem_write_act mux).
     req.io.scale_resident := ex_controller.io.mx.get.scale_resident
     req.io.scaleMem_write_act_resident.ready := false.B
     // E4M3-quad requant output (4-bit LUT) vs E4M3-single (8-bit): both output format0/altfmt0, split by lut_en.
@@ -430,7 +417,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       }
 
       // ------ requant-out (push: gemmini issues TL Puts via mx_requant_out_client) ------
-      // Mirrors radiance GemminiTile.scala:333-361.
       val rout_wire = {
         val numLanes = q.numOutputLanes
         val laneBits = q.maxOutputBits
@@ -443,13 +429,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         val nBeatsFull = (fullWidth + beatBytes - 1) / beatBytes
         val nBeatsHalf = (halfWidth + beatBytes - 1) / beatBytes
 
-        // Accept-then-burst: latch the request, then drive a (possibly multibeat) Put from the
-        // latched copy. A 256b payload on a narrow bus splits into beatBytes-sized beats; TL
-        // forbids the source changing mid-burst, so we hold ONE source across the beats, slice
-        // the data per beat, and advance the source only after the LAST beat. Latching is required
-        // so w.ready (= !busy, a reg) never feeds back combinationally into w.bits.dataType (the
-        // requantizer's output bits depend on ready) -> no combinational loop. Single-beat buses
-        // (beat >= payload) reduce to one beat/Put.
+        // Accept-then-burst: latch the request, then drive the (possibly multibeat) Put from the latched
+        // copy, holding one source across all beats (TL forbids the source changing mid-burst) and slicing
+        // data per beat. Latching also keeps w.ready off w.bits, avoiding a combinational loop.
         val busy   = RegInit(false.B)
         val req    = Reg(new RequantizerOutBundle(numLanes, laneBits))
         val beat   = RegInit(0.U(log2Ceil(nBeatsFull + 1).W))
@@ -489,9 +471,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         val beatBytes = node.params.dataBits / 8
         val nBeats    = (dataBytes + beatBytes - 1) / beatBytes
 
-        // Accept-then-burst (see rout_wire): latch the request, then drive a (possibly multibeat)
-        // fixed-size Put holding ONE source across all beats, slicing data per beat, advancing the
-        // source only after the last beat. Latching keeps w.ready (= !busy) off w.bits.
+        // Accept-then-burst (see rout_wire).
         val busy   = RegInit(false.B)
         val req    = Reg(new ScalingFactorWriteReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))
         val beat   = RegInit(0.U(log2Ceil(nBeats + 1).W))
@@ -513,8 +493,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         w
       }
 
-      // (retired) LUT regmap ports: funct-29 MX_LOAD_LUT (mx_lut_loader_client) now drives
-      // mx_requantizer.io.lut{0,1,2}_write directly. Only the requant-in regmap remains.
       val (rin_wire, rin_fields) = requantInPort(0x080)
 
       outer.mx_mmio_node.get.regmap(rin_fields: _*)
@@ -524,9 +502,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       (None, None, None)
     }
   // ---- funct-27 MX_LOAD_SCALES: DMA loader (8-byte Gets from DRAM -> scale-mem write beats) ----
-  // Replays the EXACT (addr = i*8, data = little-endian 64b) beat sequence the CPU flat window
-  // produces, so the ScaleFactorMem pairing/decode is byte-identical. sel=1 -> weight port,
-  // sel=0 -> activation port (Spike mx_load_scales polarity). Physical-only (bare-metal) addressing.
+  // Replays the (addr = i*8, data = little-endian 64b) beat sequence byte-identically to the CPU flat
+  // window. sel=1 -> weight port, sel=0 -> activation port (Spike polarity). Physical-only addressing.
   val scale_loader_busy = WireDefault(false.B)
   val (scale_loader_w, scale_loader_act, scale_loader_start) = if (outer.use_mx_mmio) {
     val s = outer.config.scale_mem.get
@@ -605,17 +582,16 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   } else (None, None, None)
 
   // ---- funct-29 MX_LOAD_LUT: DMA loader (8-byte Gets from DRAM -> one lutN_write bundle fire) ----
-  // Assembles num_luts*12 bytes (num_luts*96b) into the LUT buffer, then fires the selected
-  // requantizer lut port ONCE with data = buffer view -- byte-identical to the regmap GO fire.
+  // Assembles num_luts*96b into the LUT buffer, then fires the selected requantizer lut port once.
   // sel: 0 = B/weight -> lut0, 1 = A/act-in -> lut1, 2 = C/act-out -> lut2 (Spike polarity).
   val lut_loader_busy = WireDefault(false.B)
 
-  // G1: runtime LUT-usage flag. MX_LOAD_LUT sets it, MX_LUT_DISABLE clears it, default off.
+  // Runtime LUT-usage flag: MX_LOAD_LUT sets it, MX_LUT_DISABLE clears it, default off.
   val mx_lut_en = RegInit(false.B)
   ex_controller.io.lut_en := mx_lut_en
 
-  // G2: this build routes E4M3 (code0) operands through the LUT deproject (4-bit -> 2x8b E4M3) when
-  // lut_en is set. True only on the E4M3-quad build (operand lane MxFloat(4,4,2), sig4). Elaboration const.
+  // True only on the E4M3-quad build, which routes E4M3 (code0) operands through the LUT deproject
+  // (4-bit -> 2x8b E4M3) when lut_en is set.
   val e4m3QuadThroughput = outer.config.spatialArrayInputType match {
     case mf: MxFloat => mf.sigWidth >= 4 && mf.expWidth < 5
     case _ => false
@@ -688,9 +664,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       }
     }
 
-    // Unpack the native codebook (16 entries of ent_bits each per table) and place each entry into the
-    // physical LUT slot (rdataW = numBits/16). Narrow formats (FP6 6b) get low-aligned into wider slots
-    // (8b), so the codebook is stored config-independently. entry_bits in {6,8}: static-width paths.
+    // Unpack the native codebook (16 entries of ent_bits each per table) into the physical LUT slots
+    // (rdataW = numBits/16), low-aligning narrow formats so storage is config-independent.
     val rdataW  = numBits / 16
     val bufBits = buffer.asUInt
     def buildTables(ew: Int): UInt =
@@ -723,16 +698,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_requantizer.get.io.lut1_write <> b.lut1
       mx_requantizer.get.io.lut2_write <> b.lut2
     } else {
-      // scale-mem write source: the funct-27 DMA loader (idle -> valid=false, no spurious writes).
+      // scale-mem write source is the funct-27 DMA loader (idle -> valid=false, no spurious writes).
       spad.module.io.scale_mem_write_w.get   <> scale_loader_w.get
-      // C8.3/C8.5: act-scale write source MUX, arbitrated by ACTIVITY (order-robust). The requantizer's
-      // transposed act flush drives the port ONLY while it actually has data to write
-      // (scale_resident && flush.valid); at ALL other times the funct-27 DMA loader (scale_loader_act)
-      // drives it -- so an operand A-scale load is never blocked, regardless of whether scale_resident
-      // was set before or after it. The flush's valid stays high for its whole run (set by flushing_act,
-      // only cleared on the last beat), so once it starts it holds the port until done; the loader and
-      // the flush are temporally disjoint in a chain (A-load at MM1 start, flush at MM1 store). When
-      // scale_resident=0 the flush never asserts valid -> this is bit-identical to `<> scale_loader_act`.
+      // Act-scale write source mux, arbitrated by activity: the requantizer's transposed act flush drives
+      // the port only while it has data (scale_resident && flush.valid); otherwise the funct-27 loader does,
+      // so an A-scale load is never blocked. The two are temporally disjoint in a chain.
       locally {
         val sc_act_dst = spad.module.io.scale_mem_write_act.get
         val sc_act_res = mx_requantizer.get.io.scaleMem_write_act_resident
@@ -752,7 +722,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_requantizer.get.io.requant_data_in_gpu <> mmio_requant_in_gpu.get
       mx_requantizer.get.io.requant_data_out    <> mmio_requant_out.get
       mmio_scale_factor_out.get                 <> mx_requantizer.get.io.scaleMem_write
-      // LUT write source: funct-29 DMA loader (for the selected table) while busy, else CPU regmap.
       // LUT write source: the funct-29 DMA loader fires the sel'd port; the other two stay idle.
       val r0 = mx_requantizer.get.io.lut0_write
       val r1 = mx_requantizer.get.io.lut1_write
@@ -804,9 +773,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     for (b <- 0 until sp_banks) {
       mx_sel(b) := false.B
       when(read_projected(b).resp.valid) {
-        // Deproject (LUT-stored operand) fires for: code1/fp6 (E3M2, E2M3 -- always LUT); fp8 E5M2
-        // (code0 + altfmt -- always LUT); and E4M3-quad (code0 + !altfmt + lut_en on a quad build).
-        // fp8 E4M3-single (code0 + !altfmt + !lut_en) and fp4 (code2) stay the direct path (useMxB).
+        // Deproject (LUT-stored operand) fires for fp6 (always), fp8 E5M2 (always), and E4M3-quad
+        // (lut_en on a quad build); fp8 E4M3-single and fp4 stay the direct path (useMxB).
         val wfmt = ex_controller.io.mx.get.weight_mx_format_out
         val walt = ex_controller.io.mx.get.mx_fp8_altfmt_out
         mx_sel(b) := (wfmt === 1.U) ||
@@ -815,7 +783,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       }
 
       // req to srams
-      // read_projected(b).req <> ex_controller.io.srams.read(b).req
       read_projected(b).req <> sram_read_buffer(b).req
       spad.module.io.srams.read(b).req <> read_projected(b).req
 
@@ -823,7 +790,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       read_projected(b).resp.bits.fromDMA := spad.module.io.srams.read(b).resp.bits.fromDMA
       read_projected(b).resp.bits.weight_mx_format := spad.module.io.srams.read(b).resp.bits.weight_mx_format
       read_projected(b).resp.bits.input_mx_format := spad.module.io.srams.read(b).resp.bits.input_mx_format
-      // Finding 12: carry the operand-kind tag (aligned with the read data) to the requantizer/QuantLut.
+      // carry the operand-kind tag (aligned with the read data) to the requantizer/QuantLut
       read_projected(b).resp.bits.read_a := spad.module.io.srams.read(b).resp.bits.read_a
       read_projected(b).resp.bits.read_d := spad.module.io.srams.read(b).resp.bits.read_d
       read_projected(b).resp.valid := spad.module.io.srams.read(b).resp.valid
@@ -839,11 +806,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
       // FP8 mode: bypass requantizer
       when (useMxB) {
-        // Expand the stored 8-bit-slot operands onto the deprojected operand bus. Lane width =
-        // weightType.getWidth (the largest supported weight datatype): 12 (FP6-native cfg) or 16 (E5M2 cfg
-        // = 2x 8-bit slots). Each format fits into the lane's slots: E4M3 (single 8-bit) -> low 8 of the
-        // lane; FP4 (dual 4-bit) -> low 4 of each half-lane (slotW) slot. Generalizes the old hardcoded
-        // 12-bit lane so E4M3/FP4 coexist on any bus width (12-bit cfg reduces to pad(12) / 6-bit slots).
+        // Expand the stored 8-bit-slot operands onto the deprojected bus, lane width = weightType.getWidth:
+        // E4M3 -> low 8 of the lane; FP4 (dual 4-bit) -> low 4 of each slotW half-lane.
         val proj = read_projected(b).resp
         val laneW = outer.config.weightType.getWidth
         val slotW = laneW / 2
@@ -1280,9 +1244,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     .otherwise {
       if (outer.use_mx_mmio) {
-        // funct-27 MX_LOAD_SCALES: kick the DMA loader instead of the reservation station.
-        // The command dequeues when the (idle) loader accepts it; io.busy holds via
-        // scale_loader_busy until the load finishes, so gemmini_fence orders it.
+        // funct-27 MX_LOAD_SCALES kicks the DMA loader instead of the reservation station; io.busy holds
+        // via scale_loader_busy until the load finishes, so gemmini_fence orders it.
         when (is_mx_load_scales) {
           scale_loader_start.get.valid     := unrolled_cmd.valid
           scale_loader_start.get.bits.addr := unrolled_cmd.bits.cmd.rs1(coreMaxAddrBits - 1, 0)
@@ -1304,7 +1267,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       } else {
         reservation_station.io.alloc.valid := true.B
         when(reservation_station.io.alloc.fire) {
-          // compressed_cmd.ready := true.B
           unrolled_cmd.ready := true.B
         }
       }

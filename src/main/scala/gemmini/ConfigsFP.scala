@@ -326,11 +326,11 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig())
   )
 
-  // Faithful standalone twin of the Radiance MX flow (WithRadianceMxGemmini): same functional
-  // params, but internal scratchpad + MMIO requant path instead of shared SRAM.
+  // Standalone twin of the Radiance MX flow: same functional params, but internal scratchpad + MMIO
+  // requant path instead of shared SRAM.
   val standaloneMxFPConfig = defaultMxFPConfig.copy(
     ex_read_from_acc = false,
-    ex_write_to_spad = true,   // V1: requant FP8 -> internal spad (Scratchpad requantwrite source); MX meaning, not raw-mesh clip
+    ex_write_to_spad = true,   // requant FP8 -> internal spad
     sp_singleported = false,
     spad_read_delay = 4,
     tile_latency = 0,
@@ -338,15 +338,12 @@ object GemminiMxFPConfigs {
     acc_latency = 3,
     num_counter = 0,
     lut = Some(GemminiLUTConfig()),
-    // Flat scale-factor RAM window base/size (easy to change here). 0x20000000..0x20003fff:
-    // weight scales at +0x0000, activation scales at +0x2000 (top addr bit selects).
+    // Scale-factor RAM window 0x20000000..0x20003fff: weight scales at +0x0000, activation at +0x2000.
     scale_mem = Some(defaultMxFPConfig.scale_mem.get.copy(baseAddr = 0x20000000L)),
-    mx_mmio_base = Some(0x20010000L)   // LUT/requant regmap, relocated off the scale window
+    mx_mmio_base = Some(0x20010000L)   // LUT/requant regmap, off the scale window
   )
 
-  // FP8 E5M2 via LUT (Option A variant): FP8 slot = E5M2, stored 4-bit and up-projected to 8-bit E5M2
-  // like FP6. Operand lane MxFloat(5,3,2) (2x 8-bit); stored type stays 4-bit. 8-bit LUT (LutFP8E5M2).
-  // Step 0 = elaboration only; code0->E5M2 routing lands in Step 1.
+  // FP8 E5M2 via LUT: E5M2 stored 4-bit and up-projected to 8-bit, operand lane MxFloat(5,3,2).
   val e5m2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat(5, 3, 2, pad=false),
     weightType = MxFloat(5, 3, 2, pad=false),
@@ -361,9 +358,8 @@ object GemminiMxFPConfigs {
     )),
   )
 
-  // ALL MX formats in one mesh {FP4, E3M2, E2M3, E4M3, E5M2}, modes {0,4,8,9}. Operand lane MxFloat(4,4,2)
-  // = 16b routes mac_mx -> mxGemminiAll; E5M2 (exp5) rides mode4 via the decoupled 5-bit exp slots. Runtime
-  // lut_en promotes E4M3 to the 4-wide quad path. LutFP8E4M3 projection covers E4M3/E2M3/E3M2 outputs.
+  // All MX formats in one mesh {FP4, E3M2, E2M3, E4M3, E5M2}, modes {0,4,8,9}; operand lane MxFloat(4,4,2).
+  // Runtime lut_en promotes E4M3 to the 4-wide quad path.
   val allMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat(4, 4, 2, pad=false),
     weightType = MxFloat(4, 4, 2, pad=false),
@@ -380,9 +376,8 @@ object GemminiMxFPConfigs {
   // Back-compat alias.
   val e4m3LutMxFPConfig = allMxFPConfig
 
-  // Single-format builds: the operand descriptor carries an explicit MxConfig (MxFloat.withConfig), so the
-  // PE elaborates ONLY that format's decode + mode(s). The LUT projFormat picks that format's finder(s).
-  // FP4 (direct 4-bit) and E3M2 (fp6) requant use the default fp6 LUT (LutFP6E3M2, rdataWidth=6).
+  // Single-format builds: the operand descriptor carries an explicit MxConfig so the PE elaborates only
+  // that format's decode + mode(s), and the LUT projFormat picks that format's finder(s).
   val fp4OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
     weightType = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
@@ -395,8 +390,7 @@ object GemminiMxFPConfigs {
     spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
     spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
   )
-  // E2M3-only: 6-bit LUT (up-project 4-bit indices to 6-bit E2M3), 12-bit operand lane (2x6). Its own
-  // single-finder projFormat so no E4M3/E5M2/E3M2 finders elaborate.
+  // E2M3-only: 6-bit LUT (up-project 4-bit indices to 6-bit E2M3), 12-bit operand lane (2x6).
   val e2m3OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 4, 2, MxConfig.e2m3Only),
     weightType = MxFloat.withConfig(2, 4, 2, MxConfig.e2m3Only),

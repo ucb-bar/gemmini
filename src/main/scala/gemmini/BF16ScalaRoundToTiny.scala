@@ -34,33 +34,6 @@ object fp8ToE5M3 {
   }
 }
 
-// class BF16ScaleRoundToFP6(
-//   outputnumLanes: Int = 6
-// ) extends BF16ScaleRoundToTiny(
-//   tinyWidth      = 6,
-//   outputnumLanes = outputnumLanes,
-//   format         = MxFType.E4M2,
-//   pack           = (in: UInt) => E4M2ToFp6(in)
-// )
-
-// class BF16ScaleRoundToFP4(
-//   outputnumLanes: Int = 6
-// ) extends BF16ScaleRoundToTiny(
-//   tinyWidth      = 4,
-//   outputnumLanes = outputnumLanes,
-//   format         = MxFType.E3M1,
-//   pack           = (in: UInt) => E3M1Tofp4(in)
-// )
-
-// class BF16ScaleRoundToFP8(
-//   outputnumLanes: Int = 6
-// ) extends BF16ScaleRoundToTiny(
-//   tinyWidth      = 8,
-//   outputnumLanes = outputnumLanes,
-//   format         = MxFType.E5M3,
-//   pack           = (in: UInt) => E5M3ToFp8(in)
-// )
-
 object E3M1Tofp4 {
   def isE3M1NaN(in: UInt): Bool = { in(3, 1) === "b111".U(3.W) && in(0) }
   def isE3M1Inf(in: UInt): Bool = { in(3, 1) === "b111".U(3.W) && !in(0) }
@@ -75,9 +48,7 @@ object E3M1Tofp4 {
     val biasDiff = 2.U(3.W)
     val isZero = (exp === 0.U) && (sig === 0.U)
     val isSpecial = isE3M1NaN(in) || isE3M1Inf(in)
-    
-    // val mapToZero = (exp < 2.U) || isZero
-    // val mapToSubnorm = (exp === 2.U) && (sig === 0.U)
+
     val mapToZero   = (exp < 2.U) && !(exp === 1.U && sig === 1.U) // exp<2 except (exp=1, sig=1)
     val mapToSubnorm = ((exp === 2.U) && (sig === 0.U)) || ((exp === 1.U) && (sig === 1.U)) 
     val mapToMinNorm = (exp === 2.U) && (sig === 1.U)
@@ -215,22 +186,16 @@ object E5M3ToFp8 {
       outSub := Mux(sig === "b111".U, outMinNorm, sign ## 0.U(4.W) ## k)
     }
 
-    // NOTE: no longer used for FP8 -- BF16ToE4M3 replaced it (it double-rounded through E5M3).
-    // Kept because the FP6/FP4 paths share this file's structure.
+    // Unused for FP8 (BF16ToE4M3 replaced it); kept because the FP6/FP4 paths share this structure.
     Mux(mapToZero, Cat(sign, 0.U(7.W)),
       Mux(mapToMax, sign ## FP8Max,
         Mux(mapToSubnorm, outSub, outNorm)))
   }
 }
 
-// BF16 -> E4M3 code in ONE rounding step, ties away from zero, E4M3 subnormals allowed,
-// saturating to +-448. Matches microxcaling's _quantize_elemwise(round="nearest",
-// saturate_normals=true, allow_denorm=true), which is what MXQuant's e2e quantizer uses.
-//
-// hardfloat cannot target E4M3: with expWidth=4 it reserves exp field 15 for Inf/NaN, but E4M3
-// uses exp=15 with mantissa 0..6 as normals up to 448. Routing through E5M3 instead (what this
-// replaces) double-rounds, because E5M3's 3 fraction bits are coarser than E4M3's subnormal
-// quantum -- e.g. 6.6875 * 2^-9 came out as 6 quanta instead of 7.
+// BF16 -> E4M3 code in one rounding step: ties away from zero, subnormals allowed, saturating to
+// +-448 (matches microxcaling's nearest/saturate/allow_denorm quantizer). Done directly rather than
+// via hardfloat, which reserves E4M3's exp field 15 for Inf/NaN and would double-round through E5M3.
 object BF16ToE4M3 {
   def apply(in: UInt): UInt = {
     require(in.getWidth == 16)

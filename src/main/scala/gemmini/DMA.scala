@@ -413,7 +413,6 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
       val size = UInt(log2Ceil(maxBytes+1).W)
       val lg_size = UInt(log2Ceil(log2Ceil(maxBytes+1)+1).W)
       val mask = Vec(maxBeatsPerReq, Vec(beatBytes, Bool()))
-      println("Creating a mask of sizes (max, beatBytes): " + maxBeatsPerReq + " " + beatBytes + "\n")
       val vaddr = UInt(vaddrBits.W)
       val is_full = Bool()
 
@@ -485,16 +484,6 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     val write_shift = PriorityEncoder(write_mask)
 
     val bytes_written_this_beat = write_packet.bytes_written_per_beat(beatsSent)
-
-    // Debug wires to trace bytesSent changes
-    // val trace_bytesSent        = WireDefault(bytesSent);         dontTouch(trace_bytesSent)
-    // val trace_bytesLeft        = WireDefault(bytesLeft);         dontTouch(trace_bytesLeft)
-    // val trace_bytes_this_beat  = WireDefault(bytes_written_this_beat); dontTouch(trace_bytes_this_beat)
-    // val trace_state            = WireDefault(state);             dontTouch(trace_state)
-    // val trace_req_len          = WireDefault(req.len);           dontTouch(trace_req_len)
-    // val trace_write_beats      = WireDefault(write_beats);       dontTouch(trace_write_beats)
-    // val trace_beats_left       = WireDefault(beatsLeft);         dontTouch(trace_beats_left)
-    // val trace_req_fire         = WireDefault(io.req.fire);       dontTouch(trace_req_fire)
 
     // Firing off TileLink write requests
     val putFull = edge.Put(

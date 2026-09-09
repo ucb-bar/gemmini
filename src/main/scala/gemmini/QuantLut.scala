@@ -93,18 +93,14 @@ class QuantLut(
   val used_lut_act_out = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
   dontTouch(used_lut_act_out)
   val minIdx = WireDefault(0.U(raddrWidth.W))
-  // Projection nearest-finders (act_out): pick the decoder by LUT format.
-  // Uniform driver wires keep the surrounding control logic format-agnostic;
-  // the FP6 default path drives identical values to before.
+  // Projection nearest-finders (act_out): pick the decoder by LUT format via uniform driver wires.
   val proj_in      = WireDefault(VecInit(Seq.fill(32)(0.U(rdataWidth.W))))
   val proj_lut     = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
   val proj_nearest = Wire(Vec(32, UInt(raddrWidth.W)))
 
   lutConfig.projFormat match {
     case LutFP8E5M2 =>
-      // E5M2-capable build: instantiate BOTH finders and select at runtime by altfmt, so an FP6 output
-      // (altfmt=0) projects with the FP6 finder and an E5M2 output (altfmt=1) with the FP8 finder. LUT
-      // entries are rdataWidth (8) wide; the FP6 finder reads the low 6 bits (FP6 codes are 6-bit).
+      // E5M2-capable build: both finders, selected at runtime by altfmt (FP6 finder reads the low 6 bits).
       val fp8Finders = Seq.fill(32)(Module(new FP8NearestFinder(altfmt = true)))
       val fp6Finders = Seq.fill(32)(Module(new FP6E3M2NearestFinder()))
       val proj_lut6  = VecInit(proj_lut.map(_(5, 0)))
@@ -116,10 +112,8 @@ class QuantLut(
         proj_nearest(i) := Mux(io.mx_fp8_altfmt, fp8Finders(i).io.nearestIdx, fp6Finders(i).io.nearestIdx)
       }
     case LutFP8E4M3 =>
-      // All-formats build (mxGemminiAll): requant output is a code0 fp8 sub-format (E4M3 = altfmt0, E5M2 =
-      // altfmt1, both 8-bit codes) OR a code1 fp6 sub-format (E3M2 = altfmt0, E2M3 = altfmt1, 6-bit codes in
-      // the low 6). Pick the finder family by output code, then the sub-format by mx_fp8_altfmt (symmetric
-      // with the input decode). fp8 finders take the full 8-bit codebook; fp6 finders the low 6 bits.
+      // All-formats build: pick the finder family by output code (fp8/fp6), then the sub-format by
+      // mx_fp8_altfmt. fp8 finders take the full 8-bit codebook; fp6 finders the low 6 bits.
       val fp8e4Finders = Seq.fill(32)(Module(new FP8NearestFinder(false)))  // E4M3 (exp4)
       val fp8e5Finders = Seq.fill(32)(Module(new FP8NearestFinder(true)))   // E5M2 (exp5)
       val fp6e3Finders = Seq.fill(32)(Module(new FP6E3M2NearestFinder()))
@@ -176,11 +170,8 @@ class QuantLut(
   
   val used_lut_act_0 = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
   val used_lut_act_1 = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
-  //val used_lut_w = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
   val counter_act = RegInit(0.U(log2Ceil(16).W))
-  //val counter_w = RegInit(0.U(log2Ceil(lutConfig(1)._1).W))
 
-  // dontTouch(used_lut_w)
   dontTouch(counter_act)
   dontTouch(used_lut_act_0)
   dontTouch(used_lut_act_1)
@@ -211,19 +202,15 @@ class QuantLut(
     
     
     when(io.spad_projected_data(i).resp.valid) {
-      // Finding 12: gate on the per-response operand tag (carried aligned with the read data) instead
-      // of the hardcoded-latency io.read_a. This fires the deproj + advances counter_i exactly when the
-      // projected data arrives -> no dropped/zeroed leading beats and no codebook-row phase offset.
+      // Gate the deproj on the per-response operand tag (aligned with the read data), not a fixed latency,
+      // so it fires exactly when the projected data arrives.
       when(io.spad_projected_data(i).resp.bits.read_a) {
         when(counter_i === ((io.loop_bound_i << 4.U) - 1.U)){
           counter_i := 0.U
         }.otherwise{
           counter_i := counter_i + 1.U
         } 
-        // W3 (placement-agnostic): route by the runtime read_a tag, not a hardwired bank half.
-        // The old `if (i < sp_banks/2)` pinned activation deproj to the lower bank half, forcing the
-        // SW to place the weight operand in the upper half. Any bank whose read carries read_a now does
-        // the activation deprojection, so the operand may live in ANY scratchpad bank.
+        // Route by the runtime read_a tag, so the activation operand may live in any scratchpad bank.
         used_lut_act_0 := lutCache_act_in((counter_i << 1.U) >> io.quant_lut_update_granularity)
         used_lut_act_1 := lutCache_act_in(((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity)
         for (k <- 0 until 16) { //act data layout is k15a1, k15a0, k14a1, k14a0,...,k0a1,k0a0, each 4 bit, total 32*4
@@ -241,20 +228,13 @@ class QuantLut(
         }.otherwise{
           counter_j := counter_j + 1.U
         }
-        // W3 (placement-agnostic): route by the runtime read_d tag, not a hardwired bank half.
-        // The old `if (i >= sp_banks/2)` pinned weight deproj to the upper bank half. Any bank whose
-        // read carries read_d now does the weight deprojection, so weights may live in ANY bank.
+        // Route by the runtime read_d tag, so weights may live in any scratchpad bank.
         for (k <- 0 until 32) {
           val used_lut_w = lutCache_weight((((counter_j >> 4.U) << 5.U) + k.U) >> io.quant_lut_update_granularity)
           val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
           deprojected_bits(k) := used_lut_w(chunk_4bit)
 
         }
-        // when (counter_w === (lutConfig(1)._1 - 1).U){
-        //   counter_w := 0.U
-        // }.otherwise{
-        //   counter_w := counter_w + 1.U
-        // }
       }
       io.spad_deprojected_data(i).resp.bits.data := Cat(deprojected_bits.reverse)
       io.spad_deprojected_data(i).resp.valid := true.B

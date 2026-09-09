@@ -29,7 +29,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     val weight_mx_format = Input(UInt(2.W))
     val activation_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())   // code1 LUT slot: 1 = E5M2 (exp5), 0 = FP6 (exp3)
-    val lut_en = Input(Bool())          // G1: runtime LUT-usage flag (consumed by mode-select in M1)
+    val lut_en = Input(Bool())          // runtime LUT-usage flag
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b = Input(Vec(meshColumns, Vec(tileColumns, outputType)))
     val in_d = Input(Vec(meshColumns, Vec(tileColumns, weightType))) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
@@ -70,17 +70,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     }
   }
 
-  // for (r <- 0 until meshRows; c <- 0 until meshColumns) {
-  //   val tile = mesh(r)(c)
-  //   tile.io.activation_mx_format := io.activation_mx_format
-  //   tile.io.weight_mx_format := io.weight_mx_format
-  // }
-
-  // Symmetric encoding: altfmt = sub-format within each code.
-  //   fp8 (code0): altfmt0 -> E4M3 (exp4,sig4); altfmt1 -> E5M2 (exp5,sig3)
-  //   fp6 (code1): altfmt0 -> E3M2 (exp3,sig3); altfmt1 -> E2M3 (exp2,sig4)
-  //   fp4 (code2): E2M1 (exp2,sig2)
-  // sig drives requiredPEMode (mode select) so it MUST honor altfmt; size = bits/element by code (fp8=8,fp6=6,fp4=4).
+  // Format code -> (exp,sig,bits), altfmt selects the sub-format:
+  //   fp8 (0): E4M3(4,4) / E5M2(5,3), 8b;  fp6 (1): E3M2(3,3) / E2M3(2,4), 6b;  fp4 (2): E2M1(2,2), 4b
   def mxExp(fmt: UInt): UInt = Mux(fmt === 2.U, 2.U,
     Mux(fmt === 1.U, Mux(io.mx_fp8_altfmt, 2.U, 3.U), Mux(io.mx_fp8_altfmt, 5.U, 4.U)))
   def mxSig(fmt: UInt): UInt = Mux(fmt === 2.U, 2.U,
@@ -97,8 +88,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   typeW.sig := mxSig(io.weight_mx_format)
   val typeW_size = mxSize(io.weight_mx_format)
 
-  // Only a build with the quad (16-MACU) PE may promote E4M3 to the 4-wide mode9 at runtime; a
-  // plain build ignores lut_en for mode selection so E4M3 stays 1-wide (mode8), exactly as before.
+  // Only a quad (16-MACU) build promotes E4M3 to the 4-wide mode9 at runtime; a plain build ignores
+  // lut_en for mode selection so E4M3 stays 1-wide (mode8).
   val mode = requiredPEMode(typeA, typeW, if (e4m3QuadThroughput) io.lut_en else false.B)
   
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)

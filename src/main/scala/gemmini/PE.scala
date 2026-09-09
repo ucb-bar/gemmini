@@ -8,8 +8,6 @@ class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
   val dataflow = UInt(1.W) // TODO make this an Enum
   val propagate = UInt(1.W) // Which register should be propagated (and which should be accumulated)?
   val shift = UInt(log2Up(accType.getWidth).W) // TODO this isn't correct for Floats
-  // val activation_mx_format = UInt(2.W)
-  // val weight_mx_format = UInt(2.W)
 }
 
 class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFpProductPrecisionList: T, meshFpAccPrecisionList: T) (implicit ev: Arithmetic[T]) extends Module {
@@ -21,7 +19,7 @@ class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFp
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())
-    val lut_en = Input(Bool())   // G1: runtime LUT-usage flag (consumed by mac_mx in M1)
+    val lut_en = Input(Bool())   // runtime LUT-usage flag
     val out_d = Output(dType)
   })
 
@@ -60,7 +58,7 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())
-    val lut_en = Input(Bool())   // G1: runtime LUT-usage flag
+    val lut_en = Input(Bool())   // runtime LUT-usage flag
 
     val bad_dataflow = Output(Bool())
   })

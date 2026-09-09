@@ -42,9 +42,9 @@ object GemminiISA {
   // MX (microscaling) DMA data-movement ISA — parity with the Spike model
   // (software/libgemmini/README.md funct table). Physical-only (bare-metal) addressing.
   val MX_LOAD_SCALES = 27.U     // rs1 = DRAM addr, rs2[31:0] = len bytes, rs2[32] = sel (0=A/act,1=B/wgt)
-  val MX_READ_SMEM   = 28.U     // (Step 4.3) drain outputs from spad/smem to DRAM
-  val MX_LOAD_LUT    = 29.U     // (Step 4.2) DMA-load FP6 LUTs
-  val MX_LUT_DISABLE = 30.U     // (G1) clear runtime LUT-usage flag (MX_LOAD_LUT sets it; default off)
+  val MX_READ_SMEM   = 28.U     // drain outputs from spad/smem to DRAM
+  val MX_LOAD_LUT    = 29.U     // DMA-load FP6 LUTs
+  val MX_LUT_DISABLE = 30.U     // clear runtime LUT-usage flag (MX_LOAD_LUT sets it; default off)
 
   
   // rs1[2:0] values
@@ -122,8 +122,7 @@ object GemminiISA {
   val MX_CHUNK_ID_BITS = 3  // log2(maxChunks=8), supports DIM up to 64
 
   class MvoutRs2(mvout_rows_bits: Int, mvout_cols_bits: Int, local_addr_t: LocalAddr) extends Bundle {
-    // reuse_tiled stolen from _spacer2 (one bit narrower) so mx_chunk_id and all lower fields keep
-    // their exact bit positions. Set for the gated tiled requant->spad store (LOOP_WS rs2 bit 10).
+    // reuse_tiled takes one bit from _spacer2 so mx_chunk_id and lower fields keep their bit positions.
     val _spacer2    = UInt((MVOUT_RS2_ROWS_WIDTH - mvout_rows_bits - MX_CHUNK_ID_BITS - 1).W)
     val reuse_tiled = Bool()
     val mx_chunk_id = UInt(MX_CHUNK_ID_BITS.W)
@@ -226,14 +225,11 @@ object GemminiISA {
   val CONFIG_EX_RS1_CMD_TYPE_WIDTH = 2
   val CONFIG_EX_RS1_DATAFLOW_WIDTH = 1
   val CONFIG_EX_RS1_ACTIVATION_WIDTH = 2
-  //val CONFIG_EX_RS1_SPACER0_WIDTH = (7 - 2 - 1 - 2 - 2)
-  //val CONFIG_EX_RS1_ENABLE_MXQUANT_WIDTH = 0
   val CONFIG_EX_RS1_LUT_ENABLE_WIDTH = 1
   val CONFIG_EX_RS1_SET_ONLY_STRIDES_WIDTH = 1
   val CONFIG_EX_RS1_A_TRANSPOSE_WIDTH = 1
   val CONFIG_EX_RS1_B_TRANSPOSE_WIDTH = 1
-  //val CONFIG_EX_RS1_SPACER1_WIDTH = (16 - 10)
-  val CONFIG_EX_RS1_INPUT_MX_FORMAT_WIDTH = 2   
+  val CONFIG_EX_RS1_INPUT_MX_FORMAT_WIDTH = 2
   val CONFIG_EX_RS1_WEIGHT_MX_FORMAT_WIDTH = 2  
   val CONFIG_EX_RS1_OUTPUT_MX_FORMAT_WIDTH = 2  
   val CONFIG_EX_RS1_A_STRIDE_WIDTH = 16

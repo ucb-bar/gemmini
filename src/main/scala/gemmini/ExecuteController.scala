@@ -28,11 +28,10 @@ class ExControllerMxScalingIO(
   val weight_mx_format_out = Output(UInt(2.W))
   val mx_fp8_altfmt_out = Output(Bool())
   val mx_multi_elem = Output(Bool())   // throughput: 2 elements/lane (vs 1 for single E4M3). Datatype-independent.
-  // Runtime LUT-enable, forwarded to the requant OUTPUT path. Discriminates E4M3-quad (4-bit LUT
-  // index output) from E4M3-single (8-bit code) -- both are output format0/altfmt0, split only by lut_en.
+  // Runtime LUT-enable on the requant output path: distinguishes E4M3-quad (4-bit LUT output) from
+  // E4M3-single (8-bit code); both are output format0/altfmt0, split only by lut_en.
   val lut_en_out = Output(Bool())
   val enable_MXQuant = Output(Bool())
-  // C8.3 MX_SCALE_RESIDENT: decoded from rs1 bit 62 of the mxquant scale-config (CONFIG_SCALE_MEM).
   // When set, the requantizer also writes its output activation block-scales into the on-chip
   // act-scale window (transposed) so the next matmul reads them in place -- no DRAM/SW reload.
   val scale_resident = Output(Bool())
@@ -53,7 +52,7 @@ class ExControllerMxScalingRegs (scale_mem_write_addr_width: Int) extends Bundle
   val scale_mem_read_act_sel = UInt(1.W)
   val scale_mem_read_w_sel = UInt(1.W)
   val scale_mem_counter_reset_flag = UInt(1.W)
-  val scale_resident = Bool()   // C8.3 MX_SCALE_RESIDENT (rs1 bit 62 of CONFIG_SCALE_MEM)
+  val scale_resident = Bool()   // MX_SCALE_RESIDENT (rs1 bit 62 of CONFIG_SCALE_MEM)
 
   // loop bounds
   val loop_bound_i = UInt(9.W)
@@ -106,23 +105,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     val mx = if (use_mx_scaling) { Some(new ExControllerMxScalingIO(scale_mem.get.ScaleMemWriteAddrWidth, meshRows, tileRows))} else {None}
 
-    // G1: runtime LUT-usage flag from the Controller (set by MX_LOAD_LUT, cleared by MX_LUT_DISABLE).
+    // Runtime LUT-usage flag from the Controller (set by MX_LOAD_LUT, cleared by MX_LUT_DISABLE).
     val lut_en = Input(Bool())
   })
-
-
-// def needsBuffering(mx_format: UInt): Bool = {
-//   mx_format === 2.U  // FP8 needs buffering
-// }
-
-// def extractHalf(data: UInt, use_high_half: Bool): UInt = {
-//   Mux(use_high_half, 
-//     data(255, 128),  // high 128b
-//     data(127, 0))    // low 128b
-// }
-  
-
-  //val block_size = meshRows*tileRows
 
   val mesh_tag = new Bundle with TagQueueTag {
     val rob_id = UDValid(UInt(log2Up(reservation_station_entries).W))
@@ -168,24 +153,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     case mf: MxFloat => mf.sigWidth >= 4 && mf.expWidth < 5
     case _ => false
   }
-  // THROUGHPUT (elements packed per operand lane), decoupled from the datatype (format code):
-  //   1/lane -> single E4M3 ONLY (code0, altfmt0, no lut_en). 2/lane -> FP4/FP6 (code!=0),
-  //   E5M2 (code0 + altfmt1 -- same 8b/sig3/mode4 dual layout as E3M2), and E4M3-quad (code0 +
-  //   lut_en on the quad build). Downstream column/stride/chunk layout keys off THIS, never the
-  //   format code -- the code stays datatype-only. Exposed on io.mx for the layout modules.
+  // Elements packed per operand lane: 1/lane only for single E4M3; 2/lane for FP4/FP6, E5M2 and
+  // E4M3-quad. Downstream column/stride/chunk layout keys off this, not the datatype format code.
   val mx_multi_elem = if (use_mx_scaling)
     (mx_state.get.activation_mx_format =/= 0.U) ||
     (mx_state.get.activation_mx_format === 0.U && mx_state.get.mx_fp8_altfmt) ||   // E5M2 (code0/altfmt1) is dual
     (e4m3QuadThroughput.B && io.lut_en)
     else false.B
-  // NOTE: the CONFIG_SCALE_MEM register latch lives in the main command decoder's gated branch
-  // (search "config_cmd_type === CONFIG_SCALE_MEM"), NOT here. It must fire ONLY when a *valid*
-  // config sits at the queue head (cmd.valid(0) && !matmul_in_progress && !pending). An ungated
-  // top-level `when(functs(0) === CONFIG_SCALE_MEM)` re-fired on the stale/invalid head the cycle
-  // AFTER the real config was popped, latching garbage loop bounds (e.g. i=96/j=46/k=137) and
-  // clearing scale_resident. That made the requantizer flush address-generator never reach its
-  // terminal count, so the block-scale coalescer never flushed -> all output scales read back 0
-  // and the tiled store was corrupted (observed on fp6 128x128 chained; latent for the others).
 
   if (use_mx_scaling) {
     io.mx.get.output_MxFormat := mx_state.get.output_mx_format
@@ -300,8 +274,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val cntl_valid = mesh_cntl_signals_q.io.deq.valid
   val cntl = mesh_cntl_signals_q.io.deq.bits
 
-  // E4M3-quad build: the operand lane is MxFloat(4,4,2) (sig4). This mirrors mac_mx's config select and
-  // enables the mesh to promote E4M3 to the 4-wide mode9 when lut_en is set. Other builds -> false.
   // Instantiate the actual mesh
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecision, meshAccPrecision, use_mx_scaling,
@@ -580,8 +552,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     read_a_per_bank(i) := read_a
     read_d_per_bank(i) := read_d
-    
-    //val d_needs_sram_read = read_d && !(needsBuffering(weight_mx_format) && d_buffer_valid && !d_buffer_half)
 
     Seq((read_a, a_ready), (read_b, b_ready), (read_d, d_ready)).foreach { case (rd, r) =>
       when (rd && !io.srams.read(i).req.ready) {
@@ -592,8 +562,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     if (ex_read_from_spad) {
       io.srams.read(i).req.valid := (read_a || read_b || read_d) && cntl_ready
       io.srams.read(i).req.bits.fromDMA := false.B
-      // Finding 12: tag the read with its operand kind so QuantLut gates the deproj on a signal that
-      // returns ALIGNED with the projected data, instead of a hardcoded-latency delayed read_a.
+      // Tag the read with its operand kind so QuantLut can gate deprojection on a signal that
+      // returns aligned with the projected data, instead of a fixed-latency delayed read_a.
       io.srams.read(i).req.bits.read_a := read_a
       io.srams.read(i).req.bits.read_d := read_d
       io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
@@ -790,9 +760,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
         
         .elsewhen(functs(0) === CONFIG_SCALE_MEM && !matmul_in_progress &&
                     !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) {
-            // Latch the CONFIG_SCALE_MEM registers HERE (gated on cmd.valid(0) via the enclosing
-            // when, plus !matmul_in_progress/!pending) so a stale/invalid queue head can never
-            // corrupt them. rs1 layout: dram 0-32, tiles_I 33-41, tiles_J 42-50, tiles_K 51-59,
+            // Latch the CONFIG_SCALE_MEM registers, gated on a valid queue head via the enclosing
+            // when. rs1 layout: dram 0-32, tiles_I 33-41, tiles_J 42-50, tiles_K 51-59,
             // scale_act_sel 60, scale_wgt_sel 61, scale_mem_counter_reset 62, MX_SCALE_RESIDENT 63.
             if (use_mx_scaling) {
               mx_state.get.loop_bound_i := rs1s(0)(41,33)
@@ -1053,13 +1022,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
    cntl.d_read_from_acc -> accReadValid(cntl.d_bank_acc)
   ))
 
-  // val dataD_valid = cntl.d_garbage || cntl.d_unpadded_cols === 0.U || 
-  // Mux(needsBuffering(weight_mx_format) && d_buffer_valid,
-  //   true.B,
-  //   MuxCase(readValid(cntl.d_bank), Seq(
-  //     cntl.preload_zeros -> false.B,
-  //     cntl.d_read_from_acc -> accReadValid(cntl.d_bank_acc))))
-
   //added for negative bitshift
   val preload_zero_counter = RegInit(0.U(5.W))
   //val neg_shift_sub = block_size.U - cntl.c_rows
@@ -1067,10 +1029,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val dataA_unpadded = Mux(cntl.im2colling, im2ColData, Mux(cntl.a_read_from_acc, accReadData(cntl.a_bank_acc), readData(cntl.a_bank)))
   val dataB_unpadded = MuxCase(readData(cntl.b_bank), Seq(cntl.accumulate_zeros -> 0.U, cntl.b_read_from_acc -> accReadData(cntl.b_bank_acc)))
-  
-  // val dataD_from_sram = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
-
-  // val dataD_unpadded = Mux(needsBuffering(weight_mx_format) && d_buffer_valid, extractHalf(d_data_buffer, d_buffer_half), dataD_from_sram)
 
   val dataD_unpadded = MuxCase(readData(cntl.d_bank), Seq(cntl.preload_zeros -> 0.U, cntl.d_read_from_acc -> accReadData(cntl.d_bank_acc)))
 
@@ -1152,7 +1110,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
 
   val address = mesh.io.resp.bits.tag.addr
-  //val address_no_offset = (address.asUInt & (~("h_f".U)).asUInt).asTypeOf(address)
   val address_no_offset = Cat(address.asUInt >> 4,
   0.U(4.W)).asTypeOf(address)
   val offset = address.asUInt % block_size.U
@@ -1200,10 +1157,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       e_act
     })))
 
-    // In MX mode, the requant FP8 output reaches the spad via a dedicated bank-write source
-    // (V1.2, sourced from the requantizer), NOT this raw pre-accumulator mesh-clip port. Gating
-    // on !use_mx_scaling also avoids elaborating the byte-mask below, which is malformed for the
-    // 12-bit (non-byte-aligned) MX weightType (Vec sp_width/8=24 vs Seq block_size*wTP/8=16).
+    // In MX mode the requant FP8 output reaches the spad via a dedicated bank-write source, not this
+    // raw mesh-clip port; gating on !use_mx_scaling also skips the byte-mask below, which is malformed
+    // for the non-byte-aligned MX weightType.
     if (ex_write_to_spad && !use_mx_scaling) {
       io.srams.write(i).valid := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
       io.srams.write(i).addr := w_row

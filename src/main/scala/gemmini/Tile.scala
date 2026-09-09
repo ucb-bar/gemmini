@@ -37,7 +37,7 @@ class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())
-    val lut_en = Input(Bool())   // G1: runtime LUT-usage flag
+    val lut_en = Input(Bool())   // runtime LUT-usage flag
 
     val bad_dataflow = Output(Bool())
   })

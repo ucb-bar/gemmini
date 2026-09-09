@@ -2,7 +2,6 @@ package gemmini
 
 import chisel3._
 import chisel3.util._
-import javax.swing.plaf.synth.Region
 
 object MxFloatFormat {
   // Format encoding
@@ -32,12 +31,7 @@ object MxFloatFormat {
       BF16 -> 65024.U
     ))
 
-    // Per-format block-scale convention. FP8 was migrated to MXQuant's e2e convention (_po2):
-    // pmax=0 puts the block max in [1,2) (using the format emax 448 overflowed the mesh accumulator
-    // when chained). The nibble formats (FP4/FP6) still use the OCP emax convention, so their scale
-    // carries log2_pmax = emax: FP4 E2M1 emax=2, FP6 E3M2 emax=4. This must match the golden
-    // generator (Format.out_pmax) and Spike (gemmini.cc log2_pmax) or the fp4/fp6 requant output and
-    // its E8M0 scales come out 2^pmax too small / high.
+    // Block-scale floor: FP8 uses the _po2 convention (pmax=0); FP4/FP6 use OCP emax (FP4=2, FP6=4).
     val log2_pmax_floor = MuxLookup(bits, 0.U)(Seq(
       FP4 -> 2.U,
       FP6 -> 4.U,
@@ -61,7 +55,7 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   sp_addr_width: Int,
   scaleMem_data_width: Int,
   scaleMem_addr_width: Int,
-  scaleMemActWriteAddrWidth: Int,   // C8.3: byte-addr width of the on-chip act-scale write port
+  scaleMemActWriteAddrWidth: Int,   // byte-addr width of the on-chip act-scale write port
   scaleSize: Int,
   scaleMembasewrite: Int,
   lutConfig: GemminiLUTConfig,
@@ -95,13 +89,11 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val loop_bound_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_k = Input(UInt(iterator_bitwidth.W)) // from  controller
   val scale_mem_counter_reset_flag = Input(Bool())
-  // C8.3 MX_SCALE_RESIDENT (from ex io.mx.scale_resident). When set, the coalescer additionally
-  // flushes its output act block-scales, TRANSPOSED to [GN][M], onto scaleMem_write_act_resident
-  // (the on-chip act-scale write port, 64b/beat like scale_loader_act). When false the port is idle.
+  // When set, the coalescer also flushes act block-scales transposed to [GN][M] onto
+  // scaleMem_write_act_resident (64b/beat); otherwise that port is idle.
   val scale_resident = Input(Bool())
   val scaleMem_write_act_resident = Decoupled(new ScalingFactorWriteReq(scaleMemActWriteAddrWidth, 64))
-  // Runtime LUT-enable (from ex io.mx.lut_en_out). Discriminates E4M3-quad requant output (4-bit LUT
-  // index) from E4M3-single (8-bit code): both are output format0/altfmt0, split only by lut_en.
+  // Splits E4M3-quad (4-bit LUT index) from E4M3-single (8-bit code): both are format0/altfmt0.
   val lut_en = Input(Bool())
 }
    
@@ -110,7 +102,7 @@ class MxRequantizer[T <: Data](
   sp_addr_width: Int,
   scaleMem_data_width: Int,
   scaleMem_addr_width: Int,
-  scaleMemActWriteAddrWidth: Int,   // C8.3: byte-addr width of the on-chip act-scale write port
+  scaleMemActWriteAddrWidth: Int,   // byte-addr width of the on-chip act-scale write port
   scaleSize: Int,
   scaleMembasewrite: Int,
   lutConfig: GemminiLUTConfig,
@@ -161,8 +153,7 @@ class MxRequantizer[T <: Data](
   format_reg := quant_dataType.asUInt(1, 0)
   val altfmt_reg = RegInit(false.B)          // code1 output sub-format: 1 = E5M2, 0 = FP6 (aligned w/ format_reg)
   altfmt_reg := io.mxacc_req.mx_fp8_altfmt
-  // lut_en is quasi-static (set at LUT-load, held across the matmul+requant); latch it in the same
-  // input stage as format_reg/altfmt_reg so E4M3-quad (format0/!altfmt + lut_en) selects the 4-bit path.
+  // lut_en is quasi-static; latch it alongside format_reg/altfmt_reg.
   val lut_en_reg = RegInit(false.B)
   lut_en_reg := io.lut_en
 
@@ -186,20 +177,13 @@ class MxRequantizer[T <: Data](
     result
   }
   
-  // E5M2 build: the LUT-format slot (output code 1) is FP8 E5M2, not FP6. MxFloatFormat still reports
-  // FP6's total_bits=6 so the LUT-project branch/packing is reused (projected output is 4-bit indices
-  // either way); only the block-scale exponent floor differs: 1<<(e_bits-1)=16 for E5M2 vs FP6's 4.
   val e5m2Lut = lutConfig.projFormat == LutFP8E5M2
   val (exp_bits, mant_bits, pmax, log2_pmax_floor_raw) = MxFloatFormat(format_reg)
-  // Symmetric block-scale floor = 1<<(e_bits-1), selected at RUNTIME by (format code, altfmt):
-  //   code0/fp8: E4M3 -> 0 (MXQuant _po2 convention, from MxFloatFormat); E5M2 (altfmt) -> 16.
-  //   code1/fp6: E3M2 -> 4 (from MxFloatFormat); E2M3 (altfmt) -> 2.
-  //   code2/fp4 -> 2 (from MxFloatFormat). The altfmt overrides only fire on configs that support the
-  //   sub-format (E5M2 build never sees code0/altfmt E4M3-quad; E4M3Lut never sees code0/altfmt E5M2).
+  // Block-scale floor overrides by (format code, altfmt): E5M2 -> 16, E4M3-quad -> 8, E2M3 -> 2;
+  // everything else uses the MxFloatFormat default.
   val log2_pmax_floor = MuxCase(log2_pmax_floor_raw, Seq(
     (format_reg === 0.U && altfmt_reg) -> 16.U,                    // E5M2
-    (format_reg === 0.U && !altfmt_reg && lut_en_reg) -> 8.U,     // E4M3-quad (LUT nibble): OCP emax=8,
-                                                                   // NOT the E4M3-single _po2 raw=0
+    (format_reg === 0.U && !altfmt_reg && lut_en_reg) -> 8.U,      // E4M3-quad (LUT nibble)
     (format_reg === 1.U && altfmt_reg) ->  2.U                     // E2M3
   ))
   val data_buffer_counter = RegInit(0.U(1.W))
@@ -216,23 +200,14 @@ class MxRequantizer[T <: Data](
   val quant_half_counter = RegInit(false.B)
   val first_half_buf     = RegInit(0.U(128.W))
 
-  // NOTE (future rename): this is really the DATAPATH PACK STRUCTURE, not the literal element bit-width.
-  // E5M2 has 8-bit codes but its requant OUTPUT uses the 6-bit/nibble 4-bit-LUT datapath (same as FP6),
-  // so we force it to 6 here. Consider renaming total_bits_per_element -> datapath_pack_mode.
+  // This is the datapath pack structure, not the literal element width: E5M2 and E4M3-quad have wider
+  // codes but ride the 6-bit LUT datapath (buffering, packing, coalescer cadence) like FP6.
   val total_bits_raw = 1.U +& exp_bits +& mant_bits
-  val total_bits_per_element = WireDefault(0.U(5.W))
-  // E5M2 (code0/altfmt1) keeps its 8-bit codes for encode/finder, but rides the 6-bit LUT datapath for
-  // input buffering, packing, coalescer cadence, and isNibble grouping -- the proven FP6 path. The ISA
-  // output code stays 0 (E5M2 = code0/altfmt); only this internal pack-structure signal is remapped.
-  // E4M3-quad (code0/altfmt0 + lut_en) emits 4-bit LUT indices too, so it also rides the 6-bit LUT datapath;
-  // only E4M3-single (code0/altfmt0/!lut_en) keeps the 8-bit direct-code datapath (total_bits_raw = 8).
-  total_bits_per_element := Mux(format_reg === 0.U && (altfmt_reg || lut_en_reg), 6.U, total_bits_raw)
+  val datapath_pack_mode = WireDefault(0.U(5.W))
+  datapath_pack_mode := Mux(format_reg === 0.U && (altfmt_reg || lut_en_reg), 6.U, total_bits_raw)
 
-  // Requant output packing mode (symmetric, "always 4-bit LUT index" for the lut sub-formats):
-  //   E4M3-single (fp8/code0, altfmt0, !lut_en) -> 8-bit direct codes; E4M3-quad (code0/altfmt0 + lut_en),
-  //   E5M2 (code0/altfmt1) and E3M2/E2M3 (code1) -> 4-bit LUT indices (nibble-packed via the LUT
-  //   projection); FP4 (code2) -> 4-bit direct. E4M3-single is the ONLY 8-bit output; it and E4M3-quad
-  //   share output format0/altfmt0 and are split only by the (latched) runtime lut_en.
+  // Output packing: E4M3-single -> 8-bit direct codes; E4M3-quad/E5M2/E3M2/E2M3 -> 4-bit LUT indices;
+  // FP4 -> 4-bit direct. E4M3-single vs -quad share format0/altfmt0, split only by latched lut_en.
   val out_is_fp4  = format_reg === 2.U
   val out_is_lut4 = (format_reg === 1.U) || (format_reg === 0.U && (altfmt_reg || lut_en_reg))
   val out_is_8bit = (format_reg === 0.U && !altfmt_reg && !lut_en_reg)
@@ -243,7 +218,6 @@ class MxRequantizer[T <: Data](
   val pipe_in = Wire(Decoupled(new MxRequantizerAccResp[T](half_acc_row_t, spad_row_t)(ev)))
   pipe_in.valid := false.B
   pipe_in.bits := DontCare
-  //val pipelined_out = Reg(Vec(pipelineLatency, Decoupled(new MxRequantizerAccResp[T](half_acc_row_t, spad_row_t)(ev))))
   val pipelined_out_0 = Pipeline(pipe_in, 1)
   val oldest_pipe_out = Pipeline(pipelined_out_0, pipelineLatency - 1)
   
@@ -271,9 +245,9 @@ class MxRequantizer[T <: Data](
   }
   
   val gpu_addr = RegInit(0.U((32).W))
-  when(io.requant_data_in_gpu.fire && data_buffer_counter === 0.U && total_bits_per_element === 8.U){
+  when(io.requant_data_in_gpu.fire && data_buffer_counter === 0.U && datapath_pack_mode === 8.U){
     gpu_addr := io.requant_data_in_gpu.bits.address 
-  }.elsewhen(io.requant_data_in_gpu.fire && data_buffer_counter === 0.U && total_bits_per_element =/= 8.U && !quant_half_counter){
+  }.elsewhen(io.requant_data_in_gpu.fire && data_buffer_counter === 0.U && datapath_pack_mode =/= 8.U && !quant_half_counter){
     gpu_addr := io.requant_data_in_gpu.bits.address >> 1
   }
 
@@ -287,7 +261,6 @@ class MxRequantizer[T <: Data](
     pipe_in.bits.is_gpu := false.B
     pipe_in.bits.gpu_addr := 0.U
 
-  //}
   }.elsewhen(io.requant_data_in_gpu.fire && data_buffer_counter === 1.U) {
     pipe_in.valid := true.B
     pipe_in.bits.mx_mode := format_reg
@@ -299,52 +272,10 @@ class MxRequantizer[T <: Data](
   }
 
 
-  
-  // for (i <- 1 until pipelineLatency) {
-  //   pipelined_out(i) := pipelined_out(i-1)
-  // }
-  // pipelined_out(0).valid := pipe_in.valid
-  // pipelined_out(0).bits  := pipe_in.bits
   final_pipe_out := oldest_pipe_out
-  // val packed_quant_data = RegInit((0.U((128).W)))
-  // val packed_quant_data_counter = RegInit(0.U(1.W)) 
 
-  // when(total_bits_per_element === 6.U || total_bits_per_element === 4.U){ 
-  //   when(should_compute){
-  //     packed_quant_data_counter := ~packed_quant_data_counter
-  //     when(packed_quant_data_counter === 1.U){
-  //       when(total_bits_per_element === 6.U ){
-  //         packed_quant_data := Cat(quantLut.io.projected_data.bits.reverse)   
-  //       }.otherwise{
-  //         packed_quant_data :=  extracted_data(127,0)                
-  //       }        
-  //     }
-  //   }
-  // }
-  
-  // when(total_bits_per_element === 8.U){ 
-  //   final_pipe_out.valid := quantize_valid
-  //   final_pipe_out.bits.out.quant_mx_data_out := extracted_data.asTypeOf(spad_row_t)
-  // }.elsewhen(total_bits_per_element === 6.U){ 
-  //   final_pipe_out.valid := quantLut.io.projected_data.valid && (packed_quant_data_counter === 1.U)
-  //   val lut_quant_data = Cat(quantLut.io.projected_data.bits.reverse)
-  //   val row0 = (0 until 32).map(k => packed_quant_data(4*k+3,  4*k))  // r0_c0..c31
-  //   val row1 = (0 until 32).map(k => lut_quant_data(4*k+3,    4*k))  // r1_c0..c31
-  //   val interleaved = (0 until 16).flatMap { j => Seq(row0(2*j), row0(2*j+1), row1(2*j), row1(2*j+1)) }
-  //   final_pipe_out.bits.out.quant_mx_data_out := Cat(interleaved.reverse).asTypeOf(spad_row_t)
-  // }.elsewhen(total_bits_per_element === 4.U){
-  //   final_pipe_out.valid := quantize_valid && (packed_quant_data_counter === 1.U)
-  //   val row0 = (0 until 32).map(k => packed_quant_data(4*k+3,  4*k))  // r0_c0..c31
-  //   val row1 = (0 until 32).map(k => extracted_data(4*k+3,    4*k))  // r1_c0..c31
-  //   val interleaved = (0 until 16).flatMap { j => Seq(row0(2*j), row0(2*j+1), row1(2*j), row1(2*j+1)) }
-  //   final_pipe_out.bits.out.quant_mx_data_out := Cat(interleaved.reverse).asTypeOf(spad_row_t)
-  // }
- 
   // Two-cycle accumulation registers for FP4 / FP6:
-
-  
-
-  val fp6_lut_out     = Cat(quantLut.io.projected_data.bits.reverse)        
+  val fp6_lut_out     = Cat(quantLut.io.projected_data.bits.reverse)
   val fp6_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))    
   val fp6_row1        = (0 until 32).map(k => fp6_lut_out(4*k+3, 4*k))      
   val fp6_interleaved = (0 until 16).flatMap { j => Seq(fp6_row0(2*j), fp6_row1(2*j), fp6_row0(2*j+1), fp6_row1(2*j+1)) }
@@ -419,7 +350,7 @@ class MxRequantizer[T <: Data](
 
   val can_enqueue = pipe_in.ready
   val can_enqueue_wire = WireDefault(can_enqueue)
-  val full_precision_valid = RegNext(can_enqueue && pipelined_out_0.valid && (total_bits_per_element === 16.U))
+  val full_precision_valid = RegNext(can_enqueue && pipelined_out_0.valid && (datapath_pack_mode === 16.U))
 
   dontTouch(can_enqueue_wire)
     // Only allow input handshake when queue has space
@@ -476,7 +407,7 @@ class MxRequantizer[T <: Data](
 
   should_compute := false.B
   when (can_enqueue) {
-    when(pipelined_out_0.valid && (total_bits_per_element =/= 16.U)) {
+    when(pipelined_out_0.valid && (datapath_pack_mode =/= 16.U)) {
       should_compute := true.B
     }
   }
@@ -521,16 +452,9 @@ class MxRequantizer[T <: Data](
   dontTouch(neg_e8m0_clamped)
   scale_exponent := 0.S
   
-  // _po2 floors amax at fp32 eps (2^-23), whose BF16 biased exponent is 104. That subsumes the
-  // all-zero and subnormal-max cases, so there is no separate sentinel -- and no ambiguity between
-  // "all zero" and "overflowed".
-  //
-  // GATED ON should_compute. This module is shared with the BF16 (non-requant) path, which runs
-  // with should_compute low and block_max stuck at 0. Driving these wires unconditionally changed
-  // neg_e8m0_clamped from its default 0 to 150 on every idle cycle, which flips
-  // BF16ScaleRoundToTiny's scale_exp_unbiased sign bit and sends the shared element logic down the
-  // add branch instead of the subtract branch. Keep the idle values bit-identical to the
-  // pre-change design; conformance only matters while should_compute is high.
+  // _po2 floors amax at fp32 eps (2^-23), BF16 biased exponent 104, subsuming the all-zero/subnormal
+  // cases. Gated on should_compute: this module is shared with the BF16 path, whose idle values must
+  // stay bit-identical.
   val EPS_BIASED_EXP = 104.U(8.W)
   val max_biased_exp = block_max_uint(14, 7)
   when (should_compute) {
@@ -561,34 +485,14 @@ class MxRequantizer[T <: Data](
   BF16ScaleRoundToTiny.io.block_has_nan := block_has_nan
   BF16ScaleRoundToTiny.io.block_has_inf := block_has_inf
   quantized_buffer := RegNext(BF16ScaleRoundToTiny.io.out)
-  
 
-  
-  // when(quantize_valid) {
-  //   when(total_bits_per_element === 4.U){
-  //     extracted_data := Cat((0 until io.outputnumLanes).map(i => quantized_buffer(i)(3, 0)).reverse)
-  //   }.elsewhen(total_bits_per_element === 8.U){
-  //     extracted_data := Cat(quantized_buffer.reverse)
-  //   }.otherwise{
-  //     extracted_data := 0.U((io.outputnumLanes*8).W)
-  //   }
-  // }
-  
- 
-
-  // Source for the LUT projection: FP6 feeds 6-bit codes; E5M2 feeds 8-bit codes (= lutConfig.rdataWidth,
-  // the QuantLut.quant_fp6 port width). Generic via rdataWidth so the FP6 build is bit-identical.
+  // LUT projection source: low rdataW bits of the quantized code (full 8-bit for E5M2, low-6 for FP6).
   val rdataW = lutConfig.rdataWidth
   val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
   dontTouch(quant_fp6)
-  // Feed the LUT projection for every 4-bit-LUT output (E3M2/E2M3 6-bit codes AND E5M2 8-bit codes on
-  // code0/altfmt). rdataW (8) low bits carry the code: full 8-bit for E5M2, low-6 (padded) for fp6.
   quant_fp6 := Mux(out_is_lut4, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(rdataW - 1, 0))),
   VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
-  //val quant_projected_data = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(4.W))))
 
- 
-  
   quantLut.io.spad_projected_data <> io.spad_projected_data
   quantLut.io.spad_deprojected_data <> io.spad_deprojected_data
   quantLut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
@@ -599,7 +503,6 @@ class MxRequantizer[T <: Data](
   quantLut.io.loop_bound_i := io.loop_bound_i
   quantLut.io.loop_bound_j := io.loop_bound_j
   quantLut.io.loop_bound_k := io.loop_bound_k
-  //quantLut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
   quantLut.io.quant_fp6.valid := false.B
   quantLut.io.quant_fp6.bits := DontCare
   quantLut.io.lut_write_weight <> io.lut0_write
@@ -612,30 +515,10 @@ class MxRequantizer[T <: Data](
   }
 
   
-  // ===========================================================================
-  // Scale-factor COALESCER (row-major write-back)
-  // ---------------------------------------------------------------------------
-  // The mvout streams one E8M0 block scale per should_compute beat, in SUPER-BLOCK
-  // major order: two 32-col blocks per 16-row i-tile, all i-tiles for that block
-  // pair, then the next pair (last pair is a single block when GN is odd). Writing
-  // that stream as contiguous 32-byte flushes only lands ROW-MAJOR (byte m*GN+b,
-  // what the loader/reference expect) when GN=N/32 divides the 32-scale group --
-  // i.e. GN=2. For GN=3/4/... it misordered the scales.
-  //
-  // Instead, buffer the whole tile's scales in a row-major coalescer indexed by
-  // m*GN+b, driven by an address generator that mirrors the mvout iteration using
-  // the same loop bounds (loop_bound_i i-tiles, GN = loop_bound_j/2 blocks), then
-  // flush contiguous 32-byte row-major chunks. Arrival nesting (fp8):
-  //   super-block(sb) > i-tile(g) > block-in-superblock(bib) > row(r)
-  //   block b = 2*sb + bib ; row-tile m = 16*g + r ; dest byte = m*GN + b.
-  // FP4/FP6 stream 2 rows per beat; the target layout stays row-major, only the
-  // arrival->(m,b) decode would differ (handled when those paths are enabled).
-  // Format-aware: a 32-col block spans TWO 16-col mesh tiles for fp8 (block = loop_bound_j/2), but
-  // ONE 32-col mesh tile for the nibble formats (block = loop_bound_j). Nibble formats also stream
-  // 2 rows per beat, so an i-tile is 32 rows (bib = row-half) and the GN blocks are delivered as GN
-  // OUTER passes; for fp8 an i-tile is 16 rows and the two blocks of a super-block interleave (bib).
+  // Scale-factor coalescer: buffer the tile's E8M0 block scales row-major (byte m*GN+b) via an address
+  // generator mirroring the mvout iteration, then flush contiguous 32-byte chunks. Arrival decode:
   //   fp8:    sb=super-block, bib=block-in-sb, m=16*g+row,        b=2*sb+bib
-  //   nibble: sb=block(b),    bib=row-half,    m=32*g+16*bib+row, b=sb
+  //   nibble: sb=block(b),    bib=row-half,    m=32*g+16*bib+row, b=sb   (2 rows/beat)
   val ROWS_PER_HALF = meshColumns * tileColumns            // 16 rows per (bib) row-half
   val isNibble      = out_is_fp4 || out_is_lut4   // 4-bit-packed outputs: FP4, E3M2/E2M3, and E5M2 (code0/altfmt)
   val GN            = Mux(isNibble, io.loop_bound_j, (io.loop_bound_j >> 1).asUInt)
@@ -653,8 +536,8 @@ class MxRequantizer[T <: Data](
   val ag_row = RegInit(0.U(log2Ceil(ROWS_PER_HALF).W))
   val flushing = RegInit(false.B)
 
-  // C8.3 transposed act-scale residency flush state (gated on io.scale_resident; idle otherwise).
-  val flushing_act = RegInit(false.B)   // never set true unless scale_resident -> default-mode no-op
+  // Transposed act-scale residency flush state (gated on io.scale_resident; idle otherwise).
+  val flushing_act = RegInit(false.B)   // never set unless scale_resident
   val flush_act_bi = RegInit(0.U(9.W))  // block-column index bi, 0..GN-1  (outer)
   val flush_act_wm = RegInit(0.U(16.W)) // 64b word within a bi's M-row span, 0..(M/8 - 1)  (inner)
 
@@ -666,8 +549,7 @@ class MxRequantizer[T <: Data](
                                ag_g * ROWS_PER_HALF.U + ag_row)
   val cur_byte = cur_m * GN + cur_b
 
-  // Hold off overwriting the coalescer until BOTH flushes finish (flushing_act is always false in
-  // default mode, so this term is a no-op there -> bit-identical).
+  // Hold off overwriting the coalescer until both flushes finish.
   when(should_compute && !flushing && !flushing_act) {
     coalescer(cur_byte) := scale_e8m0
     // increment nested counters: row -> bib -> i-tile -> sb (block for nibble, super-block for fp8)
@@ -680,7 +562,7 @@ class MxRequantizer[T <: Data](
           when(ag_sb === (sb_count - 1.U)) {
             ag_sb := 0.U
             flushing := true.B                              // full tile collected -> flush
-            flushing_act := io.scale_resident               // C8.3: also start the transposed act flush
+            flushing_act := io.scale_resident               // also start the transposed act flush
           }.otherwise { ag_sb := ag_sb + 1.U }
         }.otherwise { ag_g := ag_g + 1.U }
       }.otherwise { ag_bib := ag_bib + 1.U }
@@ -706,19 +588,9 @@ class MxRequantizer[T <: Data](
     }
   }
 
-  // ===========================================================================
-  // C8.3 TRANSPOSED act-scale residency flush (gated on io.scale_resident)
-  // ---------------------------------------------------------------------------
-  // Reads the SAME row-major coalescer (coalescer(m*GN+b)) and streams it, in the
-  // on-chip A-scale operand layout [GN][M] (byte t = bi*M + m), onto the act-scale
-  // write port as 64b beats -- byte-identical to what the SW path produced (SW:
-  // a2_scales[bi*M+m] = c1_scales[m*GN+b], then scale_loader_act sends addr=w*8,
-  // data=little-endian 64b word). Emitting words w = 0,1,2,... in order (bi outer,
-  // wm inner) reproduces that exact beat sequence; ScaleFactorMem pairs two 64b
-  // beats into a 128b row write using the ODD beat's addr, same as scale_loader_act.
-  //   M (output rows) = tiles_I * (32 nibble | 16 fp8) ; words_per_bi = M/8.
-  //   word w = bi*words_per_bi + wm ; addr = w*8 ; m0 = wm*8.
-  //   data = Cat_{j=7..0} coalescer((m0 + j)*GN + bi)   (byte0 at LSB)
+  // Transposed act-scale residency flush: re-read the row-major coalescer and stream it in the
+  // A-scale operand layout [GN][M] (byte bi*M+m) as 64b beats, bi outer / wm inner.
+  //   M = tiles_I * (32 nibble | 16 fp8); words_per_bi = M/8; word w = bi*words_per_bi + wm; addr = w*8.
   val M_rows       = tiles_I * Mux(isNibble, 32.U, ROWS_PER_HALF.U)   // == total_scales / GN
   val words_per_bi = M_rows >> 3                                       // M/8 (M is a multiple of 8)
   val act_m0       = flush_act_wm << 3
