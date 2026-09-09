@@ -27,6 +27,7 @@ class ExControllerMxScalingIO(
   val activation_mx_format_out = Output(UInt(2.W))
   val weight_mx_format_out = Output(UInt(2.W))
   val mx_fp8_altfmt_out = Output(Bool())
+  val weight_mx_altfmt_out = Output(Bool())   // per-operand weight sub-format alt (act altfmt XOR rs1 bit31)
   val mx_multi_elem = Output(Bool())   // throughput: 2 elements/lane (vs 1 for single E4M3). Datatype-independent.
   // Runtime LUT-enable on the requant output path: distinguishes E4M3-quad (4-bit LUT output) from
   // E4M3-single (8-bit code); both are output format0/altfmt0, split only by lut_en.
@@ -43,6 +44,7 @@ class ExControllerMxScalingRegs (scale_mem_write_addr_width: Int) extends Bundle
   val output_mx_format = UInt(2.W)
   val uselut = Bool()
   val mx_fp8_altfmt = Bool()
+  val weight_mx_altfmt = Bool()
   val enable_mxquant = Bool()
 
   val scale_mem_mvin_base_addr_act = UInt(32.W)
@@ -166,6 +168,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.mx.get.activation_mx_format_out := mx_state.get.activation_mx_format
     io.mx.get.weight_mx_format_out := mx_state.get.weight_mx_format
     io.mx.get.mx_fp8_altfmt_out := mx_state.get.mx_fp8_altfmt
+    io.mx.get.weight_mx_altfmt_out := mx_state.get.weight_mx_altfmt
     io.mx.get.mx_multi_elem := mx_multi_elem
     io.mx.get.lut_en_out := io.lut_en
     io.mx.get.enable_MXQuant := mx_state.get.enable_mxquant
@@ -283,11 +286,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.activation_mx_format := mx_state.get.activation_mx_format
     mesh.io.weight_mx_format := mx_state.get.weight_mx_format
     mesh.io.mx_fp8_altfmt := mx_state.get.mx_fp8_altfmt
+    mesh.io.weight_mx_altfmt := mx_state.get.weight_mx_altfmt
     mesh.io.lut_en := io.lut_en
   } else {
     mesh.io.activation_mx_format := DontCare
     mesh.io.weight_mx_format := DontCare
     mesh.io.mx_fp8_altfmt := DontCare
+    mesh.io.weight_mx_altfmt := DontCare
     mesh.io.lut_en := DontCare
   }
 
@@ -726,6 +731,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
                 mx_state.get.output_mx_format := config_ex_rs1.output_mx_format
                 mx_state.get.uselut := config_ex_rs1.uselut
                 mx_state.get.mx_fp8_altfmt := config_ex_rs1.mx_fp8_altfmt
+                // per-operand weight altfmt: XOR delta on rs1 bit31 (0 -> weight matches activation)
+                mx_state.get.weight_mx_altfmt := config_ex_rs1.mx_fp8_altfmt ^ config_ex_rs1.weight_altfmt_diff
                 when(config_ex_rs1.output_mx_format =/= 3.U) {
                   mx_state.get.enable_mxquant := true.B
                 }.otherwise {

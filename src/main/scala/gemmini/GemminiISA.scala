@@ -238,7 +238,8 @@ object GemminiISA {
   class ConfigExRs1(acc_scale_bits: Int) extends Bundle {
     val _spacer2 = UInt((CONFIG_EX_RS1_ACC_SCALE_WIDTH - acc_scale_bits).W)
     val acc_scale = UInt(acc_scale_bits.W)
-    val a_stride = UInt(CONFIG_EX_RS1_A_STRIDE_WIDTH.W)
+    val weight_altfmt_diff = UInt(1.W) // bit 31 (stolen from a_stride MSB): weight sub-format XOR activation
+    val a_stride = UInt((CONFIG_EX_RS1_A_STRIDE_WIDTH - 1).W)
     val output_mx_format = UInt(CONFIG_EX_RS1_OUTPUT_MX_FORMAT_WIDTH.W) // bits [15:14]
     val weight_mx_format = UInt(CONFIG_EX_RS1_WEIGHT_MX_FORMAT_WIDTH.W) // bits [13:12]
     val activation_mx_format = UInt(CONFIG_EX_RS1_INPUT_MX_FORMAT_WIDTH.W)   // bits [11:10]

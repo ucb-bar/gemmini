@@ -452,6 +452,27 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
       projFormat = LutFP8E5M2)),
   )
+
+  // Dual-LUT asymmetric: FP8_E5M2-act (8-bit codes) x FP6_E3M2-wei (6-bit codes), mode4. Per-operand
+  // deproject width: act packs at 8b, wei at 6b (storage stays 8b).
+  val asymE5M2E3M2MxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2E3M2),
+    weightType = MxFloat.withConfig(3, 3, 2, MxConfig.asymE5M2E3M2),
+    spatialArrayInputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2E3M2),
+    spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.asymE5M2E3M2),
+    lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
+      projFormat = LutFP8E5M2, actCodeWidth = 8, weiCodeWidth = 6)),
+  )
+
+  // Opposite dual-LUT asymmetric: FP6_E3M2-act (6-bit codes) x FP8_E5M2-wei (8-bit codes), mode4.
+  val asymE3M2E5M2MxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymE3M2E5M2),
+    weightType = MxFloat.withConfig(5, 3, 2, MxConfig.asymE3M2E5M2),
+    spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymE3M2E5M2),
+    spatialArrayWeightType = MxFloat.withConfig(5, 3, 2, MxConfig.asymE3M2E5M2),
+    lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
+      projFormat = LutFP8E5M2, actCodeWidth = 6, weiCodeWidth = 8)),
+  )
 }
 
 // =========== MxFP Config ==========
@@ -551,6 +572,18 @@ class GemminiMxFPAsymFp4E5M2StandaloneConfig extends Config((site, here, up) => 
   case BuildRoCC => Seq((p: Parameters) => {
     implicit val q = p; implicit val v = implicitly[ValName]
     LazyModule(new Gemmini(GemminiMxFPConfigs.asymFp4E5M2MxFPConfig))
+  })
+})
+class GemminiMxFPAsymE5M2E3M2StandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.asymE5M2E3M2MxFPConfig))
+  })
+})
+class GemminiMxFPAsymE3M2E5M2StandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.asymE3M2E5M2MxFPConfig))
   })
 })
 

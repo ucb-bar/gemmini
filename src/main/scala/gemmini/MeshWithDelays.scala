@@ -70,6 +70,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())
+    val weight_mx_altfmt = Input(Bool())
     val lut_en = Input(Bool())   // runtime LUT-usage flag
   })
 
@@ -188,6 +189,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   mesh.io.weight_mx_format := io.weight_mx_format
   mesh.io.activation_mx_format := io.activation_mx_format
   mesh.io.mx_fp8_altfmt := io.mx_fp8_altfmt
+  mesh.io.weight_mx_altfmt := io.weight_mx_altfmt
   mesh.io.lut_en := io.lut_en
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_b := shifted(b_shifter_in, upBanks)

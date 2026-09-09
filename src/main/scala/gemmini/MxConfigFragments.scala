@@ -52,7 +52,14 @@ case class GemminiLUTConfig(
   raddrWidth: Int = 4,
   lutUpdateRegularityWidth: Int = 16,
   projFormat: LutProjFormat = LutFP6E3M2,
+  // Deprojected code width per operand for the mesh feed (0 = rdataWidth). For asymmetric builds whose
+  // two operands deproject to different widths (e.g. E5M2 act 8b x E3M2 wei 6b), set these so the
+  // deproject packs each operand at its own width. Storage stays rdataWidth-wide.
+  actCodeWidth: Int = 0,
+  weiCodeWidth: Int = 0,
 ) {
+  def actCodeW = if (actCodeWidth > 0) actCodeWidth else rdataWidth
+  def weiCodeW = if (weiCodeWidth > 0) weiCodeWidth else rdataWidth
   def isFp8Proj = projFormat == LutFP8E4M3 || projFormat == LutFP8E5M2
 
   require(!isFp8Proj || rdataWidth == 8,

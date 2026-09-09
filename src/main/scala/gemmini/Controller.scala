@@ -777,7 +777,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         val opfmt = Mux(read_projected(b).resp.bits.read_a,
           ex_controller.io.mx.get.activation_mx_format_out,
           ex_controller.io.mx.get.weight_mx_format_out)
-        val walt = ex_controller.io.mx.get.mx_fp8_altfmt_out
+        val walt = Mux(read_projected(b).resp.bits.read_a,
+          ex_controller.io.mx.get.mx_fp8_altfmt_out,
+          ex_controller.io.mx.get.weight_mx_altfmt_out)
         mx_sel(b) := (opfmt === 1.U) ||
           (opfmt === 0.U && walt) ||
           (e4m3QuadThroughput.B && mx_lut_en && opfmt === 0.U && !walt)

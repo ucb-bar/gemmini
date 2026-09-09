@@ -28,7 +28,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   val io = IO(new Bundle {
     val weight_mx_format = Input(UInt(2.W))
     val activation_mx_format = Input(UInt(2.W))
-    val mx_fp8_altfmt = Input(Bool())   // code1 LUT slot: 1 = E5M2 (exp5), 0 = FP6 (exp3)
+    val mx_fp8_altfmt = Input(Bool())   // activation sub-format alt (E5M2/E2M3 vs E4M3/E3M2)
+    val weight_mx_altfmt = Input(Bool())   // weight sub-format alt (per-operand)
     val lut_en = Input(Bool())          // runtime LUT-usage flag
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b = Input(Vec(meshColumns, Vec(tileColumns, outputType)))
@@ -66,26 +67,27 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
       tile.io.activation_mx_format := io.activation_mx_format
       tile.io.weight_mx_format := io.weight_mx_format
       tile.io.mx_fp8_altfmt := io.mx_fp8_altfmt
+      tile.io.weight_mx_altfmt := io.weight_mx_altfmt
       tile.io.lut_en := io.lut_en
     }
   }
 
   // Format code -> (exp,sig,bits), altfmt selects the sub-format:
   //   fp8 (0): E4M3(4,4) / E5M2(5,3), 8b;  fp6 (1): E3M2(3,3) / E2M3(2,4), 6b;  fp4 (2): E2M1(2,2), 4b
-  def mxExp(fmt: UInt): UInt = Mux(fmt === 2.U, 2.U,
-    Mux(fmt === 1.U, Mux(io.mx_fp8_altfmt, 2.U, 3.U), Mux(io.mx_fp8_altfmt, 5.U, 4.U)))
-  def mxSig(fmt: UInt): UInt = Mux(fmt === 2.U, 2.U,
-    Mux(fmt === 1.U, Mux(io.mx_fp8_altfmt, 4.U, 3.U), Mux(io.mx_fp8_altfmt, 3.U, 4.U)))
+  def mxExp(fmt: UInt, altfmt: Bool): UInt = Mux(fmt === 2.U, 2.U,
+    Mux(fmt === 1.U, Mux(altfmt, 2.U, 3.U), Mux(altfmt, 5.U, 4.U)))
+  def mxSig(fmt: UInt, altfmt: Bool): UInt = Mux(fmt === 2.U, 2.U,
+    Mux(fmt === 1.U, Mux(altfmt, 4.U, 3.U), Mux(altfmt, 3.U, 4.U)))
   def mxSize(fmt: UInt): UInt = Mux(fmt === 2.U, 4.U, Mux(fmt === 1.U, 6.U, 8.U))
 
   val typeA = Wire(new MxTypeBundle)
-  typeA.exp := mxExp(io.activation_mx_format)
-  typeA.sig := mxSig(io.activation_mx_format)
+  typeA.exp := mxExp(io.activation_mx_format, io.mx_fp8_altfmt)
+  typeA.sig := mxSig(io.activation_mx_format, io.mx_fp8_altfmt)
   val typeA_size = mxSize(io.activation_mx_format)
 
   val typeW = Wire(new MxTypeBundle)
-  typeW.exp := mxExp(io.weight_mx_format)
-  typeW.sig := mxSig(io.weight_mx_format)
+  typeW.exp := mxExp(io.weight_mx_format, io.weight_mx_altfmt)
+  typeW.sig := mxSig(io.weight_mx_format, io.weight_mx_altfmt)
   val typeW_size = mxSize(io.weight_mx_format)
 
   // Only a quad (16-MACU) build promotes E4M3 to the 4-wide mode9 at runtime; a plain build ignores
