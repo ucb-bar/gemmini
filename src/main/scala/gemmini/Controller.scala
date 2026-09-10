@@ -747,6 +747,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     spad.module.io.weight_mx_format := ex_controller.io.mx.get.weight_mx_format_out
     spad.module.io.act_mx_format := ex_controller.io.mx.get.activation_mx_format_out
     spad.module.io.mx_multi_elem := ex_controller.io.mx.get.mx_multi_elem
+    spad.module.io.mx_multi_elem_act := ex_controller.io.mx.get.mx_multi_elem_act
   } else {
     // Non-MX build: drive the (unconditional) MX ports to inert defaults.
     spad.module.io.enable_MXQuant := false.B
@@ -755,6 +756,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     spad.module.io.weight_mx_format := 0.U
     spad.module.io.act_mx_format := 0.U
     spad.module.io.mx_multi_elem := false.B
+    spad.module.io.mx_multi_elem_act := false.B
   }
 
 
@@ -936,6 +938,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   if (use_mx_scaling) {
     loop_matmul.io.activation_mx_format := ex_controller.io.mx.get.activation_mx_format_out
     loop_matmul.io.mx_multi_elem := ex_controller.io.mx.get.mx_multi_elem
+    loop_matmul.io.mx_multi_elem_act := ex_controller.io.mx.get.mx_multi_elem_act
     loop_matmul.io.weight_mx_format := ex_controller.io.mx.get.weight_mx_format_out
     loop_matmul.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
 
@@ -946,6 +949,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     store_controller.io.loop_bound_j := ex_controller.io.mx.get.loop_bounds.j
     store_controller.io.activation_mx_type := ex_controller.io.mx.get.activation_mx_format_out
     store_controller.io.mx_multi_elem := ex_controller.io.mx.get.mx_multi_elem
+    store_controller.io.mx_multi_elem_act := ex_controller.io.mx.get.mx_multi_elem_act
     store_controller.io.output_mx_type := ex_controller.io.mx.get.output_MxFormat
 
     mx_requantizer.get.io.read_a := ex_controller.io.read_a
@@ -970,12 +974,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // defaults. The loop counters still come from loop_matmul, which always has them.
     loop_matmul.io.activation_mx_format := 0.U
     loop_matmul.io.mx_multi_elem := false.B
+    loop_matmul.io.mx_multi_elem_act := false.B
     loop_matmul.io.weight_mx_format := 0.U
     loop_matmul.io.output_mx_format := 0.U
 
     store_controller.io.loop_bound_j := 0.U
     store_controller.io.activation_mx_type := 0.U
     store_controller.io.mx_multi_elem := false.B
+    store_controller.io.mx_multi_elem_act := false.B
     store_controller.io.output_mx_type := 0.U
 
     spad.module.io.counter_i := loop_matmul.io.counter_i

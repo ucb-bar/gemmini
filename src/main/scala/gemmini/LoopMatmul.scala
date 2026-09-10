@@ -518,6 +518,7 @@ class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val output_mx_format = UInt(2.W)
   val activation_mx_format = UInt(2.W)
   val mx_multi_elem = Bool()   // throughput: 2 elements/lane (datatype-independent)
+  val mx_multi_elem_act = Bool()   // ACTIVATION (output-row) throughput
 }
 
 class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int, tilesPerMxBlock: Int, mvout_rs2_t: MvoutRs2)
@@ -573,7 +574,13 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val dram_offset =  MuxCase((i * req.max_j) * block_size.U * 2.U + j*(block_size/8).U, Seq(
     (req.full_c || (req.output_mx_format === 3.U && !req.mx_multi_elem)) -> ((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U),
     (!req.mx_multi_elem && (req.output_mx_format === 0.U)) -> (((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U)/2.U),
-    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*8.U + j * (block_size/4).U)
+    // Internal-spad flat layout: output row R (of N cols, bf16) -> spad rows [R*(N/8), R*(N/8)+(N/8)).
+    // A row-tile of H output rows has i-stride i*H*(N/8) spad-rows. N enters via max_j = N/32, so
+    // i*H*(N/8) = i*max_j*(H/2)*block_size: act-quad H=32 -> x16... = i*max_j*block_size*8; act-single
+    // (mode6/7) H=16 -> i*max_j*block_size*4. The old x8-only assumed quad and doubled the act-single
+    // i-stride (tiles i>=1 landed at 2x -> rows>=16 garbage). Gate the height on mx_multi_elem_act; the
+    // j-term (32 cols/tile -> block_size/4 spad-rows, N-independent) is unchanged.
+    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*Mux(req.mx_multi_elem_act, 8.U, 4.U) + j * (block_size/4).U)
   ))
   val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
   val acc_addr_offset = (i*iter_max_j+j) * block_size.U
@@ -747,6 +754,7 @@ class LoopMatmulStCSpadReq(val block_size: Int, val iterator_bitwidth: Int, val 
   val output_mx_format = UInt(2.W)
   val activation_mx_format = UInt(2.W)
   val mx_multi_elem = Bool()   // throughput: 2 elements/lane (datatype-independent)
+  val mx_multi_elem_act = Bool()   // ACTIVATION (output-row) throughput
   // Output C region overlaps an A/B operand region this loop still reads (decided at dispatch);
   // gates the store on full execute drain.
   val dst_overlaps_operands = Bool()
@@ -823,7 +831,13 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
         ((i * req.max_j) * block_size.U + j * (block_size * 4).U),
         // flat: i*tiles_N*16 + 4*j
         (((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U)/2.U)),
-    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*8.U + j * (block_size/4).U)
+    // Internal-spad flat layout: output row R (of N cols, bf16) -> spad rows [R*(N/8), R*(N/8)+(N/8)).
+    // A row-tile of H output rows has i-stride i*H*(N/8) spad-rows. N enters via max_j = N/32, so
+    // i*H*(N/8) = i*max_j*(H/2)*block_size: act-quad H=32 -> x16... = i*max_j*block_size*8; act-single
+    // (mode6/7) H=16 -> i*max_j*block_size*4. The old x8-only assumed quad and doubled the act-single
+    // i-stride (tiles i>=1 landed at 2x -> rows>=16 garbage). Gate the height on mx_multi_elem_act; the
+    // j-term (32 cols/tile -> block_size/4 spad-rows, N-independent) is unchanged.
+    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*Mux(req.mx_multi_elem_act, 8.U, 4.U) + j * (block_size/4).U)
     ))
   val dst_addr = Mux(!req.mx_multi_elem,
     req.dst_addr + dst_offset + chunk_id * chunk_spad_stride,
@@ -1036,6 +1050,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     val weight_mx_format = Input(UInt(2.W))
     val output_mx_format = Input(UInt(2.W))
     val mx_multi_elem = Input(Bool())   // throughput: 2 elements/lane (datatype-independent)
+    val mx_multi_elem_act = Input(Bool())   // ACTIVATION (output-row) throughput
   })
 
   // Create states
@@ -1370,6 +1385,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.output_mx_format := io.output_mx_format
   stC.io.req.bits.activation_mx_format := io.activation_mx_format
   stC.io.req.bits.mx_multi_elem := io.mx_multi_elem
+  stC.io.req.bits.mx_multi_elem_act := io.mx_multi_elem_act
 
   stC_spad.io.req.bits.max_k := Mux(is_resadd, 1.U, loop_requesting_st.max_k)
   stC_spad.io.req.bits.max_j := loop_requesting_st.max_j
@@ -1385,6 +1401,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC_spad.io.req.bits.output_mx_format := io.output_mx_format
   stC_spad.io.req.bits.activation_mx_format := io.activation_mx_format
   stC_spad.io.req.bits.mx_multi_elem := io.mx_multi_elem
+  stC_spad.io.req.bits.mx_multi_elem_act := io.mx_multi_elem_act
   stC_spad.io.req.bits.reuse_tiled := loop_requesting_st.reuse_tiled
 
   // WAR overlap: with all A/B operand and C output spad regions known, test whether C overlaps A or B

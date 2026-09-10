@@ -28,7 +28,8 @@ class ExControllerMxScalingIO(
   val weight_mx_format_out = Output(UInt(2.W))
   val mx_fp8_altfmt_out = Output(Bool())
   val weight_mx_altfmt_out = Output(Bool())   // per-operand weight sub-format alt (act altfmt XOR rs1 bit31)
-  val mx_multi_elem = Output(Bool())   // throughput: 2 elements/lane (vs 1 for single E4M3). Datatype-independent.
+  val mx_multi_elem = Output(Bool())      // WEIGHT (output-column) throughput: 2 cols/lane iff quad weight.
+  val mx_multi_elem_act = Output(Bool())  // ACTIVATION (output-row) throughput: 2 rows/lane iff quad act.
   // Runtime LUT-enable on the requant output path: distinguishes E4M3-quad (4-bit LUT output) from
   // E4M3-single (8-bit code); both are output format0/altfmt0, split only by lut_en.
   val lut_en_out = Output(Bool())
@@ -166,6 +167,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     (mx_state.get.weight_mx_format === 0.U && mx_state.get.weight_mx_altfmt) ||      // E5M2 weight is quad
     (e4m3QuadThroughput.B && io.weight_lut_en)                                       // E4M3-quad weight (LUT)
     else false.B
+  // Output-row packing: 2/lane iff the ACTIVATION is quad (output rows come from the activation).
+  val mx_multi_elem_act = if (use_mx_scaling)
+    (mx_state.get.activation_mx_format =/= 0.U) ||
+    (mx_state.get.activation_mx_format === 0.U && mx_state.get.mx_fp8_altfmt) ||
+    (e4m3QuadThroughput.B && io.act_lut_en)
+    else false.B
 
   if (use_mx_scaling) {
     io.mx.get.output_MxFormat := mx_state.get.output_mx_format
@@ -174,6 +181,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.mx.get.mx_fp8_altfmt_out := mx_state.get.mx_fp8_altfmt
     io.mx.get.weight_mx_altfmt_out := mx_state.get.weight_mx_altfmt
     io.mx.get.mx_multi_elem := mx_multi_elem
+    io.mx.get.mx_multi_elem_act := mx_multi_elem_act
     io.mx.get.lut_en_out := io.lut_en
     io.mx.get.enable_MXQuant := mx_state.get.enable_mxquant
     io.mx.get.scale_mem_mvout_base_addr_act := mx_state.get.scale_mem_mvout_base_addr_act
@@ -1210,8 +1218,19 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
           VecInit(row0Words ++ row1Words).asUInt.asTypeOf(io.acc.write(i).bits.data)
         }
-        // Single-throughput E4M3 uses fmt0; multi-element (FP4/FP6/E5M2 and E4M3-quad) uses the packed layout.
-        io.acc.write(i).bits.data := Mux(!mx_multi_elem, fmt0_data, packed_data)
+        // ACT single, WEI quad (mode6/7): the 2 distinct col-products land contiguously at lanes 0,1
+        // (A/B tested: reading 0,2 gives NaN -> lane2 not maintained; 0,1 is the correct read).
+        val singleActQuadWei = {
+          val cols = mesh.io.resp.bits.data.flatten.flatMap { e =>
+            val w = e.withWidthOf(accType).asUInt
+            Seq(w(15, 0), w(31, 16))
+          }
+          val words = cols.grouped(4).map { g => Cat(g(3), g(2), g(1), g(0)) }.toSeq
+          VecInit(words ++ Seq.fill(words.length)(0.U(64.W))).asUInt.asTypeOf(io.acc.write(i).bits.data)
+        }
+        // Single E4M3 -> fmt0; act-single/wei-quad -> singleActQuadWei; both quad -> packed (2x2).
+        io.acc.write(i).bits.data := Mux(!mx_multi_elem, fmt0_data,
+          Mux(!mx_multi_elem_act, singleActQuadWei, packed_data))
       }
 
       io.acc.write(i).bits.acc := w_address_sp.accumulate

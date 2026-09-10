@@ -31,7 +31,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     val loop_bound_j = Input(UInt(8.W))
 
     val activation_mx_type = Input(UInt(2.W))
-    val mx_multi_elem = Input(Bool())   // throughput: 2 elements/lane (datatype-independent)
+    val mx_multi_elem = Input(Bool())   // WEIGHT (output-column) throughput
+    val mx_multi_elem_act = Input(Bool())   // ACTIVATION (output-row) throughput
     val output_mx_type = Input(UInt(2.W))
   })
 
@@ -126,7 +127,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     // Gated tiled requant->spad (FP8) carries the intra-tile row in the beat term, so per-row stride is 1.
     Mux(mvout_rs2.reuse_tiled, 1.U,
       Mux(io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j / 2.U * 4.U,
-        Mux(io.enable_wide_spad_write, io.loop_bound_j * 8.U,
+        // act-quad packs 2 output rows per acc row (stride *8); act-single (mode6/7) = 1 output row -> *4.
+        Mux(io.enable_wide_spad_write, io.loop_bound_j * Mux(io.mx_multi_elem_act, 8.U, 4.U),
           Mux(!io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j / 2.U * 2.U,
             Mux(!io.enable_wide_spad_write && io.mx_multi_elem, io.loop_bound_j * 2.U,
               1.U
@@ -201,6 +203,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.max_j := io.loop_bound_j
   io.dma.req.bits.activation_mx_type := io.activation_mx_type
   io.dma.req.bits.mx_multi_elem := io.mx_multi_elem
+  io.dma.req.bits.mx_multi_elem_act := io.mx_multi_elem_act
   io.dma.req.bits.output_mx_type := io.output_mx_type
 
   // Command tracker IO

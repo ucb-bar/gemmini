@@ -71,7 +71,8 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   val j = Input(UInt(16.W))
   val k = Input(UInt(16.W))
   val dataType_out = Input(UInt(2.W)) // output mx format datatype
-  val mx_multi_elem = Input(Bool()) // throughput: 2 elements/lane, datatype-independent
+  val mx_multi_elem = Input(Bool()) // WEIGHT (output-column) throughput: 2 cols/lane iff quad weight
+  val mx_multi_elem_act = Input(Bool()) // ACTIVATION (output-row) throughput: 2 rows/lane iff quad act
   val mx_fp8_altfmt = Input(Bool()) // code0 sub-format: 1 = E5M2 (4-bit LUT output), 0 = E4M3
   val scale_mem_write_act = if (use_mx_scaling) {
     Some(Flipped(Decoupled(new ScalingFactorWriteReq(13, 64))))
@@ -232,6 +233,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     val scale_mem = scaleFactorMem.get
     scale_mem.io.dataType := io.dataType_out
     scale_mem.io.mx_multi_elem := io.mx_multi_elem
+    scale_mem.io.mx_multi_elem_act := io.mx_multi_elem_act
     scale_mem.io.mx_fp8_altfmt := io.mx_fp8_altfmt
     scale_mem.io.scale_mem_write_w <> io.scale_mem_write_w.get
     scale_mem.io.scale_mem_write_act <> io.scale_mem_write_act.get
