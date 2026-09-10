@@ -211,6 +211,18 @@ class MxAsymE5M2E2M3GemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(128) ++
   new chipyard.config.AbstractConfig)
 
+// Dual-sig4 quad E2M3 x E4M3 builds (mode9, mixed 6/8-bit codes + per-operand altfmt).
+class MxAsymE2M3E4M3GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE2M3E4M3StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+class MxAsymE4M3E2M3GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAsymE4M3E2M3StandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
 class TestMxGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPTestConfig ++                         // use FP32Gemmini systolic array GEMM accelerator
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++

@@ -38,7 +38,8 @@ class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df
     val weight_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())
     val weight_mx_altfmt = Input(Bool())
-    val lut_en = Input(Bool())   // runtime LUT-usage flag
+    val act_lut_en = Input(Bool())     // per-operand runtime LUT-usage: activation
+    val weight_lut_en = Input(Bool())  // per-operand runtime LUT-usage: weight
 
     val bad_dataflow = Output(Bool())
   })
@@ -55,7 +56,8 @@ class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df
       pe.io.weight_mx_format := io.weight_mx_format
       pe.io.mx_fp8_altfmt := io.mx_fp8_altfmt
       pe.io.weight_mx_altfmt := io.weight_mx_altfmt
-      pe.io.lut_en := io.lut_en
+      pe.io.act_lut_en := io.act_lut_en
+      pe.io.weight_lut_en := io.weight_lut_en
     }
   }
 

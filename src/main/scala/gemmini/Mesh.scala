@@ -30,7 +30,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     val activation_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())   // activation sub-format alt (E5M2/E2M3 vs E4M3/E3M2)
     val weight_mx_altfmt = Input(Bool())   // weight sub-format alt (per-operand)
-    val lut_en = Input(Bool())          // runtime LUT-usage flag
+    val act_lut_en = Input(Bool())      // per-operand runtime LUT-usage: activation
+    val weight_lut_en = Input(Bool())   // per-operand runtime LUT-usage: weight
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b = Input(Vec(meshColumns, Vec(tileColumns, outputType)))
     val in_d = Input(Vec(meshColumns, Vec(tileColumns, weightType))) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
@@ -68,7 +69,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
       tile.io.weight_mx_format := io.weight_mx_format
       tile.io.mx_fp8_altfmt := io.mx_fp8_altfmt
       tile.io.weight_mx_altfmt := io.weight_mx_altfmt
-      tile.io.lut_en := io.lut_en
+      tile.io.act_lut_en := io.act_lut_en
+      tile.io.weight_lut_en := io.weight_lut_en
     }
   }
 
@@ -90,9 +92,10 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   typeW.sig := mxSig(io.weight_mx_format, io.weight_mx_altfmt)
   val typeW_size = mxSize(io.weight_mx_format)
 
-  // Only a quad (16-MACU) build promotes E4M3 to the 4-wide mode9 at runtime; a plain build ignores
-  // lut_en for mode selection so E4M3 stays 1-wide (mode8).
-  val mode = requiredPEMode(typeA, typeW, if (e4m3QuadThroughput) io.lut_en else false.B)
+  // Quad build promotes a sig4 operand to a quad mode only when THAT operand's own LUT is enabled.
+  val mode = requiredPEMode(typeA, typeW,
+    if (e4m3QuadThroughput) io.act_lut_en else false.B,
+    if (e4m3QuadThroughput) io.weight_lut_en else false.B)
   
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage

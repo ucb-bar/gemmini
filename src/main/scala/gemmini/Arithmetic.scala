@@ -61,7 +61,7 @@ abstract class ArithmeticOps[T <: Data](self: T) {
   def relu: T
   def zero: T
   def minimum: T
-  def mac_mx(m1: T, m2: T, meshFpProductPrecisionList: T, meshFpAccPrecisionList: T, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, lut_en: Bool): T
+  def mac_mx(m1: T, m2: T, meshFpProductPrecisionList: T, meshFpAccPrecisionList: T, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, act_lut_en: Bool, weight_lut_en: Bool): T
 
   // Optional parameters, which only need to be defined if you want to enable various optimizations for transformers
   def divider(denom_t: UInt, options: Int = 0): Option[(DecoupledIO[UInt], DecoupledIO[T])] = None
@@ -124,7 +124,7 @@ object Arithmetic {
       override def zero: UInt = 0.U
       override def identity: UInt = 1.U
       override def minimum: UInt = 0.U
-      override def mac_mx(m1: UInt, m2: UInt, fpProductPrecision: UInt, fpAccPrecision: UInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, lut_en: Bool): UInt = {
+      override def mac_mx(m1: UInt, m2: UInt, fpProductPrecision: UInt, fpAccPrecision: UInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, act_lut_en: Bool, weight_lut_en: Bool): UInt = {
         this.mac(m1, m2)
       }
 
@@ -138,7 +138,7 @@ object Arithmetic {
       override def +(t: SInt) = self + t
       override def -(t: SInt) = self - t
 
-      override def mac_mx(m1: SInt, m2: SInt, fpProductPrecision: SInt, fpAccPrecision: SInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, lut_en: Bool): SInt = {
+      override def mac_mx(m1: SInt, m2: SInt, fpProductPrecision: SInt, fpAccPrecision: SInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, act_lut_en: Bool, weight_lut_en: Bool): SInt = {
         this.mac(m1, m2)
       }
 
@@ -437,7 +437,7 @@ object Arithmetic {
         out
       }
 
-      override def mac_mx(m1: Float, m2: Float, fpProductPrecision: Float, fpAccPrecision: Float, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, lut_en: Bool): Float = {
+      override def mac_mx(m1: Float, m2: Float, fpProductPrecision: Float, fpAccPrecision: Float, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, act_lut_en: Bool, weight_lut_en: Bool): Float = {
         this.mac(m1, m2)
       }
 
@@ -583,7 +583,7 @@ object Arithmetic {
     override implicit def cast(self: DummySInt) = new ArithmeticOps(self) {
       override def *(t: DummySInt) = self.dontCare
       override def mac(m1: DummySInt, m2: DummySInt) = self.dontCare
-      override def mac_mx(m1:DummySInt, m2: DummySInt, fpProductPrecision: DummySInt, fpAccPrecision: DummySInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, lut_en: Bool) = self.dontCare
+      override def mac_mx(m1:DummySInt, m2: DummySInt, fpProductPrecision: DummySInt, fpAccPrecision: DummySInt, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, act_lut_en: Bool, weight_lut_en: Bool) = self.dontCare
       override def +(t: DummySInt) = self.dontCare
       override def -(t: DummySInt) = self.dontCare
       override def >>(t: UInt) = self.dontCare
@@ -600,7 +600,7 @@ object Arithmetic {
   implicit object MxFloatArithmetic extends Arithmetic[MxFloat] {
     override implicit def cast(self: MxFloat): ArithmeticOps[MxFloat] = new ArithmeticOps(self) {
 
-      override def mac_mx(m1: MxFloat, m2: MxFloat, fpProductPrecision: MxFloat, fpAccPrecision: MxFloat, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, lut_en: Bool): MxFloat = {
+      override def mac_mx(m1: MxFloat, m2: MxFloat, fpProductPrecision: MxFloat, fpAccPrecision: MxFloat, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, act_lut_en: Bool, weight_lut_en: Bool): MxFloat = {
         require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
         // Use the operand's explicit config if present, else infer the build from the operand widths.
         val peBaseConfig = m1.meshConfig.orElse(m2.meshConfig).getOrElse {
@@ -632,8 +632,10 @@ object Arithmetic {
         typeW.exp := mxExp(weight_mx_format, weight_altfmt)
         typeW.sig := mxSig(weight_mx_format, weight_altfmt)
 
-        // lut_en promotes E4M3xE4M3 to the 4-wide LUT mode (mode9), but only if the build elaborated it.
-        val mode = requiredPEMode(typeA, typeW, if (macConfig.hasMode9) lut_en else false.B)
+        // Per-operand lut_en promotes a sig4 operand to its quad mode (9/10/11) if the build elaborated it.
+        val mode = requiredPEMode(typeA, typeW,
+          if (macConfig.hasMode9) act_lut_en else false.B,
+          if (macConfig.hasMode9) weight_lut_en else false.B)
 
         val rec_c = if (self.isRecoded) self.bits else VecInit(self.bits.asTypeOf(Vec(4, UInt((self.expWidth + self.sigWidth).W))).map(f => recFNFromFN(self.expWidth, self.sigWidth, f))).asUInt
 

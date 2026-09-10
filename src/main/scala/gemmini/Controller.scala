@@ -589,6 +589,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Runtime LUT-usage flag: MX_LOAD_LUT sets it, MX_LUT_DISABLE clears it, default off.
   val mx_lut_en = RegInit(false.B)
   ex_controller.io.lut_en := mx_lut_en
+  // Per-operand LUT-usage (MX_LOAD_LUT sel: 1=act, 0=weight): each operand's single-vs-quad, vs global.
+  val mx_lut_a_en = RegInit(false.B)
+  val mx_lut_b_en = RegInit(false.B)
+  ex_controller.io.act_lut_en := mx_lut_a_en
+  ex_controller.io.weight_lut_en := mx_lut_b_en
 
   // True on the E4M3-quad build (either operand lane is E4M3), which routes E4M3 (code0) operands through
   // the LUT deproject (4-bit -> 2x8b E4M3) when lut_en is set.
@@ -782,9 +787,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         val walt = Mux(read_projected(b).resp.bits.read_a,
           ex_controller.io.mx.get.mx_fp8_altfmt_out,
           ex_controller.io.mx.get.weight_mx_altfmt_out)
+        val oplut = Mux(read_projected(b).resp.bits.read_a, mx_lut_a_en, mx_lut_b_en)
         mx_sel(b) := (opfmt === 1.U) ||
           (opfmt === 0.U && walt) ||
-          (e4m3QuadThroughput.B && mx_lut_en && opfmt === 0.U && !walt)
+          (e4m3QuadThroughput.B && oplut && opfmt === 0.U && !walt)
       }
 
       // req to srams
@@ -1245,6 +1251,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     .elsewhen (is_mx_lut_disable) {
       mx_lut_en := false.B
+      mx_lut_a_en := false.B
+      mx_lut_b_en := false.B
       unrolled_cmd.ready := true.B
     }
 
@@ -1265,7 +1273,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
           lut_loader_start.get.bits.sel  := unrolled_cmd.bits.cmd.rs2(33, 32)
           lut_loader_start.get.bits.entry_bits := unrolled_cmd.bits.cmd.rs2(39, 34)
           unrolled_cmd.ready := lut_loader_start.get.ready
-          when (unrolled_cmd.valid && lut_loader_start.get.ready) { mx_lut_en := true.B }
+          when (unrolled_cmd.valid && lut_loader_start.get.ready) {
+            mx_lut_en := true.B
+            val lsel = unrolled_cmd.bits.cmd.rs2(33, 32)   // 1=act, 0=weight, 2=output
+            when (lsel === 1.U) { mx_lut_a_en := true.B }
+            .elsewhen (lsel === 0.U) { mx_lut_b_en := true.B }
+          }
         } .otherwise {
           reservation_station.io.alloc.valid := true.B
           when(reservation_station.io.alloc.fire) { unrolled_cmd.ready := true.B }

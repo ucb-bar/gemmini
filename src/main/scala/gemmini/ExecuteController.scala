@@ -109,6 +109,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
     // Runtime LUT-usage flag from the Controller (set by MX_LOAD_LUT, cleared by MX_LUT_DISABLE).
     val lut_en = Input(Bool())
+    // Per-operand LUT-usage (MX_LOAD_LUT sel: 1=act, 0=weight): distinguishes single vs quad E4M3.
+    val act_lut_en = Input(Bool())
+    val weight_lut_en = Input(Bool())
   })
 
   val mesh_tag = new Bundle with TagQueueTag {
@@ -156,12 +159,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     case _ => false
   }
   val e4m3QuadThroughput = isE4M3Lane(spatialArrayInputType) || isE4M3Lane(spatialArrayWeightType)
-  // Elements packed per operand lane: 1/lane only for single E4M3; 2/lane for FP4/FP6, E5M2 and
-  // E4M3-quad. Downstream column/stride/chunk layout keys off this, not the datatype format code.
+  // Output-column packing: 2/lane iff the WEIGHT is quad (output cols come from the weight). Downstream
+  // column/stride/chunk layout keys off this. Same as the old act-based derivation for symmetric configs.
   val mx_multi_elem = if (use_mx_scaling)
-    (mx_state.get.activation_mx_format =/= 0.U) ||
-    (mx_state.get.activation_mx_format === 0.U && mx_state.get.mx_fp8_altfmt) ||   // E5M2 (code0/altfmt1) is dual
-    (e4m3QuadThroughput.B && io.lut_en)
+    (mx_state.get.weight_mx_format =/= 0.U) ||                                       // FP6/FP4 weight is quad
+    (mx_state.get.weight_mx_format === 0.U && mx_state.get.weight_mx_altfmt) ||      // E5M2 weight is quad
+    (e4m3QuadThroughput.B && io.weight_lut_en)                                       // E4M3-quad weight (LUT)
     else false.B
 
   if (use_mx_scaling) {
@@ -288,13 +291,15 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.weight_mx_format := mx_state.get.weight_mx_format
     mesh.io.mx_fp8_altfmt := mx_state.get.mx_fp8_altfmt
     mesh.io.weight_mx_altfmt := mx_state.get.weight_mx_altfmt
-    mesh.io.lut_en := io.lut_en
+    mesh.io.act_lut_en := io.act_lut_en
+    mesh.io.weight_lut_en := io.weight_lut_en
   } else {
     mesh.io.activation_mx_format := DontCare
     mesh.io.weight_mx_format := DontCare
     mesh.io.mx_fp8_altfmt := DontCare
     mesh.io.weight_mx_altfmt := DontCare
-    mesh.io.lut_en := DontCare
+    mesh.io.act_lut_en := DontCare
+    mesh.io.weight_lut_en := DontCare
   }
 
   mesh.io.a.valid := false.B
