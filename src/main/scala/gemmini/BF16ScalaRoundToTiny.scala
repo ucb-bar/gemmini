@@ -193,8 +193,8 @@ object E5M3ToFp8 {
   }
 }
 
-// BF16 -> E4M3 code in one rounding step: ties away from zero, subnormals allowed, saturating to
-// +-448 (matches microxcaling's nearest/saturate/allow_denorm quantizer). Done directly rather than
+// BF16 -> E4M3 code in one rounding step: RNE (OCP round='even'), subnormals allowed, saturating to
+// +-448 (matches microxcaling's even/saturate/allow_denorm quantizer). Done directly rather than
 // via hardfloat, which reserves E4M3's exp field 15 for Inf/NaN and would double-round through E5M3.
 object BF16ToE4M3 {
   def apply(in: UInt): UInt = {
@@ -203,23 +203,29 @@ object BF16ToE4M3 {
     val e8   = in(14, 7)
     val frac = in(6, 0)
 
-    // Normal target (unbiased exp >= -6): keep 3 of 7 fraction bits. Adding half the dropped
-    // weight before truncating IS round-half-away-from-zero on a magnitude.
-    val kn_raw = (frac +& 8.U)(7, 4)                       // 0..8
-    val carry  = kn_raw === 8.U
-    val kn     = Mux(carry, 0.U(3.W), kn_raw(2, 0))
-    val expf   = (e8 +& carry.asUInt).zext.asSInt - 120.S  // (e8 + carry - 127) + 7
-    val satN   = (expf > 15.S) || ((expf === 15.S) && (kn === 7.U))
-    val magN   = Mux(satN, 0x7E.U(7.W), Cat(expf.asUInt(3, 0), kn))
+    // Normal target (unbiased exp >= -6): keep 3 of 7 fraction bits, RNE (tie -> even).
+    val qn      = frac(6, 4)                               // top 3 kept bits
+    val rn      = frac(3)                                  // round bit
+    val stickyn = frac(2, 0).orR
+    val kn_raw  = qn +& (rn & (stickyn | qn(0)))           // 0..8
+    val carry   = kn_raw === 8.U
+    val kn      = Mux(carry, 0.U(3.W), kn_raw(2, 0))
+    val expf    = (e8 +& carry.asUInt).zext.asSInt - 120.S // (e8 + carry - 127) + 7
+    val satN    = (expf > 15.S) || ((expf === 15.S) && (kn === 7.U))
+    val magN    = Mux(satN, 0x7E.U(7.W), Cat(expf.asUInt(3, 0), kn))
 
-    // Subnormal target (unbiased exp < -6, i.e. e8 < 121): quantum 2^-9, so
-    // k = round_half_away(sig8 / 2^sh) with sh = -(e8 - 127) - 2 = 125 - e8, which is >= 5 here.
-    // sh is clamped to 9 because anything beyond that rounds to 0 regardless.
+    // Subnormal target (unbiased exp < -6, i.e. e8 < 121): quantum 2^-9, so k = RNE(sig8 / 2^sh) with
+    // sh = 125 - e8 (>= 5 here). sh >= 9 flushes to 0 (max sig8 < 2^8 < half of 2^9), so clamp the shift.
     val sig8   = Cat(1.U(1.W), frac)                       // value = sig8 * 2^(e8-127-7)
     val sh_raw = 125.U(8.W) - e8
-    val sh     = Mux(sh_raw < 5.U, 5.U(4.W), Mux(sh_raw > 9.U, 9.U(4.W), sh_raw(3, 0)))
-    val half   = (1.U(10.W) << (sh - 1.U))(9, 0)
-    val ks     = ((sig8 +& half) >> sh)(4, 0)              // 0..8
+    val flushS = sh_raw >= 9.U
+    val sh     = Mux(sh_raw < 5.U, 5.U(5.W), Mux(sh_raw > 9.U, 9.U(5.W), sh_raw(4, 0)))
+    val stepS  = (1.U(11.W) << sh)
+    val halfS  = (stepS >> 1)
+    val remS   = sig8 & (stepS - 1.U)(7, 0)
+    val kBaseS = (sig8 >> sh)
+    val ksUp   = kBaseS + Mux(remS > halfS(7, 0), 1.U, Mux(remS === halfS(7, 0), kBaseS(0), 0.U))
+    val ks     = Mux(flushS, 0.U(5.W), ksUp(4, 0))         // 0..8, RNE
     val magS   = Mux(ks >= 8.U, 0x08.U(7.W), Cat(0.U(4.W), ks(2, 0)))
 
     val useSub = e8 < 121.U
@@ -229,9 +235,9 @@ object BF16ToE4M3 {
   }
 }
 
-// BF16 -> 8-bit FP8 E5M2 code (1 sign | 5 exp | 2 mant, bias 15). RNE ties-away, overflow -> 0x7B,
-// Inf/NaN preserved, subnormals down to 2^-16. Chisel port of mx_fp_math.h::bf16_bits_to_e5m2_code
-// (verified 0/7618 vs the golden in the normal range).
+// BF16 -> 8-bit FP8 E5M2 code (1 sign | 5 exp | 2 mant, bias 15). RNE (OCP round='even'), overflow
+// -> 0x7B, Inf/NaN preserved, subnormals down to 2^-16. Chisel port of
+// mx_fp_math.h::bf16_bits_to_e5m2_code.
 object BF16ToE5M2 {
   def apply(in: UInt): UInt = {
     require(in.getWidth == 16)
@@ -240,10 +246,11 @@ object BF16ToE5M2 {
     val M    = in(6, 0)
     val e    = E.zext - 127.S                                  // unbiased exponent (signed)
 
-    // Normal range e in [-14, 15]
+    // Normal range e in [-14, 15], RNE (tie -> even)
     val q      = M(6, 5)                                        // top 2 mantissa bits
-    val r      = M(4)                                           // round bit (ties away)
-    val sig    = q +& r                                         // 0..4
+    val r      = M(4)                                           // round bit
+    val sticky = M(3, 0).orR
+    val sig    = q +& (r & (sticky | q(0)))                     // 0..4
     val carry  = sig(2)
     val mant   = Mux(carry, 0.U(2.W), sig(1, 0))
     val expOut = e + carry.zext.asSInt
@@ -251,7 +258,7 @@ object BF16ToE5M2 {
     val normCode = Cat(sign, expField(4, 0), mant)
     val normOvf  = expOut > 15.S
 
-    // Subnormal e <= -15: k = round-half-away(sig8 / 2^shift), sig8 = 1.M
+    // Subnormal e <= -15: k = RNE(sig8 / 2^shift), sig8 = 1.M
     val sig8    = Cat(1.U(1.W), M)                             // 8 bits
     val shiftR  = 0.S - (e + 9.S)
     val shiftRU = shiftR.asUInt
@@ -263,7 +270,7 @@ object BF16ToE5M2 {
     val rem     = sig8 & stepM1(7, 0)
     val half    = stepHalf(7, 0)
     val kShift  = (sig8 >> shiftU)
-    val kUp     = kShift(3, 0) + Mux(rem >= half, 1.U, 0.U)
+    val kUp     = kShift(3, 0) + Mux(rem > half, 1.U, Mux(rem === half, kShift(0), 0.U))  // RNE
     val k      = Mux(flush, 0.U(4.W), kUp)
     val subCode = Mux(k === 0.U, Cat(sign, 0.U(7.W)),
                   Mux(k >= 4.U, Cat(sign, "b0000100".U(7.W)),   // min normal 0x04
@@ -337,6 +344,60 @@ object BF16ToE2M3 {
       out := subCode
     }.otherwise {
       out := normCode                                          // normals + overflow (saturate 7.5)
+    }
+    out
+  }
+}
+
+// BF16 -> 6-bit FP6 E3M2 code (1 sign | 3 exp(bias 3) | 2 mant). Rounds STRAIGHT to the E3M2 grid,
+// RNE (OCP round='even'), subnormals kept (allow_denorm). Chisel port of the rewritten
+// mx_fp_math.h::bf16_bits_to_fp6_e3m2_code (sibling of BF16ToE2M3): emin=-2, emax=4, max_norm 28,
+// subnormal quantum 2^-4. Replaces the old BF16->E4M2->E4M2ToFp6 double-rounding path.
+object BF16ToE3M2 {
+  def apply(in: UInt): UInt = {
+    require(in.getWidth == 16)
+    val sign = in(15)
+    val E    = in(14, 7)
+    val M    = in(6, 0)
+    val e    = E.zext - 127.S                                  // unbiased bf16 exponent
+
+    // Normal (e in [-2,4]): 2 mantissa bits, RNE. E_used = min(e, 4).
+    val q        = M(6, 5)                                     // top 2 mantissa bits
+    val r        = M(4)                                        // round bit
+    val sticky   = M(3, 0).orR
+    val roundUp  = r & (sticky | q(0))                         // ties-to-even
+    val mantSum  = q +& roundUp                                // 0..4
+    val carry    = mantSum(2)
+    val mant     = Mux(carry, 0.U(2.W), mantSum(1, 0))
+    val eClip    = Mux(e > 4.S, 4.S, e)                        // clip to emax before carry
+    val expOut   = eClip + carry.zext.asSInt                   // 1..5
+    val normOvf  = expOut > 4.S                                // carried past emax -> saturate 28
+    val expField = (Mux(normOvf, 4.S, expOut) + 3.S).asUInt    // unbiased -2->1 ... 4->7
+    val mantOut  = Mux(normOvf, 3.U(2.W), mant)
+    val normCode = Cat(sign, expField(2, 0), mantOut)          // 6-bit code (sign at bit 5)
+
+    // Subnormal (e < -2): quantum 2^-4. k = RNE(sig8 / 2^(3-e)), sig8 = 1.M (8 bits). shSub >= 9
+    // flushes to 0 (max sig8 < half of 2^9) and also guards the wide `stepU` shift for very small e.
+    val sig8   = Cat(1.U(1.W), M)                             // 8 bits
+    val shSub  = (3.S - e).asUInt                             // >= 6 in this branch
+    val flushSub = shSub >= 9.U
+    val stepU  = (1.U(16.W) << shSub)
+    val halfU  = (stepU >> 1)
+    val remU   = sig8 & (stepU - 1.U)(15, 0)
+    val kBase  = (sig8 >> shSub)
+    val kUp    = kBase + Mux(remU > halfU(15, 0), 1.U, Mux(remU === halfU(15, 0), kBase(0), 0.U))  // RNE
+    val kSub   = Mux(flushSub, 0.U(4.W), kUp(3, 0))
+    val subCode = Mux(kSub === 0.U, Cat(sign, 0.U(5.W)),
+                  Mux(kSub >= 4.U, Cat(sign, "b00100".U(5.W)),      // -> min normal (exp field 1, mant 0)
+                                   Cat(sign, 0.U(3.W), kSub(1, 0))))  // subnormal exp field 0, mant k
+
+    val out = Wire(UInt(8.W))
+    when (E === 0.U || E.andR) {
+      out := Cat(sign, 0.U(5.W))                               // zero / bf16-subnormal / non-finite -> code 0
+    }.elsewhen (e < -2.S) {
+      out := subCode
+    }.otherwise {
+      out := normCode                                          // normals + overflow (saturate 28)
     }
     out
   }
@@ -462,8 +523,9 @@ class BF16ScaleRoundToTiny(
     //   code1/fp6: altfmt0 -> E3M2 (6-bit code), altfmt1 -> E2M3 (6-bit code)
     //   code2/fp4: E2M1 (4-bit)
     // The 6-bit fp6 codes and 8-bit E5M2/E4M3 codes feed the packing/LUT-projection downstream.
-    val fp6Slot = roundToMx(scaled_bf16, inputexpWidth, inputsigWidth, format_fp6, (in: UInt) => E4M2ToFp6(in))
-    val fp6_out = Mux(io.mx_fp8_altfmt, BF16ToE2M3(scaled_bf16), fp6Slot)
+    // code1/fp6: altfmt0 -> E3M2 (straight-grid RNE), altfmt1 -> E2M3. Both round directly to their
+    // grid now (the old E3M2 BF16->E4M2->E4M2ToFp6 double-rounding path is gone).
+    val fp6_out = Mux(io.mx_fp8_altfmt, BF16ToE2M3(scaled_bf16), BF16ToE3M2(scaled_bf16))
     val fp8_out = Mux(io.mx_fp8_altfmt, BF16ToE5M2(scaled_bf16), BF16ToE4M3(scaled_bf16))
     val rounded = Mux(io.dataType === 1.U,
                       fp6_out,

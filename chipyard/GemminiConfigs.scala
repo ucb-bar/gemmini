@@ -67,6 +67,14 @@ class MxAllGemminiRocketConfig extends Config(
 // Back-compat alias: the old E4M3-LUT build is now a strict subset of the all-formats build.
 class MxE4M3LutGemminiRocketConfig extends MxAllGemminiRocketConfig
 
+// FULL build: all 5 MX formats on both operands + ALL 12 PE modes -> every sym + asym combo (25 pairs;
+// 36 counting E4M3 single vs quad) in one elaborated mesh.
+class MxAllAsymGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPAllAsymStandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
 // Single-format builds: each supports ONLY its MX format; all other format hardware is elaboration-gated.
 class MxFp4OnlyGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPFp4OnlyStandaloneConfig ++

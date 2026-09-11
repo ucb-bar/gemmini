@@ -376,6 +376,19 @@ object GemminiMxFPConfigs {
   // Back-compat alias.
   val e4m3LutMxFPConfig = allMxFPConfig
 
+  // FULL build: all 5 MX formats on both operands + ALL 12 PE modes (MxConfig.allAsym) -> one mesh that
+  // runs every symmetric + asymmetric combo. Operand lane MxFloat(4,4,2) carries the explicit allAsym
+  // config (so the PE elaborates all modes, not the inferred {0,4,8,9}); the LutFP8E4M3/rdataWidth=8 LUT
+  // builds all four deproject finders (runtime-selected). Code widths 8b (widest; 6b codes ride the low bits).
+  val allAsymMxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    weightType = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    spatialArrayWeightType = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
+      projFormat = LutFP8E4M3, actCodeWidth = 8, weiCodeWidth = 8)),
+  )
+
   // Single-format builds: the operand descriptor carries an explicit MxConfig so the PE elaborates only
   // that format's decode + mode(s), and the LUT projFormat picks that format's finder(s).
   val fp4OnlyMxFPConfig = standaloneMxFPConfig.copy(
@@ -641,6 +654,14 @@ class GemminiMxFPAllStandaloneConfig extends Config((site, here, up) => {
 
 // Back-compat alias: the old E4M3-LUT fragment is now the all-formats build.
 class GemminiMxFPE4M3LutStandaloneConfig extends GemminiMxFPAllStandaloneConfig
+
+// FULL build: every sym + asym combo in one mesh (all formats, all 12 modes).
+class GemminiMxFPAllAsymStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.allAsymMxFPConfig))
+  })
+})
 
 // Single-format builds (one MX format each; all other format hardware elaboration-gated).
 class GemminiMxFPFp4OnlyStandaloneConfig extends Config((site, here, up) => {
