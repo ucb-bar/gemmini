@@ -106,7 +106,7 @@ class AccumulatorScale[T <: Data, U <: Data](
 
   import ev._
 
-  val numChunks = (fullDataType.length * fullDataType.head.length) / 8
+  val numChunks = 2  // 1024b chunks (2 rows/cyc @DIM32); was DIM/8 (512b mvout chunks)
   val chunk_t = if (use_mx_scaling) Vec(fullDataType.length / numChunks, fullDataType.head.cloneType)
                 else Vec(fullDataType.length, fullDataType.head.cloneType)
 

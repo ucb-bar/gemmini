@@ -348,3 +348,11 @@ project/
 .vscode
 __pycache__/
 fsdb*
+
+# mxgemmini session/dev artifacts (local only, not for upstream)
+planning/
+waveform-debug/
+CLAUDE.md
+.claude/
+.mcp.json
+run_*.sh

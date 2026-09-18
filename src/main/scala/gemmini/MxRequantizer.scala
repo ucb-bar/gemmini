@@ -117,7 +117,11 @@ class MxRequantizer[T <: Data](
   val pipelineLatency = config.pipelineLatency
   val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
   val spad_row_t = Vec(2*meshColumns, Vec(tileColumns, weightTypeProjected))
-  val half_acc_row_t = Vec(meshColumns/2, Vec(tileColumns, accType))
+  val numChunks = 2  // 1024b chunks (2 rows/cyc @DIM32); was DIM/8 (512b mvout chunks)
+  val tilesPerMxBlock = scaleSize / (meshColumns*tileColumns)
+  // Requant input assembly = row/numChunks accType (8 @DIM16, 16 @DIM32); unpacks 4 bf16/accType to
+  // reach numOutputLanes. (numChunks=2 now, so this equals numOutputLanes/4.)
+  val half_acc_row_t = Vec((meshColumns*tileColumns)/numChunks, Vec(tileColumns, accType))
   val inputdataWidth = config.inputBits
   val io = IO(new MxRequantizerIO[T](
     sp_data_width,
@@ -180,7 +184,7 @@ class MxRequantizer[T <: Data](
   val log2_pmax_floor = log2_pmax_floor_raw
   val data_buffer_counter = RegInit(0.U(1.W))
   //buffer twice for 16-lane mode
-  val half_lanes = 16
+  val half_lanes = config.numGPUInputLanes
   val input_32_buffer = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(inputdataWidth.W))))
   val input_16_buffer_gpu = RegInit(VecInit(Seq.fill(io.outputnumLanes/2)(0.U(inputdataWidth.W))))
   val should_compute = Wire(Bool())
@@ -190,7 +194,7 @@ class MxRequantizer[T <: Data](
   dontTouch( should_compute)
   should_compute := false.B
   val quant_half_counter = RegInit(false.B)
-  val first_half_buf     = RegInit(0.U(128.W))
+  val first_half_buf     = RegInit(0.U((io.outputnumLanes*4).W))
 
   // This is the datapath pack structure, not the literal element width: E5M2 and E4M3-quad have wider
   // codes but ride the 6-bit LUT datapath (buffering, packing, coalescer cadence) like FP6.
@@ -268,22 +272,22 @@ class MxRequantizer[T <: Data](
 
   // Two-cycle accumulation registers for FP4 / FP6:
   val fp6_lut_out     = Cat(quantLut.io.projected_data.bits.reverse)
-  val fp6_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))    
-  val fp6_row1        = (0 until 32).map(k => fp6_lut_out(4*k+3, 4*k))      
-  val fp6_interleaved = (0 until 16).flatMap { j => Seq(fp6_row0(2*j), fp6_row1(2*j), fp6_row0(2*j+1), fp6_row1(2*j+1)) }
+  val fp6_row0        = (0 until io.outputnumLanes).map(k => first_half_buf(4*k+3, 4*k))    
+  val fp6_row1        = (0 until io.outputnumLanes).map(k => fp6_lut_out(4*k+3, 4*k))      
+  val fp6_interleaved = (0 until io.outputnumLanes/2).flatMap { j => Seq(fp6_row0(2*j), fp6_row1(2*j), fp6_row0(2*j+1), fp6_row1(2*j+1)) }
   val fp6_combined    = Cat(fp6_interleaved.reverse)   
   val fp6_combined_wire = WireDefault(fp6_combined)                        
   val fp6_lut_out_wire = WireDefault(fp6_lut_out)
   dontTouch(fp6_combined_wire)
   dontTouch(fp6_lut_out_wire)
 
-  val fp4_row0        = (0 until 32).map(k => first_half_buf(4*k+3, 4*k))
-  val fp4_row1        = (0 until 32).map(k => extracted_data(4*k+3, 4*k))
+  val fp4_row0        = (0 until io.outputnumLanes).map(k => first_half_buf(4*k+3, 4*k))
+  val fp4_row1        = (0 until io.outputnumLanes).map(k => extracted_data(4*k+3, 4*k))
   val fp4_row0_wire = WireDefault(VecInit(fp4_row0))
   val fp4_row1_wire = WireDefault(VecInit(fp4_row1))
   dontTouch(fp4_row0_wire)
   dontTouch(fp4_row1_wire)
-  val fp4_interleaved = (0 until 16).flatMap { j => Seq(fp4_row0(2*j), fp4_row1(2*j), fp4_row0(2*j+1), fp4_row1(2*j+1)) }
+  val fp4_interleaved = (0 until io.outputnumLanes/2).flatMap { j => Seq(fp4_row0(2*j), fp4_row1(2*j), fp4_row0(2*j+1), fp4_row1(2*j+1)) }
   val fp4_combined    = Cat(fp4_interleaved.reverse)                       
   val fp4_combined_wire = WireDefault(fp4_combined)                        
   dontTouch(fp4_combined_wire)
@@ -311,7 +315,7 @@ class MxRequantizer[T <: Data](
   }.elsewhen(out_is_fp4) {
     when(quantize_valid) {
       when(!quant_half_counter) {
-        first_half_buf     := extracted_data(127, 0)
+        first_half_buf     := extracted_data(io.outputnumLanes*4-1, 0)
         quant_half_counter := true.B
       }.otherwise {
         quant_half_counter := false.B
@@ -404,8 +408,6 @@ class MxRequantizer[T <: Data](
     }
   }
   
-  val block_max = Wire(UInt(inputdataWidth.W))
-  block_max := 0.U
   val flat64 = pipelined_out_0.bits.out.full_mx_data_out.flatten.map(_.asUInt)
   val flat64_wire = WireDefault(VecInit(flat64))
   dontTouch(flat64_wire)
@@ -414,69 +416,81 @@ class MxRequantizer[T <: Data](
       x => (0 until 4).map(i => x(16*(i+1)-1, 16*i))
     )
   )
-  // NaN and Inf are tracked separately because the reference divides the block by its own max:
-  // /nan sends every element to NaN, /inf sends the finite ones to zero. See BF16ToE4M3's caller.
-  val block_has_nan = WireDefault(false.B)
-  val block_has_inf = WireDefault(false.B)
-  dontTouch(block_has_nan)
-  dontTouch(block_has_inf)
-  when(should_compute) {
-    val mags = reshaped_pipelined_out_0.map { e =>
-      val mag   = abs(e.asUInt)
-      val expOnes = mag(14, 7).andR     // BF16: exp field all-ones → NaN or Inf
-      val isNan = expOnes && mag(6, 0).orR
-      val isInf = expOnes && !mag(6, 0).orR
-      (Mux(expOnes, 0.U, mag), isNan, isInf)
+
+  // Per-MX-block (32-element) scale + quantize. numOutputLanes can hold multiple MX blocks: at DIM=32
+  // it is 64 lanes = 2 blocks (2 rows/cyc, tilesPerMxBlock=1), so each 32-lane block needs its OWN
+  // block_max / E8M0 scale / quantizer. (DIM=16: numOutputLanes=32 = 1 block -> identical to before.)
+  // NaN/Inf tracked per block (the reference divides each block by its own max).
+  val mxBlockSize    = 32
+  val numOutBlocks   = io.outputnumLanes / mxBlockSize   // 1 @DIM16, 2 @DIM32
+  val EPS_BIASED_EXP = 104.U(8.W)                        // fp32 eps floor (BF16 biased exp 104)
+  val scale_e8m0_vec    = Wire(Vec(numOutBlocks, UInt(8.W)))  // positive E8M0 per block -> coalescer
+  val neg_e8m0_vec      = Wire(Vec(numOutBlocks, UInt(8.W)))  // negated/clamped per block -> quantizer
+  val block_has_nan_vec = Wire(Vec(numOutBlocks, Bool()))
+  val block_has_inf_vec = Wire(Vec(numOutBlocks, Bool()))
+  val quantized_blocks  = Wire(Vec(io.outputnumLanes, UInt(8.W)))
+  dontTouch(scale_e8m0_vec); dontTouch(neg_e8m0_vec)
+
+  for (blk <- 0 until numOutBlocks) {
+    val elems = (0 until mxBlockSize).map(k => reshaped_pipelined_out_0(blk*mxBlockSize + k))
+    val block_max = WireDefault(0.U(inputdataWidth.W))
+    val bhn = WireDefault(false.B)
+    val bhi = WireDefault(false.B)
+    when(should_compute) {
+      val mags = elems.map { e =>
+        val mag     = abs(e.asUInt)
+        val expOnes = mag(14, 7).andR     // BF16: exp field all-ones -> NaN or Inf
+        val isNan   = expOnes && mag(6, 0).orR
+        val isInf   = expOnes && !mag(6, 0).orR
+        (Mux(expOnes, 0.U, mag), isNan, isInf)
+      }
+      block_max := mags.map(_._1).reduce { (a, b) => Mux(a > b, a, b) }
+      bhn := mags.map(_._2).reduce(_ || _)
+      bhi := mags.map(_._3).reduce(_ || _)
     }
-    block_max     := mags.map(_._1).reduce { (a, b) => Mux(a > b, a, b) }
-    block_has_nan := mags.map(_._2).reduce(_ || _)
-    block_has_inf := mags.map(_._3).reduce(_ || _)
-  }
-  val block_nonfinite = block_has_nan || block_has_inf
-  
-  val block_max_uint = block_max.asUInt
-  val block_max_uint_wire = WireDefault(block_max_uint)
-  dontTouch(block_max_uint_wire)
-  val scale_exponent = Wire(SInt(9.W))
-  val scale_e8m0 = WireDefault(0.U(8.W))
-  val neg_e8m0_clamped = WireDefault(0.U(8.W))
-  dontTouch(scale_e8m0)
-  dontTouch(neg_e8m0_clamped)
-  scale_exponent := 0.S
-  
-  // _po2 floors amax at fp32 eps (2^-23), BF16 biased exponent 104, subsuming the all-zero/subnormal
-  // cases. Gated on should_compute: this module is shared with the BF16 path, whose idle values must
-  // stay bit-identical.
-  val EPS_BIASED_EXP = 104.U(8.W)
-  val max_biased_exp = block_max_uint(14, 7)
-  when (should_compute) {
-    val clamped_exp = Mux(max_biased_exp < EPS_BIASED_EXP, EPS_BIASED_EXP, max_biased_exp)
-    scale_exponent := clamped_exp.zext.asSInt - 127.S - log2_pmax_floor.zext.asSInt
+    block_has_nan_vec(blk) := bhn
+    block_has_inf_vec(blk) := bhi
+    val block_nonfinite = bhn || bhi
 
-    val std_e8m0 = scale_exponent + 127.S
-    val std_clamped = Mux(std_e8m0 < 0.S, 0.U(8.W),
-                      Mux(std_e8m0 > 254.S, 254.U(8.W), std_e8m0.asUInt(7, 0)))
-    // A non-finite anywhere in the block propagates as E8M0 255 (NaN). Valid codes stop at 254 so
-    // that 255 is reserved; it used to be a reachable clamp value.
-    scale_e8m0 := Mux(block_nonfinite, 255.U, std_clamped)
-
-    val neg_e8m0 = 127.S(9.W) - scale_exponent
-    neg_e8m0_clamped := Mux(neg_e8m0 < 0.S, 0.U(8.W),
-                        Mux(neg_e8m0 > 254.S, 254.U(8.W), neg_e8m0.asUInt(7, 0)))
-  } .otherwise {
+    val scale_exponent   = Wire(SInt(9.W))
+    val scale_e8m0       = WireDefault(0.U(8.W))
+    val neg_e8m0_clamped = WireDefault(0.U(8.W))
     scale_exponent := 0.S
-    scale_e8m0 := 127.U
-    // neg_e8m0_clamped deliberately left at its WireDefault(0), as before.
+    val max_biased_exp = block_max(14, 7)
+    when (should_compute) {
+      val clamped_exp = Mux(max_biased_exp < EPS_BIASED_EXP, EPS_BIASED_EXP, max_biased_exp)
+      scale_exponent := clamped_exp.zext.asSInt - 127.S - log2_pmax_floor.zext.asSInt
+      val std_e8m0 = scale_exponent + 127.S
+      val std_clamped = Mux(std_e8m0 < 0.S, 0.U(8.W),
+                        Mux(std_e8m0 > 254.S, 254.U(8.W), std_e8m0.asUInt(7, 0)))
+      // A non-finite anywhere in the block -> E8M0 255 (NaN); valid codes stop at 254.
+      scale_e8m0 := Mux(block_nonfinite, 255.U, std_clamped)
+      val neg_e8m0 = 127.S(9.W) - scale_exponent
+      neg_e8m0_clamped := Mux(neg_e8m0 < 0.S, 0.U(8.W),
+                          Mux(neg_e8m0 > 254.S, 254.U(8.W), neg_e8m0.asUInt(7, 0)))
+    } .otherwise {
+      scale_exponent := 0.S
+      scale_e8m0 := 127.U
+    }
+    scale_e8m0_vec(blk) := scale_e8m0
+    neg_e8m0_vec(blk)   := neg_e8m0_clamped
+
+    val brt = Module(new BF16ScaleRoundToTiny(outputnumLanes = mxBlockSize, e5m2Lut = e5m2Lut))
+    brt.io.in_bf16       := VecInit(elems)
+    brt.io.scale_e8m0    := neg_e8m0_clamped
+    brt.io.dataType      := format_reg
+    brt.io.mx_fp8_altfmt := altfmt_reg
+    brt.io.block_has_nan := bhn
+    brt.io.block_has_inf := bhi
+    for (k <- 0 until mxBlockSize) { quantized_blocks(blk*mxBlockSize + k) := brt.io.out(k) }
   }
-  
-  val BF16ScaleRoundToTiny = Module(new BF16ScaleRoundToTiny(outputnumLanes = io.outputnumLanes, e5m2Lut = e5m2Lut))
-  BF16ScaleRoundToTiny.io.in_bf16 := reshaped_pipelined_out_0
-  BF16ScaleRoundToTiny.io.scale_e8m0 := neg_e8m0_clamped
-  BF16ScaleRoundToTiny.io.dataType := format_reg
-  BF16ScaleRoundToTiny.io.mx_fp8_altfmt := altfmt_reg
-  BF16ScaleRoundToTiny.io.block_has_nan := block_has_nan
-  BF16ScaleRoundToTiny.io.block_has_inf := block_has_inf
-  quantized_buffer := RegNext(BF16ScaleRoundToTiny.io.out)
+  quantized_buffer := RegNext(quantized_blocks)
+
+  // Back-compat singletons (block 0). The coalescer wiring to scale_e8m0_vec (2 scales/cyc) is done
+  // separately (item 4); until then it consumes block 0's scale via this alias.
+  val scale_e8m0    = scale_e8m0_vec(0)
+  val block_has_nan = block_has_nan_vec.reduce(_ || _)
+  val block_has_inf = block_has_inf_vec.reduce(_ || _)
 
   // LUT projection source: low rdataW bits of the quantized code (full 8-bit for E5M2, low-6 for FP6).
   val rdataW = lutConfig.rdataWidth
@@ -513,17 +527,27 @@ class MxRequantizer[T <: Data](
   //   nibble: sb=block(b),    bib=row-half,    m=32*g+16*bib+row, b=sb   (2 rows/beat)
   val ROWS_PER_HALF = meshColumns * tileColumns            // 16 rows per (bib) row-half
   val isNibble      = out_is_fp4 || out_is_lut4   // 4-bit-packed outputs: FP4, E3M2/E2M3, and E5M2 (code0/altfmt)
-  val GN            = Mux(isNibble, io.loop_bound_j, (io.loop_bound_j >> 1).asUInt)
+  val GN            = Mux(isNibble, io.loop_bound_j, (io.loop_bound_j >> log2Ceil(tilesPerMxBlock)).asUInt)
   val tiles_I       = io.loop_bound_i
   val num_super     = (GN + 1.U) >> 1                      // fp8: ceil(GN/2) super-blocks
   val gn_odd        = GN(0)
+  // fp8 j-groups: the StCSpad groups 4 tiles (=2 super-blocks) per j-group and emits beats
+  // j-group-OUTER / i-tile-MIDDLE / chunk(super-block)-INNER. So the coalescer must split the
+  // super-block into a within-j-group chunk (inner to i) and a j-group index (outer to i).
+  // (N<=128 -> num_super<=2 -> 1 j-group -> ag_jg stays 0, identical to the single-group cadence.)
+  // NOTE: assumes each j-group is full (2 super-blocks); a partial last group (num_super odd >1,
+  // e.g. GN=6) is not yet handled -- all tested N (64/128/256 -> num_super 1/2/4) are uniform.
+  val sbPerJg       = 2.U                                  // super-blocks per full fp8 j-group
+  val n_jgroups     = Mux(num_super <= sbPerJg, 1.U, (num_super + 1.U) >> 1)  // ceil(num_super/2)
+  val chunks_per_jg = Mux(num_super < sbPerJg, num_super, sbPerJg)            // 1 if num_super==1 else 2
 
   val coalesceSize  = 2048                                 // >= max M*GN for supported MX matmuls
   val coalescer     = RegInit(VecInit(Seq.fill(coalesceSize)(0.U(8.W))))
 
   // address-generator counters (advance one per should_compute beat). Nesting sb > g > bib > row.
-  val ag_sb  = RegInit(0.U(9.W))
+  val ag_sb  = RegInit(0.U(9.W))   // fp8: chunk within a j-group (0..chunks_per_jg-1); nibble: block index
   val ag_g   = RegInit(0.U(9.W))
+  val ag_jg  = RegInit(0.U(9.W))   // fp8: j-group index (0..n_jgroups-1), outer to the i-tile
   val ag_bib = RegInit(0.U(1.W))
   val ag_row = RegInit(0.U(log2Ceil(ROWS_PER_HALF).W))
   val flushing = RegInit(false.B)
@@ -536,28 +560,57 @@ class MxRequantizer[T <: Data](
   val blocks_in_sb = Mux(isNibble, 2.U,
                        Mux((ag_sb === (num_super - 1.U)) && gn_odd, 1.U, 2.U))
   val sb_count = Mux(isNibble, GN, num_super)
-  val cur_b    = Mux(isNibble, ag_sb, (ag_sb << 1).asUInt + ag_bib)
+  // fp8 global super-block = j-group base + within-group chunk; nibble keeps ag_sb as the block index.
+  val super_block = Mux(isNibble, ag_sb, ag_jg * sbPerJg + ag_sb)
+  val cur_b    = Mux(isNibble, ag_sb, (super_block << 1).asUInt + ag_bib)
   val cur_m    = Mux(isNibble, ag_g * 32.U + ag_bib * ROWS_PER_HALF.U + ag_row,
                                ag_g * ROWS_PER_HALF.U + ag_row)
   val cur_byte = cur_m * GN + cur_b
 
   // Hold off overwriting the coalescer until both flushes finish.
   when(should_compute && !flushing && !flushing_act) {
-    coalescer(cur_byte) := scale_e8m0
-    // increment nested counters: row -> bib -> i-tile -> sb (block for nibble, super-block for fp8)
+    when (isNibble) {
+      coalescer(cur_byte) := scale_e8m0_vec(0)   // nibble: 1 block/beat, bib-iterated (unchanged)
+    } .otherwise {
+      // fp8: both block-columns of super-block ag_sb land this beat (vec(0)->bib0, vec(1)->bib1),
+      // same row, adjacent bytes. cur_b = 2*ag_sb here (ag_bib stays 0 on the fp8 path).
+      coalescer(cur_byte) := scale_e8m0_vec(0)
+      when ((cur_b + 1.U) < GN) { coalescer(cur_byte + 1.U) := scale_e8m0_vec(1) }  // odd-GN guard
+    }
+    // increment nested counters. The StCSpad emits mvouts j-group-OUTER / i-tile-MIDDLE / chunk-INNER
+    // (LoopMatmul: for j { for i { for chunk_id } }), so the coalescer mirrors that:
+    //   fp8:    row -> chunk(ag_sb, within j-group) -> i-tile(ag_g) -> j-group(ag_jg)
+    //   nibble: row -> bib -> sb -> i-tile (unchanged; nibble has no chunk_id j-grouping)
     when(ag_row === (ROWS_PER_HALF - 1).U) {
       ag_row := 0.U
-      when(ag_bib === (blocks_in_sb - 1.U)) {
-        ag_bib := 0.U
-        when(ag_g === (tiles_I - 1.U)) {
-          ag_g := 0.U
+      when (isNibble) {
+        when(ag_bib =/= (blocks_in_sb - 1.U)) {
+          ag_bib := ag_bib + 1.U
+        } .otherwise {
+          ag_bib := 0.U
           when(ag_sb === (sb_count - 1.U)) {
             ag_sb := 0.U
-            flushing := true.B                              // full tile collected -> flush
-            flushing_act := io.scale_resident               // also start the transposed act flush
+            when(ag_g === (tiles_I - 1.U)) {
+              ag_g := 0.U
+              flushing := true.B
+              flushing_act := io.scale_resident
+            }.otherwise { ag_g := ag_g + 1.U }
           }.otherwise { ag_sb := ag_sb + 1.U }
-        }.otherwise { ag_g := ag_g + 1.U }
-      }.otherwise { ag_bib := ag_bib + 1.U }
+        }
+      } .otherwise {
+        ag_bib := 0.U
+        when(ag_sb === (chunks_per_jg - 1.U)) {              // chunk within j-group (inner)
+          ag_sb := 0.U
+          when(ag_g === (tiles_I - 1.U)) {                   // i-tile (middle)
+            ag_g := 0.U
+            when(ag_jg === (n_jgroups - 1.U)) {              // j-group (outer)
+              ag_jg := 0.U
+              flushing := true.B                             // full tile collected -> flush
+              flushing_act := io.scale_resident              // also start the transposed act flush
+            }.otherwise { ag_jg := ag_jg + 1.U }
+          }.otherwise { ag_g := ag_g + 1.U }
+        }.otherwise { ag_sb := ag_sb + 1.U }
+      }
     }.otherwise { ag_row := ag_row + 1.U }
   }
 
@@ -606,7 +659,7 @@ class MxRequantizer[T <: Data](
   }
 
   when(io.scale_mem_counter_reset_flag) {
-    ag_sb := 0.U; ag_g := 0.U; ag_bib := 0.U; ag_row := 0.U
+    ag_sb := 0.U; ag_g := 0.U; ag_jg := 0.U; ag_bib := 0.U; ag_row := 0.U
     flush_row := 0.U; flushing := false.B
     flush_act_bi := 0.U; flush_act_wm := 0.U; flushing_act := false.B
   }

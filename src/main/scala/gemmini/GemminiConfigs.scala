@@ -353,9 +353,12 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     }
 
     assert(tileColumns*meshColumns == tileRows*meshRows)
-    // assert(Set(8, 16, 32, 64).contains(inputType.getWidth))
-    // assert(Set(8, 16, 32, 64).contains(outputType.getWidth))
-    // assert(Set(8, 16, 32, 64).contains(accType.getWidth))
+    // MX formats use non-standard element widths (fp4=4, fp6=6); keep the original check for non-MX.
+    if (!use_mx_scaling) {
+      assert(Set(8, 16, 32, 64).contains(inputType.getWidth))
+      // assert(Set(8, 16, 32, 64).contains(outputType.getWidth))
+      assert(Set(8, 16, 32, 64).contains(accType.getWidth))
+    }
 
     val header = new StringBuilder()
     header ++= s"#ifndef $guard\n"

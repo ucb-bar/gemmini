@@ -822,7 +822,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         // Direct-path expansion, per operand: act uses inputType width + act fmt, weight uses weightType
         // width + weight fmt. E4M3 -> low 8 of the lane; FP4 (dual 4-bit) -> low 4 of each half-lane.
         val proj = read_projected(b).resp
-        val spad_data_vec = proj.bits.data.asTypeOf(Vec(16, UInt(8.W)))
+        val spad_data_vec = proj.bits.data.asTypeOf(Vec(outer.config.meshColumns*outer.config.tileColumns, UInt(8.W)))
         def expand(laneW: Int, fmt: UInt): UInt = {
           val slotW = laneW / 2
           val out = WireInit(0.U(sp_width.W))
@@ -1093,12 +1093,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // Writing to spad from ex
     for (i <- 0 until outer.config.sp_banks) {
       spad.module.io.srams.write(i).addr := ex_controller.io.srams.write(i).addr  // Default assignments
-      spad.module.io.srams.write(i).mask := ex_controller.io.srams.write(i).mask.take(16)
+      spad.module.io.srams.write(i).mask := ex_controller.io.srams.write(i).mask.take(spad.module.io.srams.write(i).mask.length)
 
       ex_controller.io.srams.write(i).ready := spad.module.io.srams.write(i).ready
       spad.module.io.srams.write(i).valid := ex_controller.io.srams.write(i).valid
 
-      val spad_data_vec = ex_controller.io.srams.write(i).data.asTypeOf(Vec(16, UInt(12.W)))
+      val spad_data_vec = ex_controller.io.srams.write(i).data.asTypeOf(Vec(outer.config.meshColumns*outer.config.tileColumns, UInt(12.W)))
       spad.module.io.srams.write(i).data := VecInit(spad_data_vec.map(a => a(7, 0))).asUInt
     }
 

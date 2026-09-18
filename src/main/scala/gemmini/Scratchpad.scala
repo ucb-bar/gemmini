@@ -346,8 +346,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
     val spad_row_t = if (use_mx_scaling) Vec(2*meshColumns, Vec(tileColumns, weightTypeProjected))
                      else Vec(meshColumns, Vec(tileColumns, inputType))
-    val numChunks = (meshColumns * tileColumns) / 8
-    val chunk_t = if (use_mx_scaling) Vec(meshColumns / numChunks, Vec(tileColumns, accType))
+    val numChunks = 2  // 1024b chunks (2 rows/cyc @DIM32); was DIM/8 (512b mvout chunks)
+    val chunk_t = if (use_mx_scaling) Vec((meshColumns*tileColumns)/numChunks, Vec(tileColumns, accType))
                   else Vec(meshColumns, Vec(tileColumns, accType))
 
     val io = IO(new Bundle {
@@ -372,7 +372,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val read_resp = Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
           Vec(meshColumns, Vec(tileColumns, accType)),
           if (config.use_mx_scaling) Vec(2*meshColumns, Vec(tileColumns, weightType)) else Vec(meshColumns, Vec(tileColumns, inputType)),
-          if (config.use_mx_scaling) Vec(meshColumns/2, Vec(tileColumns, accType)) else Vec(meshColumns, Vec(tileColumns, accType))
+          if (config.use_mx_scaling) Vec((meshColumns*tileColumns)/numChunks, Vec(tileColumns, accType)) else Vec(meshColumns, Vec(tileColumns, accType))
         )))
         val write = Flipped(Vec(acc_banks, Decoupled(new AccumulatorWriteReq(
           acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))
@@ -479,7 +479,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       has_nonlinear_activations,
       has_normalizations, config.use_mx_scaling
     ))
-    val acc_write_w = if (use_mx_scaling) acc_w/2 else acc_w
+    val acc_write_w = if (use_mx_scaling) acc_w/numChunks else acc_w
+    val requant_fp8_beats = (config.requantizer.map(_.numOutputLanes * 8).getOrElse(2*spad_w) / spad_w) max 1
     val writeData = Wire(Valid(UInt((spad_w max acc_write_w).W)))
     writeData.valid := write_issue_q.io.deq.bits.laddr.is_garbage() || (acc_scale_unit.io.out.bits.is_garbage)
     writeData.bits := DontCare
@@ -808,7 +809,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val requant_hi_row  = Reg(chiselTypeOf(requant_dst_row))
       val requant_hi_bank = Reg(chiselTypeOf(requant_dst_bank))
       when (requant_subbyte && requant_valid_fire && !requant_pend) {
-        requant_hi_data := acc_scale_unit.io.out.bits.data.asUInt(2*spad_w - 1, spad_w)
+        requant_hi_data := (if (use_mx_scaling) acc_scale_unit.io.out.bits.data.asUInt(2*spad_w - 1, spad_w) else 0.U)
         // reuse_tiled: beat1 is the next column-tile, one tile-row (16 rows) below beat0; else flat +1.
         requant_hi_row  := requant_dst_row + Mux(write_issue_q.io.deq.bits.reuse_tiled, 16.U, 1.U)
         requant_hi_bank := requant_dst_bank
@@ -872,7 +873,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           // so drain into consecutive bank rows and consume on the last beat.
           val narrowVec = acc_scale_unit.io.out.bits.data.asUInt.asTypeOf(Vec(2, UInt(spad_w.W)))
           val wideVec   = acc_scale_unit.io.out.bits.full_data.asUInt.asTypeOf(Vec(acc_write_w / spad_w, UInt(spad_w.W)))
-          val last_beat = Mux(requant_bf16, (acc_write_w / spad_w - 1).U, 1.U)
+          val last_beat = Mux(requant_bf16, (acc_write_w / spad_w - 1).U, (requant_fp8_beats - 1).U)
           // reuse_tiled (8-bit E4M3-single only): beat1 lands one tile-row (16 rows) below beat0
           // instead of flat +requant_half.
           val tiled_beat = write_issue_q.io.deq.bits.reuse_tiled && (io.output_mx_format === 0.U) && !io.mx_fp8_altfmt && !io.mx_lut_en

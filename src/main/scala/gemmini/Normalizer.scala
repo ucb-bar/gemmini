@@ -243,7 +243,8 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
   assert(isPow2(n_lanes))
 
-  val half_t = if (use_mx_scaling) Vec(fullDataType.length / 2, fullDataType.head.cloneType)
+  val numChunks = 2  // 1024b chunks (2 rows/cyc @DIM32); was DIM/8 (512b mvout chunks)
+  val half_t = if (use_mx_scaling) Vec(fullDataType.length / numChunks, fullDataType.head.cloneType)
                else Vec(fullDataType.length, fullDataType.head.cloneType)
 
   val io = IO(new Bundle {
@@ -808,7 +809,8 @@ object Normalizer {
   def passthru[T <: Data, U <: Data](max_len: Int, num_stats: Int, fullDataType: Vec[Vec[T]], scale_t: U, use_mx_scaling: Boolean)
                                     (implicit ev: Arithmetic[T]): (DecoupledIO[NormalizedInput[T,U]], DecoupledIO[NormalizedOutput[T,U]]) = {
 
-    val half_t = if (use_mx_scaling) Vec(fullDataType.length/2, fullDataType.head.cloneType)
+    val numChunks = 2  // 1024b chunks (2 rows/cyc @DIM32); was DIM/8 (512b mvout chunks)
+    val half_t = if (use_mx_scaling) Vec(fullDataType.length/numChunks, fullDataType.head.cloneType)
                  else Vec(fullDataType.length, fullDataType.head.cloneType)
     val norm_unit_passthru_q = Module(new Queue(new NormalizedInput[T,U](max_len, num_stats, fullDataType, scale_t, half_t), 2))
     val norm_unit_passthru_out = Wire(Decoupled(new NormalizedOutput(fullDataType, scale_t, half_t)))

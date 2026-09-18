@@ -69,6 +69,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   import config._
   import ev._
   val block_size = meshRows*tileRows
+  val numChunks = 2  // 1024b chunks (2 rows/cyc @DIM32); was DIM/8 (512b mvout chunks)
 
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
@@ -91,7 +92,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
         Vec(meshColumns, Vec(tileColumns, accType)),
         if (config.use_mx_scaling) Vec(2*meshColumns, Vec(tileColumns, weightType)) else Vec(meshColumns, Vec(tileColumns, inputType)),
-        if (config.use_mx_scaling) Vec(meshColumns/2, Vec(tileColumns, accType)) else Vec(meshColumns, Vec(tileColumns, accType))
+        if (config.use_mx_scaling) Vec((meshColumns*tileColumns)/numChunks, Vec(tileColumns, accType)) else Vec(meshColumns, Vec(tileColumns, accType))
       ))))
 
       // val write = Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))))
@@ -758,8 +759,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               }
             }
 
-//            a_addr_stride := config_ex_rs1.a_stride // TODO this needs to be kept in sync with ROB.scala
-            a_addr_stride := 1.U // TODO (nicolas) : FIX This Assignemt
+            // MX fixes the A-operand stride to 1; non-MX honors the config instruction (main behavior).
+            a_addr_stride := (if (use_mx_scaling) 1.U else config_ex_rs1.a_stride) // keep in sync with ReservationStation.scala
             c_addr_stride := config_ex_rs2.c_stride // TODO this needs to be kept in sync with ROB.scala
             config_initialized := true.B
           }.otherwise { // config_cmd_type === CONFIG_IM2COL
@@ -1131,8 +1132,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
 
   val address = mesh.io.resp.bits.tag.addr
-  val address_no_offset = Cat(address.asUInt >> 4,
-  0.U(4.W)).asTypeOf(address)
+  // Split the C address into row-aligned base + column offset. The offset spans log2Ceil(block_size)
+  // low bits (col-tiles pack into one acc row's columns), so strip exactly that many: 4 @DIM16, 5 @DIM32.
+  // The old hardcoded 4 leaked bit 4 into the row at DIM32, misplacing col-tiles with offset>=16 (blocks 2,3).
+  val address_no_offset = Cat(address.asUInt >> log2Ceil(block_size).U,
+  0.U(log2Ceil(block_size).W)).asTypeOf(address)
   val offset = address.asUInt % block_size.U
   
   val w_address = Mux(current_dataflow === Dataflow.WS.id.U, address_no_offset + output_counter * c_addr_stride,

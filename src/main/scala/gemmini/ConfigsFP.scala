@@ -343,6 +343,22 @@ object GemminiMxFPConfigs {
     mx_mmio_base = Some(0x20010000L)   // LUT/requant regmap, off the scale window
   )
 
+  val dim32MxFPConfig = standaloneMxFPConfig.copy(
+    meshRows = 32,
+    meshColumns = 32,
+    meshProdPrecisionList = Seq.fill(32) {MxFloat(4, 4, 4, true, false)},
+    meshAccPrecisionList =
+      Seq.fill(8) {MxFloat(4, 5, 4, true, false)} ++
+      Seq.fill(2) {MxFloat(4, 6, 4, true, false)} ++
+      Seq.fill(5) {MxFloat(4, 7, 4, true, false)} ++
+      Seq.fill(1) {MxFloat(8, 8, 4, true, false)} ++
+      Seq.fill(16){MxFloat(8, 8, 4, true, false)},
+    scale_mem = standaloneMxFPConfig.scale_mem.map(_.copy(subbankLineSizeInBytes = 32)),
+    // DIM=32: requant processes 2 output rows/cycle = 2*meshColumns*tileColumns lanes (was 32 = the
+    // DIM=16 value). Widens extracted_data 256->512 bits so all 64 fp8 codes are produced+written/cycle.
+    requantizer = standaloneMxFPConfig.requantizer.map(_.copy(numOutputLanes = 2*32*1))
+  )
+
   // FP8 E5M2 via LUT: E5M2 stored 4-bit and up-projected to 8-bit, operand lane MxFloat(5,3,2).
   val e5m2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat(5, 3, 2, pad=false),
@@ -628,6 +644,16 @@ class GemminiMxFPStandaloneConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiMxFPConfigs.standaloneMxFPConfig))
+    }
+  )
+})
+
+class GemminiMxFPDim32StandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiMxFPConfigs.dim32MxFPConfig))
     }
   )
 })

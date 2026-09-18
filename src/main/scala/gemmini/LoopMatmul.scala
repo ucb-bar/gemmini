@@ -803,9 +803,12 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   }
 
   val numChunks = block_size / 8
-  // FP8 chunk stride: flat = tilesPerMxBlock (column-inner); gated tiled = x16 (steps whole tile-rows).
+  // FP8 chunk stride: flat = spad-rows-per-chunk = 2 (each 1024b chunk = 2 blocks written as 2 bank-row
+  // beats: block0->row+0, block1->row+1), so consecutive chunks must step 2 rows or chunk N+1's block0
+  // overwrites chunk N's block1. (DIM16: tilesPerMxBlock=2 == 2 already; DIM32: tilesPerMxBlock=1 collided.)
+  // gated tiled = x16 (steps whole tile-rows).
   val chunk_spad_stride = Mux(req.output_mx_format === 3.U || req.full_c, (2 * tilesPerMxBlock).U,
-    Mux(req.reuse_tiled && req.output_mx_format === 0.U, (16 * tilesPerMxBlock).U, tilesPerMxBlock.U))
+    Mux(req.reuse_tiled && req.output_mx_format === 0.U, (block_size * tilesPerMxBlock).U, 2.U))
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
   assert(max_block_len == 1, "there might be hw bugs if block length > 1, disabled for now")
@@ -815,7 +818,11 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val i = Reg(UInt(iterator_bitwidth.W))
   val chunk_id = RegInit(0.U(GemminiISA.MX_CHUNK_ID_BITS.W))
   val fp8_tiles_this_j = Mux(j === iter_max_j - 1.U && req.max_j % 4.U =/= 0.U, req.max_j % 4.U, 4.U)
-  val chunks_this_j = fp8_tiles_this_j / tilesPerMxBlock.U
+  // Each requant beat / 1024b acc chunk spans numOutputLanes = 2*meshColumns cols = 2 mesh-tiles,
+  // so a j-group of fp8_tiles_this_j mesh-tiles needs fp8_tiles_this_j/2 chunk-reads. (DIM16: same as the
+  // old /tilesPerMxBlock since tilesPerMxBlock=2 there; DIM32: tilesPerMxBlock=1 no longer divides out
+  // the 2-blocks/beat factor, so the old form over-read the unused acc upper half.)
+  val chunks_this_j = fp8_tiles_this_j / 2.U
 
   val acc_addr_start = req.src_addr
 
@@ -829,8 +836,10 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
       Mux(req.reuse_tiled,
         // GATED tiled (FP8): i*tiles_N*16 + 64*j  (j-term x16 vs flat -> within-tile-row-inner layout)
         ((i * req.max_j) * block_size.U + j * (block_size * 4).U),
-        // flat: i*tiles_N*16 + 4*j
-        (((i * req.max_j) * block_size.U * 2.U + j*(block_size/2).U)/2.U)),
+        // flat: i-tile stride i*max_j*block_size spad-rows; j-group (=4 tiles) advances 4 spad-rows/output-row
+        // (1 tile = 1 spad row, DIM-independent). Was j*(block_size/4) = 4 only @DIM16; @DIM32 it doubled
+        // to 8 and put col-tiles 4-7 (N>128) a whole j-group too far -> cols>=128 garbage.
+        ((i * req.max_j) * block_size.U + j * 4.U)),
     // Internal-spad flat layout: output row R (of N cols, bf16) -> spad rows [R*(N/8), R*(N/8)+(N/8)).
     // A row-tile of H output rows has i-stride i*H*(N/8) spad-rows. N enters via max_j = N/32, so
     // i*H*(N/8) = i*max_j*(H/2)*block_size: act-quad H=32 -> x16... = i*max_j*block_size*8; act-single

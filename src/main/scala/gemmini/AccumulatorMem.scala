@@ -135,7 +135,10 @@ class AccumulatorMem[T <: Data, U <: Data](
   
   import ev._
 
-  val numChunks = (t.length * t.head.length) / 8  // DIM/8; each chunk = 8 acc elems = 512b
+  // numChunks = 2: the acc row is read/written in 2 chunks (1024b each @DIM32 = 2 rows/cyc).
+  // Was DIM/8 (8-elem/512b chunks for the 512b-port DRAM mvout, which we no longer use here); that
+  // stranded DIM=32 at half throughput. chunk_t = row/numChunks scales correctly (8@DIM16, 16@DIM32).
+  val numChunks = 2
   val chunk_t = if (use_mx_scaling) Vec(t.length / numChunks, t.head.cloneType)
                 else Vec(t.length, t.head.cloneType)
 
@@ -373,8 +376,6 @@ class AccumulatorMem[T <: Data, U <: Data](
     // } else if (use_shared_ext_mem) {
     //   require(false, "cannot use two-port external acc mem bank")
     // }
-
-    println("Creating Accumulator memory with sizes: acc_num_entries " + n + " len " + mask_len + "\n")
 
     val mem = AsymmetricTwoPortSyncMem(n, t, mask_len, if (use_mx_scaling) numChunks else 2) // TODO We assume byte-alignment here. Use aligned_to instead
 
