@@ -135,9 +135,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   
   import ev._
 
-  // numChunks = 2: the acc row is read/written in 2 chunks (1024b each @DIM32 = 2 rows/cyc).
-  // Was DIM/8 (8-elem/512b chunks for the 512b-port DRAM mvout, which we no longer use here); that
-  // stranded DIM=32 at half throughput. chunk_t = row/numChunks scales correctly (8@DIM16, 16@DIM32).
   val numChunks = 2
   val chunk_t = if (use_mx_scaling) Vec(t.length / numChunks, t.head.cloneType)
                 else Vec(t.length, t.head.cloneType)

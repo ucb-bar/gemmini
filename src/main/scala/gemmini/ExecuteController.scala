@@ -69,7 +69,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   import config._
   import ev._
   val block_size = meshRows*tileRows
-  val numChunks = 2  // 1024b chunks (2 rows/cyc @DIM32); was DIM/8 (512b mvout chunks)
+  val numChunks = 2
 
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
@@ -1132,9 +1132,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
 
   val address = mesh.io.resp.bits.tag.addr
-  // Split the C address into row-aligned base + column offset. The offset spans log2Ceil(block_size)
-  // low bits (col-tiles pack into one acc row's columns), so strip exactly that many: 4 @DIM16, 5 @DIM32.
-  // The old hardcoded 4 leaked bit 4 into the row at DIM32, misplacing col-tiles with offset>=16 (blocks 2,3).
   val address_no_offset = Cat(address.asUInt >> log2Ceil(block_size).U,
   0.U(log2Ceil(block_size).W)).asTypeOf(address)
   val offset = address.asUInt % block_size.U

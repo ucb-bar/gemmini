@@ -346,7 +346,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
     val spad_row_t = if (use_mx_scaling) Vec(2*meshColumns, Vec(tileColumns, weightTypeProjected))
                      else Vec(meshColumns, Vec(tileColumns, inputType))
-    val numChunks = 2  // 1024b chunks (2 rows/cyc @DIM32); was DIM/8 (512b mvout chunks)
+    val numChunks = 2
     val chunk_t = if (use_mx_scaling) Vec((meshColumns*tileColumns)/numChunks, Vec(tileColumns, accType))
                   else Vec(meshColumns, Vec(tileColumns, accType))
 

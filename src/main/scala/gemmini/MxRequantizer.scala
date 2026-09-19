@@ -117,10 +117,8 @@ class MxRequantizer[T <: Data](
   val pipelineLatency = config.pipelineLatency
   val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
   val spad_row_t = Vec(2*meshColumns, Vec(tileColumns, weightTypeProjected))
-  val numChunks = 2  // 1024b chunks (2 rows/cyc @DIM32); was DIM/8 (512b mvout chunks)
+  val numChunks = 2
   val tilesPerMxBlock = scaleSize / (meshColumns*tileColumns)
-  // Requant input assembly = row/numChunks accType (8 @DIM16, 16 @DIM32); unpacks 4 bf16/accType to
-  // reach numOutputLanes. (numChunks=2 now, so this equals numOutputLanes/4.)
   val half_acc_row_t = Vec((meshColumns*tileColumns)/numChunks, Vec(tileColumns, accType))
   val inputdataWidth = config.inputBits
   val io = IO(new MxRequantizerIO[T](
@@ -417,15 +415,11 @@ class MxRequantizer[T <: Data](
     )
   )
 
-  // Per-MX-block (32-element) scale + quantize. numOutputLanes can hold multiple MX blocks: at DIM=32
-  // it is 64 lanes = 2 blocks (2 rows/cyc, tilesPerMxBlock=1), so each 32-lane block needs its OWN
-  // block_max / E8M0 scale / quantizer. (DIM=16: numOutputLanes=32 = 1 block -> identical to before.)
-  // NaN/Inf tracked per block (the reference divides each block by its own max).
   val mxBlockSize    = 32
-  val numOutBlocks   = io.outputnumLanes / mxBlockSize   // 1 @DIM16, 2 @DIM32
-  val EPS_BIASED_EXP = 104.U(8.W)                        // fp32 eps floor (BF16 biased exp 104)
-  val scale_e8m0_vec    = Wire(Vec(numOutBlocks, UInt(8.W)))  // positive E8M0 per block -> coalescer
-  val neg_e8m0_vec      = Wire(Vec(numOutBlocks, UInt(8.W)))  // negated/clamped per block -> quantizer
+  val numOutBlocks   = io.outputnumLanes / mxBlockSize
+  val EPS_BIASED_EXP = 104.U(8.W)
+  val scale_e8m0_vec    = Wire(Vec(numOutBlocks, UInt(8.W)))
+  val neg_e8m0_vec      = Wire(Vec(numOutBlocks, UInt(8.W)))
   val block_has_nan_vec = Wire(Vec(numOutBlocks, Bool()))
   val block_has_inf_vec = Wire(Vec(numOutBlocks, Bool()))
   val quantized_blocks  = Wire(Vec(io.outputnumLanes, UInt(8.W)))
@@ -486,8 +480,6 @@ class MxRequantizer[T <: Data](
   }
   quantized_buffer := RegNext(quantized_blocks)
 
-  // Back-compat singletons (block 0). The coalescer wiring to scale_e8m0_vec (2 scales/cyc) is done
-  // separately (item 4); until then it consumes block 0's scale via this alias.
   val scale_e8m0    = scale_e8m0_vec(0)
   val block_has_nan = block_has_nan_vec.reduce(_ || _)
   val block_has_inf = block_has_inf_vec.reduce(_ || _)
@@ -525,62 +517,50 @@ class MxRequantizer[T <: Data](
   // generator mirroring the mvout iteration, then flush contiguous 32-byte chunks. Arrival decode:
   //   fp8:    sb=super-block, bib=block-in-sb, m=16*g+row,        b=2*sb+bib
   //   nibble: sb=block(b),    bib=row-half,    m=32*g+16*bib+row, b=sb   (2 rows/beat)
-  val ROWS_PER_HALF = meshColumns * tileColumns            // 16 rows per (bib) row-half
-  val isNibble      = out_is_fp4 || out_is_lut4   // 4-bit-packed outputs: FP4, E3M2/E2M3, and E5M2 (code0/altfmt)
-  val GN            = Mux(isNibble, io.loop_bound_j, (io.loop_bound_j >> log2Ceil(tilesPerMxBlock)).asUInt)
+  val ROWS_PER_HALF = meshColumns * tileColumns
+  val isNibble      = out_is_fp4 || out_is_lut4
+  val GN            = Mux(isNibble, (io.loop_bound_j * numOutBlocks.U), (io.loop_bound_j >> log2Ceil(tilesPerMxBlock)).asUInt)
   val tiles_I       = io.loop_bound_i
-  val num_super     = (GN + 1.U) >> 1                      // fp8: ceil(GN/2) super-blocks
+  val num_super     = (GN + 1.U) >> 1
   val gn_odd        = GN(0)
-  // fp8 j-groups: the StCSpad groups 4 tiles (=2 super-blocks) per j-group and emits beats
-  // j-group-OUTER / i-tile-MIDDLE / chunk(super-block)-INNER. So the coalescer must split the
-  // super-block into a within-j-group chunk (inner to i) and a j-group index (outer to i).
-  // (N<=128 -> num_super<=2 -> 1 j-group -> ag_jg stays 0, identical to the single-group cadence.)
-  // NOTE: assumes each j-group is full (2 super-blocks); a partial last group (num_super odd >1,
-  // e.g. GN=6) is not yet handled -- all tested N (64/128/256 -> num_super 1/2/4) are uniform.
-  val sbPerJg       = 2.U                                  // super-blocks per full fp8 j-group
-  val n_jgroups     = Mux(num_super <= sbPerJg, 1.U, (num_super + 1.U) >> 1)  // ceil(num_super/2)
-  val chunks_per_jg = Mux(num_super < sbPerJg, num_super, sbPerJg)            // 1 if num_super==1 else 2
+  val sbPerJg       = 2.U
+  val n_jgroups     = Mux(num_super <= sbPerJg, 1.U, (num_super + 1.U) >> 1)
+  val chunks_per_jg = Mux(num_super < sbPerJg, num_super, sbPerJg)
 
-  val coalesceSize  = 2048                                 // >= max M*GN for supported MX matmuls
+  val coalesceSize  = 2048
   val coalescer     = RegInit(VecInit(Seq.fill(coalesceSize)(0.U(8.W))))
 
-  // address-generator counters (advance one per should_compute beat). Nesting sb > g > bib > row.
-  val ag_sb  = RegInit(0.U(9.W))   // fp8: chunk within a j-group (0..chunks_per_jg-1); nibble: block index
+  val ag_sb  = RegInit(0.U(9.W))
   val ag_g   = RegInit(0.U(9.W))
-  val ag_jg  = RegInit(0.U(9.W))   // fp8: j-group index (0..n_jgroups-1), outer to the i-tile
+  val ag_jg  = RegInit(0.U(9.W))
   val ag_bib = RegInit(0.U(1.W))
   val ag_row = RegInit(0.U(log2Ceil(ROWS_PER_HALF).W))
   val flushing = RegInit(false.B)
 
-  // Transposed act-scale residency flush state (gated on io.scale_resident; idle otherwise).
-  val flushing_act = RegInit(false.B)   // never set unless scale_resident
-  val flush_act_bi = RegInit(0.U(9.W))  // block-column index bi, 0..GN-1  (outer)
-  val flush_act_wm = RegInit(0.U(16.W)) // 64b word within a bi's M-row span, 0..(M/8 - 1)  (inner)
+  val flushing_act = RegInit(false.B)
+  val flush_act_bi = RegInit(0.U(9.W))
+  val flush_act_wm = RegInit(0.U(16.W))
 
   val blocks_in_sb = Mux(isNibble, 2.U,
                        Mux((ag_sb === (num_super - 1.U)) && gn_odd, 1.U, 2.U))
-  val sb_count = Mux(isNibble, GN, num_super)
-  // fp8 global super-block = j-group base + within-group chunk; nibble keeps ag_sb as the block index.
+  val sb_count = Mux(isNibble, io.loop_bound_j, num_super)
   val super_block = Mux(isNibble, ag_sb, ag_jg * sbPerJg + ag_sb)
-  val cur_b    = Mux(isNibble, ag_sb, (super_block << 1).asUInt + ag_bib)
-  val cur_m    = Mux(isNibble, ag_g * 32.U + ag_bib * ROWS_PER_HALF.U + ag_row,
+  val cur_b    = Mux(isNibble, ag_sb * numOutBlocks.U, (super_block << 1).asUInt + ag_bib)
+  val cur_m    = Mux(isNibble, ag_g * (2*ROWS_PER_HALF).U + ag_bib * ROWS_PER_HALF.U + ag_row,
                                ag_g * ROWS_PER_HALF.U + ag_row)
   val cur_byte = cur_m * GN + cur_b
 
-  // Hold off overwriting the coalescer until both flushes finish.
   when(should_compute && !flushing && !flushing_act) {
     when (isNibble) {
-      coalescer(cur_byte) := scale_e8m0_vec(0)   // nibble: 1 block/beat, bib-iterated (unchanged)
+      for (blk <- 0 until numOutBlocks) {
+        when ((cur_b + blk.U) < GN) { coalescer(cur_byte + blk.U) := scale_e8m0_vec(blk) }
+      }
     } .otherwise {
-      // fp8: both block-columns of super-block ag_sb land this beat (vec(0)->bib0, vec(1)->bib1),
-      // same row, adjacent bytes. cur_b = 2*ag_sb here (ag_bib stays 0 on the fp8 path).
       coalescer(cur_byte) := scale_e8m0_vec(0)
-      when ((cur_b + 1.U) < GN) { coalescer(cur_byte + 1.U) := scale_e8m0_vec(1) }  // odd-GN guard
+      if (numOutBlocks >= 2) {
+        when ((cur_b + 1.U) < GN) { coalescer(cur_byte + 1.U) := scale_e8m0_vec(1) }
+      }
     }
-    // increment nested counters. The StCSpad emits mvouts j-group-OUTER / i-tile-MIDDLE / chunk-INNER
-    // (LoopMatmul: for j { for i { for chunk_id } }), so the coalescer mirrors that:
-    //   fp8:    row -> chunk(ag_sb, within j-group) -> i-tile(ag_g) -> j-group(ag_jg)
-    //   nibble: row -> bib -> sb -> i-tile (unchanged; nibble has no chunk_id j-grouping)
     when(ag_row === (ROWS_PER_HALF - 1).U) {
       ag_row := 0.U
       when (isNibble) {
@@ -588,25 +568,25 @@ class MxRequantizer[T <: Data](
           ag_bib := ag_bib + 1.U
         } .otherwise {
           ag_bib := 0.U
-          when(ag_sb === (sb_count - 1.U)) {
-            ag_sb := 0.U
-            when(ag_g === (tiles_I - 1.U)) {
-              ag_g := 0.U
+          when(ag_g === (tiles_I - 1.U)) {
+            ag_g := 0.U
+            when(ag_sb === (sb_count - 1.U)) {
+              ag_sb := 0.U
               flushing := true.B
               flushing_act := io.scale_resident
-            }.otherwise { ag_g := ag_g + 1.U }
-          }.otherwise { ag_sb := ag_sb + 1.U }
+            }.otherwise { ag_sb := ag_sb + 1.U }
+          }.otherwise { ag_g := ag_g + 1.U }
         }
       } .otherwise {
         ag_bib := 0.U
-        when(ag_sb === (chunks_per_jg - 1.U)) {              // chunk within j-group (inner)
+        when(ag_sb === (chunks_per_jg - 1.U)) {
           ag_sb := 0.U
-          when(ag_g === (tiles_I - 1.U)) {                   // i-tile (middle)
+          when(ag_g === (tiles_I - 1.U)) {
             ag_g := 0.U
-            when(ag_jg === (n_jgroups - 1.U)) {              // j-group (outer)
+            when(ag_jg === (n_jgroups - 1.U)) {
               ag_jg := 0.U
-              flushing := true.B                             // full tile collected -> flush
-              flushing_act := io.scale_resident              // also start the transposed act flush
+              flushing := true.B
+              flushing_act := io.scale_resident
             }.otherwise { ag_jg := ag_jg + 1.U }
           }.otherwise { ag_g := ag_g + 1.U }
         }.otherwise { ag_sb := ag_sb + 1.U }
@@ -614,8 +594,7 @@ class MxRequantizer[T <: Data](
     }.otherwise { ag_row := ag_row + 1.U }
   }
 
-  // Flush: stream the coalescer out as contiguous 32-byte row-major chunks.
-  val total_scales   = tiles_I * Mux(isNibble, 32.U, ROWS_PER_HALF.U) * GN   // M*GN
+  val total_scales   = tiles_I * Mux(isNibble, (2*ROWS_PER_HALF).U, ROWS_PER_HALF.U) * GN
   val num_flush_rows = total_scales >> log2Ceil(scales_per_write)
   val flush_row      = RegInit(0.U(16.W))
   val flush_base     = flush_row << log2Ceil(scales_per_write)
@@ -636,7 +615,7 @@ class MxRequantizer[T <: Data](
   // Transposed act-scale residency flush: re-read the row-major coalescer and stream it in the
   // A-scale operand layout [GN][M] (byte bi*M+m) as 64b beats, bi outer / wm inner.
   //   M = tiles_I * (32 nibble | 16 fp8); words_per_bi = M/8; word w = bi*words_per_bi + wm; addr = w*8.
-  val M_rows       = tiles_I * Mux(isNibble, 32.U, ROWS_PER_HALF.U)   // == total_scales / GN
+  val M_rows       = tiles_I * Mux(isNibble, (2*ROWS_PER_HALF).U, ROWS_PER_HALF.U)   // == total_scales / GN
   val words_per_bi = M_rows >> 3                                       // M/8 (M is a multiple of 8)
   val act_m0       = flush_act_wm << 3
   val act_word     = flush_act_bi * words_per_bi + flush_act_wm
