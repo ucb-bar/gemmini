@@ -518,7 +518,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
     writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
     writer.module.io.req.bits.len := (if (use_mx_scaling) {
-      Mux(writeData_is_full_width && !write_issue_q.io.deq.bits.laddr.is_acc_addr,
+      // bf16 (output_mx_format=3) is a full-acc-width spad store: use accType/16 bytes/elem (16*4=64), not
+      // the projected 8-bit path (16*1=16) which drops the high half of each row.
+      Mux(writeData_is_full_width && !write_issue_q.io.deq.bits.laddr.is_acc_addr && io.output_mx_format =/= 3.U,
         write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 8).U,
           Mux( writeData_is_full_width,
             write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,

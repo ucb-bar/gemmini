@@ -579,8 +579,8 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     // i*H*(N/8) = i*max_j*(H/2)*block_size: act-quad H=32 -> x16... = i*max_j*block_size*8; act-single
     // (mode6/7) H=16 -> i*max_j*block_size*4. The old x8-only assumed quad and doubled the act-single
     // i-stride (tiles i>=1 landed at 2x -> rows>=16 garbage). Gate the height on mx_multi_elem_act; the
-    // j-term (32 cols/tile -> block_size/4 spad-rows, N-independent) is unchanged.
-    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*Mux(req.mx_multi_elem_act, 8.U, 4.U) + j * (block_size/4).U)
+    // j-term: each J-tile = 2*DIM cols (a 64-col half) -> block_size/8 spad-rows (=4), N-independent.
+    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*Mux(req.mx_multi_elem_act, 8.U, 4.U) + j * (block_size/8).U)
   ))
   val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
   val acc_addr_offset = (i*iter_max_j+j) * block_size.U
@@ -835,8 +835,8 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     // i*H*(N/8) = i*max_j*(H/2)*block_size: act-quad H=32 -> x16... = i*max_j*block_size*8; act-single
     // (mode6/7) H=16 -> i*max_j*block_size*4. The old x8-only assumed quad and doubled the act-single
     // i-stride (tiles i>=1 landed at 2x -> rows>=16 garbage). Gate the height on mx_multi_elem_act; the
-    // j-term (32 cols/tile -> block_size/4 spad-rows, N-independent) is unchanged.
-    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*Mux(req.mx_multi_elem_act, 8.U, 4.U) + j * (block_size/4).U)
+    // j-term: each J-tile = 2*DIM cols (a 64-col half) -> block_size/8 spad-rows (=4), N-independent.
+    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*Mux(req.mx_multi_elem_act, 8.U, 4.U) + j * (block_size/8).U)
     ))
   val dst_addr = Mux(!req.mx_multi_elem,
     req.dst_addr + dst_offset + chunk_id * chunk_spad_stride,
