@@ -578,18 +578,34 @@ class MxRequantizer[T <: Data](
           }.otherwise { ag_g := ag_g + 1.U }
         }
       } .otherwise {
-        ag_bib := 0.U
-        when(ag_sb === (chunks_per_jg - 1.U)) {
-          ag_sb := 0.U
-          when(ag_g === (tiles_I - 1.U)) {
-            ag_g := 0.U
-            when(ag_jg === (n_jgroups - 1.U)) {
-              ag_jg := 0.U
-              flushing := true.B
-              flushing_act := io.scale_resident
-            }.otherwise { ag_jg := ag_jg + 1.U }
-          }.otherwise { ag_g := ag_g + 1.U }
-        }.otherwise { ag_sb := ag_sb + 1.U }
+        if (numOutBlocks >= 2) {
+          // DIM>=32: one arrival carries all blocks of a super-block; bib unused, walk super-blocks via j-groups.
+          ag_bib := 0.U
+          when(ag_sb === (chunks_per_jg - 1.U)) {
+            ag_sb := 0.U
+            when(ag_g === (tiles_I - 1.U)) {
+              ag_g := 0.U
+              when(ag_jg === (n_jgroups - 1.U)) {
+                ag_jg := 0.U
+                flushing := true.B
+                flushing_act := io.scale_resident
+              }.otherwise { ag_jg := ag_jg + 1.U }
+            }.otherwise { ag_g := ag_g + 1.U }
+          }.otherwise { ag_sb := ag_sb + 1.U }
+        } else {
+          // DIM=16 (numOutBlocks==1): a super-block's 2 blocks arrive on separate beats; step bib 0->1 or cur_b stays even and block 1 is never written.
+          when(ag_bib === (blocks_in_sb - 1.U)) {
+            ag_bib := 0.U
+            when(ag_g === (tiles_I - 1.U)) {
+              ag_g := 0.U
+              when(ag_sb === (sb_count - 1.U)) {
+                ag_sb := 0.U
+                flushing := true.B
+                flushing_act := io.scale_resident
+              }.otherwise { ag_sb := ag_sb + 1.U }
+            }.otherwise { ag_g := ag_g + 1.U }
+          }.otherwise { ag_bib := ag_bib + 1.U }
+        }
       }
     }.otherwise { ag_row := ag_row + 1.U }
   }

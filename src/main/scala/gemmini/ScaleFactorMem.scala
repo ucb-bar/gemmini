@@ -43,7 +43,7 @@ class ScalingFactorMem(
 ) extends Module {
   val scaleMemSizeFactor = 4
   val doubleBufferFactor = 2
-  val totalSizeBytes = 64*sramWidth*numBanks/8
+  val totalSizeBytes = depth*sramWidth*numBanks/8
   val bytesPerBank = sramWidth / 8
   val scaleWords = sramWidth / 64
   val AddrWidth = log2Ceil(totalSizeBytes)
@@ -64,7 +64,8 @@ class ScalingFactorMem(
   val counter_i = io.counter_i
   val counter_j = io.counter_j
   val counter_k = io.counter_k
-  val depth_sram = 64
+  // Per-bank depth from scale_mem config (DIM16->128, DIM32->64); was hardcoded 64, capping resident K at 1024.
+  val depth_sram = depth
   val half_sfMem_rows = depth_sram * numBanks / 2
   val bankDataT = Vec(bytesPerBank, UInt(8.W))
   val banks = Seq.fill(numBanks)(SyncReadMem(depth_sram, bankDataT))

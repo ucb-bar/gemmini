@@ -53,6 +53,12 @@ class QuantLut(
   val actCodeW = lutConfig.actCodeW
   val weiCodeW = lutConfig.weiCodeW
 
+  // outputnumLanes = 2*DIM (32 @DIM16, 64 @DIM32). The input-deproject loops/strides below were written
+  // for DIM=16; express them via luDim so they scale to DIM=32. Each reduces to its DIM=16 literal.
+  val luDim     = outputnumLanes / 2          // = DIM (16 or 32)
+  val log2LuDim = log2Ceil(luDim)             // 4 @DIM16, 5 @DIM32   (replaces the <<4 / >>4 literals)
+  val log2Lanes = log2Ceil(outputnumLanes)    // 5 @DIM16, 6 @DIM32   (replaces the <<5 literals)
+
   // Single-buffer LUT caches (no double buffering)
   // All caches as Vec of Regs to support dynamic hardware indexing
   val lutCache_act_in  = RegInit(VecInit(Seq.fill(2*lutConfig(0)._1)(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))))
@@ -160,7 +166,7 @@ class QuantLut(
       projectedIndices(i) := proj_nearest(i)
     }
     projectedDataValid := true.B
-    when (counter_act_out === ((io.loop_bound_i << 5.U) - 1.U)){
+    when (counter_act_out === ((io.loop_bound_i << log2Lanes.U) - 1.U)){
       counter_act_out := 0.U
     }.otherwise{
       counter_act_out := counter_act_out + 1.U
@@ -209,7 +215,7 @@ class QuantLut(
       // Gate the deproj on the per-response operand tag (aligned with the read data), not a fixed latency,
       // so it fires exactly when the projected data arrives.
       when(io.spad_projected_data(i).resp.bits.read_a) {
-        when(counter_i === ((io.loop_bound_i << 4.U) - 1.U)){
+        when(counter_i === ((io.loop_bound_i << log2LuDim.U) - 1.U)){
           counter_i := 0.U
         }.otherwise{
           counter_i := counter_i + 1.U
@@ -217,7 +223,7 @@ class QuantLut(
         // Route by the runtime read_a tag, so the activation operand may live in any scratchpad bank.
         used_lut_act_0 := lutCache_act_in((counter_i << 1.U) >> io.quant_lut_update_granularity)
         used_lut_act_1 := lutCache_act_in(((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity)
-        for (k <- 0 until 16) { //act data layout is k15a1, k15a0, k14a1, k14a0,...,k0a1,k0a0, each 4 bit, total 32*4
+        for (k <- 0 until luDim) { //act data layout is 2 interleaved 4-bit codes per k (kNa1,kNa0), total 2*luDim lanes
           val chunk_4bit_0 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 3, 2*k*4)
           val chunk_4bit_1 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 7, 2*k*4 + 4)
           val deprojected_bit_0 = used_lut_act_0(chunk_4bit_0)
@@ -227,14 +233,14 @@ class QuantLut(
         }
       }
       when(io.spad_projected_data(i).resp.bits.read_d) {
-       when(counter_j === ((io.loop_bound_j << 4.U) - 1.U)){
+       when(counter_j === ((io.loop_bound_j << log2LuDim.U) - 1.U)){
           counter_j := 0.U
         }.otherwise{
           counter_j := counter_j + 1.U
         }
         // Route by the runtime read_d tag, so weights may live in any scratchpad bank.
-        for (k <- 0 until 32) {
-          val used_lut_w = lutCache_weight((((counter_j >> 4.U) << 5.U) + k.U) >> io.quant_lut_update_granularity)
+        for (k <- 0 until outputnumLanes) {
+          val used_lut_w = lutCache_weight((((counter_j >> log2LuDim.U) << log2Lanes.U) + k.U) >> io.quant_lut_update_granularity)
           val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
           deprojected_bits(k) := used_lut_w(chunk_4bit)
 

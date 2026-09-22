@@ -359,6 +359,33 @@ object GemminiMxFPConfigs {
     requantizer = standaloneMxFPConfig.requantizer.map(_.copy(numOutputLanes = 2*32*1))
   )
 
+  // DIM=32 twin of allMxFPConfig: every MX format {FP4,E3M2,E2M3,E4M3,E5M2} on the 32x32 mesh, 8-bit LUT
+  // finders (LutFP8E4M3, rdataWidth=8), runtime lut_en. dim32 widening from dim32MxFPConfig; operands+LUT from allMxFPConfig.
+  val dim32AllMxFPConfig = dim32MxFPConfig.copy(
+    inputType  = MxFloat(4, 4, 2, pad=false),
+    weightType = MxFloat(4, 4, 2, pad=false),
+    spatialArrayInputType  = MxFloat(4, 4, 2, pad=false),
+    spatialArrayWeightType = MxFloat(4, 4, 2, pad=false),
+    lut = Some(GemminiLUTConfig(
+      numBits    = Seq(128, 128, 128),
+      numEntries = Seq(64, 64, 64),
+      rdataWidth = 8,
+      raddrWidth = 4,
+      projFormat = LutFP8E4M3,
+    )),
+  )
+
+  // DIM=32 twin of allAsymMxFPConfig: all 5 formats + ALL 12 PE modes on the 32x32 mesh (every symmetric +
+  // asymmetric combo), 8-bit LUT finders. dim32 widening from dim32MxFPConfig; operands+modes+LUT from allAsym.
+  val dim32AllAsymMxFPConfig = dim32MxFPConfig.copy(
+    inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    weightType = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    spatialArrayWeightType = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
+      projFormat = LutFP8E4M3, actCodeWidth = 8, weiCodeWidth = 8)),
+  )
+
   // FP8 E5M2 via LUT: E5M2 stored 4-bit and up-projected to 8-bit, operand lane MxFloat(5,3,2).
   val e5m2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat(5, 3, 2, pad=false),
@@ -654,6 +681,26 @@ class GemminiMxFPDim32StandaloneConfig extends Config((site, here, up) => {
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiMxFPConfigs.dim32MxFPConfig))
+    }
+  )
+})
+
+class GemminiMxFPDim32AllStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiMxFPConfigs.dim32AllMxFPConfig))
+    }
+  )
+})
+
+class GemminiMxFPDim32AllAsymStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiMxFPConfigs.dim32AllAsymMxFPConfig))
     }
   )
 })

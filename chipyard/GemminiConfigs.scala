@@ -58,6 +58,18 @@ class MxDim32GemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(128) ++
   new chipyard.config.AbstractConfig)
 
+class MxDim32AllGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim32AllStandaloneConfig ++              // all MX formats {FP4,E3M2,E2M3,E4M3,E5M2} on the 32x32 mesh, 8-bit LUT
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+class MxDim32AllAsymGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim32AllAsymStandaloneConfig ++         // all formats + ALL 12 PE modes (sym+asym) on the 32x32 mesh
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
 class MxE5M2GemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPE5M2StandaloneConfig ++                  // FP8 E5M2 via LUT (Option A variant)
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++
