@@ -101,7 +101,14 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val localaddr = mvout_rs2.local_addr
   val cols = mvout_rs2.num_cols
   val rows = mvout_rs2.num_rows
-  val blocks = (cols / block_cols.U(cols.getWidth.W)) + (cols % block_cols.U =/= 0.U)
+  // DIM<16 MX acc widen: the acc row is 2*meshColumns wide (DIM=16-shaped) and is read via its 2 chunks, so a
+  // wide acc read is ONE physical row -- block-stepping the address by block_stride folds back onto the same row
+  // (duplicate read). Count blocks/len at the widened width so it is a single block, matching DIM=16. Acc source
+  // only; DIM>=16 and spad-source mvouts keep block_cols byte-identical.
+  val eff_block_cols = if (use_mx_scaling && block_rows < 16)
+                         Mux(localaddr.is_acc_addr, (2 * block_cols).U(cols.getWidth.W), block_cols.U(cols.getWidth.W))
+                       else block_cols.U(cols.getWidth.W)
+  val blocks = (cols / eff_block_cols) + (cols % eff_block_cols =/= 0.U)
 
   val config_mvout_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigMvoutRs1)
   val config_mvout_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigMvoutRs2(acc_scale_t_bits, 32))
@@ -192,7 +199,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.acc_norm_stats_id := norm_stats_id
   io.dma.req.bits.acc_scale := acc_scale.asTypeOf(io.dma.req.bits.acc_scale)
 
-  io.dma.req.bits.len := Mux(block_counter === blocks - 1.U, ((cols - 1.U) % block_cols.U) + 1.U, block_cols.U)
+  io.dma.req.bits.len := Mux(block_counter === blocks - 1.U, ((cols - 1.U) % eff_block_cols) + 1.U, eff_block_cols)
   io.dma.req.bits.block := block_counter
   io.dma.req.bits.status := mstatus
   io.dma.req.bits.pool_en := pooling_is_enabled && (wrow_counter =/= 0.U || wcol_counter =/= 0.U)

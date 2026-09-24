@@ -386,6 +386,34 @@ object GemminiMxFPConfigs {
       projFormat = LutFP8E4M3, actCodeWidth = 8, weiCodeWidth = 8)),
   )
 
+  // DIM=8 (8x8 mesh). All 8 acc rows bf16 (no reduced-precision ramp). Mirrors the dim32 family.
+  val dim8MxFPConfig = standaloneMxFPConfig.copy(
+    meshRows = 8,
+    meshColumns = 8,
+    meshProdPrecisionList = Seq.fill(8) {MxFloat(4, 4, 4, true, false)},
+    meshAccPrecisionList  = Seq.fill(8) {MxFloat(8, 8, 4, true, false)},   // all 8 rows bf16
+    scale_mem = standaloneMxFPConfig.scale_mem.map(_.copy(subbankLineSizeInBytes = 8)),
+    // DIM=8 widen: acc SRAM row = accCols(2*meshColumns) = a full 32-col block per output row, mirroring DIM=16
+    // (numChunks=2 -> 2 sub-banks = 2 blocks; chunk_t=accCols/2=one block; numOutBlocks=1). numGPUInputLanes<=2*meshCol.
+    requantizer = standaloneMxFPConfig.requantizer.map(_.copy(numOutputLanes = 4*8*1, numGPUInputLanes = 8))
+  )
+  val dim8AllMxFPConfig = dim8MxFPConfig.copy(
+    inputType  = MxFloat(4, 4, 2, pad=false),
+    weightType = MxFloat(4, 4, 2, pad=false),
+    spatialArrayInputType  = MxFloat(4, 4, 2, pad=false),
+    spatialArrayWeightType = MxFloat(4, 4, 2, pad=false),
+    lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
+      projFormat = LutFP8E4M3)),
+  )
+  val dim8AllAsymMxFPConfig = dim8MxFPConfig.copy(
+    inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    weightType = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    spatialArrayWeightType = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
+    lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
+      projFormat = LutFP8E4M3, actCodeWidth = 8, weiCodeWidth = 8)),
+  )
+
   // FP8 E5M2 via LUT: E5M2 stored 4-bit and up-projected to 8-bit, operand lane MxFloat(5,3,2).
   val e5m2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat(5, 3, 2, pad=false),
@@ -701,6 +729,26 @@ class GemminiMxFPDim32AllAsymStandaloneConfig extends Config((site, here, up) =>
         implicit val q = p
         implicit val v = implicitly[ValName]
         LazyModule(new Gemmini(GemminiMxFPConfigs.dim32AllAsymMxFPConfig))
+    }
+  )
+})
+
+class GemminiMxFPDim8AllStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiMxFPConfigs.dim8AllMxFPConfig))
+    }
+  )
+})
+
+class GemminiMxFPDim8AllAsymStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq(
+      (p: Parameters) => {
+        implicit val q = p
+        implicit val v = implicitly[ValName]
+        LazyModule(new Gemmini(GemminiMxFPConfigs.dim8AllAsymMxFPConfig))
     }
   )
 })

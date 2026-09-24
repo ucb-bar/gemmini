@@ -53,11 +53,12 @@ class QuantLut(
   val actCodeW = lutConfig.actCodeW
   val weiCodeW = lutConfig.weiCodeW
 
-  // outputnumLanes = 2*DIM (32 @DIM16, 64 @DIM32). The input-deproject loops/strides below were written
-  // for DIM=16; express them via luDim so they scale to DIM=32. Each reduces to its DIM=16 literal.
-  val luDim     = outputnumLanes / 2          // = DIM (16 or 32)
-  val log2LuDim = log2Ceil(luDim)             // 4 @DIM16, 5 @DIM32   (replaces the <<4 / >>4 literals)
-  val log2Lanes = log2Ceil(outputnumLanes)    // 5 @DIM16, 6 @DIM32   (replaces the <<5 literals)
+  // Deproject width = operand nibbles (sp_width_projected/4 = 2*meshColumns), decoupled from the requant
+  // output width outputnumLanes (they differ at DIM=8 numChunks=1: 16 vs 32).
+  val depLanes  = sp_width_projected / 4
+  val luDim     = depLanes / 2
+  val log2LuDim = log2Ceil(luDim)
+  val log2Lanes = log2Ceil(depLanes)
 
   // Single-buffer LUT caches (no double buffering)
   // All caches as Vec of Regs to support dynamic hardware indexing
@@ -188,7 +189,7 @@ class QuantLut(
 
   for (i <- 0 until sp_banks) {
     // Each bank has its own deprojected_bits
-    val deprojected_bits = WireDefault(VecInit(Seq.fill(outputnumLanes)(0.U(rdataWidth.W))))
+    val deprojected_bits = WireDefault(VecInit(Seq.fill(depLanes)(0.U(rdataWidth.W))))
 
     // Initialize unused spad_projected_data outputs (QuantLut doesn't send requests)
     io.spad_projected_data(i).req.valid := false.B
@@ -239,7 +240,7 @@ class QuantLut(
           counter_j := counter_j + 1.U
         }
         // Route by the runtime read_d tag, so weights may live in any scratchpad bank.
-        for (k <- 0 until outputnumLanes) {
+        for (k <- 0 until depLanes) {
           val used_lut_w = lutCache_weight((((counter_j >> log2LuDim.U) << log2Lanes.U) + k.U) >> io.quant_lut_update_granularity)
           val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
           deprojected_bits(k) := used_lut_w(chunk_4bit)
@@ -248,8 +249,8 @@ class QuantLut(
       }
       // Pack per operand: activation codes at actCodeW, weight codes at weiCodeW (each sliced from the
       // rdataWidth-wide codebook entry). Equal widths -> identical to the old uniform Cat.
-      val act_packed = Cat((0 until outputnumLanes).reverse.map(k => deprojected_bits(k)(actCodeW - 1, 0)))
-      val wei_packed = Cat((0 until outputnumLanes).reverse.map(k => deprojected_bits(k)(weiCodeW - 1, 0)))
+      val act_packed = Cat((0 until depLanes).reverse.map(k => deprojected_bits(k)(actCodeW - 1, 0)))
+      val wei_packed = Cat((0 until depLanes).reverse.map(k => deprojected_bits(k)(weiCodeW - 1, 0)))
       io.spad_deprojected_data(i).resp.bits.data := Mux(io.spad_projected_data(i).resp.bits.read_a,
         act_packed, wei_packed)
       io.spad_deprojected_data(i).resp.valid := true.B

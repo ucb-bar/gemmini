@@ -69,7 +69,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   import config._
   import ev._
   val block_size = meshRows*tileRows
-  val numChunks = 2
+  // Widened acc SRAM row (2*meshColumns at DIM=8); read side delivers it as 2 blocks (numChunks=2).
+  val accCols = if (config.use_mx_scaling && meshColumns*tileColumns < 16) 2*meshColumns else meshColumns
+  val numChunks = if (accCols*tileColumns < 16) 1 else 2
 
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
@@ -90,9 +92,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       )))
 
       val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
-        Vec(meshColumns, Vec(tileColumns, accType)),
-        if (config.use_mx_scaling) Vec(2*meshColumns, Vec(tileColumns, weightType)) else Vec(meshColumns, Vec(tileColumns, inputType)),
-        if (config.use_mx_scaling) Vec((meshColumns*tileColumns)/numChunks, Vec(tileColumns, accType)) else Vec(meshColumns, Vec(tileColumns, accType))
+        Vec(accCols, Vec(tileColumns, accType)),
+        if (config.use_mx_scaling) Vec(config.requantizer.get.numOutputLanes/tileColumns, Vec(tileColumns, weightType)) else Vec(meshColumns, Vec(tileColumns, inputType)),
+        if (config.use_mx_scaling) Vec((accCols*tileColumns)/numChunks, Vec(tileColumns, accType)) else Vec(meshColumns, Vec(tileColumns, accType))
       ))))
 
       // val write = Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))))
@@ -1236,7 +1238,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
       io.acc.write(i).bits.acc := w_address_sp.accumulate
       io.acc.write(i).bits.mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
-      io.acc.write(i).bits.offset := offset
+      // DIM=8 acc widen. QUAD: pass the COL-TILE parity (tile-base index bit) so the acc mem interleaves j/j+1 into
+      // one wide row. SINGLE: pass the LOCAL entry offset (address % block_size = 0,2,4,6) so the acc mem can mask
+      // this col-tile's 2 entries within its chunk (the chunk itself is derived from the write address there); the
+      // parity would collapse 4 distinct col-tiles to one bit and they would clobber each other.
+      io.acc.write(i).bits.offset := (if (accCols != meshColumns) Mux(mx_multi_elem, (address_no_offset.asUInt >> log2Ceil(block_size).U)(0), offset) else offset)
     } else {
       io.acc.write(i).valid := false.B
       io.acc.write(i).bits.addr := DontCare

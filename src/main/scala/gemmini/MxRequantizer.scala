@@ -115,11 +115,14 @@ class MxRequantizer[T <: Data](
   
   import ev._
   val pipelineLatency = config.pipelineLatency
-  val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
-  val spad_row_t = Vec(2*meshColumns, Vec(tileColumns, weightTypeProjected))
-  val numChunks = 2
+  // Widened acc SRAM row (2*meshColumns at DIM=8) delivered to the requant as one wide row = 2 blocks.
+  val accCols = if (meshColumns*tileColumns < 16) 2*meshColumns else meshColumns
+  val acc_row_t = Vec(accCols, Vec(tileColumns, accType))
+  // spad_row_t holds one requant beat's output = numOutputLanes codes.
+  val spad_row_t = Vec(config.numOutputLanes/tileColumns, Vec(tileColumns, weightTypeProjected))
+  val numChunks = if (accCols*tileColumns < 16) 1 else 2
   val tilesPerMxBlock = scaleSize / (meshColumns*tileColumns)
-  val half_acc_row_t = Vec((meshColumns*tileColumns)/numChunks, Vec(tileColumns, accType))
+  val half_acc_row_t = Vec((accCols*tileColumns)/numChunks, Vec(tileColumns, accType))
   val inputdataWidth = config.inputBits
   val io = IO(new MxRequantizerIO[T](
     sp_data_width,
@@ -306,7 +309,7 @@ class MxRequantizer[T <: Data](
         quant_half_counter := false.B
       }
     }
-    final_pipe_out.bits.out.is_garbage := !quant_half_counter &&  (oldest_pipe_out.valid) 
+    final_pipe_out.bits.out.is_garbage := !quant_half_counter &&  (oldest_pipe_out.valid)
     final_pipe_out.valid :=  (oldest_pipe_out.valid)  
     final_pipe_out.bits.out.quant_mx_data_out := Mux(lut_valid, fp6_combined, quant_data_held).asTypeOf(spad_row_t)
 
@@ -519,7 +522,11 @@ class MxRequantizer[T <: Data](
   //   nibble: sb=block(b),    bib=row-half,    m=32*g+16*bib+row, b=sb   (2 rows/beat)
   val ROWS_PER_HALF = meshColumns * tileColumns
   val isNibble      = out_is_fp4 || out_is_lut4
-  val GN            = Mux(isNibble, (io.loop_bound_j * numOutBlocks.U), (io.loop_bound_j >> log2Ceil(tilesPerMxBlock)).asUInt)
+  // nibble GN = blocks-per-output-row = N/32 = loop_bound_j * (cols-per-tile) / 32 = loop_bound_j*block_cols/16.
+  // == loop_bound_j*numOutBlocks at DIM16/32 (block_cols/16 == numOutBlocks); differs only at DIM=8 (tile<block).
+  val nibbleGN      = if (meshColumns*tileColumns < 16) ((io.loop_bound_j * (meshColumns*tileColumns).U) >> 4).asUInt
+                      else (io.loop_bound_j * numOutBlocks.U)
+  val GN            = Mux(isNibble, nibbleGN, (io.loop_bound_j >> log2Ceil(tilesPerMxBlock)).asUInt)
   val tiles_I       = io.loop_bound_i
   val num_super     = (GN + 1.U) >> 1
   val gn_odd        = GN(0)
@@ -543,7 +550,9 @@ class MxRequantizer[T <: Data](
 
   val blocks_in_sb = Mux(isNibble, 2.U,
                        Mux((ag_sb === (num_super - 1.U)) && gn_odd, 1.U, 2.U))
-  val sb_count = Mux(isNibble, io.loop_bound_j, num_super)
+  // Super-block arrivals = GN blocks / numOutBlocks blocks-per-arrival. At DIM16/32 GN==loop_bound_j*numOutBlocks
+  // so this equals loop_bound_j (unchanged); at DIM=8 (tile<block) loop_bound_j overcounts -> use GN/numOutBlocks.
+  val sb_count = Mux(isNibble, (GN / numOutBlocks.U), num_super)
   val super_block = Mux(isNibble, ag_sb, ag_jg * sbPerJg + ag_sb)
   val cur_b    = Mux(isNibble, ag_sb * numOutBlocks.U, (super_block << 1).asUInt + ag_bib)
   val cur_m    = Mux(isNibble, ag_g * (2*ROWS_PER_HALF).U + ag_bib * ROWS_PER_HALF.U + ag_row,

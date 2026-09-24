@@ -135,8 +135,10 @@ class AccumulatorMem[T <: Data, U <: Data](
   
   import ev._
 
-  val numChunks = 2
-  val chunk_t = if (use_mx_scaling) Vec(t.length / numChunks, t.head.cloneType)
+  // DIM=8 widen: SRAM row is 2x t; numChunks=2 splits it into 2 sub-banks = the 2 blocks (rowR, rowR+1).
+  val accColsMem = if (use_mx_scaling && meshRows*tileRows < 16) t.length*2 else t.length
+  val numChunks = if (accColsMem < 16) 1 else 2
+  val chunk_t = if (use_mx_scaling) Vec(accColsMem / numChunks, t.head.cloneType)
                 else Vec(t.length, t.head.cloneType)
 
   // TODO unify this with TwoPortSyncMemIO
@@ -374,23 +376,127 @@ class AccumulatorMem[T <: Data, U <: Data](
     //   require(false, "cannot use two-port external acc mem bank")
     // }
 
-    val mem = AsymmetricTwoPortSyncMem(n, t, mask_len, if (use_mx_scaling) numChunks else 2) // TODO We assume byte-alignment here. Use aligned_to instead
+    // DIM=8 acc-row widen: the SRAM row is 2x, holding 2 col-tiles = one 32-col MX block for 2 output rows.
+    // Each write is one col-tile (t = meshColumns entries = rowR[0..half-1] ++ rowR+1[half..]). Place it into
+    // a quadrant pair (idx0,2 or idx1,3) chosen by the write offset (0,2,4,6 -> parity 0,1,0,1); the second
+    // col-tile fills the gaps. Reading the low 8 entries (idx0+idx1) then yields rowR's full 32-col block.
+    val widen  = use_mx_scaling && (meshRows*tileRows < 16)
+    val half   = t.length / 2
+    val t_wide = if (widen) Vec(t.length*2, t.head.cloneType) else t
+    // DIM=8 widen: single throughput packs 4 col-tiles per chunk at 2-entry granularity, so the mask must isolate
+    // a single col-tile (2 entries = one accType-pair). Use 2-entry (16-byte) mask granularity for the widen mem
+    // (8 bits at DIM=8) instead of the default 4-entry (32-byte); non-widen (DIM16/32) keeps the coarse default.
+    val mask_len_wide = if (widen) t_wide.getWidth / (8 * 16) else t_wide.getWidth / (8 * 32)
+    val mem = AsymmetricTwoPortSyncMem(n, t_wide, mask_len_wide, if (use_mx_scaling) numChunks else 2) // TODO We assume byte-alignment here. Use aligned_to instead
+
+    // place a single col-tile (8 entries: rowR[0..half-1], rowR+1[half..]) into the wide row's quadrants:
+    //   parity 0 -> rowR->idx0(0..half-1), rowR+1->idx2(2*half..); parity 1 -> rowR->idx1(half..), rowR+1->idx3(3*half..)
+    def placeWide(src: Vec[Vec[T]], parity: UInt): Vec[Vec[T]] = {
+      // Contiguous sub-bank split (chunk0 = entries 0..t-1 = rowR's block, chunk1 = t..2t-1 = rowR+1's block).
+      // Each col-tile's rowR goes to the low quad of its parity, rowR+1 to the high quad, so:
+      //   even (j0): rowR->entries[0..half) , rowR+1->[2*half..3*half)
+      //   odd  (j1): rowR->[half..2*half)   , rowR+1->[3*half..4*half)
+      // -> chunk0 (0..2*half-1) = [j0 rowR | j1 rowR] = row R block ; chunk1 = row R+1 block.
+      val w = WireInit(0.U.asTypeOf(t_wide))
+      when (parity === 0.U) {
+        for (k <- 0 until half) { w(k) := src(k); w(2*half + k) := src(half + k) }
+      } .otherwise {
+        for (k <- 0 until half) { w(half + k) := src(k); w(3*half + k) := src(half + k) }
+      }
+      w
+    }
+    // extract this col-tile's two quads back (t entries) for the accumulate read.
+    def extractWide(src: Vec[Vec[T]], parity: UInt): Vec[Vec[T]] = {
+      val e = WireInit(0.U.asTypeOf(t))
+      when (parity === 0.U) {
+        for (k <- 0 until half) { e(k) := src(k); e(half + k) := src(2*half + k) }
+      } .otherwise {
+        for (k <- 0 until half) { e(k) := src(half + k); e(half + k) := src(3*half + k) }
+      }
+      e
+    }
+
+    // SINGLE throughput (mx_multi_elem=false): the 8-wide write already carries one output row's 32 cols
+    // (4 col-tiles offset-packed by fmt0_data). It is contiguous, so route the WHOLE block to chunk0 (par 0)
+    // or chunk1 (par 1) — no 2-row/2-col quad split. par = the block-index low bit (col-tiles 0..3 -> block N
+    // -> chunk0, col-tiles 4..7 -> block N+1 -> chunk1, folded onto the same physical row by foldW).
+    def placeSingle(src: Vec[Vec[T]], parity: UInt): Vec[Vec[T]] = {
+      val w = WireInit(0.U.asTypeOf(t_wide))
+      when (parity === 0.U) {
+        for (k <- 0 until t.length) { w(k) := src(k) }
+      } .otherwise {
+        for (k <- 0 until t.length) { w(t.length + k) := src(k) }
+      }
+      w
+    }
+    def extractSingle(src: Vec[Vec[T]], parity: UInt): Vec[Vec[T]] = {
+      val e = WireInit(0.U.asTypeOf(t))
+      when (parity === 0.U) {
+        for (k <- 0 until t.length) { e(k) := src(k) }
+      } .otherwise {
+        for (k <- 0 until t.length) { e(k) := src(t.length + k) }
+      }
+      e
+    }
+
+    // Col-tiles j/j+1 (the two 16-col halves of a 32-col block) differ by EXACTLY block_size in the acc write
+    // address (same intra-tile row, tile bases block_size apart). Parity comes from EC in the offset field
+    // (the tile-base index bit, constant across a tile's rows). Fold = subtract block_size for the odd tile so
+    // j and j+1 land on the SAME physical row, interleaved by quadrant. The mvout read addresses the folded
+    // (parity-0) rows directly, so it needs no subtract.
+    val blkSize = (meshRows*tileRows).U
+    def foldW(a: UInt, par: UInt): UInt = a - Mux(par(0), blkSize, 0.U)
 
     // write
-    mem.io.waddr := oldest_pipelined_write.bits.addr
+    val wr_data = Mux(oldest_pipelined_write.bits.acc, adder_sum, oldest_pipelined_write.bits.data)
+    val wr_par  = oldest_pipelined_write.bits.offset
+    // QUAD: offset field carries the chunk parity directly. SINGLE: offset field carries the col-tile's LOCAL entry
+    // offset (0,2,4,6); the CHUNK is the write address' block-index bit (col-tiles 0-3 -> block N -> chunk0, 4-7 ->
+    // block N+1 -> chunk1, folded onto the same physical row).
+    val wr_chunk = Mux(io.mx_multi_elem, wr_par(0),
+      (oldest_pipelined_write.bits.addr >> log2Ceil(meshRows*tileRows).U)(0))
+    if (widen) {
+      mem.io.waddr := foldW(oldest_pipelined_write.bits.addr, wr_chunk)
+      // QUAD interleaves each col-tile's two quads (8-bit mask: chunk-group ((q/2)%2) reproduces the old 4-entry
+      // 0,2 vs 1,3 exactly). SINGLE writes ONE col-tile = 2 entries at [local_offset, local_offset+1] within its
+      // chunk, so it masks ONLY that pair (bit = chunk*half + local_offset/2); otherwise it clobbers the 3 sibling
+      // col-tiles sharing the chunk (root cause of the DIM=8 single failure).
+      mem.io.wdata := Mux(io.mx_multi_elem, placeWide(wr_data, wr_par), placeSingle(wr_data, wr_chunk))
+      val single_mask_bit = Mux(wr_chunk, (mask_len_wide/2).U, 0.U) + (wr_par >> 1)
+      mem.io.mask  := Mux(io.mx_multi_elem,
+        VecInit((0 until mask_len_wide).map(q => ((q / 2) % 2).U === wr_par(0))),
+        VecInit((0 until mask_len_wide).map(q => q.U === single_mask_bit)))
+    } else {
+      mem.io.waddr := oldest_pipelined_write.bits.addr
+      mem.io.wdata := wr_data
+      mem.io.mask := VecInit(oldest_pipelined_write.bits.mask.grouped(32).map(_.reduce(_ || _)).toSeq)
+    }
     mem.io.wen := oldest_pipelined_write.valid
-    mem.io.wdata := Mux(oldest_pipelined_write.bits.acc, adder_sum, oldest_pipelined_write.bits.data)
-    mem.io.mask := VecInit(oldest_pipelined_write.bits.mask.grouped(32).map(_.reduce(_ || _)).toSeq)
 
     if (use_mx_scaling) {
-      // full-width read
-      mem.io.raddr_full := io.write.bits.addr
+      // full-width read (accumulate RMW): fold the address (same parity) + extract the quadrant pair.
+      val rd_par = io.write.bits.offset
+      // SINGLE: chunk (fold parity) comes from the read address' block bit, not the offset field (= local offset).
+      val rd_chunk = (io.write.bits.addr >> log2Ceil(meshRows*tileRows).U)(0)
+      mem.io.raddr_full := (if (widen) foldW(io.write.bits.addr, Mux(io.mx_multi_elem, rd_par, rd_chunk)) else io.write.bits.addr)
       mem.io.ren_full := io.write.fire && io.write.bits.acc
-      rdata_for_adder := mem.io.rdata_full
+      // rdata_full is the SyncMem read output 1 cycle after raddr was set, so extractWide must use the parity of
+      // the write that FIRED the read (delayed by the read latency), not the current cycle's offset. Otherwise the
+      // last write of a col-tile pass (whose next write already switched parity) extracts the wrong quadrant ->
+      // reads j0's value for j1 (only bites the last physical row = the last output-row pair).
+      // SINGLE: RMW read picks the chunk by the read address' block bit (rd_chunk above); QUAD uses the offset-field
+      // parity. Both delayed by RegNext to match the SyncMem read latency.
+      rdata_for_adder := (if (widen) Mux(io.mx_multi_elem, extractWide(mem.io.rdata_full, RegNext(rd_par)),
+                                                           extractSingle(mem.io.rdata_full, RegNext(rd_chunk)))
+                          else mem.io.rdata_full)
 
-      // half-width read: address = {addr, bank_sel}, taking bankSelBits of chunk_id
+      // half-width read: address = {row, bank_sel}. numChunks=2 sub-banks = the 2 blocks (rowR/rowR+1);
+      // chunk_id picks the block. Fold the read address the SAME as the write so odd col-tiles map onto the
+      // folded (even) rows (read parity = the read address' tile-base bit).
       val bankSelBits = if (numChunks > 1) log2Up(numChunks) else 1
-      mem.io.raddr_half := Cat(io.read.req.bits.addr, io.read.req.bits.chunk_id(bankSelBits - 1, 0))
+      val rr_par = (io.read.req.bits.addr >> log2Ceil(meshRows*tileRows).U)(0)
+      mem.io.raddr_half := (if (widen) Cat(foldW(io.read.req.bits.addr, rr_par), io.read.req.bits.chunk_id(bankSelBits - 1, 0))
+                            else Cat(io.read.req.bits.addr, io.read.req.bits.chunk_id(bankSelBits - 1, 0)))
       mem.io.ren_half := io.read.req.fire
 
       rdata_for_read_resp := mem.io.rdata_half.asTypeOf(chunk_t)
