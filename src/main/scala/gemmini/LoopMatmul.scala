@@ -806,8 +806,12 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   // DIM=16's store: 2 chunks per wide read (the 2 output rows), and step col-tiles by 2 (2 col-tiles/block).
   val accBlockSize = if (block_size < 16) 2*block_size else block_size
   val numChunks = accBlockSize / 8
+  // Single fmt0 requant: chunk1 (block1, cols 32-63) sits ONE requant output below chunk0, = the block's
+  // spad-row span = tilesPerMxBlock (mxBlockSize/DIM: 2 at DIM16, 4 at DIM8). Hardcoded 2 only held at DIM16;
+  // at DIM=8 a block spans 4 rows so +2 overwrote block0's beats 2-3. Gate on DIM<16 to keep DIM>=16 identical.
+  val single_chunk_stride = if (block_size < 16) tilesPerMxBlock else 2
   val chunk_spad_stride = Mux(req.output_mx_format === 3.U || req.full_c, (2 * tilesPerMxBlock).U,
-    Mux(req.reuse_tiled && req.output_mx_format === 0.U, (block_size * tilesPerMxBlock).U, 2.U))
+    Mux(req.reuse_tiled && req.output_mx_format === 0.U, (block_size * tilesPerMxBlock).U, single_chunk_stride.U))
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
   assert(max_block_len == 1, "there might be hw bugs if block length > 1, disabled for now")
