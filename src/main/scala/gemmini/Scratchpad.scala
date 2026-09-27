@@ -92,7 +92,8 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
 
   io.out.valid := io.in.valid
   io.out.bits := io.in.bits
-  io.out.bits.len := 16.U
+  // Acc (and garbage, which is acc-tagged) keep 16; spad-source requests keep the real row length (DIM32 = 32).
+  io.out.bits.len := Mux(io.in.bits.laddr.is_acc_addr, 16.U, io.in.bits.len)
   io.out.bits.chunk_id := out_chunk_id
   io.out.bits.store_en := Mux(is_non_fp8_acc_write, !second_half || !second_half_invalid, io.in.bits.store_en)
   io.out.bits.vaddr   := Mux(is_non_fp8_acc_write && second_half,
@@ -526,10 +527,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
     writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
     writer.module.io.req.bits.len := (if (use_mx_scaling) {
-      // bf16 (output_mx_format=3) is a full-acc-width spad store: use accType/16 bytes/elem (16*4=64), not
-      // the projected 8-bit path (16*1=16) which drops the high half of each row.
-      Mux(writeData_is_full_width && !write_issue_q.io.deq.bits.laddr.is_acc_addr && io.output_mx_format =/= 3.U,
-        write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 8).U,
+      // Spad-source (bf16 drain or requant codes): exactly len spad elements, no overrun.
+      Mux(!write_issue_q.io.deq.bits.laddr.is_acc_addr,
+        write_issue_q.io.deq.bits.len * (inputTypeProjected.getWidth / 8).U,
           Mux( writeData_is_full_width,
             write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,
             write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U))
