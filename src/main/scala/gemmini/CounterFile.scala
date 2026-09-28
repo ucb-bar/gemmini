@@ -69,8 +69,10 @@ object CounterEvent {
 
   val LOOP_MATMUL_ACTIVE_CYCLES = 43
   val TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES = 44
+  val RDMA_XACT_FULL_CYCLES = 45          // read-DMA xact table (TL source ids) all in flight
+  val LOAD_CMD_TRACKER_FULL_CYCLES = 46   // mvin waiting: load cmd tracker full
 
-  val n = 45
+  val n = 47
 }
 
 object CounterExternal {

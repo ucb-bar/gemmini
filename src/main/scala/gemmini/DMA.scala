@@ -110,6 +110,7 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     io.counter := DontCare
     io.counter.collect(core.module.io.counter)
     io.counter.collect(xactTracker.io.counter)
+    io.counter.connectEventSignal(CounterEvent.RDMA_XACT_FULL_CYCLES, !xactTracker.io.alloc.ready)
   }
 }
 

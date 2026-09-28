@@ -336,7 +336,8 @@ object GemminiMxFPConfigs {
     tile_latency = 0,
     mesh_output_delay = 1,
     acc_latency = 3,
-    num_counter = 0,
+    num_counter = 8,   // perf counters (include/mx_perf.h)
+    max_in_flight_mem_reqs = 32,   // DMA was in-flight-bound at 16 (PERF_LD)
     lut = Some(GemminiLUTConfig()),
     // Scale-factor RAM window 0x20000000..0x20003fff: weight scales at +0x0000, activation at +0x2000.
     scale_mem = Some(defaultMxFPConfig.scale_mem.get.copy(baseAddr = 0x20000000L)),

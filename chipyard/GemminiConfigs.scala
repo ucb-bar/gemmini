@@ -49,7 +49,7 @@ class GemminiShuttleConfig extends Config(
 class MxGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPStandaloneConfig ++                      // standalone MX twin (internal spad + MMIO requant)
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++
-  new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.WithSystemBusWidth(256) ++
   new chipyard.config.AbstractConfig)
 
 class MxDim32GemminiRocketConfig extends Config(

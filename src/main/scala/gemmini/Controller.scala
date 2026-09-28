@@ -140,11 +140,12 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
 
   // Pull-side master for funct-27 MX_LOAD_SCALES: issues 8-byte TL Gets from DRAM (addr in rs1)
   // and replays them as scale-mem write beats. Replaces the CPU flat window as the SW scale front-end.
+  val mx_scale_loader_slots = 8   // Gets in flight (one TL source + one 64B reorder slot each)
   val mx_scale_loader_client = Option.when(use_mx_mmio) {
     TLClientNode(Seq(TLMasterPortParameters.v1(
       clients = Seq(TLMasterParameters.v1(
         name     = "gemmini-mx-scale-loader",
-        sourceId = IdRange(0, 1))))))
+        sourceId = IdRange(0, mx_scale_loader_slots))))))
   }
 
   // Pull-side master for funct-29 MX_LOAD_LUT: issues 8-byte TL Gets from DRAM (addr in rs1),
@@ -510,7 +511,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val (gnode, gedge) = outer.mx_scale_loader_client.get.out.head
     val beatBytes = gnode.params.dataBits / 8
     val nLanes    = math.max(beatBytes / 8, 1)
-    val laneRegW  = if (nLanes > 1) log2Ceil(nLanes) else 1
+    val laneW     = log2Ceil(nLanes)
 
     val start = Wire(Decoupled(new Bundle {
       val addr = UInt(coreMaxAddrBits.W)
@@ -522,60 +523,99 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     val w_out   = Wire(Decoupled(new ScalingFactorWriteReq(s.addrBits - 1, 8 * 8)))
     val act_out = Wire(Decoupled(new ScalingFactorWriteReq(s.addrBits - 1, 8 * 8)))
-    w_out.valid   := false.B; w_out.bits   := DontCare
-    act_out.valid := false.B; act_out.bits := DontCare
 
-    val sIdle :: sReq :: sResp :: Nil = Enum(3)
-    val state       = RegInit(sIdle)
-    val base        = Reg(UInt(coreMaxAddrBits.W))
-    val total_words = Reg(UInt(29.W))   // len bytes / 8
-    val word_idx    = Reg(UInt(29.W))
-    val sel_r       = Reg(Bool())
-    val lane_r      = Reg(UInt(laneRegW.W))
+    // Pipelined loader: up to nSlots aligned Gets (<= one 64B line) in flight. ScaleFactorMem packs
+    // consecutive 64-bit words into rows, so responses (any order) land in a per-slot reorder buffer and
+    // retire from the ring head in address order, one word/cycle.
+    val nSlots    = outer.mx_scale_loader_slots
+    val lineWords = 8
+    require(isPow2(nSlots))
+    val slotW     = log2Ceil(nSlots)
 
-    // TL-A/D defaults (overridden per-state below)
-    gnode.a.valid := false.B
-    gnode.a.bits  := DontCare
-    gnode.d.ready := false.B
+    val sIdle :: sRun :: Nil = Enum(2)
+    val state      = RegInit(sIdle)
+    val cur_addr   = Reg(UInt(coreMaxAddrBits.W))
+    val bytes_left = Reg(UInt(32.W))
+    val sel_r      = Reg(Bool())
+    val out_word   = Reg(UInt(29.W))   // next scale-mem word (retire order)
+
+    val s_valid  = RegInit(VecInit(Seq.fill(nSlots)(false.B)))
+    val s_done   = Reg(Vec(nSlots, Bool()))
+    val s_nwords = Reg(Vec(nSlots, UInt(4.W)))
+    val s_beats  = Reg(Vec(nSlots, UInt(4.W)))   // D beats expected
+    val s_got    = Reg(Vec(nSlots, UInt(4.W)))   // D beats received
+    val s_laneo  = Reg(Vec(nSlots, UInt(3.W)))   // lane of word 0 in beat 0 (sub-beat Gets)
+    val s_data   = Reg(Vec(nSlots, Vec(lineWords, UInt(64.W))))
+    val tail     = RegInit(0.U(slotW.W))   // next slot to allocate
+    val head     = RegInit(0.U(slotW.W))   // next slot to retire
+    val rw       = RegInit(0.U(3.W))       // word within the head slot
 
     start.ready := state === sIdle
-    when (state === sIdle && start.fire) {
-      base        := start.bits.addr
-      total_words := start.bits.len(31, 3)
-      word_idx    := 0.U
-      sel_r       := start.bits.sel
-      state       := Mux(start.bits.len(31, 3) === 0.U, sIdle, sReq)
+    assert(!start.fire || start.bits.addr(2, 0) === 0.U, "MX scale loader: address must be 8B-aligned")
+    when (start.fire) {
+      cur_addr   := start.bits.addr
+      bytes_left := Cat(start.bits.len(31, 3), 0.U(3.W))
+      sel_r      := start.bits.sel
+      out_word   := 0.U
+      state      := Mux(start.bits.len(31, 3) === 0.U, sIdle, sRun)
     }
 
-    val get_addr = base + (word_idx << 3)
-    when (state === sReq) {
-      gnode.a.valid := true.B
-      gnode.a.bits  := gedge.Get(fromSource = 0.U, toAddress = get_addr, lgSize = 3.U)._2
-      when (gnode.a.fire) {
-        lane_r := (if (nLanes > 1) get_addr(log2Ceil(beatBytes) - 1, 3) else 0.U)
-        state  := sResp
-      }
+    // Issue: largest aligned size (64/32/16/8B) that fits the remaining length.
+    val sizes     = Seq(64, 32, 16, 8)
+    val fits      = sizes.map(sz => cur_addr(log2Ceil(sz) - 1, 0) === 0.U && bytes_left >= sz.U)
+    val issue_lg  = PriorityMux(fits, sizes.map(sz => log2Ceil(sz).U(3.W)))
+    val issue_b   = 1.U(7.W) << issue_lg
+    gnode.a.valid := state === sRun && bytes_left =/= 0.U && !s_valid(tail)
+    gnode.a.bits  := gedge.Get(fromSource = tail, toAddress = cur_addr, lgSize = issue_lg)._2
+    when (gnode.a.fire) {
+      s_valid(tail)  := true.B
+      s_done(tail)   := false.B
+      s_got(tail)    := 0.U
+      s_nwords(tail) := issue_b >> 3
+      s_beats(tail)  := Mux(issue_b > beatBytes.U, issue_b >> log2Ceil(beatBytes), 1.U)
+      s_laneo(tail)  := (if (nLanes > 1) cur_addr(log2Ceil(beatBytes) - 1, 3) else 0.U)
+      tail           := tail + 1.U
+      cur_addr       := cur_addr + issue_b
+      bytes_left     := bytes_left - issue_b
     }
 
+    // Response: drop each 64-bit lane into its slot word (word w sits at lane (w + laneo) of beat (w + laneo)/nLanes).
+    gnode.d.ready := true.B
+    val d_slot    = gnode.d.bits.source(slotW - 1, 0)
     val dataLanes = gnode.d.bits.data.asTypeOf(Vec(nLanes, UInt(64.W)))
-    val word_data = if (nLanes > 1) dataLanes(lane_r) else gnode.d.bits.data(63, 0)
-    when (state === sResp) {
-      when (sel_r) {
-        w_out.valid     := gnode.d.valid
-        w_out.bits.addr := (word_idx << 3)
-        w_out.bits.data := word_data
-        gnode.d.ready   := w_out.ready
-      } .otherwise {
-        act_out.valid     := gnode.d.valid
-        act_out.bits.addr := (word_idx << 3)
-        act_out.bits.data := word_data
-        gnode.d.ready     := act_out.ready
+    when (gnode.d.fire) {
+      for (w <- 0 until lineWords) {
+        val pos  = w.U(4.W) +& s_laneo(d_slot)
+        val beat = if (laneW > 0) pos >> laneW else pos
+        val lane = if (laneW > 0) pos(laneW - 1, 0) else 0.U
+        when (beat === s_got(d_slot) && w.U < s_nwords(d_slot)) {
+          s_data(d_slot)(w) := dataLanes(lane)
+        }
       }
-      when (gnode.d.fire) {
-        word_idx := word_idx + 1.U
-        state    := Mux(word_idx + 1.U === total_words, sIdle, sReq)
+      s_got(d_slot) := s_got(d_slot) + 1.U
+      when (s_got(d_slot) + 1.U === s_beats(d_slot)) { s_done(d_slot) := true.B }
+    }
+
+    // Retire in address order from the head slot.
+    val head_rdy = s_valid(head) && s_done(head)
+    w_out.valid       := head_rdy && sel_r
+    act_out.valid     := head_rdy && !sel_r
+    w_out.bits.addr   := out_word << 3
+    act_out.bits.addr := out_word << 3
+    w_out.bits.data   := s_data(head)(rw)
+    act_out.bits.data := s_data(head)(rw)
+    when (Mux(sel_r, w_out.fire, act_out.fire)) {
+      out_word := out_word + 1.U
+      when (rw === s_nwords(head) - 1.U) {
+        s_valid(head) := false.B
+        head          := head + 1.U
+        rw            := 0.U
+      } .otherwise {
+        rw := rw + 1.U
       }
     }
+
+    when (state === sRun && bytes_left === 0.U && !s_valid.asUInt.orR) { state := sIdle }
 
     scale_loader_busy := state =/= sIdle
     (Some(w_out), Some(act_out), Some(start))
