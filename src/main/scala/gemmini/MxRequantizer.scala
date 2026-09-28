@@ -55,7 +55,7 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   scaleMemActWriteAddrWidth: Int,   // byte-addr width of the on-chip act-scale write port
   scaleSize: Int,
   scaleMembasewrite: Int,
-  lutConfig: GemminiLUTConfig,
+  lutConfig: Option[GemminiLUTConfig],
   sp_bank_entries: Int,
   sp_banks: Int,
   sp_width: Int,
@@ -73,15 +73,16 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val requant_data_in_gpu = Flipped(Decoupled(new RequantizerInBundle(config.numGPUInputLanes, inputdataWidth)))
   val requant_data_out = Decoupled(new RequantizerOutBundle(outputnumLanes))
   val scaleMem_write = Decoupled(new ScalingFactorWriteReq(scaleMem_addr_width, scaleMem_data_width)) 
-  val lut0_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(0))))
-  val lut1_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(1))))
-  val lut2_write = Flipped(Decoupled(new QuantLutWriteBundle(lutConfig(2))))
+  // LUT write ports exist only when the QuantLut is built (lutConfig defined).
+  val lut0_write = lutConfig.map(l => Flipped(Decoupled(new QuantLutWriteBundle(l(0)))))
+  val lut1_write = lutConfig.map(l => Flipped(Decoupled(new QuantLutWriteBundle(l(1)))))
+  val lut2_write = lutConfig.map(l => Flipped(Decoupled(new QuantLutWriteBundle(l(2)))))
   val spad_projected_data   = Vec(sp_banks, new ScratchpadReadIO(sp_bank_entries, sp_width_projected))
   val spad_deprojected_data = Vec(sp_banks, Flipped(new ScratchpadReadIO(sp_bank_entries, sp_width)))
   val read_a = Input(Bool())
   val read_d = Input(Bool())
   val scale_mem_mvout_base_addr_act = Input(UInt(scaleMem_addr_width.W)) // from execute controller
-  val quant_lut_update_granularity = Input(UInt(lutConfig.lutUpdateRegularityWidth.W))
+  val quant_lut_update_granularity = Input(UInt(lutConfig.map(_.lutUpdateRegularityWidth).getOrElse(16).W))
   val loop_bound_i = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_k = Input(UInt(iterator_bitwidth.W)) // from  controller
@@ -102,7 +103,8 @@ class MxRequantizer[T <: Data](
   scaleMemActWriteAddrWidth: Int,   // byte-addr width of the on-chip act-scale write port
   scaleSize: Int,
   scaleMembasewrite: Int,
-  lutConfig: GemminiLUTConfig,
+  // None -> no QuantLut (no LUT caches / nearest finders): only direct-coded outputs (E4M3-single, FP4).
+  lutConfig: Option[GemminiLUTConfig],
   sp_bank_entries: Int,
   sp_banks: Int,
   sp_width: Int,
@@ -179,7 +181,7 @@ class MxRequantizer[T <: Data](
     result
   }
   
-  val e5m2Lut = lutConfig.projFormat == LutFP8E5M2
+  val e5m2Lut = lutConfig.exists(_.projFormat == LutFP8E5M2)
   val (exp_bits, mant_bits, pmax, log2_pmax_floor_raw) = MxFloatFormat(format_reg)
   // Block-scale floor = 0 for every (format, altfmt) so chained requant outputs stay in acc/finder range.
   val log2_pmax_floor = log2_pmax_floor_raw
@@ -206,7 +208,7 @@ class MxRequantizer[T <: Data](
   // Output packing: E4M3-single -> 8-bit direct codes; E4M3-quad/E5M2/E3M2/E2M3 -> 4-bit LUT indices;
   // FP4 -> 4-bit direct. E4M3-single vs -quad share format0/altfmt0, split only by latched lut_en.
   val out_is_fp4  = format_reg === 2.U
-  val out_is_lut4 = (format_reg === 1.U) || (format_reg === 0.U && (altfmt_reg || lut_en_reg))
+  val out_is_lut4 = lutConfig.isDefined.B && ((format_reg === 1.U) || (format_reg === 0.U && (altfmt_reg || lut_en_reg)))
   val out_is_8bit = (format_reg === 0.U && !altfmt_reg && !lut_en_reg)
 
   val extracted_data = WireDefault((0.U((io.outputnumLanes*8).W))) // 256bits / 128bits
@@ -221,8 +223,8 @@ class MxRequantizer[T <: Data](
 
   val final_pipe_out = Wire(Decoupled(new MxRequantizerAccResp[T](half_acc_row_t, spad_row_t)(ev)))
   dontTouch(final_pipe_out)
-  val quantLut = Module(new QuantLut(
-    lutConfig,
+  val quantLut = lutConfig.map { l => Module(new QuantLut(
+    l,
     outputnumLanes = io.outputnumLanes ,
     sp_bank_entries = sp_bank_entries,
     sp_banks = sp_banks,
@@ -232,7 +234,7 @@ class MxRequantizer[T <: Data](
     lut_update_regularity_act_in = config.lutUpdateRegularityActIn,
     lut_update_regularity_act_out = config.lutUpdateRegularityActOut,
     iterator_bitwidth = iterator_bitwidth
-  ))
+  )) }
 
   when(io.requant_data_in_gpu.fire) {
      for (i <- 0 until half_lanes) {
@@ -272,7 +274,7 @@ class MxRequantizer[T <: Data](
   final_pipe_out := oldest_pipe_out
 
   // Two-cycle accumulation registers for FP4 / FP6:
-  val fp6_lut_out     = Cat(quantLut.io.projected_data.bits.reverse)
+  val fp6_lut_out     = quantLut.map(q => Cat(q.io.projected_data.bits.reverse)).getOrElse(0.U((io.outputnumLanes*4).W))
   val fp6_row0        = (0 until io.outputnumLanes).map(k => first_half_buf(4*k+3, 4*k))    
   val fp6_row1        = (0 until io.outputnumLanes).map(k => fp6_lut_out(4*k+3, 4*k))      
   val fp6_interleaved = (0 until io.outputnumLanes/2).flatMap { j => Seq(fp6_row0(2*j), fp6_row1(2*j), fp6_row0(2*j+1), fp6_row1(2*j+1)) }
@@ -295,7 +297,7 @@ class MxRequantizer[T <: Data](
 
   final_pipe_out.bits.out.quant_mx_data_out := 0.U.asTypeOf(spad_row_t)
   final_pipe_out.bits.out.is_garbage := false.B
-  val lut_valid = quantLut.io.projected_data.valid
+  val lut_valid = quantLut.map(_.io.projected_data.valid).getOrElse(false.B)
   when(out_is_8bit) {
     final_pipe_out.valid := oldest_pipe_out.valid
     final_pipe_out.bits.out.quant_mx_data_out := Mux(quantize_valid, extracted_data, quant_data_held).asTypeOf(spad_row_t)
@@ -487,32 +489,45 @@ class MxRequantizer[T <: Data](
   val block_has_nan = block_has_nan_vec.reduce(_ || _)
   val block_has_inf = block_has_inf_vec.reduce(_ || _)
 
-  // LUT projection source: low rdataW bits of the quantized code (full 8-bit for E5M2, low-6 for FP6).
-  val rdataW = lutConfig.rdataWidth
-  val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
-  dontTouch(quant_fp6)
-  quant_fp6 := Mux(out_is_lut4, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(rdataW - 1, 0))),
-  VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
+  quantLut match {
+    case Some(lut) =>
+      // LUT projection source: low rdataW bits of the quantized code (full 8-bit for E5M2, low-6 for FP6).
+      val rdataW = lutConfig.get.rdataWidth
+      val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
+      dontTouch(quant_fp6)
+      quant_fp6 := Mux(out_is_lut4, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(rdataW - 1, 0))),
+      VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
 
-  quantLut.io.spad_projected_data <> io.spad_projected_data
-  quantLut.io.spad_deprojected_data <> io.spad_deprojected_data
-  quantLut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
-  quantLut.io.read_a := io.read_a
-  quantLut.io.read_d := io.read_d
-  quantLut.io.mx_fp8_altfmt := altfmt_reg
-  quantLut.io.output_mx_format := format_reg
-  quantLut.io.loop_bound_i := io.loop_bound_i
-  quantLut.io.loop_bound_j := io.loop_bound_j
-  quantLut.io.loop_bound_k := io.loop_bound_k
-  quantLut.io.quant_fp6.valid := false.B
-  quantLut.io.quant_fp6.bits := DontCare
-  quantLut.io.lut_write_weight <> io.lut0_write
-  quantLut.io.lut_write_act_in <> io.lut1_write
-  quantLut.io.lut_write_act_out <> io.lut2_write
+      lut.io.spad_projected_data <> io.spad_projected_data
+      lut.io.spad_deprojected_data <> io.spad_deprojected_data
+      lut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
+      lut.io.read_a := io.read_a
+      lut.io.read_d := io.read_d
+      lut.io.mx_fp8_altfmt := altfmt_reg
+      lut.io.output_mx_format := format_reg
+      lut.io.loop_bound_i := io.loop_bound_i
+      lut.io.loop_bound_j := io.loop_bound_j
+      lut.io.loop_bound_k := io.loop_bound_k
+      lut.io.quant_fp6.valid := false.B
+      lut.io.quant_fp6.bits := DontCare
+      lut.io.lut_write_weight <> io.lut0_write.get
+      lut.io.lut_write_act_in <> io.lut1_write.get
+      lut.io.lut_write_act_out <> io.lut2_write.get
 
-  when(quantize_valid && out_is_lut4) {
-      quantLut.io.quant_fp6.valid := true.B
-      quantLut.io.quant_fp6.bits := quant_fp6
+      when(quantize_valid && out_is_lut4) {
+          lut.io.quant_fp6.valid := true.B
+          lut.io.quant_fp6.bits := quant_fp6
+      }
+    case None =>
+      // No QuantLut: the Controller never routes reads through the deproject path; tie it off inert.
+      for (b <- 0 until sp_banks) {
+        io.spad_projected_data(b).req.valid := false.B
+        io.spad_projected_data(b).req.bits := DontCare
+        io.spad_projected_data(b).resp.ready := true.B
+        io.spad_deprojected_data(b).req.ready := false.B
+        io.spad_deprojected_data(b).resp.valid := false.B
+        io.spad_deprojected_data(b).resp.bits := DontCare
+      }
   }
 
   

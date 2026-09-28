@@ -273,10 +273,21 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val load_controller = withClock (gated_clock) { Module(new LoadController(outer.config, coreMaxAddrBits, local_addr_t)) }
   val store_controller = withClock (gated_clock) { Module(new StoreController(outer.config, coreMaxAddrBits, local_addr_t)) }
   val ex_controller = withClock (gated_clock) { Module(new ExecuteController(xLen, tagWidth, outer.config)) }
-  val mx_requantizer = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined && outer.config.lut.isDefined) {
+  // lut = None still builds the requantizer, just without the QuantLut (no LUT caches / nearest finders),
+  // so the mesh may only support direct-coded formats (FP4, E4M3-single). Checked here, on the final config,
+  // since base templates (e.g. Radiance's defaultMxFPConfig) fill in lut later via copy.
+  val has_quant_lut = outer.config.lut.isDefined
+  (outer.config.spatialArrayInputType, outer.config.spatialArrayWeightType) match {
+    case (a: MxFloat, w: MxFloat) if outer.config.use_mx_scaling =>
+      val pe = MxFloat.peConfig(a, w)
+      require(has_quant_lut || !MxFloat.needsQuantLut(pe),
+        s"lut = None but the mesh needs the QuantLut (act ${pe.actFormats.mkString(",")}, " +
+        s"wei ${pe.weiFormats.mkString(",")}, quad=${pe.hasMode9}); only FP4 / E4M3-single run without a LUT")
+    case _ =>
+  }
+  val mx_requantizer = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined) {
     val q = outer.config.requantizer.get
-    val l = outer.config.lut.get
-    
+
     Module(new MxRequantizer(
       sp_data_width = outer.config.sp_width,
       sp_addr_width = log2Ceil(outer.config.sp_bank_entries),
@@ -286,7 +297,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       scaleMemActWriteAddrWidth = outer.config.scale_mem.get.addrBits - 1,
       scaleSize = outer.config.scaleSize,
       scaleMembasewrite = 0, // TODO: add this into the instruction
-      lutConfig = l,
+      lutConfig = outer.config.lut,
       sp_bank_entries = outer.config.sp_bank_entries,
       sp_banks = outer.config.sp_banks,
       sp_width = outer.config.sp_width,
@@ -315,9 +326,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
 
   val mx_io = Option.when(outer.config.use_mx_scaling && outer.config.use_shared_ext_mem) {
-    require(outer.config.requantizer.isDefined && outer.config.lut.isDefined, "requantizer and lut need to be defined if using mx_scaling")
+    require(outer.config.requantizer.isDefined, "requantizer needs to be defined if using mx_scaling")
     val q = outer.config.requantizer.get
-    val l = outer.config.lut.get
+    val l = outer.config.lut
     val s = outer.config.scale_mem.get
 
     IO(new Bundle {
@@ -325,9 +336,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val scale_mem_write_act = Flipped(Decoupled(new ScalingFactorWriteReq(s)))
       val requant_in_gpu = Flipped(Decoupled(new RequantizerInBundle(q.numGPUInputLanes, q.inputBits)))
       val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
-      val lut0 = Flipped(Decoupled(new QuantLutWriteBundle(l(0))))
-      val lut1 = Flipped(Decoupled(new QuantLutWriteBundle(l(1))))
-      val lut2 = Flipped(Decoupled(new QuantLutWriteBundle(l(2))))
+      val lut0 = l.map(c => Flipped(Decoupled(new QuantLutWriteBundle(c(0)))))
+      val lut1 = l.map(c => Flipped(Decoupled(new QuantLutWriteBundle(c(1)))))
+      val lut2 = l.map(c => Flipped(Decoupled(new QuantLutWriteBundle(c(2)))))
       val scale_factor_out = Decoupled(new ScalingFactorWriteReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))
     })
   }
@@ -336,7 +347,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     if (outer.use_mx_mmio) {
       val s = outer.config.scale_mem.get
       val q = outer.config.requantizer.get
-      val l = outer.config.lut.get
 
       // ------ helper: latch a flat dataW-bit reg from N×64-bit MMIO writes ------
       def dataRegFields(base: Int, data_reg: UInt, dataW: Int, offset: Int)
@@ -396,7 +406,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
       // ------ LUT write port (data Vec only, no addr/dtype) ------
       def lutPort(base: Int, idx: Int): (DecoupledIO[QuantLutWriteBundle], Seq[(Int, Seq[RegField])]) = {
-        val (numEntries, numBits) = l(idx)
+        val (numEntries, numBits) = outer.config.lut.get(idx)
         val dataW = numEntries * numBits
         val w = Wire(Decoupled(new QuantLutWriteBundle(numEntries, numBits)))
 
@@ -641,10 +651,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     case mf: MxFloat => mf.sigWidth >= 4 && mf.expWidth < 5
     case _ => false
   }
-  val e4m3QuadThroughput = isE4M3Lane(outer.config.spatialArrayInputType) ||
-    isE4M3Lane(outer.config.spatialArrayWeightType)
+  val e4m3QuadThroughput = has_quant_lut && (isE4M3Lane(outer.config.spatialArrayInputType) ||
+    isE4M3Lane(outer.config.spatialArrayWeightType))
 
-  val (lut_out, lut_out_sel, lut_loader_start) = if (outer.use_mx_mmio) {
+  val (lut_out, lut_out_sel, lut_loader_start) = if (outer.use_mx_mmio && has_quant_lut) {
     val (gnode, gedge) = outer.mx_lut_loader_client.get.out.head
     val beatBytes = gnode.params.dataBits / 8
     val nLanes    = math.max(beatBytes / 8, 1)
@@ -741,9 +751,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_requantizer.get.io.requant_data_in_gpu <> b.requant_in_gpu
       mx_requantizer.get.io.requant_data_out    <> b.requant_out
       b.scale_factor_out                        <> mx_requantizer.get.io.scaleMem_write
-      mx_requantizer.get.io.lut0_write <> b.lut0
-      mx_requantizer.get.io.lut1_write <> b.lut1
-      mx_requantizer.get.io.lut2_write <> b.lut2
+      val r = mx_requantizer.get.io
+      Seq((r.lut0_write, b.lut0), (r.lut1_write, b.lut1), (r.lut2_write, b.lut2)).foreach {
+        case (port, src) => (port zip src).foreach { case (p, s) => p <> s }
+      }
     } else {
       // scale-mem write source is the funct-27 DMA loader (idle -> valid=false, no spurious writes).
       spad.module.io.scale_mem_write_w.get   <> scale_loader_w.get
@@ -770,15 +781,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_requantizer.get.io.requant_data_out    <> mmio_requant_out.get
       mmio_scale_factor_out.get                 <> mx_requantizer.get.io.scaleMem_write
       // LUT write source: the funct-29 DMA loader fires the sel'd port; the other two stay idle.
-      val r0 = mx_requantizer.get.io.lut0_write
-      val r1 = mx_requantizer.get.io.lut1_write
-      val r2 = mx_requantizer.get.io.lut2_write
-      Seq((r0, 0), (r1, 1), (r2, 2)).foreach { case (port, n) =>
-        port.valid := lut_out.get.valid && (lut_out_sel.get === n.U)
-        port.bits  := lut_out.get.bits
+      if (has_quant_lut) {
+        val r0 = mx_requantizer.get.io.lut0_write.get
+        val r1 = mx_requantizer.get.io.lut1_write.get
+        val r2 = mx_requantizer.get.io.lut2_write.get
+        Seq((r0, 0), (r1, 1), (r2, 2)).foreach { case (port, n) =>
+          port.valid := lut_out.get.valid && (lut_out_sel.get === n.U)
+          port.bits  := lut_out.get.bits
+        }
+        lut_out.get.ready := Mux(lut_out_sel.get === 0.U, r0.ready,
+                             Mux(lut_out_sel.get === 1.U, r1.ready, r2.ready))
       }
-      lut_out.get.ready := Mux(lut_out_sel.get === 0.U, r0.ready,
-                           Mux(lut_out_sel.get === 1.U, r1.ready, r2.ready))
     }
 
     spad.module.io.enable_MXQuant := ex_controller.io.mx.get.enable_MXQuant
@@ -821,7 +834,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     for (b <- 0 until sp_banks) {
       mx_sel(b) := false.B
-      when(read_projected(b).resp.valid) {
+      // No QuantLut: every read takes the direct path (FP4 / E4M3-single).
+      if (has_quant_lut) when(read_projected(b).resp.valid) {
         // Per-operand routing: act reads gate on act fmt, weight/other reads on weight fmt.
         val opfmt = Mux(read_projected(b).resp.bits.read_a,
           ex_controller.io.mx.get.activation_mx_format_out,
@@ -1313,17 +1327,22 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
           scale_loader_start.get.bits.sel  := unrolled_cmd.bits.cmd.rs2(32).asBool
           unrolled_cmd.ready := scale_loader_start.get.ready
         } .elsewhen (is_mx_load_lut) {
-          lut_loader_start.get.valid     := unrolled_cmd.valid
-          lut_loader_start.get.bits.addr := unrolled_cmd.bits.cmd.rs1(coreMaxAddrBits - 1, 0)
-          lut_loader_start.get.bits.num  := unrolled_cmd.bits.cmd.rs2(31, 0)
-          lut_loader_start.get.bits.sel  := unrolled_cmd.bits.cmd.rs2(33, 32)
-          lut_loader_start.get.bits.entry_bits := unrolled_cmd.bits.cmd.rs2(39, 34)
-          unrolled_cmd.ready := lut_loader_start.get.ready
-          when (unrolled_cmd.valid && lut_loader_start.get.ready) {
-            mx_lut_en := true.B
-            val lsel = unrolled_cmd.bits.cmd.rs2(33, 32)   // 1=act, 0=weight, 2=output
-            when (lsel === 1.U) { mx_lut_a_en := true.B }
-            .elsewhen (lsel === 0.U) { mx_lut_b_en := true.B }
+          if (!has_quant_lut) {
+            // No QuantLut: retire MX_LOAD_LUT as a no-op; lut_en stays off so E4M3 runs single-throughput.
+            unrolled_cmd.ready := true.B
+          } else {
+            lut_loader_start.get.valid     := unrolled_cmd.valid
+            lut_loader_start.get.bits.addr := unrolled_cmd.bits.cmd.rs1(coreMaxAddrBits - 1, 0)
+            lut_loader_start.get.bits.num  := unrolled_cmd.bits.cmd.rs2(31, 0)
+            lut_loader_start.get.bits.sel  := unrolled_cmd.bits.cmd.rs2(33, 32)
+            lut_loader_start.get.bits.entry_bits := unrolled_cmd.bits.cmd.rs2(39, 34)
+            unrolled_cmd.ready := lut_loader_start.get.ready
+            when (unrolled_cmd.valid && lut_loader_start.get.ready) {
+              mx_lut_en := true.B
+              val lsel = unrolled_cmd.bits.cmd.rs2(33, 32)   // 1=act, 0=weight, 2=output
+              when (lsel === 1.U) { mx_lut_a_en := true.B }
+              .elsewhen (lsel === 0.U) { mx_lut_b_en := true.B }
+            }
           }
         } .otherwise {
           reservation_station.io.alloc.valid := true.B

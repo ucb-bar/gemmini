@@ -32,6 +32,18 @@ object MxFloat {
   // Operand descriptor carrying an explicit PE MxConfig (single-format / custom builds).
   def withConfig(expWidth: Int, sigWidth: Int, count: Int, cfg: MxConfig): MxFloat =
     MxFloat(expWidth, sigWidth, count, false, false, Some(cfg))
+
+  // The PE build for an (act, wei) operand pair: the explicit config if present, else inferred from widths.
+  def peConfig(act: MxFloat, wei: MxFloat): MxConfig = act.meshConfig.orElse(wei.meshConfig).getOrElse {
+    if (act.expWidth >= 5 || wei.expWidth >= 5) MxConfig.mxGemminiE5M2
+    else if (act.sigWidth >= 4 || wei.sigWidth >= 4) MxConfig.mxGemminiAll
+    else MxConfig.mxGemmini
+  }
+
+  // True if the build needs the QuantLut: any LUT-deprojected format (E3M2/E2M3/E5M2) or an E4M3/E2M3
+  // quad mode (9/10/11). FP4 and E4M3-single are fed and requantized as direct codes.
+  def needsQuantLut(cfg: MxConfig): Boolean =
+    !(cfg.actFormats ++ cfg.weiFormats).subsetOf(Set(MxFormat.FP4, MxFormat.FP8_E4M3)) || cfg.hasMode9
 }
 
 case class DummySInt(w: Int) extends Bundle {
@@ -603,11 +615,7 @@ object Arithmetic {
       override def mac_mx(m1: MxFloat, m2: MxFloat, fpProductPrecision: MxFloat, fpAccPrecision: MxFloat, activation_mx_format: UInt, weight_mx_format: UInt, mx_fp8_altfmt: Bool, weight_altfmt: Bool, act_lut_en: Bool, weight_lut_en: Bool): MxFloat = {
         require(!m1.isRecoded && !m2.isRecoded) // mxFloat inputs must be in standard format
         // Use the operand's explicit config if present, else infer the build from the operand widths.
-        val peBaseConfig = m1.meshConfig.orElse(m2.meshConfig).getOrElse {
-          if (m1.expWidth >= 5 || m2.expWidth >= 5) MxConfig.mxGemminiE5M2
-          else if (m1.sigWidth >= 4 || m2.sigWidth >= 4) MxConfig.mxGemminiAll
-          else MxConfig.mxGemmini
-        }
+        val peBaseConfig = MxFloat.peConfig(m1, m2)
         val macConfig = peBaseConfig.copy(
           inActBusWidth    = m1.bits.getWidth,
           inWeiBusWidth    = m2.bits.getWidth,

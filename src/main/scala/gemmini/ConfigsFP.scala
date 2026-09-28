@@ -494,6 +494,15 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
       projFormat = LutFP8E4M3)),
   )
+  // E4M3 single throughput only (mode8), no QuantLut: lut = None drops the LUT caches, nearest finders and
+  // the MX_LOAD_LUT DMA buffer. 8-bit E4M3 codes feed the mesh and leave the requantizer directly.
+  val e4m3SingleNoLutMxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3SingleOnly),
+    weightType = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3SingleOnly),
+    spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3SingleOnly),
+    spatialArrayWeightType = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3SingleOnly),
+    lut = None,
+  )
   val e5m2OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
     weightType = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
@@ -811,6 +820,12 @@ class GemminiMxFPE4M3OnlyStandaloneConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq((p: Parameters) => {
     implicit val q = p; implicit val v = implicitly[ValName]
     LazyModule(new Gemmini(GemminiMxFPConfigs.e4m3OnlyMxFPConfig))
+  })
+})
+class GemminiMxFPE4M3SingleNoLutStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.e4m3SingleNoLutMxFPConfig))
   })
 })
 class GemminiMxFPE5M2OnlyStandaloneConfig extends Config((site, here, up) => {
