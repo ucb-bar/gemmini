@@ -63,25 +63,14 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
     val op2 = Output(t.cloneType)
     val sum = Input(t.cloneType)
   }
-  // Scaling-factor memory control
-  val counter_i = Input(UInt(16.W))
-  val counter_j = Input(UInt(16.W))
-  val counter_k = Input(UInt(16.W))
-  val i = Input(UInt(16.W))
-  val j = Input(UInt(16.W))
-  val k = Input(UInt(16.W))
   val dataType_out = Input(UInt(2.W)) // output mx format datatype
   val mx_multi_elem = Input(Bool()) // WEIGHT (output-column) throughput: 2 cols/lane iff quad weight
   val mx_multi_elem_act = Input(Bool()) // ACTIVATION (output-row) throughput: 2 rows/lane iff quad act
   val mx_fp8_altfmt = Input(Bool()) // code0 sub-format: 1 = E5M2 (4-bit LUT output), 0 = E4M3
-  val scale_mem_write_act = if (use_mx_scaling) {
-    Some(Flipped(Decoupled(new ScalingFactorWriteReq(13, 64))))
-  } else None
-  val scale_mem_write_w = if (use_mx_scaling) {
-    Some(Flipped(Decoupled(new ScalingFactorWriteReq(13, 64))))
-  } else None
-  val scaleMemCntl = if (use_mx_scaling) {
-    Some(Input(new ScalingFactorCntl(meshRows * tileRows)))
+  // Shared ScalingFactorMem (one per Scratchpad): this bank's read on write fire, and the broadcast response.
+  val scale_rd_req = if (use_mx_scaling) Some(Output(Valid(new ScalingFactorReadReq(7)))) else None
+  val scale_rd_resp = if (use_mx_scaling) {
+    Some(Input(Valid(new ScalingFactorReadResp(2*meshRows*tileRows, 2*meshRows*tileRows))))
   } else None
 }
 
@@ -144,18 +133,6 @@ class AccumulatorMem[T <: Data, U <: Data](
   // TODO unify this with TwoPortSyncMemIO
   val io = IO(new AccumulatorMemIO(n, t, scale_t, chunk_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows))
 
-  val scaleFactorMem = scale_mem.map { conf =>
-    Module(new ScalingFactorMem(
-      depth = conf.depth,
-      sramWidth = conf.subbankLineSizeInBytes*8,
-      actOutputScalingWidth = 8,
-      numBanks = conf.numBanks,
-      testConfig = testConfig,
-      meshRows = meshRows,
-      tileRows = tileRows
-    ))
-  }
- 
   def calculateScaleAddr(write_addr: UInt): UInt = {
     (write_addr & (~("h_f".U)).asUInt).asUInt  // derive the scale-mem read addr from the accumulator write addr
   }
@@ -232,33 +209,14 @@ class AccumulatorMem[T <: Data, U <: Data](
     
 
   if (use_mx_scaling) {
-    val scale_mem = scaleFactorMem.get
-    scale_mem.io.dataType := io.dataType_out
-    scale_mem.io.mx_multi_elem := io.mx_multi_elem
-    scale_mem.io.mx_multi_elem_act := io.mx_multi_elem_act
-    scale_mem.io.mx_fp8_altfmt := io.mx_fp8_altfmt
-    scale_mem.io.scale_mem_write_w <> io.scale_mem_write_w.get
-    scale_mem.io.scale_mem_write_act <> io.scale_mem_write_act.get
-    scale_mem.io.counter_i := io.counter_i
-    scale_mem.io.counter_j := io.counter_j
-    scale_mem.io.counter_k := io.counter_k
-    scale_mem.io.i := io.i
-    scale_mem.io.j := io.j
-    scale_mem.io.k := io.k
-   
-    scale_mem.io.scaleMemCntl <> io.scaleMemCntl.get
-    scale_mem.io.read_req.valid := false.B
-    scale_mem.io.read_req.bits.addr := DontCare
-    scale_mem.io.read_req.bits.scaling_enable := false.B
-    scale_mem.io.read_resp.ready := true.B
-
-    when(io.write.fire) {
-      scale_mem.io.read_req.valid := true.B
-      scale_mem.io.read_req.bits.scaling_enable := true.B
-      scale_mem.io.read_req.bits.addr := calculateScaleAddr(io.write.bits.addr)
-    }
+    val scale_req  = io.scale_rd_req.get
+    val scale_resp = io.scale_rd_resp.get
+    scale_req.valid := io.write.fire
+    scale_req.bits.scaling_enable := io.write.fire
+    scale_req.bits.addr := calculateScaleAddr(io.write.bits.addr)
     val dim = meshRows * tileRows
-    when(scale_mem.io.read_resp.valid) {
+    // resp is broadcast to all banks; it is this bank's iff this bank wrote last cycle (one bank writes/cycle)
+    when(scale_resp.valid && pipelined_writes(0).valid) {
       // Narrow dim/4 window only for E4M3-single; E4M3-quad and E5M2 use the full-width path below.
       when(dataType === 0.U && !io.mx_multi_elem && !io.mx_fp8_altfmt) {
         for (i <- 0 until dim) {
@@ -270,7 +228,7 @@ class AccumulatorMem[T <: Data, U <: Data](
           when(i.U >= offset && i.U < (offset +& (dim / 4).U)) {
             scaled_result:= VecInit(dataElement.asTypeOf(Vec(4, UInt(16.W))).zipWithIndex.map {
               case (e, j) =>
-              val scale = scale_mem.io.read_resp.bits.combined_scales((i.U - offset)*4.U +& j.U)(8, 0)
+              val scale = scale_resp.bits.combined_scales((i.U - offset)*4.U +& j.U)(8, 0)
               applyE9M0Scale(e, scale, 8, 7) }).asUInt
           }
           scaled_data(i) := scaled_result.asTypeOf(pipelined_writes(0).bits.data(i))
@@ -280,7 +238,7 @@ class AccumulatorMem[T <: Data, U <: Data](
           val scaled_chunks = Wire(Vec(4, UInt(16.W)))
           val dataElement = Wire(UInt(64.W))
           dataElement := pipelined_writes(0).bits.data(i).asUInt
-          val scale = scale_mem.io.read_resp.bits.combined_scales(i)
+          val scale = scale_resp.bits.combined_scales(i)
           for (j <- 0 until 4) {
             scaled_chunks(j) := applyE9M0Scale(
               dataElement(j*16 + 15, j*16),

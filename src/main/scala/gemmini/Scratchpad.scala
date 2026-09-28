@@ -1035,35 +1035,55 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.acc_bank())
 
+      // ONE ScalingFactorMem shared by all acc banks: its i/j/k counters advance on a write to any bank, so
+      // scale reads follow global compute order across banks (one bank writes per cycle).
+      val shared_scale_mem = config.scale_mem.filter(_ => config.use_mx_scaling).map { conf =>
+        val sm = Module(new ScalingFactorMem(
+          depth = conf.depth,
+          sramWidth = conf.subbankLineSizeInBytes*8,
+          actOutputScalingWidth = 8,
+          numBanks = conf.numBanks,
+          testConfig = config.testConfig,
+          meshRows = meshRows,
+          tileRows = tileRows
+        ))
+        Seq((sm.io.scale_mem_write_w, io.scale_mem_write_w.get), (sm.io.scale_mem_write_act, io.scale_mem_write_act.get)).foreach {
+          case (dst, src) =>
+            dst.valid := src.valid
+            dst.bits  := src.bits
+            dst.bits.addr := src.bits.addr(12, 0)   // keep the old per-bank port's 13-bit address
+            src.ready := dst.ready
+        }
+        sm.io.dataType := io.act_mx_format
+        sm.io.mx_multi_elem := io.mx_multi_elem
+        sm.io.mx_multi_elem_act := io.mx_multi_elem_act
+        sm.io.mx_fp8_altfmt := io.mx_fp8_altfmt
+        sm.io.counter_i := io.counter_i
+        sm.io.counter_j := io.counter_j
+        sm.io.counter_k := io.counter_k
+        sm.io.i := io.i
+        sm.io.j := io.j
+        sm.io.k := io.k
+        sm.io.scaleMemCntl := io.scaleMemCntl.get
+        val reqs = bank_ios.map(_.scale_rd_req.get)
+        assert(PopCount(reqs.map(_.valid)) <= 1.U, "shared scale mem: two acc banks wrote in the same cycle")
+        sm.io.read_req.valid := reqs.map(_.valid).reduce(_ || _)
+        sm.io.read_req.bits  := Mux1H(reqs.map(_.valid), reqs.map(_.bits))
+        sm.io.read_resp.ready := true.B
+        sm
+      }
+
       // Reading from the Accumulator banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
-        bio.scale_mem_write_w.foreach { w =>
-          w.valid := io.scale_mem_write_w.get.valid
-          w.bits := io.scale_mem_write_w.get.bits
-          io.scale_mem_write_w.get.ready := w.ready
+        shared_scale_mem.foreach { sm =>
+          bio.scale_rd_resp.get.valid := sm.io.read_resp.valid
+          bio.scale_rd_resp.get.bits  := sm.io.read_resp.bits
         }
-
-        bio.scale_mem_write_act.foreach { w =>
-          w.valid := io.scale_mem_write_act.get.valid
-          w.bits := io.scale_mem_write_act.get.bits
-          io.scale_mem_write_act.get.ready := w.ready
-        }
-        bio.i := io.i
-        bio.j := io.j
-        bio.k := io.k
-        bio.counter_i := io.counter_i
-        bio.counter_j := io.counter_j
-        bio.counter_k := io.counter_k
         bio.dataType_out := io.act_mx_format
         bio.mx_multi_elem := io.mx_multi_elem
         bio.mx_multi_elem_act := io.mx_multi_elem_act
         bio.mx_fp8_altfmt := io.mx_fp8_altfmt
-        bio.scaleMemCntl.foreach { bioCnlt =>
-          io.scaleMemCntl.foreach { ioCnlt =>
-            bioCnlt <> ioCnlt
-          }
-        }
-      
+
         bio.read.req.bits.activation_mx_format := io.act_mx_format
         bio.read.req.bits.weight_mx_format := io.weight_mx_format
 

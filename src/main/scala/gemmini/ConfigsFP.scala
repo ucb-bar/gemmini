@@ -338,6 +338,7 @@ object GemminiMxFPConfigs {
     acc_latency = 3,
     num_counter = 8,   // perf counters (include/mx_perf.h)
     max_in_flight_mem_reqs = 32,   // DMA was in-flight-bound at 16 (PERF_LD)
+    acc_banks = 2,   // store of loop n reads one bank while loop n+1 accumulates the other
     lut = Some(GemminiLUTConfig()),
     // Scale-factor RAM window 0x20000000..0x20003fff: weight scales at +0x0000, activation at +0x2000.
     scale_mem = Some(defaultMxFPConfig.scale_mem.get.copy(baseAddr = 0x20000000L)),
@@ -345,6 +346,7 @@ object GemminiMxFPConfigs {
   )
 
   val dim32MxFPConfig = standaloneMxFPConfig.copy(
+    acc_banks = 1,   // dual-bank acc validated at DIM16 only
     meshRows = 32,
     meshColumns = 32,
     meshProdPrecisionList = Seq.fill(32) {MxFloat(4, 4, 4, true, false)},
@@ -389,6 +391,7 @@ object GemminiMxFPConfigs {
 
   // DIM=8 (8x8 mesh). All 8 acc rows bf16 (no reduced-precision ramp). Mirrors the dim32 family.
   val dim8MxFPConfig = standaloneMxFPConfig.copy(
+    acc_banks = 1,   // DIM8 acc-widen assumes 1 bank (unvalidated at 2)
     meshRows = 8,
     meshColumns = 8,
     meshProdPrecisionList = Seq.fill(8) {MxFloat(4, 4, 4, true, false)},
