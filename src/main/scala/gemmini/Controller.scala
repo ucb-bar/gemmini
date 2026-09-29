@@ -448,11 +448,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
           req.data)
         val dataVec = putData.asTypeOf(Vec(nBeatsFull, UInt((beatBytes * 8).W)))
         val last = beat === Mux(isFP4, (nBeatsHalf - 1).U, (nBeatsFull - 1).U)
+        // A Put narrower than the beat must sit in the lanes its address selects; putData already
+        // places the FP4 half within fullWidth, so shift by the fullWidth-granular beat offset.
+        val beatData = if (fullWidth < beatBytes)
+          (putData.pad(beatBytes * 8) << (Cat(req.address(log2Ceil(beatBytes) - 1, log2Ceil(fullWidth)),
+                                              0.U(log2Ceil(fullWidth).W)) << 3))(beatBytes * 8 - 1, 0)
+        else dataVec(beat)
         node.a.valid     := busy
         node.a.bits      := edge.Put(fromSource = source, toAddress = req.address,
                               lgSize = Mux(isFP4, log2Ceil(halfWidth).U, log2Ceil(fullWidth).U),
                               data = dataVec(0))._2
-        node.a.bits.data := dataVec(beat)
+        node.a.bits.data := beatData
         node.d.ready     := true.B
         when (busy && node.a.fire) {
           beat := beat + 1.U
@@ -482,10 +488,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
         val dataVec = req.data.asTypeOf(Vec(nBeats, UInt((beatBytes * 8).W)))
         val last = beat === (nBeats - 1).U
+        // A Put narrower than the beat must sit in the byte lanes its address selects (the mask does).
+        val beatData = if (dataBytes < beatBytes)
+          (req.data.pad(beatBytes * 8) << (req.addr(log2Ceil(beatBytes) - 1, 0) << 3))(beatBytes * 8 - 1, 0)
+        else dataVec(beat)
         node.a.valid     := busy
         node.a.bits      := edge.Put(fromSource = source, toAddress = req.addr,
                               lgSize = log2Ceil(dataBytes).U, data = dataVec(0))._2
-        node.a.bits.data := dataVec(beat)
+        node.a.bits.data := beatData
         node.d.ready     := true.B
         when (busy && node.a.fire) {
           beat := beat + 1.U
@@ -506,6 +516,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Replays the (addr = i*8, data = little-endian 64b) beat sequence byte-identically to the CPU flat
   // window. sel=1 -> weight port, sel=0 -> activation port (Spike polarity). Physical-only addressing.
   val scale_loader_busy = WireDefault(false.B)
+  val scale_loader_landed = WireDefault(VecInit(Seq.fill(4)(true.B)))
+  val scale_loader_ready = WireDefault(VecInit(Seq.fill(4)(true.B)))
+  val scale_cfg_evt = WireDefault(0.U.asTypeOf(Valid(UInt(3.W))))   // from ex_controller
   val (scale_loader_w, scale_loader_act, scale_loader_start) = if (outer.use_mx_mmio) {
     val s = outer.config.scale_mem.get
     val (gnode, gedge) = outer.mx_scale_loader_client.get.out.head
@@ -514,12 +527,18 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val laneW     = log2Ceil(nLanes)
 
     val start = Wire(Decoupled(new Bundle {
-      val addr = UInt(coreMaxAddrBits.W)
-      val len  = UInt(32.W)   // bytes
-      val sel  = Bool()       // 1 = weight, 0 = activation
+      val addr  = UInt(coreMaxAddrBits.W)
+      val len   = UInt(32.W)   // bytes per row (1-D: total bytes)
+      val sel   = Bool()       // 1 = weight, 0 = activation
+      val dest  = UInt(13.W)   // scale-mem byte offset of the first word (8B-aligned)
+      val rows  = UInt(8.W)    // 0 or 1 = 1-D
+      val pitch = UInt(24.W)   // DRAM bytes between rows (0 = contiguous)
+      val gated = Bool()       // loop-managed: start only once the target half is FREE
     }))
     start.valid := false.B
     start.bits  := DontCare
+    // Queue so loads issued by the loop unit never block the command stream behind a busy loader.
+    val start_q = Queue(start, 4)
 
     val w_out   = Wire(Decoupled(new ScalingFactorWriteReq(s.addrBits - 1, 8 * 8)))
     val act_out = Wire(Decoupled(new ScalingFactorWriteReq(s.addrBits - 1, 8 * 8)))
@@ -535,7 +554,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val sIdle :: sRun :: Nil = Enum(2)
     val state      = RegInit(sIdle)
     val cur_addr   = Reg(UInt(coreMaxAddrBits.W))
-    val bytes_left = Reg(UInt(32.W))
+    val bytes_left = Reg(UInt(32.W))   // left in the current row
+    val row_base   = Reg(UInt(coreMaxAddrBits.W))
+    val row_len    = Reg(UInt(32.W))
+    val row_step   = Reg(UInt(32.W))
+    val rows_left  = Reg(UInt(8.W))    // rows after the current one
     val sel_r      = Reg(Bool())
     val out_word   = Reg(UInt(29.W))   // next scale-mem word (retire order)
 
@@ -550,14 +573,33 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val head     = RegInit(0.U(slotW.W))   // next slot to retire
     val rw       = RegInit(0.U(3.W))       // word within the head slot
 
-    start.ready := state === sIdle
-    assert(!start.fire || start.bits.addr(2, 0) === 0.U, "MX scale loader: address must be 8B-aligned")
-    when (start.fire) {
-      cur_addr   := start.bits.addr
-      bytes_left := Cat(start.bits.len(31, 3), 0.U(3.W))
-      sel_r      := start.bits.sel
-      out_word   := 0.U
-      state      := Mux(start.bits.len(31, 3) === 0.U, sIdle, sRun)
+    // Loop-managed half state, index sel*2 + half: FREE -(gated load starts)-> LOADED -(managed config
+    // selects it)-> INUSE -(a config selects the other half; ex has drained all older computes)-> FREE.
+    val hFree :: hLoaded :: hInUse :: Nil = Enum(3)
+    val hstate = RegInit(VecInit(Seq.fill(4)(hFree)))
+    val sq = start_q.bits
+    val sq_x = Cat(sq.sel, sq.dest(12))
+    start_q.ready := state === sIdle && (!sq.gated || hstate(sq_x) === hFree)
+    assert(!start_q.fire || (sq.addr(2, 0) === 0.U && sq.pitch(2, 0) === 0.U && sq.dest(2, 0) === 0.U),
+      "MX scale loader: address, pitch and dest must be 8B-aligned")
+    when (start_q.fire) {
+      val len8 = Cat(sq.len(31, 3), 0.U(3.W))
+      cur_addr   := sq.addr
+      row_base   := sq.addr
+      bytes_left := len8
+      row_len    := len8
+      row_step   := Mux(sq.pitch === 0.U, len8, sq.pitch)
+      rows_left  := Mux(sq.rows === 0.U, 0.U, sq.rows - 1.U)
+      sel_r      := sq.sel
+      out_word   := sq.dest >> 3
+      state      := Mux(sq.len(31, 3) === 0.U, sIdle, sRun)
+    }
+    // Next row (a 1-cycle bubble per row).
+    when (state === sRun && bytes_left === 0.U && rows_left =/= 0.U) {
+      cur_addr   := row_base + row_step
+      row_base   := row_base + row_step
+      bytes_left := row_len
+      rows_left  := rows_left - 1.U
     }
 
     // Issue: largest aligned size (64/32/16/8B) that fits the remaining length.
@@ -615,9 +657,37 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       }
     }
 
-    when (state === sRun && bytes_left === 0.U && !s_valid.asUInt.orR) { state := sIdle }
+    when (state === sRun && bytes_left === 0.U && rows_left === 0.U && !s_valid.asUInt.orR) { state := sIdle }
 
-    scale_loader_busy := state =/= sIdle
+    scale_loader_busy := state =/= sIdle || start_q.valid
+
+    // pending(sel*2 + half): loads into that half ENQUEUED (so a later CONFIG never races a load still in
+    // start_q) and not yet fully retired. landed = no pending loads.
+    // Gated loads count from dequeue: a queued one waits for FREE, so counting it earlier would stall the
+    // previous user's config (it waits for landed) -> deadlock.
+    val pending = RegInit(VecInit(Seq.fill(4)(0.U(3.W))))
+    val half_r  = Reg(Bool())
+    when (start_q.fire) { half_r := sq.dest(12) }
+    val done_now = state === sRun && bytes_left === 0.U && rows_left === 0.U && !s_valid.asUInt.orR
+    for (x <- 0 until 4) {
+      val inc = (start.fire && !start.bits.gated && Cat(start.bits.sel, start.bits.dest(12)) === x.U) ||
+                (start_q.fire && sq.gated && sq_x === x.U)
+      val dec = done_now && Cat(sel_r, half_r) === x.U
+      pending(x) := pending(x) + inc.asUInt - dec.asUInt
+      scale_loader_landed(x) := pending(x) === 0.U
+      scale_loader_ready(x)  := pending(x) === 0.U && hstate(x) === hLoaded
+      // Config: selected half -> INUSE (managed only); the other half of that sel -> FREE (a legacy config
+      // also frees, so mixing legacy and managed never deadlocks).
+      val cfg_half = scale_cfg_evt.bits(x / 2)
+      when (scale_cfg_evt.valid) {
+        when (cfg_half === (x % 2 == 1).B) {
+          when (scale_cfg_evt.bits(2)) { hstate(x) := hInUse }
+        } .elsewhen (hstate(x) === hInUse) {
+          hstate(x) := hFree
+        }
+      }
+      when (start_q.fire && sq.gated && sq_x === x.U) { hstate(x) := hLoaded }
+    }
     (Some(w_out), Some(act_out), Some(start))
   } else (None, None, None)
 
@@ -982,6 +1052,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     loop_matmul.io.weight_mx_format := ex_controller.io.mx.get.weight_mx_format_out
     loop_matmul.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
 
+    ex_controller.io.mx.get.scale_landed := scale_loader_landed
+    ex_controller.io.mx.get.scale_ready  := scale_loader_ready
+    scale_cfg_evt := ex_controller.io.mx.get.scale_cfg
     mx_requantizer.get.io.loop_bound_i := ex_controller.io.mx.get.scaleMemCntl.loop_bound_i
     mx_requantizer.get.io.loop_bound_j := ex_controller.io.mx.get.scaleMemCntl.loop_bound_j
     mx_requantizer.get.io.loop_bound_k := ex_controller.io.mx.get.scaleMemCntl.loop_bound_k
@@ -1308,9 +1381,15 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         // via scale_loader_busy until the load finishes, so gemmini_fence orders it.
         when (is_mx_load_scales) {
           scale_loader_start.get.valid     := unrolled_cmd.valid
-          scale_loader_start.get.bits.addr := unrolled_cmd.bits.cmd.rs1(coreMaxAddrBits - 1, 0)
-          scale_loader_start.get.bits.len  := unrolled_cmd.bits.cmd.rs2(31, 0)
-          scale_loader_start.get.bits.sel  := unrolled_cmd.bits.cmd.rs2(32).asBool
+          // rs1[39:0] addr, rs1[63:40] DRAM row pitch; rs2[31:0] bytes/row, [32] sel, [45:33] dest, [53:46] rows,
+          // [54] gated (loop-managed)
+          scale_loader_start.get.bits.addr  := unrolled_cmd.bits.cmd.rs1(39, 0)
+          scale_loader_start.get.bits.pitch := unrolled_cmd.bits.cmd.rs1(63, 40)
+          scale_loader_start.get.bits.len   := unrolled_cmd.bits.cmd.rs2(31, 0)
+          scale_loader_start.get.bits.sel   := unrolled_cmd.bits.cmd.rs2(32).asBool
+          scale_loader_start.get.bits.dest  := unrolled_cmd.bits.cmd.rs2(45, 33)
+          scale_loader_start.get.bits.rows  := unrolled_cmd.bits.cmd.rs2(53, 46)
+          scale_loader_start.get.bits.gated := unrolled_cmd.bits.cmd.rs2(54).asBool
           unrolled_cmd.ready := scale_loader_start.get.ready
         } .elsewhen (is_mx_load_lut) {
           lut_loader_start.get.valid     := unrolled_cmd.valid

@@ -37,6 +37,12 @@ class ExControllerMxScalingIO(
   // When set, the requantizer also writes its output activation block-scales into the on-chip
   // act-scale window (transposed) so the next matmul reads them in place -- no DRAM/SW reload.
   val scale_resident = Output(Bool())
+  // Scale-loader "landed" flags, index sel*2 + half (sel 0 = act, 1 = wgt; half = dest bit 12).
+  val scale_landed = Input(Vec(4, Bool()))
+  // Loop-managed halves (same index): LOADED by a gated load and landed -> a rs2[17] config may take them.
+  val scale_ready = Input(Vec(4, Bool()))
+  // CONFIG_SCALE_MEM executed: bits = Cat(rs2[17] managed, wgt half, act half); drives the halves' release.
+  val scale_cfg = Output(Valid(UInt(3.W)))
 }
 
 class ExControllerMxScalingRegs (scale_mem_write_addr_width: Int) extends Bundle {
@@ -503,6 +509,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.mx.get.scaleMemCntl.loop_bound_k := mx_state.get.loop_bound_k
     io.mx.get.scaleMemCntl.baseAddress_act := mx_state.get.scale_mem_mvin_base_addr_act
     io.mx.get.scaleMemCntl.baseAddress_w := mx_state.get.scale_mem_mvin_base_addr_w
+    io.mx.get.scale_cfg.valid := false.B
+    io.mx.get.scale_cfg.bits  := Cat(rs2s(0)(17), rs1s(0)(61), rs1s(0)(60))
   }
 
   when (!firing) {
@@ -783,7 +791,16 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
         }
         
         .elsewhen(functs(0) === CONFIG_SCALE_MEM && !matmul_in_progress &&
-                    !pending_completed_rob_ids.map(_.valid).reduce(_ || _)) {
+                    !pending_completed_rob_ids.map(_.valid).reduce(_ || _) &&
+                    // rs2[16]: wait until this config's act/wgt scale halves have landed (loop-issued loads)
+                    (if (use_mx_scaling) (!rs2s(0)(16) ||
+                      (io.mx.get.scale_landed(rs1s(0)(60)) && io.mx.get.scale_landed(Cat(1.U(1.W), rs1s(0)(61))))) &&
+                     // rs2[17]: loop-managed -- its gated loads must have started (LOADED) and landed;
+                     // rs2[18]: act scales reused in place (no act load issued)
+                     (!rs2s(0)(17) ||
+                      ((rs2s(0)(18) || io.mx.get.scale_ready(rs1s(0)(60))) &&
+                       io.mx.get.scale_ready(Cat(1.U(1.W), rs1s(0)(61)))))
+                     else true.B)) {
             // Latch the CONFIG_SCALE_MEM registers, gated on a valid queue head via the enclosing
             // when. rs1 layout: dram 0-32, tiles_I 33-41, tiles_J 42-50, tiles_K 51-59,
             // scale_act_sel 60, scale_wgt_sel 61, scale_mem_counter_reset 62, MX_SCALE_RESIDENT 63.
@@ -797,6 +814,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               mx_state.get.scale_mem_counter_reset_flag := rs1s(0)(62)
               mx_state.get.scale_resident := rs1s(0)(63)
               mx_state.get.quant_lut_update_granularity := rs2s(0)(15,0)
+              io.mx.get.scale_cfg.valid := true.B
             }
             io.completed := cmd.bits(0).rob_id
             cmd.pop := 1.U

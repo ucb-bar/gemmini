@@ -41,10 +41,12 @@ object GemminiISA {
 
   // MX (microscaling) DMA data-movement ISA — parity with the Spike model
   // (software/libgemmini/README.md funct table). Physical-only (bare-metal) addressing.
-  val MX_LOAD_SCALES = 27.U     // rs1 = DRAM addr, rs2[31:0] = len bytes, rs2[32] = sel (0=A/act,1=B/wgt)
+  val MX_LOAD_SCALES = 27.U     // rs1[39:0] DRAM addr, rs1[63:40] pitch; rs2[31:0] bytes/row, [32] sel, [45:33] dest, [53:46] rows, [54] gated
   val MX_READ_SMEM   = 28.U     // drain outputs from spad/smem to DRAM
   val MX_LOAD_LUT    = 29.U     // DMA-load FP6 LUTs
   val MX_LUT_DISABLE = 30.U     // clear runtime LUT-usage flag (MX_LOAD_LUT sets it; default off)
+  val LOOP_WS_CONFIG_SCALES = 31.U        // loop-integrated MX scales: rs1 = A-scale DRAM base, rs2 = B-scale base
+  val LOOP_WS_CONFIG_SCALE_STRIDES = 32.U // rs1/rs2 = A/B scale row pitch (bytes per E8M0 k-block row)
 
   
   // rs1[2:0] values
