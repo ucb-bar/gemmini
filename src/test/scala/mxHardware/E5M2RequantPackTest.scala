@@ -17,7 +17,7 @@ class E5M2RequantPackTest extends AnyFlatSpec with ChiselScalatestTester {
   behavior of "MxRequantizer E5M2 (code0) packing"
 
   val cfg = GemminiMxFPConfigs.e5m2MxFPConfig
-  val lut = cfg.lut.get
+  val lut = cfg.lut
 
   def mkDut = new MxRequantizer(
     sp_data_width       = cfg.sp_width,
@@ -55,9 +55,9 @@ class E5M2RequantPackTest extends AnyFlatSpec with ChiselScalatestTester {
       dut.io.requant_data_out.ready.poke(true.B)
       dut.io.scaleMem_write.ready.poke(true.B)
       dut.io.scaleMem_write_act_resident.ready.poke(true.B)
-      dut.io.lut0_write.valid.poke(false.B)
-      dut.io.lut1_write.valid.poke(false.B)
-      dut.io.lut2_write.valid.poke(false.B)
+      dut.io.lut0_write.get.valid.poke(false.B)
+      dut.io.lut1_write.get.valid.poke(false.B)
+      dut.io.lut2_write.get.valid.poke(false.B)
       dut.io.read_a.poke(false.B); dut.io.read_d.poke(false.B)
       dut.io.scale_resident.poke(false.B)
       dut.io.scale_mem_counter_reset_flag.poke(false.B)
@@ -71,10 +71,10 @@ class E5M2RequantPackTest extends AnyFlatSpec with ChiselScalatestTester {
       dut.clock.step(2)
 
       // load the act-out codebook (group 0)
-      dut.io.lut2_write.valid.poke(true.B)
-      dut.io.lut2_write.bits.data(0).poke(lutWord.U)
+      dut.io.lut2_write.get.valid.poke(true.B)
+      dut.io.lut2_write.get.bits.data(0).poke(lutWord.U)
       dut.clock.step(1)
-      dut.io.lut2_write.valid.poke(false.B)
+      dut.io.lut2_write.get.valid.poke(false.B)
       dut.clock.step(2)
 
       // Feed one acc chunk: 8 lanes x 64b (each 64b = 4 bf16). Fill with a ramp of distinct bf16 values.
