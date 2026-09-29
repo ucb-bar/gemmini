@@ -497,10 +497,11 @@ object GemminiMxFPConfigs {
   // E4M3 single throughput only (mode8), no QuantLut: lut = None drops the LUT caches, nearest finders and
   // the MX_LOAD_LUT DMA buffer. 8-bit E4M3 codes feed the mesh and leave the requantizer directly.
   val e4m3SingleNoLutMxFPConfig = standaloneMxFPConfig.copy(
-    inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3SingleOnly),
-    weightType = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3SingleOnly),
-    spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3SingleOnly),
-    spatialArrayWeightType = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3SingleOnly),
+    // 1-element lane (8 bits): E4M3-single never packs a second code, so the 16b quad lane is not needed.
+    inputType  = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleOnly),
+    weightType = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleOnly),
+    spatialArrayInputType  = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleOnly),
+    spatialArrayWeightType = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleOnly),
     lut = None,
   )
   val e5m2OnlyMxFPConfig = standaloneMxFPConfig.copy(

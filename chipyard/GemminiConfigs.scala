@@ -55,7 +55,7 @@ class MxGemminiRocketConfig extends Config(
 class MxE4M3SingleGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPE4M3SingleNoLutStandaloneConfig ++       // standalone MX, E4M3 single throughput only, no QuantLut
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++
-  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.WithSystemBusWidth(256) ++
   new chipyard.config.AbstractConfig)
 
 class MxDim32GemminiRocketConfig extends Config(
