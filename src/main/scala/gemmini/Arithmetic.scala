@@ -751,7 +751,16 @@ object Arithmetic {
 
       override def clippedToWidthOf(t: MxFloat): MxFloat = self
 
-      override def relu: MxFloat = self
+      // Packed elements (count x (exp+sig[+1 recoded]) bits, sign = MSB of each): zero every negative one.
+      override def relu: MxFloat = {
+        val w = self.expWidth + self.sigWidth + (if (self.isRecoded) 1 else 0)
+        val out = Wire(chiselTypeOf(self))
+        out.bits := VecInit((0 until self.count).map { i =>
+          val e = self.bits(i * w + w - 1, i * w)
+          Mux(e(w - 1), 0.U(w.W), e)
+        }).asUInt.pad(self.bits.getWidth)
+        out
+      }
 
       override def zero: MxFloat = 0.U.asTypeOf(self)
       override def identity: MxFloat = self

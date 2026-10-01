@@ -504,6 +504,20 @@ object GemminiMxFPConfigs {
     spatialArrayWeightType = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleOnly),
     lut = None,
   )
+  // e4m3SingleNoLut minus every unit the MX matmul flow does not use (none of these are instantiated),
+  // with ReLU (only) on the accumulated output. Base for the VPU config.
+  val e4m3TrimmedMxFPConfig = e4m3SingleNoLutMxFPConfig.copy(
+    has_loop_conv = false,
+    has_first_layer_optimizations = false,
+    has_im2col = false,
+    has_transposer = false,
+    has_mx_mmio_requant = false,
+    has_acc_mvin = false,
+    has_nonlinear_activations = true,   // RELU only: has_normalizations stays false
+    has_normalizations = false,
+    has_vpu = true,
+    has_spad_requant = true,
+  )
   val e5m2OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
     weightType = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
@@ -821,6 +835,12 @@ class GemminiMxFPE4M3OnlyStandaloneConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq((p: Parameters) => {
     implicit val q = p; implicit val v = implicitly[ValName]
     LazyModule(new Gemmini(GemminiMxFPConfigs.e4m3OnlyMxFPConfig))
+  })
+})
+class GemminiMxFPE4M3TrimmedStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.e4m3TrimmedMxFPConfig))
   })
 })
 class GemminiMxFPE4M3SingleNoLutStandaloneConfig extends Config((site, here, up) => {

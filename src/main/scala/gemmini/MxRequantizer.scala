@@ -93,6 +93,11 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val scaleMem_write_act_resident = Decoupled(new ScalingFactorWriteReq(scaleMemActWriteAddrWidth, 64))
   // Splits E4M3-quad (4-bit LUT index) from E4M3-single (8-bit code): both are format0/altfmt0.
   val lut_en = Input(Bool())
+  // SPAD_REQUANT: scales filed in arrival order (byte k = block k, M x GN row-major), not by the matmul walk
+  val linear_scales = Input(Bool())
+  val linear_gn = Input(UInt(16.W))
+  val linear_m = Input(UInt(16.W))
+  val scale_flush_busy = Output(Bool())
 }
    
 class MxRequantizer[T <: Data](
@@ -541,7 +546,8 @@ class MxRequantizer[T <: Data](
   // == loop_bound_j*numOutBlocks at DIM16/32 (block_cols/16 == numOutBlocks); differs only at DIM=8 (tile<block).
   val nibbleGN      = if (meshColumns*tileColumns < 16) ((io.loop_bound_j * (meshColumns*tileColumns).U) >> 4).asUInt
                       else (io.loop_bound_j * numOutBlocks.U)
-  val GN            = Mux(isNibble, nibbleGN, (io.loop_bound_j >> log2Ceil(tilesPerMxBlock)).asUInt)
+  val GN            = Mux(io.linear_scales, io.linear_gn,
+                        Mux(isNibble, nibbleGN, (io.loop_bound_j >> log2Ceil(tilesPerMxBlock)).asUInt))
   val tiles_I       = io.loop_bound_i
   val num_super     = (GN + 1.U) >> 1
   val gn_odd        = GN(0)
@@ -574,7 +580,19 @@ class MxRequantizer[T <: Data](
                                ag_g * ROWS_PER_HALF.U + ag_row)
   val cur_byte = cur_m * GN + cur_b
 
-  when(should_compute && !flushing && !flushing_act) {
+  val lin_cnt = RegInit(0.U(16.W))
+  val lin_total = io.linear_m * io.linear_gn
+  when(should_compute && !flushing && !flushing_act && io.linear_scales) {
+    coalescer(lin_cnt) := scale_e8m0_vec(0)
+    when (lin_cnt === lin_total - 1.U) {
+      lin_cnt := 0.U
+      flushing := true.B
+      flushing_act := io.scale_resident
+    } .otherwise { lin_cnt := lin_cnt + 1.U }
+  }
+  if (numOutBlocks != 1) assert(!io.linear_scales, "linear scale filing assumes one MX block per beat")
+
+  when(should_compute && !flushing && !flushing_act && !io.linear_scales) {
     when (isNibble) {
       for (blk <- 0 until numOutBlocks) {
         when ((cur_b + blk.U) < GN) { coalescer(cur_byte + blk.U) := scale_e8m0_vec(blk) }
@@ -634,7 +652,8 @@ class MxRequantizer[T <: Data](
     }.otherwise { ag_row := ag_row + 1.U }
   }
 
-  val total_scales   = tiles_I * Mux(isNibble, (2*ROWS_PER_HALF).U, ROWS_PER_HALF.U) * GN
+  val total_scales   = Mux(io.linear_scales, lin_total,
+                         tiles_I * Mux(isNibble, (2*ROWS_PER_HALF).U, ROWS_PER_HALF.U) * GN)
   val num_flush_rows = total_scales >> log2Ceil(scales_per_write)
   val flush_row      = RegInit(0.U(16.W))
   val flush_base     = flush_row << log2Ceil(scales_per_write)
@@ -655,7 +674,8 @@ class MxRequantizer[T <: Data](
   // Transposed act-scale residency flush: re-read the row-major coalescer and stream it in the
   // A-scale operand layout [GN][M] (byte bi*M+m) as 64b beats, bi outer / wm inner.
   //   M = tiles_I * (32 nibble | 16 fp8); words_per_bi = M/8; word w = bi*words_per_bi + wm; addr = w*8.
-  val M_rows       = tiles_I * Mux(isNibble, (2*ROWS_PER_HALF).U, ROWS_PER_HALF.U)   // == total_scales / GN
+  val M_rows       = Mux(io.linear_scales, io.linear_m,
+                       tiles_I * Mux(isNibble, (2*ROWS_PER_HALF).U, ROWS_PER_HALF.U))   // == total_scales / GN
   val words_per_bi = M_rows >> 3                                       // M/8 (M is a multiple of 8)
   val act_m0       = flush_act_wm << 3
   val act_word     = flush_act_bi * words_per_bi + flush_act_wm
@@ -677,7 +697,10 @@ class MxRequantizer[T <: Data](
     }
   }
 
+  io.scale_flush_busy := flushing || flushing_act
+
   when(io.scale_mem_counter_reset_flag) {
+    lin_cnt := 0.U
     ag_sb := 0.U; ag_g := 0.U; ag_jg := 0.U; ag_bib := 0.U; ag_row := 0.U
     flush_row := 0.U; flushing := false.B
     flush_act_bi := 0.U; flush_act_wm := 0.U; flushing_act := false.B

@@ -136,7 +136,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
   }
 
-  val unrolled_cmd = TransposePreloadUnroller(io.cmd, config, io.counter)
+  val unrolled_cmd = if (has_transposer) TransposePreloadUnroller(io.cmd, config, io.counter) else {
+    io.counter.connectEventSignal(CounterEvent.TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES, false.B)
+    io.cmd
+  }
 
   val cmd_q_heads = 3
   assert(ex_queue_length >= cmd_q_heads)
@@ -301,7 +304,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Instantiate the actual mesh
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecision, meshAccPrecision, use_mx_scaling,
-    e4m3QuadThroughput = e4m3QuadThroughput))
+    e4m3QuadThroughput = e4m3QuadThroughput, has_transposer = has_transposer))
  
   if (use_mx_scaling) {
     mesh.io.activation_mx_format := mx_state.get.activation_mx_format
@@ -747,8 +750,11 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               }
               in_shift := config_ex_rs2.in_shift
               acc_scale := rs1s(0)(xLen - 1, 32).asTypeOf(acc_scale_t) // TODO magic number
-              a_transpose := config_ex_rs1.a_transpose
-              bd_transpose := config_ex_rs1.b_transpose
+              // Without the transposer, transposed operands are unsupported (forced off, asserted).
+              a_transpose := config_ex_rs1.a_transpose.asBool && has_transposer.B
+              bd_transpose := config_ex_rs1.b_transpose.asBool && has_transposer.B
+              assert(has_transposer.B || !(config_ex_rs1.a_transpose.asBool || config_ex_rs1.b_transpose.asBool),
+                "a/b transpose requested but the transposer is not built (has_transposer = false)")
 
               if (use_mx_scaling) {
                 mx_state.get.activation_mx_format := config_ex_rs1.activation_mx_format

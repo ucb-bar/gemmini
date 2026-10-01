@@ -53,6 +53,13 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val busy = Output(Bool())
 
+    // VPU bank ordering: banks claimed by a running VPU op (entries touching them do not issue), and the
+    // spad banks touched by any valid entry (a VPU op starts only once its banks are clear)
+    val vpu_banks = Input(UInt(sp_banks.W))
+    val spad_banks_in_use = Output(UInt(sp_banks.W))
+    val empty = Output(Bool())
+    val hold_scale_cfg = Input(Bool())   // SPAD_REQUANT running: CONFIG_SCALE_MEM (its scale destination) waits
+
     val counter = new CounterEventIO()
   })
 
@@ -69,6 +76,14 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val start = local_addr_t.cloneType
     val end = local_addr_t.cloneType
     val wraps_around = Bool()
+
+    // conservative spad bank mask of [start, end]
+    def sp_banks_mask(dummy: Int = 0): UInt = {
+      val lo = start.sp_bank(); val hi = end.sp_bank()
+      val all = wraps_around || hi < lo || end.is_acc_addr
+      Mux(start.is_acc_addr || start.is_garbage(), 0.U,
+        VecInit((0 until sp_banks).map(b => all || (b.U >= lo && b.U <= hi))).asUInt)
+    }
 
     def overlaps(other: OpT): Bool = {
       ((other.start <= start && (start < other.end || other.wraps_around)) ||
@@ -138,6 +153,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val utilization = PopCount(entries.map(e => e.valid)) // TODO it may be cheaper to count the utilization in a register, rather than performing a PopCount
   val solitary_preload = RegInit(false.B) // This checks whether or not the reservation station received a "preload" instruction, but hasn't yet received the following "compute" instruction
   io.busy := !empty && !(utilization === 1.U && solitary_preload)
+  io.empty := empty
   
   // Tell the conv and matmul FSMs if any of their issued instructions completed
   val conv_ld_issue_completed = WireInit(false.B)
@@ -431,11 +447,18 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }
   }
 
+  def entry_sp_banks(e: UDValid[Entry]): UInt =
+    Mux(e.bits.opa.valid, e.bits.opa.bits.sp_banks_mask(), 0.U) | Mux(e.bits.opb.valid, e.bits.opb.bits.sp_banks_mask(), 0.U)
+  io.spad_banks_in_use := entries.map(e => Mux(e.valid, entry_sp_banks(e), 0.U)).reduce(_ | _)
+  val vpu_banks = io.vpu_banks
+  val hold_scale_cfg = io.hold_scale_cfg
+
   // Issue commands which are ready to be issued
   Seq((ldq, io.issue.ld, entries_ld), (exq, io.issue.ex, entries_ex), (stq, io.issue.st, entries_st))
     .foreach { case (q, io, entries_type) =>
 
-    val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued)
+    val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued &&
+      (entry_sp_banks(e) & vpu_banks) === 0.U && !(hold_scale_cfg && e.bits.cmd.cmd.inst.funct === CONFIG_SCALE_MEM))
     val issue_sel = PriorityEncoderOH(issue_valids)
     val issue_id = OHToUInt(issue_sel)
     val global_issue_id = Cat(q.U(2.W), issue_id.pad(log2Up(res_max_per_type)))

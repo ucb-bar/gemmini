@@ -35,7 +35,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
    tileRows: Int, tileColumns: Int, meshRows: Int, meshColumns: Int,
    leftBanks: Int, upBanks: Int, meshProdPrecisionList : Seq[T],
    meshAccPrecisionList : Seq[T], use_mx_scaling: Boolean = true, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1,
-   e4m3QuadThroughput: Boolean = false)
+   e4m3QuadThroughput: Boolean = false, has_transposer: Boolean = true)
   extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
@@ -157,10 +157,11 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val pause = !req.valid || !input_next_row_into_spatial_array
 
   // Transposer
-  val a_is_from_transposer = Mux(req.bits.pe_control.dataflow === Dataflow.OS.id.U, !req.bits.a_transpose, req.bits.a_transpose)
-  val b_is_from_transposer = req.bits.pe_control.dataflow === Dataflow.OS.id.U && req.bits.bd_transpose
-  val d_is_from_transposer = req.bits.pe_control.dataflow === Dataflow.WS.id.U && req.bits.bd_transpose
-  val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
+  // has_transposer = false: no transposer is built and every operand bypasses it (WS, no transpose).
+  val a_is_from_transposer = has_transposer.B &&
+    Mux(req.bits.pe_control.dataflow === Dataflow.OS.id.U, !req.bits.a_transpose, req.bits.a_transpose)
+  val b_is_from_transposer = has_transposer.B && req.bits.pe_control.dataflow === Dataflow.OS.id.U && req.bits.bd_transpose
+  val d_is_from_transposer = has_transposer.B && req.bits.pe_control.dataflow === Dataflow.WS.id.U && req.bits.bd_transpose
 
   // TODO: Improve this function to actually reduce the size of MXFormats
   def toInput(x: Data): T = {
@@ -169,14 +170,18 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     u(inputType.getWidth - 1, 0).asTypeOf(inputType)
   }
 
-  transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
-  transposer.io.inRow.bits := MuxCase(VecInit(a_buf.flatten), Seq(
-    b_is_from_transposer -> VecInit(b_buf.flatten.map(toInput)),
-    d_is_from_transposer -> VecInit(d_buf.flatten.reverse.map(toInput)),
-  ))
-
-  transposer.io.outCol.ready := true.B
-  val transposer_out = VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
+  val transposer_out = if (has_transposer) {
+    val transposer = Module(new AlwaysOutTransposer(block_size, inputType))
+    transposer.io.inRow.valid := !pause && (a_is_from_transposer || b_is_from_transposer || d_is_from_transposer)
+    transposer.io.inRow.bits := MuxCase(VecInit(a_buf.flatten), Seq(
+      b_is_from_transposer -> VecInit(b_buf.flatten.map(toInput)),
+      d_is_from_transposer -> VecInit(d_buf.flatten.reverse.map(toInput)),
+    ))
+    transposer.io.outCol.ready := true.B
+    VecInit(transposer.io.outCol.bits.grouped(tileRows).map(t => VecInit(t)).toSeq)
+  } else {
+    0.U.asTypeOf(Vec(block_size / tileRows, Vec(tileRows, inputType)))
+  }
 
   // Wire up mesh's IO to this module's IO
   val mesh = Module(new Mesh(inputType, weightType, outputType, accType, df, tree_reduction, tile_latency, max_simultaneous_matmuls, output_delay, tileRows, tileColumns, meshRows, meshColumns, meshProdPrecisionList, meshAccPrecisionList, use_mx_scaling, e4m3QuadThroughput))

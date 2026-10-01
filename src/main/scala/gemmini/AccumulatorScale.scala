@@ -153,9 +153,14 @@ class AccumulatorScale[T <: Data, U <: Data](
     })))
 
     if (use_mx_scaling) {
+      // ReLU is the only activation on the MX path: applied to the accumulated output before the
+      // requantizer (no scale/clip -- the MX requantizer does the output scaling).
+      val mx_act_data = if (has_nonlinear_activations)
+        VecInit(acc_read_data.map(v => VecInit(v.map(e => Mux(act === Activation.RELU, e.relu, e)))))
+      else acc_read_data
       io.mx_req_io.mx_data_in.valid := io.in.valid
       io.in.ready := io.mx_req_io.mx_data_in.ready
-      io.mx_req_io.mx_data_in.bits.full_mx_data_in := acc_read_data
+      io.mx_req_io.mx_data_in.bits.full_mx_data_in := mx_act_data
       io.mx_req_io.mx_data_in.bits.fromDMA := io.in.bits.acc_read_resp.fromDMA
       io.mx_req_io.mx_data_in.bits.chunk_id := io.in.bits.acc_read_resp.chunk_id
       io.mx_req_io.mx_data_in.bits.acc_bank_id := io.in.bits.acc_read_resp.acc_bank_id

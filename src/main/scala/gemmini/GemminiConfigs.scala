@@ -102,6 +102,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_normalizations: Boolean = false,
                                                                              has_first_layer_optimizations: Boolean = true,
                                                                              has_loop_conv: Boolean = true,
+                                                                             // Instantiation gates for units the MX matmul flow does not use (false = not built).
+                                                                             has_im2col: Boolean = true,
+                                                                             has_transposer: Boolean = true,          // AlwaysOutTransposer + TransposePreloadUnroller
+                                                                             has_mx_mmio_requant: Boolean = true,     // MMIO requant-in regmap + requant-out Put client
+                                                                             has_acc_mvin: Boolean = true,            // mvin into the accumulator (bias path)
+                                                                             has_vpu: Boolean = false,                // BF16 vector engine on the scratchpad (VPU_EXEC)
+                                                                             has_spad_requant: Boolean = false,       // SPAD_REQUANT: spad BF16 tile -> MxRequantizer
 
                                                                              use_firesim_simulation_counters: Boolean = false,
 

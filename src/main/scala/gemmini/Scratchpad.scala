@@ -191,7 +191,8 @@ class MxRequantizerAccMemIO[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rD
   val mx_fp8_altfmt = Output(Bool())   // code1 requant output: 1 = E5M2, 0 = FP6
 }
 
-class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean, is_dummy: Boolean) extends Module {
+class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean, is_dummy: Boolean,
+                     has_vpu: Boolean = false) extends Module {
   // This is essentially a pipelined SRAM with the ability to stall pipeline stages
 
   require(w % aligned_to == 0 || w < aligned_to)
@@ -202,7 +203,12 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     val read = Flipped(new ScratchpadReadIO(n, w))
     val write = Flipped(new ScratchpadWriteIO(n, w, mask_len))
     val ext_mem = if (use_shared_ext_mem) Some(new ExtMemIO) else None
+    // VPU read: owns the SRAM read port this cycle, data valid exactly one cycle later (vpu_rdata)
+    val vpu_rd = Option.when(has_vpu)(Flipped(Valid(UInt(log2Ceil(n).W))))
+    val vpu_rdata = Option.when(has_vpu)(Output(UInt(w.W)))
   })
+  require(!has_vpu || (!is_dummy && !use_shared_ext_mem && !single_ported), "VPU needs a dual-ported SyncReadMem bank")
+  val vpu_ren = io.vpu_rd.map(_.valid).getOrElse(false.B)
 
   val ren = io.read.req.fire
   val fromDMA = io.read.req.bits.fromDMA
@@ -274,13 +280,14 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   } else { // use valid only interface
     val mem = SyncReadMem(n, Vec(mask_len, mask_elem))
 
-    val raddr = io.read.req.bits.addr
+    val raddr = io.vpu_rd.map(v => Mux(v.valid, v.bits, io.read.req.bits.addr)).getOrElse(io.read.req.bits.addr)
     val rdata = if (single_ported) {
       assert(!(ren && io.write.fire))
       mem.read(raddr, ren && !io.write.fire).asUInt
     } else {
-      mem.read(raddr, ren).asUInt
+      mem.read(raddr, ren || vpu_ren).asUInt
     }
+    io.vpu_rdata.foreach(_ := rdata)
     q.io.enq.valid := RegNext(ren)
     q.io.enq.bits.data := rdata
     q.io.enq.bits.fromDMA := RegNext(fromDMA)
@@ -289,7 +296,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.bits.read_a := RegNext(read_a_tag)
     q.io.enq.bits.read_d := RegNext(read_d_tag)
 
-    io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
+    io.read.req.ready := q_will_be_empty && !singleport_busy_with_write && !vpu_ren
 
     io.write.ready := true.B
     when(io.write.fire) {
@@ -421,6 +428,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val mx_multi_elem_act = Input(Bool())   // ACTIVATION (output-row) throughput: 2 rows/lane iff quad act
       val enable_MXQuant = Input(Bool()) //determines if mxrequantizer gets used
       val loop_bounds = Input(new MaxBounds())
+      // VPU: command in, busy out, banks with spad writes still queued in the requant drain
+      val vpu_cmd = Option.when(has_vpu)(Flipped(Decoupled(new gemmini.vpu.VpuCmd(log2Ceil(sp_banks * sp_bank_entries)))))
+      val vpu_busy = Output(Bool())
+      val vpu_pending_banks = Output(UInt(sp_banks.W))
+      // SPAD_REQUANT code rows: lowest write priority, backpressured
+      val sr_write = Option.when(has_spad_requant)(Flipped(Decoupled(new SpadRowWrite(log2Ceil(sp_banks * sp_bank_entries), spad_w))))
     })
 
     val write_dispatch_q = if (use_mx_scaling) {
@@ -634,13 +647,27 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       config.weightType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits),
       is_acc = false
     )
-    val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out) else (
+    val (mvin_scale_acc_in, mvin_scale_acc_out) = if (mvin_scale_shared) (mvin_scale_in, mvin_scale_out)
+      else if (!has_acc_mvin) {
+        // has_acc_mvin = false: no mvin into the accumulator (no bias path) -> inert stubs, no VSM/queue.
+        require(config.mvin_scale_acc_args.isEmpty, "has_acc_mvin = false needs mvin_scale_acc_args = None")
+        val tag_t = chiselTypeOf(reader.module.io.resp.bits)
+        val cols = config.meshColumns * config.tileColumns
+        val in_stub = Wire(Decoupled(new VectorScalarMultiplierReq(cols, config.accType, Bool(), tag_t)))
+        val out_stub = Wire(Decoupled(new VectorScalarMultiplierResp(cols, config.accType, tag_t)))
+        in_stub.ready := false.B
+        out_stub.valid := false.B
+        out_stub.bits := DontCare
+        (in_stub, out_stub)
+      } else (
       VectorScalarMultiplier(
         config.mvin_scale_acc_args,
         config.accType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits),
         is_acc = true
       )
       )
+    assert(has_acc_mvin.B || !(reader.module.io.resp.valid && reader.module.io.resp.bits.is_acc),
+      "mvin into the accumulator, but has_acc_mvin = false")
 
     mvin_scale_in.valid := reader.module.io.resp.valid && (mvin_scale_shared.B || !reader.module.io.resp.bits.is_acc ||
       (reader.module.io.resp.bits.is_acc && !reader.module.io.resp.bits.has_acc_bitwidth))
@@ -723,9 +750,37 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(
         sp_bank_entries, spad_w,
         aligned_to, config.sp_singleported,
-        use_shared_ext_mem, is_dummy
+        use_shared_ext_mem, is_dummy, has_vpu
       )) }
       val bank_ios = VecInit(banks.map(_.io))
+
+      // VPU: reads take the bank's SRAM read port (fixed 1-cycle latency), writes have top write priority.
+      // Ordering against other spad traffic is enforced by the Controller (bank claims), so neither collides.
+      val vpu_wr_bank = WireDefault(VecInit(Seq.fill(sp_banks)(false.B)))
+      val vpu_wr_row = WireDefault(0.U(log2Ceil(sp_bank_entries).W))
+      val vpu_wr_data = WireDefault(0.U(spad_w.W))
+      val vpu = Option.when(has_vpu) {
+        require(spad_w == 128 && isPow2(sp_banks) && log2Ceil(sp_banks * sp_bank_entries) <= 14,
+          "VPU: 8 x BF16 spad rows, <= 14-bit spad row addresses")
+        val v = Module(new gemmini.vpu.Vpu(log2Ceil(sp_banks * sp_bank_entries), log2Ceil(sp_bank_entries)))
+        v.io.cmd <> io.vpu_cmd.get
+        val bankOf = (a: UInt) => if (sp_banks == 1) 0.U else a(log2Ceil(sp_banks * sp_bank_entries) - 1, log2Ceil(sp_bank_entries))
+        val rowOf = (a: UInt) => a(log2Ceil(sp_bank_entries) - 1, 0)
+        bank_ios.zipWithIndex.foreach { case (bio, i) =>
+          val hit = v.io.spad.rd.map(r => r.valid && bankOf(r.bits) === i.U)
+          bio.vpu_rd.get.valid := hit.reduce(_ || _)
+          bio.vpu_rd.get.bits := rowOf(Mux(hit(0), v.io.spad.rd(0).bits, v.io.spad.rd(1).bits))
+          assert(!(hit(0) && hit(1)), "VPU: two reads to one bank in a cycle")
+        }
+        v.io.spad.rd.zip(v.io.spad.rdata).foreach { case (r, d) =>
+          d := VecInit(bank_ios.map(_.vpu_rdata.get))(RegNext(bankOf(r.bits)))
+        }
+        vpu_wr_bank.zipWithIndex.foreach { case (w, i) => w := v.io.spad.wr.valid && bankOf(v.io.spad.wr.bits.addr) === i.U }
+        vpu_wr_row := rowOf(v.io.spad.wr.bits.addr)
+        vpu_wr_data := v.io.spad.wr.bits.data
+        v
+      }
+      io.vpu_busy := vpu.map(_.io.busy).getOrElse(false.B)
       // Reading from the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
         if (use_shared_ext_mem) {
@@ -857,13 +912,24 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       requant_read_stall := requant_to_spad && requant_subbyte && (requant_q.io.count >= (requant_q_depth/2).U)
 
       val requant_drain = RegInit(0.U(log2Ceil(nbeats+1).W))
+      val sbw0_grant = WireDefault(false.B)   // the beat won its bank's write port this cycle
+      val sr_grant = WireDefault(false.B)     // the SPAD_REQUANT row won its bank's write port this cycle
+      io.sr_write.foreach(_.ready := sr_grant)
       val deqVec = requant_q.io.deq.bits.codes.asTypeOf(Vec(nbeats, UInt(spad_w.W)))
       when (requant_q.io.deq.valid && requant_drain === 0.U) {
         requant_drain := nbeats.U
-      } .elsewhen (requant_drain =/= 0.U) {
+      } .elsewhen (requant_drain =/= 0.U && sbw0_grant) {
         requant_drain := requant_drain - 1.U
       }
-      requant_q.io.deq.ready := requant_drain === 1.U   // pop the head after its last beat
+      requant_q.io.deq.ready := requant_drain === 1.U && sbw0_grant   // pop the head after its last beat
+      // rows buffered in requant_q per bank (written after the store command may have completed)
+      val requant_pending = RegInit(VecInit(Seq.fill(sp_banks)(0.U(log2Ceil(requant_q_depth + 1).W))))
+      requant_pending.zipWithIndex.foreach { case (c, i) =>
+        val inc = requant_q.io.enq.fire && requant_q.io.enq.bits.bank === i.U
+        val dec = requant_q.io.deq.fire && requant_q.io.deq.bits.bank === i.U
+        c := c + inc.asUInt - dec.asUInt
+      }
+      io.vpu_pending_banks := VecInit(requant_pending.map(_ =/= 0.U)).asUInt
       val drain_beat = nbeats.U - requant_drain
       sbw0_valid := requant_drain =/= 0.U
       sbw0_bank  := requant_q.io.deq.bits.bank
@@ -872,8 +938,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
       // Writing to the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
+        val vpuwrite = vpu_wr_bank(i)
         val exwrite = io.srams.write(i).valid
-        io.srams.write(i).ready := bio.write.ready
+        io.srams.write(i).ready := bio.write.ready && !vpuwrite
+        assert(!(vpuwrite && exwrite), "VPU and ExecuteController write the same spad bank")
 
         // val laddr = mvin_scale_out.bits.tag.addr.asTypeOf(local_addr_t) + mvin_scale_out.bits.row
         val laddr = mvin_scale_pixel_repeater.io.resp.bits.laddr
@@ -901,10 +969,16 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           (requant_dst_bank === i.U) && bio.write.ready
         val requant_beat0 = sbw0_valid && (sbw0_bank === i.U) && bio.write.ready
         val requant_beat1 = sbw1_valid && (sbw1_bank === i.U) && bio.write.ready
+        val srwrite = io.sr_write.map(w => w.valid && (if (sp_banks == 1) true.B
+          else w.bits.addr(log2Ceil(sp_banks * sp_bank_entries) - 1, log2Ceil(sp_bank_entries)) === i.U)).getOrElse(false.B)
 
-        bio.write.valid := exwrite || dmaread || zerowrite || requantwrite || requant_beat0 || requant_beat1
+        bio.write.valid := vpuwrite || exwrite || dmaread || zerowrite || requantwrite || requant_beat0 || requant_beat1 || srwrite
 
-        when (exwrite) {
+        when (vpuwrite) {
+          bio.write.addr := vpu_wr_row
+          bio.write.data := vpu_wr_data
+          bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
+        }.elsewhen (exwrite) {
           bio.write.addr := io.srams.write(i).addr
           bio.write.data := io.srams.write(i).data
           bio.write.mask := io.srams.write(i).mask
@@ -933,12 +1007,18 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           requant_half := Mux(requant_half === last_beat, 0.U, requant_half + 1.U)
           when (requant_half === last_beat) { requant_spad_consume := true.B }
         }.elsewhen (requant_beat0) {
+          sbw0_grant := true.B
           bio.write.addr := sbw0_addr
           bio.write.data := sbw0_data
           bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
         }.elsewhen (requant_beat1) {
           bio.write.addr := sbw1_addr
           bio.write.data := sbw1_data
+          bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
+        }.elsewhen (srwrite) {
+          sr_grant := true.B
+          bio.write.addr := io.sr_write.map(_.bits.addr(log2Ceil(sp_bank_entries) - 1, 0)).getOrElse(0.U)
+          bio.write.data := io.sr_write.map(_.bits.data).getOrElse(0.U)
           bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
         }.otherwise {
           bio.write.addr := DontCare
@@ -1183,8 +1263,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         assert(!(exwrite && !bio.write.ready), "Execute controller write to AccumulatorMem was skipped")
 
         // val from_mvin_scale = mvin_scale_out.valid && mvin_scale_out.bits.tag.is_acc
-        val from_mvin_scale = mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.tag.is_acc
-        val from_mvin_scale_acc = mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.tag.is_acc
+        val from_mvin_scale = has_acc_mvin.B &&
+          mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.tag.is_acc
+        val from_mvin_scale_acc = has_acc_mvin.B && mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.tag.is_acc
 
         // val mvin_scale_laddr = mvin_scale_out.bits.tag.addr.asTypeOf(local_addr_t) + mvin_scale_out.bits.row
         val mvin_scale_laddr = mvin_scale_pixel_repeater.io.resp.bits.laddr
@@ -1246,10 +1327,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.bits.offset := io.acc.write(i).bits.offset
         }.elsewhen (dmaread && !spad_last && !consecutive_write_block) {
           bio.write.valid := true.B
-          bio.write.bits.data := Mux(from_mvin_scale,
+          // has_acc_mvin = false: this branch is unreachable; skip the spad->acc width converters entirely.
+          bio.write.bits.data := (if (has_acc_mvin) Mux(from_mvin_scale,
             // VecInit(mvin_scale_out.bits.out.map(e => e.withWidthOf(accType))).asTypeOf(acc_row_t),
             VecInit(mvin_scale_pixel_repeater.io.resp.bits.out.map(e => e.withWidthOf(accType))).asTypeOf(acc_row_t),
-            mvin_scale_acc_out.bits.out.asTypeOf(acc_row_t))
+            mvin_scale_acc_out.bits.out.asTypeOf(acc_row_t)) else 0.U.asTypeOf(acc_row_t))
           bio.write.bits.mask :=
             Mux(from_mvin_scale,
               {
