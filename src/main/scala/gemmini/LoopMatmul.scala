@@ -1347,6 +1347,24 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val ex_c_addr_start = RegInit(0.U(log2Up(max_acc_addr).W))
   val st_c_addr_start = RegInit(0.U(log2Up(max_acc_addr).W))
 
+  // Cross-loop WAR guard. With explicit spad ids both concurrent loops can own the same rows, and the newer
+  // loop's mvins would enter the RS ahead of the older loop's remaining computes (RS then sees RAW, not WAR).
+  // Hold a newer loop's A/B load while its rows overlap the older (head) loop's A or B rows and that loop has
+  // not issued all its ex commands; after that the RS orders each mvin behind the reads it overlaps.
+  val half_rows = (max_addr / concurrent_loops).U
+  def a_rows(l: LoopMatmulState): (UInt, UInt) = {
+    val s = Mux(l.spad_only || l.a_ex_spad_id === 0.U, l.a_addr_start, (l.a_ex_spad_id - 1.U) * half_rows)
+    (s, s +& l.max_i * l.max_k * block_size.U)
+  }
+  def b_rows(l: LoopMatmulState): (UInt, UInt) = {
+    val e = Mux(l.spad_only || l.b_ex_spad_id === 0.U, l.b_addr_end, l.b_ex_spad_id * half_rows)
+    val n = l.max_k * l.max_j * block_size.U
+    (Mux(e > n, e - n, 0.U), e)
+  }
+  def rows_overlap(x: (UInt, UInt), y: (UInt, UInt)): Bool = x._1 < y._2 && y._1 < x._2
+  def ld_blocked(id: UInt, rows: (UInt, UInt)): Bool = !is_resadd && id =/= head_loop_id && head_loop.configured &&
+    !head_loop.ex_completed && (rows_overlap(rows, a_rows(head_loop)) || rows_overlap(rows, b_rows(head_loop)))
+
   val loop_requesting_ldA_id = Mux(head_loop.lda_started, tail_loop_id, head_loop_id)
   val loop_requesting_ldA = loops(loop_requesting_ldA_id)
   ldA.io.req.bits.max_k := Mux(is_resadd, loop_requesting_ldA.max_j, loop_requesting_ldA.max_k)
@@ -1360,7 +1378,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ldA.io.req.bits.loop_id := loop_requesting_ldA_id
   ldA.io.req.bits.is_resadd := is_resadd
 
-  ldA.io.req.valid := !loop_requesting_ldA.lda_started && loop_requesting_ldA.configured
+  ldA.io.req.valid := !loop_requesting_ldA.lda_started && loop_requesting_ldA.configured &&
+    !(loop_requesting_ldA.a_dram_addr =/= 0.U && ld_blocked(loop_requesting_ldA_id, a_rows(loop_requesting_ldA)))
 
   when (ldA.io.req.fire) {
     loop_requesting_ldA.running := true.B
@@ -1380,7 +1399,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ldB.io.req.bits.loop_id := loop_requesting_ldB_id
   ldB.io.req.bits.is_resadd := is_resadd
 
-  ldB.io.req.valid := !loop_requesting_ldB.ldb_started && loop_requesting_ldB.configured
+  ldB.io.req.valid := !loop_requesting_ldB.ldb_started && loop_requesting_ldB.configured &&
+    !(loop_requesting_ldB.b_dram_addr =/= 0.U && ld_blocked(loop_requesting_ldB_id, b_rows(loop_requesting_ldB)))
 
   when (ldB.io.req.fire) {
     loop_requesting_ldB.running := true.B
