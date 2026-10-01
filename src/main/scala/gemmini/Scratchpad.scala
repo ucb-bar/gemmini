@@ -428,7 +428,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val mx_multi_elem_act = Input(Bool())   // ACTIVATION (output-row) throughput: 2 rows/lane iff quad act
       val enable_MXQuant = Input(Bool()) //determines if mxrequantizer gets used
       val loop_bounds = Input(new MaxBounds())
-      // VPU: command in, busy out, banks with spad writes still queued in the requant drain
+      // VPU: command in, busy out, banks with store data not yet written (requant drain / store pipeline)
       val vpu_cmd = Option.when(has_vpu)(Flipped(Decoupled(new gemmini.vpu.VpuCmd(log2Ceil(sp_banks * sp_bank_entries)))))
       val vpu_busy = Output(Bool())
       val vpu_pending_banks = Output(UInt(sp_banks.W))
@@ -929,7 +929,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val dec = requant_q.io.deq.fire && requant_q.io.deq.bits.bank === i.U
         c := c + inc.asUInt - dec.asUInt
       }
-      io.vpu_pending_banks := VecInit(requant_pending.map(_ =/= 0.U)).asUInt
+      // + every bank while a store's data is still between its acc read and its spad write: an acc-source store
+      // retires at its acc read (io.dma.write.resp), before the rows land (write_issue_q holds it until consumed)
+      val store_rows_in_flight = write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_issue_q.io.deq.valid
+      io.vpu_pending_banks := VecInit(requant_pending.map(_ =/= 0.U)).asUInt | Fill(sp_banks, store_rows_in_flight)
       val drain_beat = nbeats.U - requant_drain
       sbw0_valid := requant_drain =/= 0.U
       sbw0_bank  := requant_q.io.deq.bits.bank

@@ -332,6 +332,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     req.io.linear_scales := false.B
     req.io.linear_gn := 0.U
     req.io.linear_m := 0.U
+    req.io.linear_base := 0.U
+    req.io.linear_resident := false.B
   }
 
 
@@ -837,7 +839,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val sc_act_dst = spad.module.io.scale_mem_write_act.get
       val sc_act_res = mx_requantizer.get.io.scaleMem_write_act_resident
       val sc_act_ld  = scale_loader_act.get
-      when (ex_controller.io.mx.get.scale_resident && sc_act_res.valid) {
+      // valid only during a resident flush (matmul: CONFIG_SCALE_MEM resident bit; SPAD_REQUANT: its own bit)
+      when (sc_act_res.valid) {
         sc_act_dst.valid := sc_act_res.valid
         sc_act_dst.bits  := sc_act_res.bits
         sc_act_res.ready := sc_act_dst.ready
@@ -913,8 +916,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     through mxrequantizer.
    */
 
-  // SPAD_REQUANT sequencer (drives the existing mx_requantizer; no new quantization logic). sr_claim = banks it
-  // owns while running: their spad read responses go to it, and RS entries touching them do not issue.
+  // SPAD_REQUANT sequencer (drives the existing mx_requantizer; no new quantization logic). Its spad reads share the
+  // ex read ports; responses return in request order per bank, so a per-bank FIFO routes them back.
   val sr = Option.when(has_spad_requant) {
     require(outer.config.use_mx_scaling && mx_requantizer.isDefined && sp_width == 128 && sp_width_projected == 128,
       "SPAD_REQUANT needs the MX requantizer and 16-byte spad rows")
@@ -924,7 +927,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       "SPAD_REQUANT: a requant beat must be 32 BF16 in / 32 E4M3 codes out")
     Module(new SpadRequant(log2Ceil(sp_banks * sp_bank_entries), log2Ceil(sp_bank_entries), sp_banks, sp_width, 2048))
   }
-  val sr_claim = RegInit(0.U(sp_banks.W))
+  val sr_rd_ready = WireDefault(VecInit(Seq.fill(sp_banks)(false.B)))
 
   // read assignments
 
@@ -1007,14 +1010,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         sram_read_buffer(b).resp <> mx_requantizer.get.io.spad_deprojected_data(b).resp
       }
 
-      // SPAD_REQUANT owns bank b: raw spad rows to the sequencer, the ex read port sees nothing
+      // SPAD_REQUANT reads share bank b's port (ex first); `order` remembers who issued each read
       sr.foreach { u =>
         val bankOf = (a: UInt) => if (sp_banks == 1) 0.U else a(log2Ceil(sp_banks * sp_bank_entries) - 1, log2Ceil(sp_bank_entries))
-        val own = sr_claim(b)
-        u.io.rd_resp(b).valid := own && read_projected(b).resp.valid
-        u.io.rd_resp(b).bits := read_projected(b).resp.bits.data
-        when (own) {
-          read_projected(b).req.valid := u.io.rd_req.valid && bankOf(u.io.rd_req.bits) === b.U
+        val order = Module(new Queue(Bool(), 8))   // true = SPAD_REQUANT read
+        val pick = u.io.rd_req.valid && bankOf(u.io.rd_req.bits) === b.U && !sram_read_buffer(b).req.valid
+        when (pick) {
+          read_projected(b).req.valid := true.B
           read_projected(b).req.bits := DontCare
           read_projected(b).req.bits.addr := u.io.rd_req.bits(log2Ceil(sp_bank_entries) - 1, 0)
           read_projected(b).req.bits.fromDMA := false.B
@@ -1022,18 +1024,26 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
           read_projected(b).req.bits.read_d := false.B
           read_projected(b).req.bits.weight_mx_format := 0.U
           read_projected(b).req.bits.input_mx_format := 0.U
+        }
+        when (!order.io.enq.ready) {
+          read_projected(b).req.valid := false.B
           sram_read_buffer(b).req.ready := false.B
+        }
+        order.io.enq.valid := read_projected(b).req.fire
+        order.io.enq.bits := pick
+        sr_rd_ready(b) := pick && read_projected(b).req.ready && order.io.enq.ready
+        val toSr = order.io.deq.valid && order.io.deq.bits
+        u.io.rd_resp(b).valid := toSr && read_projected(b).resp.valid
+        u.io.rd_resp(b).bits := read_projected(b).resp.bits.data
+        when (toSr) {
           sram_read_buffer(b).resp.valid := false.B
           read_projected(b).resp.ready := u.io.rd_resp(b).ready
         }
+        order.io.deq.ready := read_projected(b).resp.fire
+        assert(!read_projected(b).resp.valid || order.io.deq.valid, "spad read response with no recorded request")
       }
     }
-    sr.foreach { u =>
-      val bankOf = (a: UInt) => if (sp_banks == 1) 0.U else a(log2Ceil(sp_banks * sp_bank_entries) - 1, log2Ceil(sp_bank_entries))
-      u.io.rd_req.ready := VecInit((0 until sp_banks).map(b =>
-        sr_claim(b) && bankOf(u.io.rd_req.bits) === b.U && read_projected(b).req.ready)).asUInt.orR
-      assert(!u.io.rd_req.valid || sr_claim(bankOf(u.io.rd_req.bits)), "SPAD_REQUANT reads a bank it has not claimed")
-    }
+    sr.foreach(_.io.rd_req.ready := sr_rd_ready.asUInt.orR)
     sram_read_buffer
   } else {
     spad.module.io.srams.read
@@ -1299,6 +1309,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_requantizer.get.io.linear_scales := u.io.active
       mx_requantizer.get.io.linear_gn := u.io.linear_gn
       mx_requantizer.get.io.linear_m := u.io.linear_m
+      mx_requantizer.get.io.linear_base := u.io.linear_base
+      mx_requantizer.get.io.linear_resident := u.io.linear_resident
       u.io.flush_busy := mx_requantizer.get.io.scale_flush_busy || sfout_outstanding =/= 0.U
     }
 
@@ -1396,7 +1408,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   //-------------------------------------------------------------------------
   // risc
-  val reservation_station_completed_arb = Module(new Arbiter(UInt(log2Up(reservation_station_entries).W), 3))
+  val reservation_station_completed_arb = Module(new Arbiter(UInt(log2Up(reservation_station_entries).W), 4))
+  val vec_completed = reservation_station_completed_arb.io.in(3)   // driven by the vector-queue tracker below
 
   reservation_station_completed_arb.io.in(0).valid := ex_controller.io.completed.valid
   reservation_station_completed_arb.io.in(0).bits := ex_controller.io.completed.bits
@@ -1413,72 +1426,45 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   reservation_station.io.completed.bits := reservation_station_completed_arb.io.out.bits
   reservation_station_completed_arb.io.out.ready := true.B
 
-  // VPU_EXEC: dispatched in program order from the head of unrolled_cmd (never enters the RS). It starts only
-  // once no RS entry (all older) and no queued requant write touches its banks; while it runs, its banks are
-  // claimed and RS entries touching them do not issue.
-  val vpu_start = Wire(Decoupled(new gemmini.vpu.VpuCmd(log2Ceil(sp_banks * sp_bank_entries))))
-  vpu_start.valid := false.B
-  vpu_start.bits := gemmini.vpu.VpuCmd.decode(unrolled_cmd.bits.cmd.rs1, unrolled_cmd.bits.cmd.rs2, vpu_start.bits.addrW)
-  val vpu_claim = RegInit(0.U(sp_banks.W))
-  val vpu_req_banks = {
-    val c = vpu_start.bits
-    val bankBits = log2Ceil(sp_bank_entries)
-    def range(start: UInt, n: UInt): UInt = {
-      val lo = start >> bankBits
-      val hi = (start +& n - 1.U) >> bankBits
-      VecInit((0 until sp_banks).map(b => hi >= sp_banks.U || (b.U >= lo && b.U <= hi))).asUInt
-    }
-    val n = Mux(c.rows === 0.U, 1.U, c.rows)
-    range(c.src1, n) | range(c.dst, n) | Mux(c.op <= gemmini.vpu.VpuOp.MUL.U, range(c.src2, n), 0.U)
+  // 4th RS queue: VPU_EXEC / SPAD_REQUANT issue to their unit; the RS runs them one at a time, in order, and
+  // retires the entry once the unit is idle again (VPU pipeline drained / SPAD_REQUANT writes + scale flush done).
+  val vec_issue = reservation_station.io.issue.vec
+  val vec_is_sr = vec_issue.cmd.cmd.inst.funct === SPAD_REQUANT
+  val vpu_ready = spad.module.io.vpu_cmd.map(_.ready).getOrElse(false.B)
+  // SPAD_REQUANT may only take the requantizer once it is empty: a retired store can still have beats in flight, so
+  // wait until no accumulator-side beat has entered for (pipeline latency + 4) cycles and nothing waits at its output
+  val rq_quiet = mx_requantizer.map { r =>
+    val lat = outer.config.requantizer.get.pipelineLatency + 4
+    val quiet = RegInit(0.U(log2Ceil(lat + 1).W))
+    when (r.io.mxacc_req.mx_data_in.fire) { quiet := 0.U } .elsewhen (quiet =/= lat.U) { quiet := quiet + 1.U }
+    quiet === lat.U && !r.io.mxacc_req.mx_data_out.valid
+  }.getOrElse(true.B)
+  val sr_free = !mx_requantizer.map(_.io.scale_flush_busy).getOrElse(false.B) && sfout_outstanding === 0.U && rq_quiet
+  val sr_ready = sr.map(_.io.cmd.ready && sr_free).getOrElse(false.B)
+  reservation_station.io.vec_unit_ready := VecInit(vpu_ready, sr_ready)
+  reservation_station.io.vec_pending_banks := spad.module.io.vpu_pending_banks
+  spad.module.io.vpu_cmd.foreach { c =>
+    c.valid := vec_issue.valid && !vec_is_sr
+    c.bits := gemmini.vpu.VpuCmd.decode(vec_issue.cmd.cmd.rs1, vec_issue.cmd.cmd.rs2, c.bits.addrW)
   }
-  val vpu_banks_clear = ((reservation_station.io.spad_banks_in_use | spad.module.io.vpu_pending_banks | sr_claim) & vpu_req_banks) === 0.U
-  if (has_vpu) {
-    spad.module.io.vpu_cmd.get.valid := vpu_start.valid && vpu_banks_clear
-    spad.module.io.vpu_cmd.get.bits := vpu_start.bits
-    vpu_start.ready := spad.module.io.vpu_cmd.get.ready && vpu_banks_clear
-    when (vpu_start.fire) { vpu_claim := vpu_req_banks }
-      .elsewhen (!spad.module.io.vpu_busy) { vpu_claim := 0.U }
-  } else {
-    vpu_start.ready := false.B
+  sr.foreach { u =>
+    u.io.cmd.valid := vec_issue.valid && vec_is_sr && sr_free
+    u.io.cmd.bits := SpadRequantCmd.decode(vec_issue.cmd.cmd.rs1, vec_issue.cmd.cmd.rs2, u.io.cmd.bits.addrW)
   }
-  // SPAD_REQUANT: dispatched like VPU_EXEC; also needs every older command retired (it shares the requantizer and
-  // its scale coalescer with matmul stores, and CONFIG_SCALE_MEM must have been applied) and the requant idle.
-  val sr_start = Wire(Decoupled(new SpadRequantCmd(log2Ceil(sp_banks * sp_bank_entries))))
-  sr_start.valid := false.B
-  sr_start.bits := SpadRequantCmd.decode(unrolled_cmd.bits.cmd.rs1, unrolled_cmd.bits.cmd.rs2, sr_start.bits.addrW)
-  val sr_req_banks = {
-    val c = sr_start.bits
-    val bankBits = log2Ceil(sp_bank_entries)
-    def range(start: UInt, n: UInt): UInt = {
-      val lo = start >> bankBits
-      val hi = (start +& n - 1.U) >> bankBits
-      VecInit((0 until sp_banks).map(b => hi >= sp_banks.U || (b.U >= lo && b.U <= hi))).asUInt
-    }
-    val m16 = (c.m +& 15.U) & ~15.U(17.W)
-    val nSrc = (c.m * c.n) >> 3
-    val nDst = (m16 * c.n) >> 4
-    range(c.src, Mux(nSrc === 0.U, 1.U, nSrc)) | range(c.dst, Mux(nDst === 0.U, 1.U, nDst))
-  }
-  sr match {
-    case Some(u) =>
-      // RS empty => every older store retired, i.e. its requant beats have left the requantizer
-      val idle = reservation_station.io.empty && !mx_requantizer.get.io.scale_flush_busy && sfout_outstanding === 0.U
-      val clear = ((spad.module.io.vpu_pending_banks | vpu_claim) & sr_req_banks) === 0.U
-      u.io.cmd.valid := sr_start.valid && idle && clear
-      u.io.cmd.bits := sr_start.bits
-      sr_start.ready := u.io.cmd.ready && idle && clear
-      when (sr_start.fire) { sr_claim := sr_req_banks }
-        .elsewhen (!u.io.busy) { sr_claim := 0.U }
-    case None =>
-      sr_start.ready := false.B
-  }
-  reservation_station.io.vpu_banks := vpu_claim | sr_claim
-  reservation_station.io.hold_scale_cfg := sr.map(_.io.busy).getOrElse(false.B) || sr_claim =/= 0.U
+  vec_issue.ready := Mux(vec_is_sr, sr_ready, vpu_ready)
+  val vec_run = RegInit(false.B)
+  val vec_run_sr = Reg(Bool())
+  val vec_rob = Reg(UInt(ROB_ID_WIDTH.W))
+  when (vec_issue.fire) { vec_run := true.B; vec_run_sr := vec_is_sr; vec_rob := vec_issue.rob_id }
+  val vec_unit_busy = Mux(vec_run_sr, sr.map(_.io.busy).getOrElse(false.B), spad.module.io.vpu_busy)
+  vec_completed.valid := vec_run && !vec_unit_busy
+  vec_completed.bits := vec_rob
+  when (vec_completed.fire) { vec_run := false.B }
+  assert(!(vec_issue.fire && vec_run), "vector queue issued while an op is still running")
 
   // Wire up global RoCC signals
   io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || reservation_station.io.busy || spad.module.io.busy || unrolled_cmd.valid || loop_cmd.valid || conv_cmd.valid || scale_loader_busy || lut_loader_busy ||
-    spad.module.io.vpu_busy || vpu_claim =/= 0.U || sr.map(_.io.busy).getOrElse(false.B) || sr_claim =/= 0.U ||
-    sfout_outstanding =/= 0.U
+    spad.module.io.vpu_busy || sr.map(_.io.busy).getOrElse(false.B) || vec_run || sfout_outstanding =/= 0.U
 
   io.interrupt := tlb.io.exp.map(_.interrupt).reduce(_ || _)
 
@@ -1518,8 +1504,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val is_mx_load_scales = risc_funct === MX_LOAD_SCALES
     val is_mx_load_lut = risc_funct === MX_LOAD_LUT
     val is_mx_lut_disable = risc_funct === MX_LUT_DISABLE
-    val is_vpu_exec = has_vpu.B && risc_funct === VPU_EXEC
-    val is_spad_requant = has_spad_requant.B && risc_funct === SPAD_REQUANT
 
     /*
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
@@ -1552,16 +1536,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_lut_a_en := false.B
       mx_lut_b_en := false.B
       unrolled_cmd.ready := true.B
-    }
-
-    .elsewhen (is_vpu_exec) {
-      vpu_start.valid := true.B
-      unrolled_cmd.ready := vpu_start.ready
-    }
-
-    .elsewhen (is_spad_requant) {
-      sr_start.valid := true.B
-      unrolled_cmd.ready := sr_start.ready
     }
 
     .otherwise {

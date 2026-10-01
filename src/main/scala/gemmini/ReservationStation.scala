@@ -41,6 +41,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       val ld = new ReservationStationIssue(cmd_t, ROB_ID_WIDTH)
       val st = new ReservationStationIssue(cmd_t, ROB_ID_WIDTH)
       val ex = new ReservationStationIssue(cmd_t, ROB_ID_WIDTH)
+      val vec = new ReservationStationIssue(cmd_t, ROB_ID_WIDTH)   // VPU_EXEC / SPAD_REQUANT
     }
 
     val conv_ld_completed = Output(UInt(log2Up(max_instructions_completed_per_type_per_cycle+1).W))
@@ -53,12 +54,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val busy = Output(Bool())
 
-    // VPU bank ordering: banks claimed by a running VPU op (entries touching them do not issue), and the
-    // spad banks touched by any valid entry (a VPU op starts only once its banks are clear)
-    val vpu_banks = Input(UInt(sp_banks.W))
-    val spad_banks_in_use = Output(UInt(sp_banks.W))
-    val empty = Output(Bool())
-    val hold_scale_cfg = Input(Bool())   // SPAD_REQUANT running: CONFIG_SCALE_MEM (its scale destination) waits
+    // vector queue: 0 = VPU idle, 1 = SPAD_REQUANT can start; spad banks with requant rows still to be written
+    val vec_unit_ready = Input(Vec(2, Bool()))
+    val vec_pending_banks = Input(UInt(sp_banks.W))
 
     val counter = new CounterEventIO()
   })
@@ -71,6 +69,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val ldqu = 0.U(2.W)
   val exqu = 1.U(2.W)
   val stqu = 2.U(2.W)
+  // 4th queue: VPU_EXEC / SPAD_REQUANT (one entry, never allocated, when neither unit is built)
+  val vecq = 3
+  val vecqu = 3.U(2.W)
+  val has_vec = has_vpu || has_spad_requant
+  val n_vec = if (has_vec) 4 else 1
 
   class OpT extends Bundle {
     val start = local_addr_t.cloneType
@@ -123,8 +126,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val deps_ld = Vec(reservation_station_entries_ld, Bool())
     val deps_ex = Vec(reservation_station_entries_ex, Bool())
     val deps_st = Vec(reservation_station_entries_st, Bool())
+    val deps_vec = Vec(n_vec, Bool())
+    val opc = UDValid(new OpT)   // vector entries only: src2
 
-    def ready(dummy: Int = 0): Bool = !(deps_ld.reduce(_ || _) || deps_ex.reduce(_ || _) || deps_st.reduce(_ || _))
+    def ready(dummy: Int = 0): Bool = !(deps_ld.reduce(_ || _) || deps_ex.reduce(_ || _) || deps_st.reduce(_ || _) ||
+      deps_vec.reduce(_ || _))
 
     // Debugging signals
     val allocated_at = UInt(instructions_allocated.getWidth.W)
@@ -137,8 +143,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val entries_ld = Reg(Vec(reservation_station_entries_ld, UDValid(new Entry)))
   val entries_ex = Reg(Vec(reservation_station_entries_ex, UDValid(new Entry)))
   val entries_st = Reg(Vec(reservation_station_entries_st, UDValid(new Entry)))
+  val entries_vec = Reg(Vec(n_vec, UDValid(new Entry)))
 
-  val entries = entries_ld ++ entries_ex ++ entries_st
+  val entries = entries_ld ++ entries_ex ++ entries_st ++ entries_vec
 
   val empty_ld = !entries_ld.map(_.valid).reduce(_ || _)
   val empty_ex = !entries_ex.map(_.valid).reduce(_ || _)
@@ -153,7 +160,6 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val utilization = PopCount(entries.map(e => e.valid)) // TODO it may be cheaper to count the utilization in a register, rather than performing a PopCount
   val solitary_preload = RegInit(false.B) // This checks whether or not the reservation station received a "preload" instruction, but hasn't yet received the following "compute" instruction
   io.busy := !empty && !(utilization === 1.U && solitary_preload)
-  io.empty := empty
   
   // Tell the conv and matmul FSMs if any of their issued instructions completed
   val conv_ld_issue_completed = WireInit(false.B)
@@ -195,8 +201,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val new_allocs_oh_ld = Wire(Vec(reservation_station_entries_ld, Bool()))
   val new_allocs_oh_ex = Wire(Vec(reservation_station_entries_ex, Bool()))
   val new_allocs_oh_st = Wire(Vec(reservation_station_entries_st, Bool()))
+  val new_allocs_oh_vec = Wire(Vec(n_vec, Bool()))
 
-  val new_entry_oh = new_allocs_oh_ld ++ new_allocs_oh_ex ++ new_allocs_oh_st
+  val new_entry_oh = new_allocs_oh_ld ++ new_allocs_oh_ex ++ new_allocs_oh_st ++ new_allocs_oh_vec
   new_entry_oh.foreach(_ := false.B)
 
   val alloc_fire = io.alloc.fire
@@ -331,13 +338,46 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val is_store = funct === STORE_CMD || funct === STORE_SPAD_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_STORE || config_cmd_type === CONFIG_NORM))
     val is_norm = funct === CONFIG_CMD && config_cmd_type === CONFIG_NORM // normalization commands are a subset of store commands, so they still go in the store queue
 
+    val is_vpu = has_vpu.B && funct === VPU_EXEC
+    val is_sreq = has_spad_requant.B && funct === SPAD_REQUANT
+    val is_vec = is_vpu || is_sreq
+
     new_entry.q := Mux1H(Seq(
       is_load -> ldqu,
       is_store -> stqu,
-      is_ex -> exqu
+      is_ex -> exqu,
+      is_vec -> vecqu
     ))
 
-    assert(is_load || is_store || is_ex)
+    assert(is_load || is_store || is_ex || is_vec)
+
+    // vector entries: opa = dst (written), opb = src1, opc = src2; spad row ranges (rows / M*N sizes, conservative)
+    def spRange(start: UInt, n: UInt): UDValid[OpT] = {
+      val o = Wire(UDValid(new OpT))
+      val la = WireInit(0.U.asTypeOf(local_addr_t))
+      la.data := start
+      o.valid := true.B
+      o.bits.start := la
+      o.bits.end := la + n
+      o.bits.wraps_around := (start +& n) >= local_addr_t.spRows.U
+      o
+    }
+    new_entry.opc.valid := false.B
+    new_entry.opc.bits := DontCare
+    when (is_vpu) {
+      val vc = gemmini.vpu.VpuCmd.decode(cmd.rs1, cmd.rs2, 14)
+      new_entry.opa_is_dst := true.B
+      new_entry.opa := spRange(vc.dst, vc.rows)
+      new_entry.opb := spRange(vc.src1, vc.rows)
+      new_entry.opc := spRange(vc.src2, vc.rows)
+      new_entry.opc.valid := vc.op <= gemmini.vpu.VpuOp.MUL.U
+    }.elsewhen (is_sreq) {
+      val sc = SpadRequantCmd.decode(cmd.rs1, cmd.rs2, 14)
+      val m16 = (sc.m +& 15.U) & ~15.U(17.W)
+      new_entry.opa_is_dst := true.B
+      new_entry.opa := spRange(sc.dst, Mux(sc.tiled, (m16 * sc.n) >> 4, (sc.m * sc.n) >> 4))
+      new_entry.opb := spRange(sc.src, (sc.m * sc.n) >> 3)
+    }
 
     val not_config = !new_entry.is_config
     when (is_load) {
@@ -394,6 +434,29 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       new_entry.deps_st := VecInit(entries_st.map { e => e.valid }) // same q
     }
 
+    // ---- 4th (vector) queue dependencies. ov = row-range overlap of valid operands ----
+    def ov(a: UDValid[OpT], b: UDValid[OpT]): Bool = a.valid && b.valid && a.bits.overlaps(b.bits)
+    def ovAny(as: Seq[UDValid[OpT]], bs: Seq[UDValid[OpT]]): Bool = (for (a <- as; b <- bs) yield ov(a, b)).reduce(_ || _)
+    def opsOf(e: Entry): Seq[UDValid[OpT]] = Seq(e.opa, e.opb, e.opc)
+    // e writes only opa (when opa_is_dst); conflict unless both sides only read
+    def conflicts(n: Entry, e: Entry): Bool =
+      (n.opa_is_dst && ovAny(Seq(n.opa), opsOf(e))) || (e.opa_is_dst && ovAny(opsOf(n), Seq(e.opa)))
+    val is_scale_cfg = funct === CONFIG_SCALE_MEM
+    when (is_vec) {
+      // after older ld/ex/st that write rows it touches or read rows it writes; SPAD_REQUANT also after every older
+      // store (shared requantizer + scale coalescer; their act-scale reads finish before they complete)
+      new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && !e.bits.is_config && conflicts(new_entry, e.bits) })
+      new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && conflicts(new_entry, e.bits) })
+      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && (is_sreq || conflicts(new_entry, e.bits)) })
+      // vector entries run strictly in order, one at a time (deps clear on completion)
+      new_entry.deps_vec := VecInit(entries_vec.map(_.valid))
+    }.otherwise {
+      // ld/ex/st after older vector entries they conflict with; stores (requantizer) and CONFIG_SCALE_MEM (the next
+      // matmul's act-scale reads must see the resident scales) after an older SPAD_REQUANT
+      new_entry.deps_vec := VecInit(entries_vec.map { e => e.valid && !new_entry.is_config && (conflicts(new_entry, e.bits) ||
+        ((is_store || is_scale_cfg) && e.bits.cmd.cmd.inst.funct === SPAD_REQUANT)) })
+    }
+
     new_entry.allocated_at := instructions_allocated
 
     new_entry.complete_on_issue := new_entry.is_config && new_entry.q =/= exqu
@@ -401,7 +464,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     Seq(
       (ldqu, entries_ld, new_allocs_oh_ld, reservation_station_entries_ld),
       (exqu, entries_ex, new_allocs_oh_ex, reservation_station_entries_ex),
-      (stqu, entries_st, new_allocs_oh_st, reservation_station_entries_st))
+      (stqu, entries_st, new_allocs_oh_st, reservation_station_entries_st),
+      (vecqu, entries_vec, new_allocs_oh_vec, n_vec))
       .foreach { case (q, entries_type, new_allocs_type, entries_count) =>
         when (new_entry.q === q) {
           val is_full = PopCount(Seq(dst.valid, op1.valid, op2.valid)) > 1.U
@@ -448,17 +512,20 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   def entry_sp_banks(e: UDValid[Entry]): UInt =
-    Mux(e.bits.opa.valid, e.bits.opa.bits.sp_banks_mask(), 0.U) | Mux(e.bits.opb.valid, e.bits.opb.bits.sp_banks_mask(), 0.U)
-  io.spad_banks_in_use := entries.map(e => Mux(e.valid, entry_sp_banks(e), 0.U)).reduce(_ | _)
-  val vpu_banks = io.vpu_banks
-  val hold_scale_cfg = io.hold_scale_cfg
+    Seq(e.bits.opa, e.bits.opb, e.bits.opc).map(o => Mux(o.valid, o.bits.sp_banks_mask(), 0.U)).reduce(_ | _)
+  val vec_unit_ready = io.vec_unit_ready
+  val vec_pending_banks = io.vec_pending_banks
 
   // Issue commands which are ready to be issued
-  Seq((ldq, io.issue.ld, entries_ld), (exq, io.issue.ex, entries_ex), (stq, io.issue.st, entries_st))
+  Seq((ldq, io.issue.ld, entries_ld), (exq, io.issue.ex, entries_ex), (stq, io.issue.st, entries_st),
+    (vecq, io.issue.vec, entries_vec))
     .foreach { case (q, io, entries_type) =>
 
-    val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued &&
-      (entry_sp_banks(e) & vpu_banks) === 0.U && !(hold_scale_cfg && e.bits.cmd.cmd.inst.funct === CONFIG_SCALE_MEM))
+    // a vector entry also needs its unit free and no queued requant rows in its spad banks
+    def unit_ok(e: UDValid[Entry]): Bool = if (q != vecq) true.B else
+      Mux(e.bits.cmd.cmd.inst.funct === SPAD_REQUANT, vec_unit_ready(1), vec_unit_ready(0)) &&
+        (entry_sp_banks(e) & vec_pending_banks) === 0.U
+    val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued && unit_ok(e))
     val issue_sel = PriorityEncoderOH(issue_valids)
     val issue_id = OHToUInt(issue_sel)
     val global_issue_id = Cat(q.U(2.W), issue_id.pad(log2Up(res_max_per_type)))
@@ -484,12 +551,13 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       }
 
       // Update the "deps" vectors of all instructions which depend on the one that is being issued
-      Seq((ldq, entries_ld), (exq, entries_ex), (stq, entries_st))
+      Seq((ldq, entries_ld), (exq, entries_ex), (stq, entries_st), (vecq, entries_vec))
         .foreach { case (q_, entries_type_) =>
 
         entries_type_.zipWithIndex.foreach { case (e, i) =>
-          val deps_type = if (q == ldq) e.bits.deps_ld else if (q == exq) e.bits.deps_ex else e.bits.deps_st
-          if ((q == q_) && (q_ != stq)) {
+          val deps_type = if (q == ldq) e.bits.deps_ld else if (q == exq) e.bits.deps_ex
+            else if (q == stq) e.bits.deps_st else e.bits.deps_vec
+          if ((q == q_) && (q_ != stq) && (q_ != vecq)) {
             deps_type(issue_id) := false.B // TODO(richard): normal mvouts should not be blocked until complete
           } else {
             when (issue_entry.bits.complete_on_issue) {
@@ -542,7 +610,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       
       assert(entries_st(issue_id).valid)
     }.otherwise {
-      assert(queue_type =/= 3.U)
+      assert(has_vec.B, "vector-queue completion without a vector queue")
+      entries.foreach(_.bits.deps_vec(issue_id) := false.B)
+      entries_vec(issue_id).valid := false.B
+      assert(entries_vec(issue_id).valid)
     }
   }
 
@@ -554,6 +625,12 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       e.bits.opb.bits := DontCare
     }
   }
+  // opc (src2) exists only in vector entries
+  Seq(entries_ld, entries_ex, entries_st).foreach(_.foreach { e =>
+    e.bits.opc.valid := false.B
+    e.bits.opc.bits := DontCare
+  })
+  if (!has_vec) entries_vec.foreach(_.valid := false.B)
 
   // val utilization = PopCount(entries.map(e => e.valid))
   val utilization_ld_q_unissued = PopCount(entries.map(e => e.valid && !e.bits.issued && e.bits.q === ldqu))
@@ -583,7 +660,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   val cycles_since_issue = RegInit(0.U(16.W))
 
-  when (io.issue.ld.fire || io.issue.st.fire || io.issue.ex.fire || !io.busy || io.completed.fire) {
+  when (io.issue.ld.fire || io.issue.st.fire || io.issue.ex.fire || io.issue.vec.fire || !io.busy || io.completed.fire) {
     cycles_since_issue := 0.U
   }.elsewhen(io.busy) {
     cycles_since_issue := cycles_since_issue + 1.U

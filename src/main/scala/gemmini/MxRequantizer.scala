@@ -97,6 +97,8 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val linear_scales = Input(Bool())
   val linear_gn = Input(UInt(16.W))
   val linear_m = Input(UInt(16.W))
+  val linear_base = Input(UInt(scaleMem_addr_width.W))   // overrides scale_mem_mvout_base_addr_act / scale_resident
+  val linear_resident = Input(Bool())
   val scale_flush_busy = Output(Bool())
 }
    
@@ -587,7 +589,7 @@ class MxRequantizer[T <: Data](
     when (lin_cnt === lin_total - 1.U) {
       lin_cnt := 0.U
       flushing := true.B
-      flushing_act := io.scale_resident
+      flushing_act := io.linear_resident
     } .otherwise { lin_cnt := lin_cnt + 1.U }
   }
   if (numOutBlocks != 1) assert(!io.linear_scales, "linear scale filing assumes one MX block per beat")
@@ -659,7 +661,8 @@ class MxRequantizer[T <: Data](
   val flush_base     = flush_row << log2Ceil(scales_per_write)
 
   io.scaleMem_write.valid     := false.B
-  io.scaleMem_write.bits.addr := scale_mem_mvout_base_addr_act + (flush_row << log2Ceil(scaleMem_data_width/8))
+  io.scaleMem_write.bits.addr := Mux(io.linear_scales, io.linear_base, scale_mem_mvout_base_addr_act) +
+    (flush_row << log2Ceil(scaleMem_data_width/8))
   io.scaleMem_write.bits.data := Cat((0 until scales_per_write).map(i => coalescer(flush_base + i.U)).reverse)
   when(flushing) {
     io.scaleMem_write.valid := true.B

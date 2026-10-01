@@ -52,6 +52,14 @@ class MxGemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(512) ++
   new chipyard.config.AbstractConfig)
 
+// E4M3-single, trimmed (no LoopConv/Im2Col/transposer/first-layer/MMIO-requant/acc-mvin), ReLU only.
+// Step 1 of the VPU config (the VPU is added on top of this).
+class MxE4M3VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPE4M3TrimmedStandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
 class MxE4M3SingleGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPE4M3SingleNoLutStandaloneConfig ++       // standalone MX, E4M3 single throughput only, no QuantLut
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++

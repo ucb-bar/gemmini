@@ -6,20 +6,24 @@ import chisel3.util._
 // SPAD_REQUANT: stream a row-major BF16 tile (M x N, N a multiple of 32) from the scratchpad through the existing
 // MxRequantizer. Block (m, b) = 4 consecutive spad rows src + 4*(m*GN + b) -> one requant beat -> 32 E4M3 codes
 // (2 spad rows) at dst, flat (dst + 2*(m*GN + b) + h) or operand-A tiled (dst + ((m/16)*N/16 + 2b + h)*16 + m%16).
-// Scales are filed by the requantizer's linear mode (scale k = block k) and flushed by its existing coalescer.
+// Scales are filed by the requantizer's linear mode (scale k = block k) and flushed by its existing coalescer to
+// the command's own scale DRAM address (and, if resident, the act-scale memory), so no CONFIG_SCALE_MEM is involved.
 class SpadRequantCmd(val addrW: Int) extends Bundle {
   val src   = UInt(addrW.W)
   val dst   = UInt(addrW.W)
   val m     = UInt(16.W)
   val n     = UInt(16.W)
   val tiled = Bool()
+  val resident = Bool()
+  val scale_addr = UInt(33.W)
 }
 
 object SpadRequantCmd {
-  // rs1 = src[13:0] | dst[27:14] | tiled[28]; rs2 = M[15:0] | N[31:16]
+  // rs1 = src[13:0] | dst[27:14] | tiled[28] | resident[29] | scale DRAM addr[62:30]; rs2 = M[15:0] | N[31:16]
   def decode(rs1: UInt, rs2: UInt, addrW: Int): SpadRequantCmd = {
     val c = Wire(new SpadRequantCmd(addrW))
     c.src := rs1(13, 0); c.dst := rs1(27, 14); c.tiled := rs1(28)
+    c.resident := rs1(29); c.scale_addr := rs1(62, 30)
     c.m := rs2(15, 0); c.n := rs2(31, 16)
     c
   }
@@ -40,6 +44,8 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
     val wr      = Decoupled(new SpadRowWrite(addrW, rowW))
     val linear_gn = Output(UInt(16.W))
     val linear_m  = Output(UInt(16.W))
+    val linear_base = Output(UInt(33.W))   // scale DRAM address for this command's flush
+    val linear_resident = Output(Bool())
     val flush_busy = Input(Bool())   // requantizer scale flush in progress
     val active  = Output(Bool())
     val busy    = Output(Bool())
@@ -99,6 +105,7 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
   val outValid = RegInit(false.B)
   val half = RegInit(false.B)
   io.rq_out.ready := !outValid
+  assert(!io.rq_out.fire || outCnt < total, "SPAD_REQUANT: more requantizer outputs than blocks it sent")
   when (io.rq_out.fire) { outBuf := io.rq_out.bits; outValid := true.B; half := false.B }
   val tilesK = c.n >> 4
   val flatAddr  = c.dst + (outCnt << 1) + half.asUInt
@@ -124,6 +131,8 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
 
   io.linear_gn := gn
   io.linear_m := c.m
+  io.linear_base := c.scale_addr
+  io.linear_resident := c.resident
   io.active := active
   io.busy := active
 }
