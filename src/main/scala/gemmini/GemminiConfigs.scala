@@ -192,9 +192,14 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   }
   assert(acc_scale_latency > 0)
 
-  val mvin_cols_bits = log2Up(((dma_maxbytes / (weightType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  // Size the col fields for the narrowest element the DMA moves. LoopMatmul issues up to
+  // dma_maxbytes / (block * inputTypeProjected bytes) blocks per mvin, so an MX build whose mesh lane
+  // (weightType, e.g. 16b E4M3) is wider than its 8b projected code must still fit dma_maxbytes cols --
+  // otherwise a 4-block (64-col) mvin wraps to 0.
+  private val min_elem_bytes = (Seq(weightType, inputTypeProjected, weightTypeProjected).map(_.getWidth).min / 8) max 1
+  val mvin_cols_bits = log2Up(((dma_maxbytes / min_elem_bytes) max (meshColumns * tileColumns)) + 1)
   val mvin_rows_bits = log2Up(2*meshRows * tileRows + 1)
-  val mvout_cols_bits = log2Up(((dma_maxbytes / (weightType.getWidth / 8)) max (meshColumns * tileColumns)) + 1)
+  val mvout_cols_bits = log2Up(((dma_maxbytes / min_elem_bytes) max (meshColumns * tileColumns)) + 1)
   val mvout_rows_bits = log2Up(2*meshRows * tileRows + 1)
 
   val load_states = 3
