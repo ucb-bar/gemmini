@@ -896,7 +896,16 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val mvout_cmd_rs1 = Wire(mvout_spad_rs1_t.cloneType)
   mvout_cmd_rs1 := DontCare
   mvout_cmd_rs1.local_addr := cast_to_sp_addr(mvout_cmd_rs1.local_addr, dst_addr)
-  mvout_cmd_rs1.stride := 1.U // TODO
+  // Absolute destination row step (bit 31 set), from THIS loop's own J and format captured at request time. The
+  // store controller used to derive it from the live CONFIG_SCALE_MEM bounds, which a younger loop's config can
+  // replace while this loop's last stores are still queued. Non-MX builds read a flagged stride as the old 1.
+  val st_j = req.max_j
+  val st_wide = req.output_mx_format === 3.U
+  val st_row_step = Mux(req.reuse_tiled, 1.U,
+    Mux(st_wide && !req.mx_multi_elem, st_j / 2.U * 4.U,
+      Mux(st_wide, st_j * Mux(req.mx_multi_elem_act, 8.U, 4.U),
+        Mux(!req.mx_multi_elem, st_j / 2.U * 2.U, st_j * 2.U))))
+  mvout_cmd_rs1.stride := (BigInt(1) << 31).U | st_row_step.pad(31)
   mvout_cmd.rs1 := mvout_cmd_rs1.asUInt
 
   val mvout_cmd_rs2 = Wire(mvout_rs2_t.cloneType)
@@ -906,7 +915,9 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   mvout_cmd_rs2.local_addr := cast_to_acc_addr(mvout_cmd_rs2.local_addr, src_addr, accumulate = false.B, read_full = req.full_c)
   mvout_cmd_rs2.mx_chunk_id := chunk_id
   mvout_cmd_rs2.reuse_tiled := req.reuse_tiled
-  mvout_cmd.rs2 := mvout_cmd_rs2.asUInt
+  // rs2[63] (rows spacer): BF16 store -- its beats pass the requantizer unquantized, so the RS lets it overlap
+  // SPAD_REQUANT (which then shares the requantizer beat by beat)
+  mvout_cmd.rs2 := Cat(st_wide, mvout_cmd_rs2.asUInt(62, 0))
 
   io.req.ready := state === idle
   io.j := j
@@ -1082,7 +1093,8 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
 class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
                  mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
-                 compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2)
+                 compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2,
+                 vec_bypass: Boolean = false)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
   val tilesPerMxBlock = 32 / block_size
@@ -1111,6 +1123,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     val output_mx_format = Input(UInt(2.W))
     val mx_multi_elem = Input(Bool())   // throughput: 2 elements/lane (datatype-independent)
     val mx_multi_elem_act = Input(Bool())   // ACTIVATION (output-row) throughput
+    val vec_space = Input(Bool())   // RS vector queue can take one more VPU_EXEC
   })
 
   // Create states
@@ -1364,6 +1377,52 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   def rows_overlap(x: (UInt, UInt), y: (UInt, UInt)): Bool = x._1 < y._2 && y._1 < x._2
   def ld_blocked(id: UInt, rows: (UInt, UInt)): Bool = !is_resadd && id =/= head_loop_id && head_loop.configured &&
     !head_loop.ex_completed && (rows_overlap(rows, a_rows(head_loop)) || rows_overlap(rows, b_rows(head_loop)))
+
+  // VPU_EXEC passes configured loops whose A, B and C spad rows it misses, so vector work overlaps the loop's
+  // unrolling (raw commands stay in program order). SPAD_REQUANT does not: the RS orders a store after an older SR
+  // (shared requantizer), so an SR ahead of the loop's own stores would stall them. Ranges are conservative.
+  if (vec_bypass) {
+    val f = cmd.bits.cmd.inst.funct
+    val r1 = cmd.bits.cmd.rs1
+    val r2 = cmd.bits.cmd.rs2
+    val is_vpu = f === VPU_EXEC
+    val vpu_rows = r1(57, 42)
+    def span(base: UInt, n: UInt): (UInt, UInt) = (base, base +& n)
+    val ranges = Seq(
+      (is_vpu, span(r1(13, 0), vpu_rows)),
+      (is_vpu && gemmini.vpu.VpuOp.usesSrc2(r2(3, 0)), span(r1(27, 14), vpu_rows)),
+      (is_vpu, span(r1(41, 28), vpu_rows)))
+    def c_rows(l: LoopMatmulState): (UInt, UInt) = span(l.c_spad_addr(log2Up(max_addr) - 1, 0), 2.U * l.max_i * l.max_j * block_size.U)
+    def hits(l: LoopMatmulState): Bool = l.configured && ranges.map { case (v, r) =>
+      v && (rows_overlap(r, a_rows(l)) || rows_overlap(r, b_rows(l)) || (l.spad_only && rows_overlap(r, c_rows(l))))
+    }.reduce(_ || _)
+    val vec_pass = cmd.valid && loop_configured && is_vpu && io.vec_space && !loops.map(hits).reduce(_ || _)
+    // The next matmul's scale config and gated scale load may pass loops that have issued every load and ex command
+    // (only stores left) when the output is BF16 and every such loop moves the accumulator base by half: the next
+    // loop then accumulates into the other half while these stores drain. The RS orders the config after the loops'
+    // ex commands; a gated load waits for a free scale half on its own.
+    val acc_alternates = (l: LoopMatmulState) => Mux(l.spad_only, l.inc_acc_addr, l.c_dram_addr =/= 0.U)
+    val only_stores_left = loops.map(l => !l.configured || (l.ex_completed && l.lda_completed && l.ldb_completed &&
+      l.ldd_completed && acc_alternates(l))).reduce(_ && _)
+    val is_scale_cmd = f === CONFIG_SCALE_MEM || (f === MX_LOAD_SCALES && r2(54))
+    // a CONFIG_SCALE_MEM also needs a free RS ex slot, or it would itself wait at the head of the unrolled queue
+    val cfg_pass = cmd.valid && loop_configured && is_scale_cmd && only_stores_left && io.output_mx_format === 3.U &&
+      (f =/= CONFIG_SCALE_MEM || ex_utilization < max_exs.U)
+    when (vec_pass || cfg_pass) {
+      io.out.valid := true.B
+      io.out.bits.cmd := cmd.bits.cmd
+      io.out.bits.from_matmul_fsm := cmd.bits.from_matmul_fsm
+      io.out.bits.from_conv_fsm := cmd.bits.from_conv_fsm
+      cmd.ready := io.out.ready
+      arb.io.out.ready := false.B
+    }
+    // A passed CONFIG_SCALE_MEM takes an RS ex slot: count it in ex_utilization (and report its completion as a
+    // matmul one) so the ex unroller never sends a command the full ex queue cannot take, which would sit at the head
+    // of the unrolled queue and block the loops' stores behind it.
+    val cfg_ex_pass = cfg_pass && f === CONFIG_SCALE_MEM
+    when (cfg_ex_pass) { io.out.bits.from_matmul_fsm := true.B }
+    when (cfg_ex_pass && io.out.fire) { ex_utilization := ex_utilization +& 1.U -& io.ex_completed }
+  }
 
   val loop_requesting_ldA_id = Mux(head_loop.lda_started, tail_loop_id, head_loop_id)
   val loop_requesting_ldA = loops(loop_requesting_ldA_id)
@@ -1640,11 +1699,12 @@ object LoopMatmul {
             block_size: Int, coreMaxAddrBits: Int, rob_size: Int, max_lds: Int, max_exs: Int, max_sts: Int,
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
             mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
-            compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2)
+            compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2,
+            vec_bypass: Boolean = false)
            (implicit p: Parameters): (DecoupledIO[GemminiCmd], Bool, Vec[Bool], LoopMatmul) = {
     val mod = Module(new LoopMatmul(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
-      mvin_rs2_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t, mvout_spad_rs1_t, mvout_rs2_t))
+      mvin_rs2_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t, mvout_spad_rs1_t, mvout_rs2_t, vec_bypass))
     mod.io.in <> in
     mod.io.ld_completed := ld_completed
     mod.io.st_completed := st_completed

@@ -57,6 +57,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     // vector queue: 0 = VPU idle, 1 = SPAD_REQUANT can start; spad banks with requant rows still to be written
     val vec_unit_ready = Input(Vec(2, Bool()))
     val vec_pending_banks = Input(UInt(sp_banks.W))
+    val vec_free = Output(UInt(5.W))   // free vector-queue entries
 
     val counter = new CounterEventIO()
   })
@@ -73,7 +74,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val vecq = 3
   val vecqu = 3.U(2.W)
   val has_vec = has_vpu || has_spad_requant
-  val n_vec = if (has_vec) 4 else 1
+  val n_vec = if (has_vec) res_max_per_type min 16 else 1   // a block's vector work enters at once (ids fit the per-type width)
 
   class OpT extends Bundle {
     val start = local_addr_t.cloneType
@@ -160,6 +161,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val utilization = PopCount(entries.map(e => e.valid)) // TODO it may be cheaper to count the utilization in a register, rather than performing a PopCount
   val solitary_preload = RegInit(false.B) // This checks whether or not the reservation station received a "preload" instruction, but hasn't yet received the following "compute" instruction
   io.busy := !empty && !(utilization === 1.U && solitary_preload)
+  io.vec_free := PopCount(entries_vec.map(!_.valid))
   
   // Tell the conv and matmul FSMs if any of their issued instructions completed
   val conv_ld_issue_completed = WireInit(false.B)
@@ -297,7 +299,13 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       // TODO: make it so that spad move has its own load config states
       val mv_cols = cmd.rs2(32 + mvout_cols_bits - 1, 32)
       val mv_rows = cmd.rs2(48 + mvout_rows_bits - 1, 48)
-      val mvout_dst_rows = mv_rows // * mv_cols
+      // MX: an absolute row step (rs1 bit 63) spreads the rows: [dst, dst + rows*step + 16) also covers the tiled
+      // layout's second beat 16 rows below each row
+      val st_step = cmd.rs1(62, 32)
+      // BF16 store (rs2[63], from StCSpad): row r writes its beats (<= 8) to consecutive rows at dst + r*step, so the
+      // exact span is (rows-1)*step + 8; other flagged stores keep the conservative rows*step + 16 (tiled beats)
+      val mvout_dst_rows = if (use_mx_scaling) Mux(cmd.rs1(63),
+        Mux(cmd.rs2(63), (mv_rows - 1.U) * st_step + 8.U, mv_rows * st_step + 16.U), mv_rows) else mv_rows
 
       dst.bits.start := cmd.rs1(31, 0).asTypeOf(local_addr_t)
       dst.bits.end := dst.bits.start + mvout_dst_rows
@@ -370,7 +378,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       new_entry.opa := spRange(vc.dst, vc.rows)
       new_entry.opb := spRange(vc.src1, vc.rows)
       new_entry.opc := spRange(vc.src2, vc.rows)
-      new_entry.opc.valid := vc.op <= gemmini.vpu.VpuOp.MUL.U
+      new_entry.opc.valid := gemmini.vpu.VpuOp.usesSrc2(vc.op)
     }.elsewhen (is_sreq) {
       val sc = SpadRequantCmd.decode(cmd.rs1, cmd.rs2, 14)
       val m16 = (sc.m +& 15.U) & ~15.U(17.W)
@@ -442,20 +450,35 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     def conflicts(n: Entry, e: Entry): Bool =
       (n.opa_is_dst && ovAny(Seq(n.opa), opsOf(e))) || (e.opa_is_dst && ovAny(opsOf(n), Seq(e.opa)))
     val is_scale_cfg = funct === CONFIG_SCALE_MEM
+    // a BF16 scratchpad store (rs2[63], set by StCSpad) shares the requantizer with SPAD_REQUANT beat by beat; only
+    // quantized stores (scale coalescer) are ordered against it
+    def bf16_store(c: RoCCCommand): Bool = c.inst.funct === STORE_SPAD_CMD && c.rs2(63)
+    // SPAD_REQUANT files resident act scales into act half 0; a managed, non-resident config reading act half 1
+    // touches neither, so it needn't wait for it
+    val scale_cfg_after_sr = is_scale_cfg && !(cmd.rs2(17) && cmd.rs1(60) && !cmd.rs1(63))
     when (is_vec) {
       // after older ld/ex/st that write rows it touches or read rows it writes; SPAD_REQUANT also after every older
       // store (shared requantizer + scale coalescer; their act-scale reads finish before they complete)
       new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && !e.bits.is_config && conflicts(new_entry, e.bits) })
       new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && conflicts(new_entry, e.bits) })
-      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && (is_sreq || conflicts(new_entry, e.bits)) })
-      // vector entries run strictly in order, one at a time (deps clear on completion)
-      new_entry.deps_vec := VecInit(entries_vec.map(_.valid))
+      new_entry.deps_st := VecInit(entries_st.map { e => e.valid && ((is_sreq && !bf16_store(e.bits.cmd.cmd)) ||
+        conflicts(new_entry, e.bits)) })
+      // vector entries run in order per unit (VPU, SPAD_REQUANT); across the two units they are ordered by row
+      // conflicts and by shared spad banks (the VPU's fixed-latency read port always wins its bank and would starve
+      // SPAD_REQUANT's reads there), so a VPU op and a SPAD_REQUANT run at the same time only in different banks
+      def banks(x: Entry): UInt = Seq(x.opa, x.opb, x.opc).map(o => Mux(o.valid, o.bits.sp_banks_mask(), 0.U)).reduce(_ | _)
+      new_entry.deps_vec := VecInit(entries_vec.map { e => e.valid &&
+        ((e.bits.cmd.cmd.inst.funct === SPAD_REQUANT) === is_sreq || conflicts(new_entry, e.bits) ||
+          (banks(new_entry) & banks(e.bits)) =/= 0.U) })
     }.otherwise {
-      // ld/ex/st after older vector entries they conflict with; stores (requantizer) and CONFIG_SCALE_MEM (the next
-      // matmul's act-scale reads must see the resident scales) after an older SPAD_REQUANT
+      // ld/ex/st after older vector entries they conflict with; stores (requantizer) and CONFIG_SCALE_MEM that may read
+      // act half 0 (the next matmul's act-scale reads must see the resident scales) after an older SPAD_REQUANT
       new_entry.deps_vec := VecInit(entries_vec.map { e => e.valid && !new_entry.is_config && (conflicts(new_entry, e.bits) ||
-        ((is_store || is_scale_cfg) && e.bits.cmd.cmd.inst.funct === SPAD_REQUANT)) })
+        (((is_store && !bf16_store(cmd)) || scale_cfg_after_sr) && e.bits.cmd.cmd.inst.funct === SPAD_REQUANT)) })
     }
+    // CONFIG_SCALE_MEM has no spad operands (its op ranges are decoded garbage), so the ex-vs-ld overlap above is a false
+    // RAW on every queued mvin; loads never touch the scale config (the ex controller waits for the scales to land)
+    when (is_scale_cfg) { new_entry.deps_ld := VecInit(Seq.fill(reservation_station_entries_ld)(false.B)) }
 
     new_entry.allocated_at := instructions_allocated
 

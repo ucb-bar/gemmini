@@ -334,6 +334,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     req.io.linear_m := 0.U
     req.io.linear_base := 0.U
     req.io.linear_resident := false.B
+    req.io.quant_mode.valid := false.B
+    req.io.quant_mode.bits := 0.U
+    req.io.sr_tag_in := false.B
   }
 
 
@@ -1125,7 +1128,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     inputTypeProjected.getWidth, accType.getWidth, dma_maxbytes, new MvinRs2(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
-    new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t)) }
+    new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t),
+    vec_bypass = has_vpu || has_spad_requant) }
   
   if (use_mx_scaling) {
     loop_matmul.io.activation_mx_format := ex_controller.io.mx.get.activation_mx_format_out
@@ -1191,6 +1195,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
   val unrolled_cmd = Queue(loop_cmd)
   unrolled_cmd.ready := false.B
+  // vector-queue space for LoopMatmul's VPU/SPAD_REQUANT bypass, net of those already queued in unrolled_cmd
+  def is_vec_funct(f: UInt): Bool = f === VPU_EXEC || f === SPAD_REQUANT
+  val vec_in_q = RegInit(0.U(2.W))
+  vec_in_q := vec_in_q + (loop_cmd.fire && is_vec_funct(loop_cmd.bits.cmd.inst.funct)).asUInt -
+    (unrolled_cmd.fire && is_vec_funct(unrolled_cmd.bits.cmd.inst.funct)).asUInt
+  loop_matmul.io.vec_space := reservation_station.io.vec_free > vec_in_q
   counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
 
   // Wire up controllers to ROB
@@ -1284,12 +1294,35 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // Connect accumulator memory to mxrequantizer
     // default
     spad.module.io.mx_req_io <> mx_requantizer.get.io.mxacc_req
-    // SPAD_REQUANT: while the sequencer is active the requantizer takes its beats (E4M3, linear scale filing)
-    // and the accumulator path is held off; it starts only with every older command retired (RS empty).
+    // SPAD_REQUANT: while the sequencer is active the requantizer takes its beats (E4M3, linear scale filing).
+    // If the accumulator side is in BF16 pass-through mode its beats share the requantizer beat by beat (they skip
+    // quantization and the scale coalescer; each beat carries its mode and an owner tag that routes its output);
+    // otherwise the accumulator path is held off while SPAD_REQUANT runs.
     sr.foreach { u =>
       val rq = mx_requantizer.get.io.mxacc_req
       val acc = spad.module.io.mx_req_io
-      when (u.io.active) {
+      val share = u.io.active && acc.mx_mode === MxFloatFormat.BF16 && !ex_controller.io.mx.get.lut_en_out
+      val last_sr = RegInit(false.B)   // alternate when both have a beat
+      val pick_sr = u.io.rq_in.valid && (!acc.mx_data_in.valid || !last_sr)
+      val out_sr = mx_requantizer.get.io.sr_tag_out
+      when (rq.mx_data_in.fire) { last_sr := pick_sr }
+      when (share) {
+        rq.mx_data_in.valid := u.io.rq_in.valid || acc.mx_data_in.valid
+        when (pick_sr) {
+          rq.mx_data_in.bits := DontCare
+          rq.mx_data_in.bits.full_mx_data_in := u.io.rq_in.bits.asTypeOf(rq.mx_data_in.bits.full_mx_data_in)
+          rq.mx_data_in.bits.fromDMA := true.B
+          rq.mx_data_in.bits.chunk_id := 0.U
+          rq.mx_data_in.bits.acc_bank_id := 0.U
+        }
+        rq.mx_mode := Mux(pick_sr, 0.U, MxFloatFormat.BF16)
+        rq.mx_fp8_altfmt := false.B
+        mx_requantizer.get.io.quant_mode.valid := true.B   // SPAD_REQUANT's beats quantize to E4M3
+        mx_requantizer.get.io.quant_mode.bits := 0.U
+        acc.mx_data_in.ready := rq.mx_data_in.ready && !pick_sr
+        rq.mx_data_out.ready := Mux(out_sr, u.io.rq_out.ready, acc.mx_data_out.ready)
+        acc.mx_data_out.valid := rq.mx_data_out.valid && !out_sr
+      } .elsewhen (u.io.active) {
         rq.mx_data_in.valid := u.io.rq_in.valid
         rq.mx_data_in.bits := DontCare
         rq.mx_data_in.bits.full_mx_data_in := u.io.rq_in.bits.asTypeOf(rq.mx_data_in.bits.full_mx_data_in)
@@ -1302,8 +1335,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         rq.mx_data_out.ready := u.io.rq_out.ready
         acc.mx_data_out.valid := false.B
       }
-      u.io.rq_in.ready := u.io.active && rq.mx_data_in.ready
-      u.io.rq_out.valid := u.io.active && rq.mx_data_out.valid
+      mx_requantizer.get.io.sr_tag_in := Mux(share, pick_sr, u.io.active)
+      u.io.rq_in.ready := u.io.active && rq.mx_data_in.ready && (!share || pick_sr)
+      u.io.rq_out.valid := u.io.active && rq.mx_data_out.valid && (!share || out_sr)
       u.io.rq_out.bits := rq.mx_data_out.bits.quant_mx_data_out.asUInt
       spad.module.io.sr_write.get <> u.io.wr
       mx_requantizer.get.io.linear_scales := u.io.active
@@ -1436,12 +1470,19 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val rq_quiet = mx_requantizer.map { r =>
     val lat = outer.config.requantizer.get.pipelineLatency + 4
     val quiet = RegInit(0.U(log2Ceil(lat + 1).W))
-    when (r.io.mxacc_req.mx_data_in.fire) { quiet := 0.U } .elsewhen (quiet =/= lat.U) { quiet := quiet + 1.U }
-    quiet === lat.U && !r.io.mxacc_req.mx_data_out.valid
+    // BF16 beats share the requantizer with SPAD_REQUANT (they skip quantization and the scale coalescer): only
+    // quantized beats must have drained, and a waiting output is fine while the accumulator side is in BF16 mode
+    val q_in = r.io.mxacc_req.mx_data_in.fire && r.io.mxacc_req.mx_mode =/= MxFloatFormat.BF16
+    val acc_bf16 = spad.module.io.mx_req_io.mx_mode === MxFloatFormat.BF16 && !ex_controller.io.mx.get.lut_en_out
+    when (q_in) { quiet := 0.U } .elsewhen (quiet =/= lat.U) { quiet := quiet + 1.U }
+    quiet === lat.U && (!r.io.mxacc_req.mx_data_out.valid || acc_bf16)
   }.getOrElse(true.B)
   val sr_free = !mx_requantizer.map(_.io.scale_flush_busy).getOrElse(false.B) && sfout_outstanding === 0.U && rq_quiet
   val sr_ready = sr.map(_.io.cmd.ready && sr_free).getOrElse(false.B)
-  reservation_station.io.vec_unit_ready := VecInit(vpu_ready, sr_ready)
+  // one command in flight per vector unit (the VPU and SPAD_REQUANT run side by side)
+  val vpu_run = RegInit(false.B)
+  val sr_run = RegInit(false.B)
+  reservation_station.io.vec_unit_ready := VecInit(vpu_ready && !vpu_run, sr_ready && !sr_run)
   reservation_station.io.vec_pending_banks := spad.module.io.vpu_pending_banks
   spad.module.io.vpu_cmd.foreach { c =>
     c.valid := vec_issue.valid && !vec_is_sr
@@ -1451,16 +1492,21 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     u.io.cmd.valid := vec_issue.valid && vec_is_sr && sr_free
     u.io.cmd.bits := SpadRequantCmd.decode(vec_issue.cmd.cmd.rs1, vec_issue.cmd.cmd.rs2, u.io.cmd.bits.addrW)
   }
-  vec_issue.ready := Mux(vec_is_sr, sr_ready, vpu_ready)
-  val vec_run = RegInit(false.B)
-  val vec_run_sr = Reg(Bool())
-  val vec_rob = Reg(UInt(ROB_ID_WIDTH.W))
-  when (vec_issue.fire) { vec_run := true.B; vec_run_sr := vec_is_sr; vec_rob := vec_issue.rob_id }
-  val vec_unit_busy = Mux(vec_run_sr, sr.map(_.io.busy).getOrElse(false.B), spad.module.io.vpu_busy)
-  vec_completed.valid := vec_run && !vec_unit_busy
-  vec_completed.bits := vec_rob
-  when (vec_completed.fire) { vec_run := false.B }
-  assert(!(vec_issue.fire && vec_run), "vector queue issued while an op is still running")
+  vec_issue.ready := Mux(vec_is_sr, sr_ready && !sr_run, vpu_ready && !vpu_run)
+  val vpu_rob = Reg(UInt(ROB_ID_WIDTH.W))
+  val sr_rob = Reg(UInt(ROB_ID_WIDTH.W))
+  when (vec_issue.fire && !vec_is_sr) { vpu_run := true.B; vpu_rob := vec_issue.rob_id }
+  when (vec_issue.fire && vec_is_sr) { sr_run := true.B; sr_rob := vec_issue.rob_id }
+  val vpu_done = vpu_run && !spad.module.io.vpu_busy
+  val sr_done = sr_run && !sr.map(_.io.busy).getOrElse(false.B)
+  // one completion port: the VPU first; a finished SPAD_REQUANT waits a cycle
+  vec_completed.valid := vpu_done || sr_done
+  vec_completed.bits := Mux(vpu_done, vpu_rob, sr_rob)
+  when (vec_completed.fire && vpu_done) { vpu_run := false.B }
+  when (vec_completed.fire && !vpu_done) { sr_run := false.B }
+  val vec_run = vpu_run || sr_run
+  assert(!(vec_issue.fire && !vec_is_sr && vpu_run), "VPU command issued while one is still running")
+  assert(!(vec_issue.fire && vec_is_sr && sr_run), "SPAD_REQUANT issued while one is still running")
 
   // Wire up global RoCC signals
   io.busy := raw_cmd.valid || loop_conv_unroller_busy || loop_matmul_unroller_busy || reservation_station.io.busy || spad.module.io.busy || unrolled_cmd.valid || loop_cmd.valid || conv_cmd.valid || scale_loader_busy || lut_loader_busy ||

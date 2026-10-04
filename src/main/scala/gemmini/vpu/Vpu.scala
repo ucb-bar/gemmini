@@ -11,7 +11,11 @@ object VpuOp {
   val ADDS = 3; val MULS = 4                    // src1 (op) imm
   val EXP = 5;  val RCP = 6;  val RSQRT = 7     // unary
   val RMAX = 8; val RSUM = 9; val RAMAX = 10    // row reductions over rlen rows
+  val MAX = 11                                  // src1 max src2 (elementwise)
+  val EXPSUB = 12                               // exp(src1 - src2): softmax's subtract and exp in one pass
   val width = 4
+  def isReduction(op: UInt): Bool = op === RMAX.U || op === RSUM.U || op === RAMAX.U
+  def usesSrc2(op: UInt): Bool = op <= MUL.U || op === MAX.U || op === EXPSUB.U
 }
 
 class VpuCmd(val addrW: Int) extends Bundle {
@@ -66,8 +70,8 @@ class Vpu(addrW: Int = 14, bankRowBits: Int = 12, lanes: Int = 8) extends Module
   val j      = Reg(UInt(10.W))   // row within the logical row
   val phase  = RegInit(false.B)  // bank conflict: src2 read this cycle, src1 next
 
-  val isRed   = c.op >= RMAX.U
-  val useSrc2 = c.op <= MUL.U
+  val isRed   = isReduction(c.op)
+  val useSrc2 = usesSrc2(c.op)
   val needB   = useSrc2 && (!c.bcast || j === 0.U)
   val a_addr  = c.src1 + i
   val b_addr  = c.src2 + Mux(c.bcast, g, i)
@@ -127,12 +131,14 @@ class Vpu(addrW: Int = 14, bankRowBits: Int = 12, lanes: Int = 8) extends Module
   val bIn = Mux(op === ADDS.U || op === MULS.U, immVec, s1_b)
   val midA = VecInit((0 until lanes).map { l =>
     val a = s1_a(l); val b = bIn(l)
-    val sum = VpuMath.add(a, b, op === SUB.U)
+    val sum = VpuMath.add(a, b, op === SUB.U || op === EXPSUB.U)
     val prd = VpuMath.mul(a, b)
     MuxLookup(op, a.pad(VpuMath.expMidW))(Seq(
       ADD.U -> sum.pad(VpuMath.expMidW), SUB.U -> sum.pad(VpuMath.expMidW), ADDS.U -> sum.pad(VpuMath.expMidW),
       MUL.U -> prd.pad(VpuMath.expMidW), MULS.U -> prd.pad(VpuMath.expMidW),
+      MAX.U -> VpuMath.max(a, b).pad(VpuMath.expMidW),
       EXP.U -> VpuMath.expStageA(a),
+      EXPSUB.U -> VpuMath.expStageA(sum),   // BF16-rounded difference: bit-identical to SUB then EXP
       RSQRT.U -> VpuMath.sqrt(a).pad(VpuMath.expMidW)))
   })
   // row reduction across the lanes of one scratchpad row
@@ -152,6 +158,7 @@ class Vpu(addrW: Int = 14, bankRowBits: Int = 12, lanes: Int = 8) extends Module
     val m = s2_mid(l)
     MuxLookup(op, m(15, 0))(Seq(
       EXP.U -> VpuMath.expStageB(m),
+      EXPSUB.U -> VpuMath.expStageB(m),
       RCP.U -> VpuMath.rcp(m(15, 0)),
       RSQRT.U -> VpuMath.rcp(m(15, 0))))
   })

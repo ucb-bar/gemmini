@@ -45,6 +45,7 @@ class MxRequantizerAccResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDa
   val mx_mode = UInt(2.W)
   val is_gpu = Bool()
   val gpu_addr = UInt(32.W)
+  val from_sr = Bool()   // owner tag: a SPAD_REQUANT beat (vs an accumulator beat), returned with the output
 }
 
 class MxRequantizerIO[T <: Data: Arithmetic](
@@ -100,6 +101,12 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val linear_base = Input(UInt(scaleMem_addr_width.W))   // overrides scale_mem_mvout_base_addr_act / scale_resident
   val linear_resident = Input(Bool())
   val scale_flush_busy = Output(Bool())
+  // Shared use (SPAD_REQUANT beats interleaved with BF16 accumulator beats): each beat's own mx_mode decides
+  // quantize vs pass-through; quant_mode, when valid, sets the quantizer's format instead of mxacc_req.mx_mode.
+  // Interleaving is only valid with an 8-bit direct-coded quant format (no two-beat FP4/LUT output packing).
+  val quant_mode = Input(Valid(UInt(2.W)))
+  val sr_tag_in = Input(Bool())    // tags the beat entering on mxacc_req.mx_data_in
+  val sr_tag_out = Output(Bool())  // tag of the beat on mxacc_req.mx_data_out
 }
    
 class MxRequantizer[T <: Data](
@@ -161,7 +168,7 @@ class MxRequantizer[T <: Data](
   val scale_buffer = RegInit(VecInit(Seq.fill(scaleSize)(0.U(8.W))))
   val quant_dataType = io.mxacc_req.mx_mode  //output data fromat
   val format_reg = RegInit(0.U(2.W))
-  format_reg := quant_dataType.asUInt(1, 0)
+  format_reg := Mux(io.quant_mode.valid, io.quant_mode.bits, quant_dataType.asUInt)(1, 0)
   val altfmt_reg = RegInit(false.B)          // code1 output sub-format: 1 = E5M2, 0 = FP6 (aligned w/ format_reg)
   altfmt_reg := io.mxacc_req.mx_fp8_altfmt
   // lut_en is quasi-static; latch it alongside format_reg/altfmt_reg.
@@ -266,6 +273,7 @@ class MxRequantizer[T <: Data](
     pipe_in.bits.out.acc_bank_id := io.mxacc_req.mx_data_in.bits.acc_bank_id
     pipe_in.bits.is_gpu := false.B
     pipe_in.bits.gpu_addr := 0.U
+    pipe_in.bits.from_sr := io.sr_tag_in
 
   }.elsewhen(io.requant_data_in_gpu.fire && data_buffer_counter === 1.U) {
     pipe_in.valid := true.B
@@ -275,6 +283,7 @@ class MxRequantizer[T <: Data](
     pipe_in.bits.out.fromDMA := false.B
     pipe_in.bits.is_gpu := true.B
     pipe_in.bits.gpu_addr := gpu_addr
+    pipe_in.bits.from_sr := false.B
   }
 
 
@@ -356,7 +365,9 @@ class MxRequantizer[T <: Data](
 
   val can_enqueue = pipe_in.ready
   val can_enqueue_wire = WireDefault(can_enqueue)
-  val full_precision_valid = RegNext(can_enqueue && pipelined_out_0.valid && (datapath_pack_mode === 16.U))
+  // per beat: a BF16 beat passes through unquantized (same as datapath_pack_mode === 16 while the mode is static)
+  val beat_full = pipelined_out_0.bits.mx_mode === MxFloatFormat.BF16
+  val full_precision_valid = RegNext(can_enqueue && pipelined_out_0.valid && beat_full)
 
   dontTouch(can_enqueue_wire)
     // Only allow input handshake when queue has space
@@ -370,6 +381,7 @@ class MxRequantizer[T <: Data](
   io.mxacc_req.mx_data_out.bits.fromDMA := final_pipe_out.bits.out.fromDMA
   io.mxacc_req.mx_data_out.bits.acc_bank_id := final_pipe_out.bits.out.acc_bank_id
   io.mxacc_req.mx_data_out.bits.chunk_id := final_pipe_out.bits.out.chunk_id
+  io.sr_tag_out := final_pipe_out.bits.from_sr
 
 
   final_pipe_out.ready := Mux(final_pipe_out.bits.is_gpu,
@@ -413,7 +425,7 @@ class MxRequantizer[T <: Data](
 
   should_compute := false.B
   when (can_enqueue) {
-    when(pipelined_out_0.valid && (datapath_pack_mode =/= 16.U)) {
+    when(pipelined_out_0.valid && !beat_full) {
       should_compute := true.B
     }
   }

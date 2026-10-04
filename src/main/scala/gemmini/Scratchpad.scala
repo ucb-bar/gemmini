@@ -929,10 +929,23 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val dec = requant_q.io.deq.fire && requant_q.io.deq.bits.bank === i.U
         c := c + inc.asUInt - dec.asUInt
       }
-      // + every bank while a store's data is still between its acc read and its spad write: an acc-source store
-      // retires at its acc read (io.dma.write.resp), before the rows land (write_issue_q holds it until consumed)
-      val store_rows_in_flight = write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_issue_q.io.deq.valid
-      io.vpu_pending_banks := VecInit(requant_pending.map(_ =/= 0.U)).asUInt | Fill(sp_banks, store_rows_in_flight)
+      // + the destination bank of every scratchpad store whose data is still between its acc read and its spad
+      // write: an acc-source store retires at its acc read (io.dma.write.resp), before the rows land. Counted from
+      // entering write_norm_q to leaving write_issue_q (a requant/BF16 store leaves only after its last bank beat).
+      // A DRAM store (dest 0) never lands in the scratchpad.
+      def store_bank_oh(r: ScratchpadMemWriteRequest): UInt = {
+        val la = WireInit(0.U.asTypeOf(local_addr_t))
+        la.data := r.vaddr
+        UIntToOH(la.sp_bank(), sp_banks)
+      }
+      val st_in = Mux(write_norm_q.io.enq.fire && write_norm_q.io.enq.bits.dest.asBool,
+        store_bank_oh(write_norm_q.io.enq.bits), 0.U(sp_banks.W))
+      val st_out = Mux(write_issue_q.io.deq.fire && write_issue_q.io.deq.bits.dest.asBool,
+        store_bank_oh(write_issue_q.io.deq.bits), 0.U(sp_banks.W))
+      val store_pending = RegInit(VecInit(Seq.fill(sp_banks)(0.U(6.W))))
+      store_pending.zipWithIndex.foreach { case (c, i) => c := c + st_in(i).asUInt - st_out(i).asUInt }
+      val store_banks_in_flight = VecInit(store_pending.map(_ =/= 0.U)).asUInt
+      io.vpu_pending_banks := VecInit(requant_pending.map(_ =/= 0.U)).asUInt | store_banks_in_flight
       val drain_beat = nbeats.U - requant_drain
       sbw0_valid := requant_drain =/= 0.U
       sbw0_bank  := requant_q.io.deq.bits.bank

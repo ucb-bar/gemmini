@@ -517,6 +517,7 @@ object GemminiMxFPConfigs {
     has_normalizations = false,
     has_vpu = true,
     has_spad_requant = true,
+    reservation_station_entries_ld = 32,   // a K/V block's mvins enter at once instead of blocking the command stream
   )
   val e5m2OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
