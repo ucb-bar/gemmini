@@ -237,21 +237,28 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     val ext_mem = io.ext_mem.get
 
     /* READ */
-    ext_mem.read_req.valid := q_will_be_empty && io.read.req.valid
-    ext_mem.read_req.bits := io.read.req.bits.addr
-    io.read.req.ready := q_will_be_empty && ext_mem.read_req.ready
-
     // TODO (richard): the number of entries here should be configurable
     // Carry fromDMA + the read_a/read_d tag through the same latency-tracking queue as the
     // variable-latency shared-mem read, so the operand-kind tag returns aligned with its data.
     class ReadMeta extends Bundle { val fromDMA = Bool(); val read_a = Bool(); val read_d = Bool() }
     val dma_q = Module(new Queue(new ReadMeta, 4, false, true))
+
+    // RADIANCE FIX: `q_will_be_empty` only bounds the response queue; reads whose responses are still
+    // travelling through the shared memory are bounded by nothing, and once the SMEM read path stopped
+    // deasserting a.ready while a response was pending (sharedmem backup-register fixes) more than
+    // four reads could be outstanding, overflowing dma_q -- measured in RTL sim as
+    // "DMA queue does not have enough entries" (in silicon the fromDMA tag of a response would be
+    // lost and the response misrouted).  Back-pressure the request on dma_q having room.  0 FF.
+    ext_mem.read_req.valid := q_will_be_empty && io.read.req.valid && dma_q.io.enq.ready
+    ext_mem.read_req.bits := io.read.req.bits.addr
+    io.read.req.ready := q_will_be_empty && ext_mem.read_req.ready && dma_q.io.enq.ready
+
     dma_q.io.enq.valid := ren
     dma_q.io.enq.bits.fromDMA := fromDMA
     dma_q.io.enq.bits.read_a := read_a_tag
     dma_q.io.enq.bits.read_d := read_d_tag
     dma_q.io.deq.ready := q.io.enq.fire
-    assert(dma_q.io.enq.fire === ren, "DMA queue does not have enough entries") // TODO (richard): do backpressure
+    assert(dma_q.io.enq.fire === ren, "DMA queue does not have enough entries")
     assert(dma_q.io.deq.fire === q.io.enq.fire, "fromDMA should be dequeued only when read resp comes back")
 
     q.io.enq.valid := ext_mem.read_resp.valid
