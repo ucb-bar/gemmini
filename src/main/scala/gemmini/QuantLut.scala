@@ -64,7 +64,14 @@ class QuantLut(
   // All caches as Vec of Regs to support dynamic hardware indexing
   val lutCache_act_in  = RegInit(VecInit(Seq.fill(2*lutConfig(0)._1)(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))))
   val lutCache_weight  = RegInit(VecInit(Seq.fill(2*lutConfig(1)._1)(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))))
-  val lutCache_act_out = RegInit(VecInit(Seq.fill(2*lutConfig(2)._1)(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))))
+  // act_out: the projection codebooks are not stored as raw codes but as the derived nearest-finder tables
+  // (sorted-order permutation + per-format decision thresholds), computed once per table at load time by the
+  // NearestFinderTableEngine and shared by every output lane. Only the finder formats the operands need are
+  // elaborated (lutConfig.resolvedFinderFormats).
+  val finderFormats = lutConfig.resolvedFinderFormats
+  val finderEngine  = Module(new NearestFinderTableEngine(finderFormats, rdataWidth, log2Ceil(lutConfig(2)._1)))
+  val finderTable_t = new NearestFinderTable(finderEngine.nSlots, finderEngine.thrW)
+  val lutCache_act_out = RegInit(VecInit(Seq.fill(2*lutConfig(2)._1)(0.U.asTypeOf(finderTable_t))))
   val counter_i = RegInit(0.U(6.W))
   val counter_j = RegInit(0.U(6.W))
   val out_counter_i = RegInit(0.U(6.W))
@@ -88,80 +95,46 @@ class QuantLut(
   }
   io.lut_write_weight.ready := true.B
 
-  // act_out write
-  when(io.lut_write_act_out.fire) {
-    for (lane <- 0 until lutConfig(2)._1) {
-      for (entry <- 0 until 16) {
-        lutCache_act_out(lane)(entry) := io.lut_write_act_out.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
-      }
-    }
+  // act_out write: the write bundle carries all tables at once; feed them one per cycle through the finder
+  // engine (bits stay stable until the handshake, which happens on the last table) and store the derived
+  // tables as they come out `latency` cycles later.
+  val act_out_tables = lutConfig(2)._1
+  val act_out_wr_idx = RegInit(0.U(log2Ceil(act_out_tables).W))
+  val act_out_last   = act_out_wr_idx === (act_out_tables - 1).U
+  io.lut_write_act_out.ready := act_out_last
+  finderEngine.io.in.valid      := io.lut_write_act_out.valid
+  finderEngine.io.in.bits.codes := io.lut_write_act_out.bits.data(act_out_wr_idx).asTypeOf(Vec(16, UInt(rdataWidth.W)))
+  finderEngine.io.in.bits.is6   := io.lut_write_act_out.bits.entry_bits === 6.U
+  finderEngine.io.in.bits.tag   := act_out_wr_idx
+  when(io.lut_write_act_out.valid) {
+    act_out_wr_idx := Mux(act_out_last, 0.U, act_out_wr_idx + 1.U)
   }
-  io.lut_write_act_out.ready := true.B
+  when(finderEngine.io.out.valid) {
+    lutCache_act_out(finderEngine.io.out.bits.tag) := finderEngine.io.out.bits.table
+  }
 
   val projectedIndices = WireDefault(VecInit(Seq.fill(outputnumLanes)(0.U(raddrWidth.W))))
   val projectedDataValid = WireDefault(false.B)
   val counter_act_out = RegInit(0.U(log2Ceil(256).W))
-  val used_lut_act_out = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
-  dontTouch(used_lut_act_out)
-  val minIdx = WireDefault(0.U(raddrWidth.W))
-  // Projection nearest-finders (act_out): pick the decoder by LUT format via uniform driver wires.
+  // Projection nearest-finders (act_out): one shared derived table (sorted permutation + thresholds) per
+  // codebook, a key compare + popcount + permutation lookup per lane. The threshold set within a code-width
+  // class is selected by mx_fp8_altfmt (0 = E4M3 / E3M2, 1 = E5M2 / E2M3); the class (8- or 6-bit codes) is
+  // the one the codebook was loaded with.
   val proj_in      = WireDefault(VecInit(Seq.fill(outputnumLanes)(0.U(rdataWidth.W))))
-  val proj_lut     = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
+  val proj_table   = WireDefault(0.U.asTypeOf(finderTable_t))
   val proj_nearest = Wire(Vec(outputnumLanes, UInt(raddrWidth.W)))
-
-  lutConfig.projFormat match {
-    case LutFP8E5M2 =>
-      // E5M2-capable build: both finders, selected at runtime by altfmt (FP6 finder reads the low 6 bits).
-      val fp8Finders = Seq.fill(outputnumLanes)(Module(new FP8NearestFinder(altfmt = true)))
-      val fp6Finders = Seq.fill(outputnumLanes)(Module(new FP6E3M2NearestFinder()))
-      val proj_lut6  = VecInit(proj_lut.map(_(5, 0)))
-      for (i <- 0 until outputnumLanes) {
-        fp8Finders(i).io.in     := proj_in(i)
-        fp8Finders(i).io.in_lut := proj_lut
-        fp6Finders(i).io.in_fp6 := proj_in(i)(5, 0)
-        fp6Finders(i).io.in_lut := proj_lut6
-        proj_nearest(i) := Mux(io.mx_fp8_altfmt, fp8Finders(i).io.nearestIdx, fp6Finders(i).io.nearestIdx)
-      }
-    case LutFP8E4M3 =>
-      // All-formats build: pick the finder family by output code (fp8/fp6), then the sub-format by
-      // mx_fp8_altfmt. fp8 finders take the full 8-bit codebook; fp6 finders the low 6 bits.
-      val fp8e4Finders = Seq.fill(outputnumLanes)(Module(new FP8NearestFinder(false)))  // E4M3 (exp4)
-      val fp8e5Finders = Seq.fill(outputnumLanes)(Module(new FP8NearestFinder(true)))   // E5M2 (exp5)
-      val fp6e3Finders = Seq.fill(outputnumLanes)(Module(new FP6E3M2NearestFinder()))
-      val fp6e2Finders = Seq.fill(outputnumLanes)(Module(new FP6E2M3NearestFinder()))
-      val proj_lut6    = VecInit(proj_lut.map(_(5, 0)))
-      for (i <- 0 until outputnumLanes) {
-        fp8e4Finders(i).io.in     := proj_in(i)
-        fp8e4Finders(i).io.in_lut := proj_lut
-        fp8e5Finders(i).io.in     := proj_in(i)
-        fp8e5Finders(i).io.in_lut := proj_lut
-        fp6e3Finders(i).io.in_fp6 := proj_in(i)(5, 0)
-        fp6e3Finders(i).io.in_lut := proj_lut6
-        fp6e2Finders(i).io.in_fp6 := proj_in(i)(5, 0)
-        fp6e2Finders(i).io.in_lut := proj_lut6
-        val fp6Idx = Mux(io.mx_fp8_altfmt, fp6e2Finders(i).io.nearestIdx, fp6e3Finders(i).io.nearestIdx)
-        val fp8Idx = Mux(io.mx_fp8_altfmt, fp8e5Finders(i).io.nearestIdx, fp8e4Finders(i).io.nearestIdx)
-        proj_nearest(i) := Mux(io.output_mx_format === 1.U, fp6Idx, fp8Idx)
-      }
-    case LutFP6E2M3 => // single-format E2M3 build: 6-bit codes, only the E2M3 finder
-      val finders = Seq.fill(outputnumLanes)(Module(new FP6E2M3NearestFinder()))
-      for (i <- 0 until outputnumLanes) {
-        finders(i).io.in_fp6 := proj_in(i)
-        finders(i).io.in_lut := proj_lut
-        proj_nearest(i)      := finders(i).io.nearestIdx
-      }
-    case _ => // LutFP6E3M2 (default)
-      val finders = Seq.fill(outputnumLanes)(Module(new FP6E3M2NearestFinder()))
-      for (i <- 0 until outputnumLanes) {
-        finders(i).io.in_fp6 := proj_in(i)
-        finders(i).io.in_lut := proj_lut
-        proj_nearest(i)      := finders(i).io.nearestIdx
-      }
+  val proj_slot    = if (finderEngine.nSlots == 1) 0.U else io.mx_fp8_altfmt.asUInt
+  val proj_thr     = proj_table.thr(proj_slot)
+  val finderWidths = finderFormats.map(NfFormat.width).distinct
+  for (i <- 0 until outputnumLanes) {
+    val keys = finderWidths.map(w => NearestFinder.key(proj_in(i)(w - 1, 0), w).pad(finderEngine.thrW))
+    val k = if (finderWidths.length == 1) keys.head
+            else Mux(proj_table.is6, keys(finderWidths.indexOf(6)), keys(finderWidths.indexOf(8)))
+    proj_nearest(i) := NearestFinder.lane(k, proj_thr, proj_table.perm)
   }
 
   when(io.quant_fp6.valid) {
-    used_lut_act_out := lutCache_act_out(counter_act_out >> io.quant_lut_update_granularity)
-    proj_lut := used_lut_act_out
+    proj_table := lutCache_act_out(counter_act_out >> io.quant_lut_update_granularity)
     for (i <- 0 until outputnumLanes) {
       proj_in(i) := io.quant_fp6.bits(i)
       projectedIndices(i) := proj_nearest(i)

@@ -57,10 +57,39 @@ case class GemminiLUTConfig(
   // deproject packs each operand at its own width. Storage stays rdataWidth-wide.
   actCodeWidth: Int = 0,
   weiCodeWidth: Int = 0,
+  // Nearest-finder formats the act_out projection must support at runtime. None -> the historical set implied
+  // by projFormat (LutFP8E4M3 = every format, LutFP8E5M2 = E5M2 + E3M2, FP6 formats = themselves). Set it
+  // (or let the Controller derive it from the operand MxConfig via restrictedTo) so a single-format build,
+  // e.g. E4M3-only, elaborates only its own finder.
+  finderFormats: Option[Seq[LutProjFormat]] = None,
 ) {
   def actCodeW = if (actCodeWidth > 0) actCodeWidth else rdataWidth
   def weiCodeW = if (weiCodeWidth > 0) weiCodeWidth else rdataWidth
   def isFp8Proj = projFormat == LutFP8E4M3 || projFormat == LutFP8E5M2
+
+  def legacyFinderFormats: Seq[LutProjFormat] = projFormat match {
+    case LutFP8E4M3 => Seq(LutFP8E4M3, LutFP8E5M2, LutFP6E3M2, LutFP6E2M3)
+    case LutFP8E5M2 => Seq(LutFP8E5M2, LutFP6E3M2)
+    case LutFP6E2M3 => Seq(LutFP6E2M3)
+    case LutFP6E3M2 => Seq(LutFP6E3M2)
+  }
+  def resolvedFinderFormats: Seq[LutProjFormat] = finderFormats.getOrElse(legacyFinderFormats)
+
+  /** Keep only the finders whose format the activation operand can take (FP4 and custom formats never project
+    * through the LUT). Falls back to the current set when nothing matches, so odd configs still elaborate. */
+  def restrictedTo(actFormats: Set[mxgen.MxFormat]): GemminiLUTConfig = {
+    val wanted = actFormats.toSeq.collect {
+      case mxgen.MxFormat.FP8_E4M3 => LutFP8E4M3
+      case mxgen.MxFormat.FP8_E5M2 => LutFP8E5M2
+      case mxgen.MxFormat.FP6_E3M2 => LutFP6E3M2
+      case mxgen.MxFormat.FP6_E2M3 => LutFP6E2M3
+    }
+    val kept = resolvedFinderFormats.filter(wanted.contains)
+    copy(finderFormats = Some(if (kept.nonEmpty) kept else resolvedFinderFormats))
+  }
+
+  require(resolvedFinderFormats.forall(f => !(f == LutFP8E4M3 || f == LutFP8E5M2) || rdataWidth == 8),
+    s"8-bit finder formats in $resolvedFinderFormats need rdataWidth == 8 (projFormat $projFormat)")
 
   require(!isFp8Proj || rdataWidth == 8,
     "FP8 LUT projection requires rdataWidth == 8")
@@ -129,6 +158,7 @@ class RequantizerOutBundle(numLanes: Int, dataWidth: Int = 8) extends Bundle {
 
 class QuantLutWriteBundle(numEntries: Int, numBits: Int) extends Bundle {
   val data = Vec(numEntries, UInt(numBits.W))
+  val entry_bits = UInt(6.W)   // width of the codebook entries as loaded (6 = FP6 class, 8 = FP8 class)
   def this(config: (Int, Int)) = {
     this(config._1, config._2)
   }
