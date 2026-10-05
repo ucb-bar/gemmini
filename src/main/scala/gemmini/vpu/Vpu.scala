@@ -38,6 +38,14 @@ object VpuCmd {
     c.op := rs2(3, 0); c.bcast := rs2(4); c.rlen := rs2(14, 5); c.imm := rs2(31, 16)
     c
   }
+  // exact row footprints (for ordering): a reduction writes rows/rlen rows; a broadcast src2 is read ceil(rows/rlen)
+  // rows; everything else spans rows (rlen 0 is the counter's 1024)
+  private def groups(c: VpuCmd, roundUp: Boolean): UInt = {
+    val rl = Mux(c.rlen === 0.U, 1024.U, c.rlen)
+    (if (roundUp) c.rows +& rl - 1.U else c.rows +& 0.U) / rl
+  }
+  def dstRows(c: VpuCmd): UInt = Mux(VpuOp.isReduction(c.op), groups(c, false), c.rows)
+  def src2Rows(c: VpuCmd): UInt = Mux(c.bcast, groups(c, true), c.rows)
 }
 
 // Fixed-latency scratchpad port: read data is valid exactly one cycle after rd(i).valid, never stalled;
@@ -60,6 +68,7 @@ class Vpu(addrW: Int = 14, bankRowBits: Int = 12, lanes: Int = 8) extends Module
     val cmd  = Flipped(Decoupled(new VpuCmd(addrW)))
     val spad = new VpuSpadIO(addrW, rowW)
     val busy = Output(Bool())
+    val stall = Input(Bool())   // hold issue (no new reads) while the write path downstream is backed up
   })
 
   // ---------------- issue FSM ----------------
@@ -76,8 +85,8 @@ class Vpu(addrW: Int = 14, bankRowBits: Int = 12, lanes: Int = 8) extends Module
   val a_addr  = c.src1 + i
   val b_addr  = c.src2 + Mux(c.bcast, g, i)
   val conflict = needB && (a_addr >> bankRowBits) === (b_addr >> bankRowBits)
-  val issueA  = active && (!conflict || phase)
-  val issueB  = active && needB && (!conflict || !phase)
+  val issueA  = active && !io.stall && (!conflict || phase)
+  val issueB  = active && !io.stall && needB && (!conflict || !phase)
   val lastJ   = j === c.rlen - 1.U
 
   io.spad.rd(0).valid := issueA; io.spad.rd(0).bits := a_addr
@@ -99,7 +108,7 @@ class Vpu(addrW: Int = 14, bankRowBits: Int = 12, lanes: Int = 8) extends Module
     active := io.cmd.bits.rows =/= 0.U
     c := io.cmd.bits
     i := 0.U; g := 0.U; j := 0.U; phase := false.B
-  } .elsewhen (active) {
+  } .elsewhen (active && !io.stall) {
     when (conflict && !phase) {
       phase := true.B
     } .otherwise {

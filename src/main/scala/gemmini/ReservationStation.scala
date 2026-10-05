@@ -58,6 +58,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val vec_unit_ready = Input(Vec(2, Bool()))
     val vec_pending_banks = Input(UInt(sp_banks.W))
     val vec_free = Output(UInt(5.W))   // free vector-queue entries
+    val ld_free = Output(UInt(log2Up(reservation_station_entries_ld + 1).W))   // free load-queue entries
 
     val counter = new CounterEventIO()
   })
@@ -81,9 +82,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val end = local_addr_t.cloneType
     val wraps_around = Bool()
 
-    // conservative spad bank mask of [start, end]
+    // conservative spad bank mask of [start, end)
     def sp_banks_mask(dummy: Int = 0): UInt = {
-      val lo = start.sp_bank(); val hi = end.sp_bank()
+      val last = WireInit(end); last.data := Mux(end.data === start.data, end.data, end.data - 1.U)   // end is exclusive
+      val lo = start.sp_bank(); val hi = last.sp_bank()
       val all = wraps_around || hi < lo || end.is_acc_addr
       Mux(start.is_acc_addr || start.is_garbage(), 0.U,
         VecInit((0 until sp_banks).map(b => all || (b.U >= lo && b.U <= hi))).asUInt)
@@ -129,6 +131,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val deps_st = Vec(reservation_station_entries_st, Bool())
     val deps_vec = Vec(n_vec, Bool())
     val opc = UDValid(new OpT)   // vector entries only: src2
+    val reads_act0 = Bool()      // ex entries: issued under a scale config that may read act half 0
 
     def ready(dummy: Int = 0): Bool = !(deps_ld.reduce(_ || _) || deps_ex.reduce(_ || _) || deps_st.reduce(_ || _) ||
       deps_vec.reduce(_ || _))
@@ -162,6 +165,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val solitary_preload = RegInit(false.B) // This checks whether or not the reservation station received a "preload" instruction, but hasn't yet received the following "compute" instruction
   io.busy := !empty && !(utilization === 1.U && solitary_preload)
   io.vec_free := PopCount(entries_vec.map(!_.valid))
+  io.ld_free := PopCount(entries_ld.map(!_.valid))
   
   // Tell the conv and matmul FSMs if any of their issued instructions completed
   val conv_ld_issue_completed = WireInit(false.B)
@@ -367,7 +371,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       o.valid := true.B
       o.bits.start := la
       o.bits.end := la + n
-      o.bits.wraps_around := (start +& n) >= local_addr_t.spRows.U
+      o.bits.wraps_around := (start +& n) > local_addr_t.spRows.U
       o
     }
     new_entry.opc.valid := false.B
@@ -375,9 +379,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     when (is_vpu) {
       val vc = gemmini.vpu.VpuCmd.decode(cmd.rs1, cmd.rs2, 14)
       new_entry.opa_is_dst := true.B
-      new_entry.opa := spRange(vc.dst, vc.rows)
+      new_entry.opa := spRange(vc.dst, gemmini.vpu.VpuCmd.dstRows(vc))
       new_entry.opb := spRange(vc.src1, vc.rows)
-      new_entry.opc := spRange(vc.src2, vc.rows)
+      new_entry.opc := spRange(vc.src2, gemmini.vpu.VpuCmd.src2Rows(vc))
       new_entry.opc.valid := gemmini.vpu.VpuOp.usesSrc2(vc.op)
     }.elsewhen (is_sreq) {
       val sc = SpadRequantCmd.decode(cmd.rs1, cmd.rs2, 14)
@@ -456,20 +460,29 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     // SPAD_REQUANT files resident act scales into act half 0; a managed, non-resident config reading act half 1
     // touches neither, so it needn't wait for it
     val scale_cfg_after_sr = is_scale_cfg && !(cmd.rs2(17) && cmd.rs1(60) && !cmd.rs1(63))
+    // computes read the act scales of the last config ahead of them; a resident SPAD_REQUANT rewrites act half 0, so it
+    // waits for older ex entries issued under a config that may read act half 0 (WAR on the scales)
+    val cfg_reads_act0 = RegInit(true.B)
+    when (io.alloc.fire && is_scale_cfg) { cfg_reads_act0 := scale_cfg_after_sr }
+    new_entry.reads_act0 := Mux(is_scale_cfg, scale_cfg_after_sr, cfg_reads_act0)
+    val sr_resident = is_sreq && cmd.rs1(29)
     when (is_vec) {
       // after older ld/ex/st that write rows it touches or read rows it writes; SPAD_REQUANT also after every older
       // store (shared requantizer + scale coalescer; their act-scale reads finish before they complete)
       new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && !e.bits.is_config && conflicts(new_entry, e.bits) })
-      new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && conflicts(new_entry, e.bits) })
+      new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && (conflicts(new_entry, e.bits) ||
+        (sr_resident && e.bits.reads_act0)) })
       new_entry.deps_st := VecInit(entries_st.map { e => e.valid && ((is_sreq && !bf16_store(e.bits.cmd.cmd)) ||
         conflicts(new_entry, e.bits)) })
-      // vector entries run in order per unit (VPU, SPAD_REQUANT); across the two units they are ordered by row
-      // conflicts and by shared spad banks (the VPU's fixed-latency read port always wins its bank and would starve
-      // SPAD_REQUANT's reads there), so a VPU op and a SPAD_REQUANT run at the same time only in different banks
-      def banks(x: Entry): UInt = Seq(x.opa, x.opb, x.opc).map(o => Mux(o.valid, o.bits.sp_banks_mask(), 0.U)).reduce(_ | _)
+      // vector entries: SPAD_REQUANT (one unit) runs in order; VPU commands run side by side on the VPUs and next to
+      // SPAD_REQUANT. Across units they are ordered by row conflicts and by shared READ banks: each bank has one VPU
+      // read port, fixed-latency and always winning, so two readers of a bank would starve each other. Writes are a
+      // separate port (VPU writes are queued and arbitrated per bank), so sharing only a write bank is fine.
+      // opa is the destination of every vector entry; opb / opc are its sources.
+      def read_banks(x: Entry): UInt = Seq(x.opb, x.opc).map(o => Mux(o.valid, o.bits.sp_banks_mask(), 0.U)).reduce(_ | _)
       new_entry.deps_vec := VecInit(entries_vec.map { e => e.valid &&
-        ((e.bits.cmd.cmd.inst.funct === SPAD_REQUANT) === is_sreq || conflicts(new_entry, e.bits) ||
-          (banks(new_entry) & banks(e.bits)) =/= 0.U) })
+        ((is_sreq && e.bits.cmd.cmd.inst.funct === SPAD_REQUANT) || conflicts(new_entry, e.bits) ||
+          (read_banks(new_entry) & read_banks(e.bits)) =/= 0.U) })
     }.otherwise {
       // ld/ex/st after older vector entries they conflict with; stores (requantizer) and CONFIG_SCALE_MEM that may read
       // act half 0 (the next matmul's act-scale reads must see the resident scales) after an older SPAD_REQUANT

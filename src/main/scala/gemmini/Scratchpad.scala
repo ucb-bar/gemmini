@@ -429,8 +429,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val enable_MXQuant = Input(Bool()) //determines if mxrequantizer gets used
       val loop_bounds = Input(new MaxBounds())
       // VPU: command in, busy out, banks with store data not yet written (requant drain / store pipeline)
-      val vpu_cmd = Option.when(has_vpu)(Flipped(Decoupled(new gemmini.vpu.VpuCmd(log2Ceil(sp_banks * sp_bank_entries)))))
+      val vpu_cmd = Option.when(has_vpu)(Vec(vpu_units, Flipped(Decoupled(new gemmini.vpu.VpuCmd(log2Ceil(sp_banks * sp_bank_entries))))))
       val vpu_busy = Output(Bool())
+      val vpu_unit_busy = Output(Vec(vpu_units, Bool()))
       val vpu_pending_banks = Output(UInt(sp_banks.W))
       // SPAD_REQUANT code rows: lowest write priority, backpressured
       val sr_write = Option.when(has_spad_requant)(Flipped(Decoupled(new SpadRowWrite(log2Ceil(sp_banks * sp_bank_entries), spad_w))))
@@ -754,33 +755,54 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       )) }
       val bank_ios = VecInit(banks.map(_.io))
 
-      // VPU: reads take the bank's SRAM read port (fixed 1-cycle latency), writes have top write priority.
-      // Ordering against other spad traffic is enforced by the Controller (bank claims), so neither collides.
+      // VPUs: reads take the bank's SRAM read port (fixed 1-cycle latency); the RS runs two VPU commands at once only
+      // when they read disjoint banks, so each bank's VPU read port serves at most one VPU a cycle (asserted). Writes
+      // go through a small queue per VPU and win their bank over every other writer; two VPUs writing one bank in a
+      // cycle take turns (the other's queue holds it), and a VPU stops issuing reads before its queue can overflow.
+      // Ordering against other spad traffic is the RS's (row ranges / read banks).
       val vpu_wr_bank = WireDefault(VecInit(Seq.fill(sp_banks)(false.B)))
-      val vpu_wr_row = WireDefault(0.U(log2Ceil(sp_bank_entries).W))
-      val vpu_wr_data = WireDefault(0.U(spad_w.W))
-      val vpu = Option.when(has_vpu) {
+      val vpu_wr_row = WireDefault(VecInit(Seq.fill(sp_banks)(0.U(log2Ceil(sp_bank_entries).W))))
+      val vpu_wr_data = WireDefault(VecInit(Seq.fill(sp_banks)(0.U(spad_w.W))))
+      val vpu_wq_busy = WireDefault(VecInit(Seq.fill(vpu_units)(false.B)))
+      val vpus = if (!has_vpu) Seq() else {
         require(spad_w == 128 && isPow2(sp_banks) && log2Ceil(sp_banks * sp_bank_entries) <= 14,
           "VPU: 8 x BF16 spad rows, <= 14-bit spad row addresses")
-        val v = Module(new gemmini.vpu.Vpu(log2Ceil(sp_banks * sp_bank_entries), log2Ceil(sp_bank_entries)))
-        v.io.cmd <> io.vpu_cmd.get
+        val vs = Seq.tabulate(vpu_units)(_ => Module(new gemmini.vpu.Vpu(log2Ceil(sp_banks * sp_bank_entries), log2Ceil(sp_bank_entries))))
+        vs.zip(io.vpu_cmd.get).foreach { case (v, c) => v.io.cmd <> c }
         val bankOf = (a: UInt) => if (sp_banks == 1) 0.U else a(log2Ceil(sp_banks * sp_bank_entries) - 1, log2Ceil(sp_bank_entries))
         val rowOf = (a: UInt) => a(log2Ceil(sp_bank_entries) - 1, 0)
+        val rds = vs.flatMap(_.io.spad.rd)
+        // write queues: depth 8; issue stops at 4 queued so the <= 4 writes already in the VPU pipeline always fit
+        val wqs = vs.map { v =>
+          val q = Module(new Queue(new gemmini.vpu.VpuWrite(log2Ceil(sp_banks * sp_bank_entries), spad_w), 8))
+          q.io.enq.valid := v.io.spad.wr.valid
+          q.io.enq.bits := v.io.spad.wr.bits
+          assert(!v.io.spad.wr.valid || q.io.enq.ready, "VPU write queue overflow")
+          v.io.stall := q.io.count >= 4.U
+          q.io.deq.ready := false.B
+          q
+        }
+        wqs.zipWithIndex.foreach { case (q, u) => vpu_wq_busy(u) := q.io.deq.valid }
         bank_ios.zipWithIndex.foreach { case (bio, i) =>
-          val hit = v.io.spad.rd.map(r => r.valid && bankOf(r.bits) === i.U)
+          val hit = rds.map(r => r.valid && bankOf(r.bits) === i.U)
           bio.vpu_rd.get.valid := hit.reduce(_ || _)
-          bio.vpu_rd.get.bits := rowOf(Mux(hit(0), v.io.spad.rd(0).bits, v.io.spad.rd(1).bits))
-          assert(!(hit(0) && hit(1)), "VPU: two reads to one bank in a cycle")
+          bio.vpu_rd.get.bits := rowOf(Mux1H(hit, rds.map(_.bits)))
+          assert(PopCount(hit) <= 1.U, "VPU: two reads to one bank in a cycle")
+          val want = wqs.map(q => q.io.deq.valid && bankOf(q.io.deq.bits.addr) === i.U)
+          val grant = PriorityEncoderOH(want)
+          vpu_wr_bank(i) := want.reduce(_ || _)
+          vpu_wr_row(i) := rowOf(Mux1H(grant, wqs.map(_.io.deq.bits.addr)))
+          vpu_wr_data(i) := Mux1H(grant, wqs.map(_.io.deq.bits.data))
+          wqs.zip(grant).foreach { case (q, g) => when (g) { q.io.deq.ready := true.B } }
         }
-        v.io.spad.rd.zip(v.io.spad.rdata).foreach { case (r, d) =>
+        vs.foreach(v => v.io.spad.rd.zip(v.io.spad.rdata).foreach { case (r, d) =>
           d := VecInit(bank_ios.map(_.vpu_rdata.get))(RegNext(bankOf(r.bits)))
-        }
-        vpu_wr_bank.zipWithIndex.foreach { case (w, i) => w := v.io.spad.wr.valid && bankOf(v.io.spad.wr.bits.addr) === i.U }
-        vpu_wr_row := rowOf(v.io.spad.wr.bits.addr)
-        vpu_wr_data := v.io.spad.wr.bits.data
-        v
+        })
+        vs
       }
-      io.vpu_busy := vpu.map(_.io.busy).getOrElse(false.B)
+      // a VPU is busy until its last write has landed
+      io.vpu_unit_busy := VecInit(Seq.tabulate(vpu_units)(i => if (has_vpu) vpus(i).io.busy || vpu_wq_busy(i) else false.B))
+      io.vpu_busy := io.vpu_unit_busy.asUInt.orR
       // Reading from the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>
         if (use_shared_ext_mem) {
@@ -991,8 +1013,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.write.valid := vpuwrite || exwrite || dmaread || zerowrite || requantwrite || requant_beat0 || requant_beat1 || srwrite
 
         when (vpuwrite) {
-          bio.write.addr := vpu_wr_row
-          bio.write.data := vpu_wr_data
+          bio.write.addr := vpu_wr_row(i)
+          bio.write.data := vpu_wr_data(i)
           bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
         }.elsewhen (exwrite) {
           bio.write.addr := io.srams.write(i).addr

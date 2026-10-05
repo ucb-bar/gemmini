@@ -1201,6 +1201,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   vec_in_q := vec_in_q + (loop_cmd.fire && is_vec_funct(loop_cmd.bits.cmd.inst.funct)).asUInt -
     (unrolled_cmd.fire && is_vec_funct(unrolled_cmd.bits.cmd.inst.funct)).asUInt
   loop_matmul.io.vec_space := reservation_station.io.vec_free > vec_in_q
+  // same for loads (mvin / config_ld) passing loops
+  def is_ld_cmd(c: RoCCCommand): Bool = c.inst.funct === LOAD_CMD || c.inst.funct === LOAD2_CMD || c.inst.funct === LOAD3_CMD ||
+    (c.inst.funct === CONFIG_CMD && c.rs1(1, 0) === CONFIG_LOAD)
+  val ld_in_q = RegInit(0.U(2.W))
+  ld_in_q := ld_in_q + (loop_cmd.fire && is_ld_cmd(loop_cmd.bits.cmd)).asUInt - (unrolled_cmd.fire && is_ld_cmd(unrolled_cmd.bits.cmd)).asUInt
+  loop_matmul.io.ld_space := reservation_station.io.ld_free > ld_in_q
   counters.io.event_io.connectEventSignal(CounterEvent.LOOP_MATMUL_ACTIVE_CYCLES, loop_matmul_unroller_busy)
 
   // Wire up controllers to ROB
@@ -1464,7 +1470,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // retires the entry once the unit is idle again (VPU pipeline drained / SPAD_REQUANT writes + scale flush done).
   val vec_issue = reservation_station.io.issue.vec
   val vec_is_sr = vec_issue.cmd.cmd.inst.funct === SPAD_REQUANT
-  val vpu_ready = spad.module.io.vpu_cmd.map(_.ready).getOrElse(false.B)
+  val vpu_n = outer.config.vpu_units
+  val vpu_cmd_ready = VecInit(Seq.tabulate(vpu_n)(i => spad.module.io.vpu_cmd.map(_(i).ready).getOrElse(false.B)))
   // SPAD_REQUANT may only take the requantizer once it is empty: a retired store can still have beats in flight, so
   // wait until no accumulator-side beat has entered for (pipeline latency + 4) cycles and nothing waits at its output
   val rq_quiet = mx_requantizer.map { r =>
@@ -1479,33 +1486,36 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }.getOrElse(true.B)
   val sr_free = !mx_requantizer.map(_.io.scale_flush_busy).getOrElse(false.B) && sfout_outstanding === 0.U && rq_quiet
   val sr_ready = sr.map(_.io.cmd.ready && sr_free).getOrElse(false.B)
-  // one command in flight per vector unit (the VPU and SPAD_REQUANT run side by side)
-  val vpu_run = RegInit(false.B)
+  // one command in flight per vector unit (the VPUs and SPAD_REQUANT run side by side); a VPU command goes to the
+  // first free VPU
+  val vpu_run = RegInit(VecInit(Seq.fill(vpu_n)(false.B)))
   val sr_run = RegInit(false.B)
-  reservation_station.io.vec_unit_ready := VecInit(vpu_ready && !vpu_run, sr_ready && !sr_run)
+  val vpu_free = VecInit(Seq.tabulate(vpu_n)(i => vpu_cmd_ready(i) && !vpu_run(i)))
+  val vpu_pick = PriorityEncoderOH(vpu_free)
+  reservation_station.io.vec_unit_ready := VecInit(vpu_free.asUInt.orR, sr_ready && !sr_run)
   reservation_station.io.vec_pending_banks := spad.module.io.vpu_pending_banks
-  spad.module.io.vpu_cmd.foreach { c =>
-    c.valid := vec_issue.valid && !vec_is_sr
+  spad.module.io.vpu_cmd.foreach(_.zipWithIndex.foreach { case (c, i) =>
+    c.valid := vec_issue.valid && !vec_is_sr && vpu_pick(i)
     c.bits := gemmini.vpu.VpuCmd.decode(vec_issue.cmd.cmd.rs1, vec_issue.cmd.cmd.rs2, c.bits.addrW)
-  }
+  })
   sr.foreach { u =>
     u.io.cmd.valid := vec_issue.valid && vec_is_sr && sr_free
     u.io.cmd.bits := SpadRequantCmd.decode(vec_issue.cmd.cmd.rs1, vec_issue.cmd.cmd.rs2, u.io.cmd.bits.addrW)
   }
-  vec_issue.ready := Mux(vec_is_sr, sr_ready && !sr_run, vpu_ready && !vpu_run)
-  val vpu_rob = Reg(UInt(ROB_ID_WIDTH.W))
+  vec_issue.ready := Mux(vec_is_sr, sr_ready && !sr_run, vpu_free.asUInt.orR)
+  val vpu_rob = Reg(Vec(vpu_n, UInt(ROB_ID_WIDTH.W)))
   val sr_rob = Reg(UInt(ROB_ID_WIDTH.W))
-  when (vec_issue.fire && !vec_is_sr) { vpu_run := true.B; vpu_rob := vec_issue.rob_id }
+  for (i <- 0 until vpu_n) when (vec_issue.fire && !vec_is_sr && vpu_pick(i)) { vpu_run(i) := true.B; vpu_rob(i) := vec_issue.rob_id }
   when (vec_issue.fire && vec_is_sr) { sr_run := true.B; sr_rob := vec_issue.rob_id }
-  val vpu_done = vpu_run && !spad.module.io.vpu_busy
-  val sr_done = sr_run && !sr.map(_.io.busy).getOrElse(false.B)
-  // one completion port: the VPU first; a finished SPAD_REQUANT waits a cycle
-  vec_completed.valid := vpu_done || sr_done
-  vec_completed.bits := Mux(vpu_done, vpu_rob, sr_rob)
-  when (vec_completed.fire && vpu_done) { vpu_run := false.B }
-  when (vec_completed.fire && !vpu_done) { sr_run := false.B }
-  val vec_run = vpu_run || sr_run
-  assert(!(vec_issue.fire && !vec_is_sr && vpu_run), "VPU command issued while one is still running")
+  // one completion port: the VPUs first, then SPAD_REQUANT; a finished unit waits its turn
+  val unit_done = VecInit(Seq.tabulate(vpu_n)(i => vpu_run(i) && !spad.module.io.vpu_unit_busy(i)) :+
+    (sr_run && !sr.map(_.io.busy).getOrElse(false.B)))
+  val done_sel = PriorityEncoderOH(unit_done)
+  vec_completed.valid := unit_done.asUInt.orR
+  vec_completed.bits := Mux1H(done_sel, vpu_rob :+ sr_rob)
+  for (i <- 0 until vpu_n) when (vec_completed.fire && done_sel(i)) { vpu_run(i) := false.B }
+  when (vec_completed.fire && done_sel(vpu_n)) { sr_run := false.B }
+  val vec_run = vpu_run.asUInt.orR || sr_run
   assert(!(vec_issue.fire && vec_is_sr && sr_run), "SPAD_REQUANT issued while one is still running")
 
   // Wire up global RoCC signals

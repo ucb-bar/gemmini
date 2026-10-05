@@ -214,9 +214,11 @@ class GemminiBF16Default8Config extends Config((site, here, up) => {
 })
 
 object GemminiMxFPConfigs {
+  // lazy: every config is a full case-class copy, and eager vals all land in this object's static initializer,
+  // which exceeds the JVM's 64 KB method limit (each new GemminiArrayConfig field grows every copy)
   import Arithmetic.MxFloatArithmetic._
   import mxgen.MxConfig
-  val defaultMxFPConfig = GemminiArrayConfig[MxFloat, Float, Float](
+  lazy val defaultMxFPConfig = GemminiArrayConfig[MxFloat, Float, Float](
     opcodes = OpcodeSet.custom3,
     tileRows = 1,
     tileColumns = 1,
@@ -319,8 +321,8 @@ object GemminiMxFPConfigs {
         ))
   )
 
-  val testMxFPConfig = defaultMxFPConfig.copy(testConfig = true)
-  val testRequantizerLutMxFPConfig = defaultMxFPConfig.copy(
+  lazy val testMxFPConfig = defaultMxFPConfig.copy(testConfig = true)
+  lazy val testRequantizerLutMxFPConfig = defaultMxFPConfig.copy(
     testConfig = true,
     enable_lut = true,
     lut = Some(GemminiLUTConfig())
@@ -328,7 +330,7 @@ object GemminiMxFPConfigs {
 
   // Standalone twin of the Radiance MX flow: same functional params, but internal scratchpad + MMIO
   // requant path instead of shared SRAM.
-  val standaloneMxFPConfig = defaultMxFPConfig.copy(
+  lazy val standaloneMxFPConfig = defaultMxFPConfig.copy(
     ex_read_from_acc = false,
     ex_write_to_spad = true,   // requant FP8 -> internal spad
     sp_singleported = false,
@@ -345,7 +347,7 @@ object GemminiMxFPConfigs {
     mx_mmio_base = Some(0x20010000L)   // LUT/requant regmap, off the scale window
   )
 
-  val dim32MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val dim32MxFPConfig = standaloneMxFPConfig.copy(
     acc_banks = 1,   // dual-bank acc validated at DIM16 only
     meshRows = 32,
     meshColumns = 32,
@@ -364,7 +366,7 @@ object GemminiMxFPConfigs {
 
   // DIM=32 twin of allMxFPConfig: every MX format {FP4,E3M2,E2M3,E4M3,E5M2} on the 32x32 mesh, 8-bit LUT
   // finders (LutFP8E4M3, rdataWidth=8), runtime lut_en. dim32 widening from dim32MxFPConfig; operands+LUT from allMxFPConfig.
-  val dim32AllMxFPConfig = dim32MxFPConfig.copy(
+  lazy val dim32AllMxFPConfig = dim32MxFPConfig.copy(
     inputType  = MxFloat(4, 4, 2, pad=false),
     weightType = MxFloat(4, 4, 2, pad=false),
     spatialArrayInputType  = MxFloat(4, 4, 2, pad=false),
@@ -380,7 +382,7 @@ object GemminiMxFPConfigs {
 
   // DIM=32 twin of allAsymMxFPConfig: all 5 formats + ALL 12 PE modes on the 32x32 mesh (every symmetric +
   // asymmetric combo), 8-bit LUT finders. dim32 widening from dim32MxFPConfig; operands+modes+LUT from allAsym.
-  val dim32AllAsymMxFPConfig = dim32MxFPConfig.copy(
+  lazy val dim32AllAsymMxFPConfig = dim32MxFPConfig.copy(
     inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
     weightType = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
     spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
@@ -390,7 +392,7 @@ object GemminiMxFPConfigs {
   )
 
   // DIM=8 (8x8 mesh). All 8 acc rows bf16 (no reduced-precision ramp). Mirrors the dim32 family.
-  val dim8MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val dim8MxFPConfig = standaloneMxFPConfig.copy(
     acc_banks = 1,   // DIM8 acc-widen assumes 1 bank (unvalidated at 2)
     meshRows = 8,
     meshColumns = 8,
@@ -401,7 +403,7 @@ object GemminiMxFPConfigs {
     // (numChunks=2 -> 2 sub-banks = 2 blocks; chunk_t=accCols/2=one block; numOutBlocks=1). numGPUInputLanes<=2*meshCol.
     requantizer = standaloneMxFPConfig.requantizer.map(_.copy(numOutputLanes = 4*8*1, numGPUInputLanes = 8))
   )
-  val dim8AllMxFPConfig = dim8MxFPConfig.copy(
+  lazy val dim8AllMxFPConfig = dim8MxFPConfig.copy(
     inputType  = MxFloat(4, 4, 2, pad=false),
     weightType = MxFloat(4, 4, 2, pad=false),
     spatialArrayInputType  = MxFloat(4, 4, 2, pad=false),
@@ -409,7 +411,7 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
       projFormat = LutFP8E4M3)),
   )
-  val dim8AllAsymMxFPConfig = dim8MxFPConfig.copy(
+  lazy val dim8AllAsymMxFPConfig = dim8MxFPConfig.copy(
     inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
     weightType = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
     spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
@@ -419,7 +421,7 @@ object GemminiMxFPConfigs {
   )
 
   // FP8 E5M2 via LUT: E5M2 stored 4-bit and up-projected to 8-bit, operand lane MxFloat(5,3,2).
-  val e5m2MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val e5m2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat(5, 3, 2, pad=false),
     weightType = MxFloat(5, 3, 2, pad=false),
     spatialArrayInputType  = MxFloat(5, 3, 2, pad=false),
@@ -435,7 +437,7 @@ object GemminiMxFPConfigs {
 
   // All MX formats in one mesh {FP4, E3M2, E2M3, E4M3, E5M2}, modes {0,4,8,9}; operand lane MxFloat(4,4,2).
   // Runtime lut_en promotes E4M3 to the 4-wide quad path.
-  val allMxFPConfig = standaloneMxFPConfig.copy(
+  lazy val allMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat(4, 4, 2, pad=false),
     weightType = MxFloat(4, 4, 2, pad=false),
     spatialArrayInputType  = MxFloat(4, 4, 2, pad=false),
@@ -449,13 +451,13 @@ object GemminiMxFPConfigs {
     )),
   )
   // Back-compat alias.
-  val e4m3LutMxFPConfig = allMxFPConfig
+  lazy val e4m3LutMxFPConfig = allMxFPConfig
 
   // FULL build: all 5 MX formats on both operands + ALL 12 PE modes (MxConfig.allAsym) -> one mesh that
   // runs every symmetric + asymmetric combo. Operand lane MxFloat(4,4,2) carries the explicit allAsym
   // config (so the PE elaborates all modes, not the inferred {0,4,8,9}); the LutFP8E4M3/rdataWidth=8 LUT
   // builds all four deproject finders (runtime-selected). Code widths 8b (widest; 6b codes ride the low bits).
-  val allAsymMxFPConfig = standaloneMxFPConfig.copy(
+  lazy val allAsymMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
     weightType = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
     spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.allAsym),
@@ -466,27 +468,27 @@ object GemminiMxFPConfigs {
 
   // Single-format builds: the operand descriptor carries an explicit MxConfig so the PE elaborates only
   // that format's decode + mode(s), and the LUT projFormat picks that format's finder(s).
-  val fp4OnlyMxFPConfig = standaloneMxFPConfig.copy(
+  lazy val fp4OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
     weightType = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
     spatialArrayInputType  = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
     spatialArrayWeightType = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
   )
-  val e3m2OnlyMxFPConfig = standaloneMxFPConfig.copy(
+  lazy val e3m2OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
     weightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
     spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
     spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
   )
   // E2M3-only: 6-bit LUT (up-project 4-bit indices to 6-bit E2M3), 12-bit operand lane (2x6).
-  val e2m3OnlyMxFPConfig = standaloneMxFPConfig.copy(
+  lazy val e2m3OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 4, 2, MxConfig.e2m3Only),
     weightType = MxFloat.withConfig(2, 4, 2, MxConfig.e2m3Only),
     spatialArrayInputType  = MxFloat.withConfig(2, 4, 2, MxConfig.e2m3Only),
     spatialArrayWeightType = MxFloat.withConfig(2, 4, 2, MxConfig.e2m3Only),
     lut = Some(GemminiLUTConfig(projFormat = LutFP6E2M3)),
   )
-  val e4m3OnlyMxFPConfig = standaloneMxFPConfig.copy(
+  lazy val e4m3OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3Only),
     weightType = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3Only),
     spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.e4m3Only),
@@ -496,7 +498,7 @@ object GemminiMxFPConfigs {
   )
   // E4M3 single throughput only (mode8), no QuantLut: lut = None drops the LUT caches, nearest finders and
   // the MX_LOAD_LUT DMA buffer. 8-bit E4M3 codes feed the mesh and leave the requantizer directly.
-  val e4m3SingleNoLutMxFPConfig = standaloneMxFPConfig.copy(
+  lazy val e4m3SingleNoLutMxFPConfig = standaloneMxFPConfig.copy(
     // 1-element lane (8 bits): E4M3-single never packs a second code, so the 16b quad lane is not needed.
     inputType  = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleOnly),
     weightType = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleOnly),
@@ -506,7 +508,7 @@ object GemminiMxFPConfigs {
   )
   // e4m3SingleNoLut minus every unit the MX matmul flow does not use (none of these are instantiated),
   // with ReLU (only) on the accumulated output. Base for the VPU config.
-  val e4m3TrimmedMxFPConfig = e4m3SingleNoLutMxFPConfig.copy(
+  lazy val e4m3TrimmedMxFPConfig = e4m3SingleNoLutMxFPConfig.copy(
     has_loop_conv = false,
     has_first_layer_optimizations = false,
     has_im2col = false,
@@ -516,10 +518,11 @@ object GemminiMxFPConfigs {
     has_nonlinear_activations = true,   // RELU only: has_normalizations stays false
     has_normalizations = false,
     has_vpu = true,
+    vpu_units = 2,   // two 8-lane VPUs: commands in different spad banks run side by side
     has_spad_requant = true,
     reservation_station_entries_ld = 32,   // a K/V block's mvins enter at once instead of blocking the command stream
   )
-  val e5m2OnlyMxFPConfig = standaloneMxFPConfig.copy(
+  lazy val e5m2OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
     weightType = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
     spatialArrayInputType  = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
@@ -530,7 +533,7 @@ object GemminiMxFPConfigs {
 
   // Asymmetric FP4-act x FP6_E3M2-wei (mode1): activation fed direct (4-bit), weight LUT-deprojected to
   // 6-bit E3M2. Inherits the default LutFP6E3M2 codebook from standaloneMxFPConfig.
-  val asymFp4Fp6MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymFp4Fp6MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4Fp6),
     weightType = MxFloat.withConfig(3, 3, 2, MxConfig.asymFp4Fp6),
     spatialArrayInputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4Fp6),
@@ -539,7 +542,7 @@ object GemminiMxFPConfigs {
 
   // Opposite asymmetric: FP6_E3M2-act (LUT-deprojected) x FP4-wei (direct), mode3. Default LutFP6E3M2
   // codebook (inherited) up-projects the fp6 activation.
-  val asymFp6Fp4MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymFp6Fp4MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymFp6Fp4),
     weightType = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp6Fp4),
     spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymFp6Fp4),
@@ -547,7 +550,7 @@ object GemminiMxFPConfigs {
   )
 
   // Asymmetric: FP8_E5M2-act (LUT-deprojected to 8-bit) x FP4-wei (direct), mode3. E5M2 LUT codebook.
-  val asymE5M2Fp4MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE5M2Fp4MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2Fp4),
     weightType = MxFloat.withConfig(2, 2, 2, MxConfig.asymE5M2Fp4),
     spatialArrayInputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2Fp4),
@@ -557,7 +560,7 @@ object GemminiMxFPConfigs {
   )
 
   // Opposite: FP4-act (direct) x FP8_E5M2-wei (LUT-deprojected to 8-bit), mode1. E5M2 LUT codebook.
-  val asymFp4E5M2MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymFp4E5M2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4E5M2),
     weightType = MxFloat.withConfig(5, 3, 2, MxConfig.asymFp4E5M2),
     spatialArrayInputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4E5M2),
@@ -568,7 +571,7 @@ object GemminiMxFPConfigs {
 
   // Dual-LUT asymmetric: FP8_E5M2-act (8-bit codes) x FP6_E3M2-wei (6-bit codes), mode4. Per-operand
   // deproject width: act packs at 8b, wei at 6b (storage stays 8b).
-  val asymE5M2E3M2MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE5M2E3M2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2E3M2),
     weightType = MxFloat.withConfig(3, 3, 2, MxConfig.asymE5M2E3M2),
     spatialArrayInputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2E3M2),
@@ -578,7 +581,7 @@ object GemminiMxFPConfigs {
   )
 
   // Opposite dual-LUT asymmetric: FP6_E3M2-act (6-bit codes) x FP8_E5M2-wei (8-bit codes), mode4.
-  val asymE3M2E5M2MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE3M2E5M2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymE3M2E5M2),
     weightType = MxFloat.withConfig(5, 3, 2, MxConfig.asymE3M2E5M2),
     spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymE3M2E5M2),
@@ -588,7 +591,7 @@ object GemminiMxFPConfigs {
   )
 
   // Mixed quad: FP8_E4M3-act (LUT-deprojected to 8-bit, 2/lane) x FP4-wei (direct), mode10. E4M3 LUT.
-  val asymE4M3Fp4MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE4M3Fp4MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.asymE4M3Fp4),
     weightType = MxFloat.withConfig(2, 2, 2, MxConfig.asymE4M3Fp4),
     spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.asymE4M3Fp4),
@@ -598,7 +601,7 @@ object GemminiMxFPConfigs {
   )
 
   // Opposite mixed quad: FP4-act (direct) x FP8_E4M3-wei (LUT-deprojected to 8-bit, 2/lane), mode11.
-  val asymFp4E4M3MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymFp4E4M3MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4E4M3),
     weightType = MxFloat.withConfig(4, 4, 2, MxConfig.asymFp4E4M3),
     spatialArrayInputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4E4M3),
@@ -609,7 +612,7 @@ object GemminiMxFPConfigs {
 
   // E4M3-quad x sig3 dual-LUT combos, mode10 (E4M3 act) / mode11 (E4M3 wei). Per-operand code widths:
   // E4M3 8-bit, e3m2 6-bit, e5m2 8-bit. E5M2 pairs also need the per-operand altfmt bit (set in the test).
-  val asymE4M3E3M2MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE4M3E3M2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.asymE4M3E3M2),
     weightType = MxFloat.withConfig(3, 3, 2, MxConfig.asymE4M3E3M2),
     spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.asymE4M3E3M2),
@@ -617,7 +620,7 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
       projFormat = LutFP8E4M3, actCodeWidth = 8, weiCodeWidth = 6)),
   )
-  val asymE4M3E5M2MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE4M3E5M2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.asymE4M3E5M2),
     weightType = MxFloat.withConfig(5, 3, 2, MxConfig.asymE4M3E5M2),
     spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.asymE4M3E5M2),
@@ -625,7 +628,7 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
       projFormat = LutFP8E4M3, actCodeWidth = 8, weiCodeWidth = 8)),
   )
-  val asymE3M2E4M3MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE3M2E4M3MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymE3M2E4M3),
     weightType = MxFloat.withConfig(4, 4, 2, MxConfig.asymE3M2E4M3),
     spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymE3M2E4M3),
@@ -633,7 +636,7 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
       projFormat = LutFP8E4M3, actCodeWidth = 6, weiCodeWidth = 8)),
   )
-  val asymE5M2E4M3MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE5M2E4M3MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2E4M3),
     weightType = MxFloat.withConfig(4, 4, 2, MxConfig.asymE5M2E4M3),
     spatialArrayInputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2E4M3),
@@ -643,7 +646,7 @@ object GemminiMxFPConfigs {
   )
 
   // E2M3-quad (sig4, exp2, fp6/LUT 6-bit codes) mixed-quad combos. mode10 (E2M3 act) / mode11 (E2M3 wei).
-  val asymE2M3Fp4MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE2M3Fp4MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 4, 2, MxConfig.asymE2M3Fp4),
     weightType = MxFloat.withConfig(2, 2, 2, MxConfig.asymE2M3Fp4),
     spatialArrayInputType  = MxFloat.withConfig(2, 4, 2, MxConfig.asymE2M3Fp4),
@@ -651,7 +654,7 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(96, 96, 96), Seq(64, 64, 64), rdataWidth = 6, raddrWidth = 4,
       projFormat = LutFP6E2M3)),
   )
-  val asymE2M3E3M2MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE2M3E3M2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 4, 2, MxConfig.asymE2M3E3M2),
     weightType = MxFloat.withConfig(3, 3, 2, MxConfig.asymE2M3E3M2),
     spatialArrayInputType  = MxFloat.withConfig(2, 4, 2, MxConfig.asymE2M3E3M2),
@@ -659,7 +662,7 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(96, 96, 96), Seq(64, 64, 64), rdataWidth = 6, raddrWidth = 4,
       projFormat = LutFP6E2M3)),
   )
-  val asymE2M3E5M2MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE2M3E5M2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 4, 2, MxConfig.asymE2M3E5M2),
     weightType = MxFloat.withConfig(5, 3, 2, MxConfig.asymE2M3E5M2),
     spatialArrayInputType  = MxFloat.withConfig(2, 4, 2, MxConfig.asymE2M3E5M2),
@@ -667,7 +670,7 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
       projFormat = LutFP8E5M2, actCodeWidth = 6, weiCodeWidth = 8)),
   )
-  val asymFp4E2M3MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymFp4E2M3MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4E2M3),
     weightType = MxFloat.withConfig(2, 4, 2, MxConfig.asymFp4E2M3),
     spatialArrayInputType  = MxFloat.withConfig(2, 2, 2, MxConfig.asymFp4E2M3),
@@ -675,7 +678,7 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(96, 96, 96), Seq(64, 64, 64), rdataWidth = 6, raddrWidth = 4,
       projFormat = LutFP6E2M3)),
   )
-  val asymE3M2E2M3MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE3M2E2M3MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymE3M2E2M3),
     weightType = MxFloat.withConfig(2, 4, 2, MxConfig.asymE3M2E2M3),
     spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.asymE3M2E2M3),
@@ -683,7 +686,7 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(96, 96, 96), Seq(64, 64, 64), rdataWidth = 6, raddrWidth = 4,
       projFormat = LutFP6E2M3)),
   )
-  val asymE5M2E2M3MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE5M2E2M3MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2E2M3),
     weightType = MxFloat.withConfig(2, 4, 2, MxConfig.asymE5M2E2M3),
     spatialArrayInputType  = MxFloat.withConfig(5, 3, 2, MxConfig.asymE5M2E2M3),
@@ -693,7 +696,7 @@ object GemminiMxFPConfigs {
   )
 
   // Dual-sig4 quad E2M3 x E4M3 (mode9). Mixed code widths (E2M3 6b, E4M3 8b), per-operand altfmt.
-  val asymE2M3E4M3MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE2M3E4M3MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(2, 4, 2, MxConfig.asymE2M3E4M3),
     weightType = MxFloat.withConfig(4, 4, 2, MxConfig.asymE2M3E4M3),
     spatialArrayInputType  = MxFloat.withConfig(2, 4, 2, MxConfig.asymE2M3E4M3),
@@ -701,7 +704,7 @@ object GemminiMxFPConfigs {
     lut = Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(64, 64, 64), rdataWidth = 8, raddrWidth = 4,
       projFormat = LutFP8E4M3, actCodeWidth = 6, weiCodeWidth = 8)),
   )
-  val asymE4M3E2M3MxFPConfig = standaloneMxFPConfig.copy(
+  lazy val asymE4M3E2M3MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(4, 4, 2, MxConfig.asymE4M3E2M3),
     weightType = MxFloat.withConfig(2, 4, 2, MxConfig.asymE4M3E2M3),
     spatialArrayInputType  = MxFloat.withConfig(4, 4, 2, MxConfig.asymE4M3E2M3),

@@ -1060,6 +1060,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val lds_started = Bool()
   val lds_done = Bool()
   val lds_a_reuse = Bool()
+  val reads_act0 = Bool()   // its scale config (the last CONFIG_SCALE_MEM ahead of its LOOP_WS) may read act half 0
 
   def reset(): Unit = {
     configured := false.B
@@ -1124,6 +1125,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     val mx_multi_elem = Input(Bool())   // throughput: 2 elements/lane (datatype-independent)
     val mx_multi_elem_act = Input(Bool())   // ACTIVATION (output-row) throughput
     val vec_space = Input(Bool())   // RS vector queue can take one more VPU_EXEC
+    val ld_space = Input(Bool())    // RS load queue can take one more mvin / config_ld
   })
 
   // Create states
@@ -1265,6 +1267,12 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val loops_configured = RegInit(0.U(16.W))
   dontTouch(loops_configured)
 
+  // act half of the last scale config seen (same test as the RS): a resident SPAD_REQUANT rewrites act half 0
+  val cfg_reads_act0 = RegInit(true.B)
+  when (cmd.fire && cmd.bits.cmd.inst.funct === CONFIG_SCALE_MEM) {
+    cfg_reads_act0 := !(cmd.bits.cmd.rs2(17) && cmd.bits.cmd.rs1(60) && !cmd.bits.cmd.rs1(63))
+  }
+
   // Create config registers
   when(cmd.valid && is_loop_cmd && !loop_being_configured.configured) {
 
@@ -1349,6 +1357,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         is_resadd := cmd.bits.cmd.rs2(2)
 
         loop_being_configured.configured := true.B
+        loop_being_configured.reads_act0 := cfg_reads_act0
 
         loops_configured := loops_configured + 1.U
       }
@@ -1379,24 +1388,33 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     !head_loop.ex_completed && (rows_overlap(rows, a_rows(head_loop)) || rows_overlap(rows, b_rows(head_loop)))
 
   // VPU_EXEC passes configured loops whose A, B and C spad rows it misses, so vector work overlaps the loop's
-  // unrolling (raw commands stay in program order). SPAD_REQUANT does not: the RS orders a store after an older SR
-  // (shared requantizer), so an SR ahead of the loop's own stores would stall them. Ranges are conservative.
+  // unrolling (raw commands stay in program order). SPAD_REQUANT does too, but only while the output is BF16: then
+  // the loop's stores are BF16-marked and do not wait for an older SR (they share the requantizer beat by beat);
+  // a quantized store would, so with a quantized output SR stays in order.
   if (vec_bypass) {
     val f = cmd.bits.cmd.inst.funct
     val r1 = cmd.bits.cmd.rs1
     val r2 = cmd.bits.cmd.rs2
     val is_vpu = f === VPU_EXEC
-    val vpu_rows = r1(57, 42)
+    val vc = gemmini.vpu.VpuCmd.decode(r1, r2, 14)
     def span(base: UInt, n: UInt): (UInt, UInt) = (base, base +& n)
+    val is_sr = f === SPAD_REQUANT && io.output_mx_format === 3.U
+    // exact footprints, as the RS computes them: BF16 source M*N/8 rows, E4M3 destination M*N/16 (M padded to 16 if tiled)
+    val sc = SpadRequantCmd.decode(r1, r2, 14)
+    val sr_src_rows = (sc.m * sc.n) >> 3
+    val sr_dst_rows = Mux(sc.tiled, ((((sc.m +& 15.U) & ~15.U(17.W)) * sc.n) >> 4), (sc.m * sc.n) >> 4)
     val ranges = Seq(
-      (is_vpu, span(r1(13, 0), vpu_rows)),
-      (is_vpu && gemmini.vpu.VpuOp.usesSrc2(r2(3, 0)), span(r1(27, 14), vpu_rows)),
-      (is_vpu, span(r1(41, 28), vpu_rows)))
+      (is_vpu, span(vc.src1, vc.rows)),
+      (is_vpu && gemmini.vpu.VpuOp.usesSrc2(vc.op), span(vc.src2, gemmini.vpu.VpuCmd.src2Rows(vc))),
+      (is_vpu, span(vc.dst, gemmini.vpu.VpuCmd.dstRows(vc))),
+      (is_sr, span(sc.src, sr_src_rows)),
+      (is_sr, span(sc.dst, sr_dst_rows)))
     def c_rows(l: LoopMatmulState): (UInt, UInt) = span(l.c_spad_addr(log2Up(max_addr) - 1, 0), 2.U * l.max_i * l.max_j * block_size.U)
-    def hits(l: LoopMatmulState): Bool = l.configured && ranges.map { case (v, r) =>
+    // a resident SR also waits for a loop reading act half 0 to issue all its computes (the RS then orders it after them)
+    def hits(l: LoopMatmulState): Bool = l.configured && (ranges.map { case (v, r) =>
       v && (rows_overlap(r, a_rows(l)) || rows_overlap(r, b_rows(l)) || (l.spad_only && rows_overlap(r, c_rows(l))))
-    }.reduce(_ || _)
-    val vec_pass = cmd.valid && loop_configured && is_vpu && io.vec_space && !loops.map(hits).reduce(_ || _)
+    }.reduce(_ || _) || (is_sr && sc.resident && l.reads_act0 && !l.ex_completed))
+    val vec_pass = cmd.valid && loop_configured && (is_vpu || is_sr) && io.vec_space && !loops.map(hits).reduce(_ || _)
     // The next matmul's scale config and gated scale load may pass loops that have issued every load and ex command
     // (only stores left) when the output is BF16 and every such loop moves the accumulator base by half: the next
     // loop then accumulates into the other half while these stores drain. The RS orders the config after the loops'
@@ -1408,7 +1426,23 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     // a CONFIG_SCALE_MEM also needs a free RS ex slot, or it would itself wait at the head of the unrolled queue
     val cfg_pass = cmd.valid && loop_configured && is_scale_cmd && only_stores_left && io.output_mx_format === 3.U &&
       (f =/= CONFIG_SCALE_MEM || ex_utilization < max_exs.U)
-    when (vec_pass || cfg_pass) {
+    // A raw mvin (or the config_ld that sets its block stride) may pass loops that have issued all their own loads
+    // when its destination rows miss every configured loop's A, B and C rows: the next block's K/V loads then enter
+    // while the previous loop's stores drain. The RS orders it against the loop's queued commands by row range.
+    val is_cfg_ld = f === CONFIG_CMD && r1(1, 0) === CONFIG_LOAD
+    val ld_stride = RegInit(0.U(16.W))   // block stride of load state 0 (as the RS computes the mvin's rows)
+    when (cmd.fire && is_cfg_ld && r1(4, 3) === 0.U) { ld_stride := r1(31, 16) }
+    val mv = r2.asTypeOf(mvin_rs2_t)
+    val mv_mats = mv.num_cols / block_size.U + (mv.num_cols % block_size.U =/= 0.U)
+    val mv_dst = mv.local_addr.asUInt(log2Up(max_addr) - 1, 0)
+    val mv_range = span(mv_dst, (mv_mats - 1.U) * ld_stride +& mv.num_rows)
+    val loads_done = loops.map(l => !l.configured || (l.lda_completed && l.ldb_completed && l.ldd_completed)).reduce(_ && _)
+    def mv_hits(l: LoopMatmulState): Bool = l.configured && (rows_overlap(mv_range, a_rows(l)) ||
+      rows_overlap(mv_range, b_rows(l)) || (l.spad_only && rows_overlap(mv_range, c_rows(l))))
+    val is_spad_mvin = f === LOAD_CMD && !mv.local_addr.is_acc_addr && !mv.local_addr.is_garbage()
+    val ld_pass = cmd.valid && loop_configured && io.ld_space && loads_done &&
+      (is_cfg_ld || (is_spad_mvin && !loops.map(mv_hits).reduce(_ || _)))
+    when (vec_pass || cfg_pass || ld_pass) {
       io.out.valid := true.B
       io.out.bits.cmd := cmd.bits.cmd
       io.out.bits.from_matmul_fsm := cmd.bits.from_matmul_fsm
