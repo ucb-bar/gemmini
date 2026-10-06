@@ -1053,10 +1053,29 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val accReadValid = VecInit(io.acc.read_resp.map(bank => ex_read_from_acc.B && bank.valid && !bank.bits.fromDMA))
   val im2ColValid = io.im2col.resp.valid
 
-  mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire || !mesh.io.a.ready) &&
-    (!cntl.b_fire || mesh.io.b.fire || !mesh.io.b.ready) &&
-    (!cntl.d_fire || mesh.io.d.fire || !mesh.io.d.ready) &&
+  // With a shared external SMEM the A, B and D read responses of one row can arrive in different
+  // cycles. The mesh may then accept one operand while the control entry still waits for another.
+  // That operand is "taken": its read response is popped when the mesh accepts it (below), and it
+  // is not offered again until the entry dequeues. Before this, the response was popped only on
+  // dequeue, so the next entry fed the same row again and every later row of the matmul shifted.
+  val a_taken = RegInit(false.B)
+  val b_taken = RegInit(false.B)
+  val d_taken = RegInit(false.B)
+
+  mesh_cntl_signals_q.io.deq.ready := (!cntl.a_fire || mesh.io.a.fire || !mesh.io.a.ready || a_taken) &&
+    (!cntl.b_fire || mesh.io.b.fire || !mesh.io.b.ready || b_taken) &&
+    (!cntl.d_fire || mesh.io.d.fire || !mesh.io.d.ready || d_taken) &&
     (!cntl.first || mesh.io.req.ready)
+
+  when (mesh_cntl_signals_q.io.deq.fire) {
+    a_taken := false.B
+    b_taken := false.B
+    d_taken := false.B
+  }.elsewhen (cntl_valid) {
+    when (mesh.io.a.fire) { a_taken := true.B }
+    when (mesh.io.b.fire) { b_taken := true.B }
+    when (mesh.io.d.fire) { d_taken := true.B }
+  }
 
   val dataA_valid = cntl.a_garbage || cntl.a_unpadded_cols === 0.U || Mux(cntl.im2colling, im2ColValid, Mux(cntl.a_read_from_acc, accReadValid(cntl.a_bank_acc), readValid(cntl.a_bank)))
 
@@ -1088,8 +1107,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   }
   val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, weightType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, weightType.zero)}.map(d => d.asTypeOf(weightType).withWidthOf(spatialArrayWeightType)))
 
-  // Pop responses off the scratchpad io ports
-  when (mesh_cntl_signals_q.io.deq.fire) {
+  // Pop responses off the scratchpad io ports when the mesh accepts them (see a_taken)
+  when (cntl_valid) {
     when (cntl.a_fire && mesh.io.a.fire && !cntl.a_garbage && cntl.a_unpadded_cols > 0.U && !cntl.im2colling) {
       when (cntl.a_read_from_acc) {
         io.acc.read_resp(cntl.a_bank_acc).ready := !io.acc.read_resp(cntl.a_bank_acc).bits.fromDMA
@@ -1124,9 +1143,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   when (cntl_valid) {
     // Default inputs
-    mesh.io.a.valid := cntl.a_fire && dataA_valid
-    mesh.io.b.valid := cntl.b_fire && dataB_valid
-    mesh.io.d.valid := cntl.d_fire && dataD_valid
+    mesh.io.a.valid := cntl.a_fire && dataA_valid && !a_taken
+    mesh.io.b.valid := cntl.b_fire && dataB_valid && !b_taken
+    mesh.io.d.valid := cntl.d_fire && dataD_valid && !d_taken
 
     mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, spatialArrayInputType)))
     mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, spatialArrayOutputType)))
