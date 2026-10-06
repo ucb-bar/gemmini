@@ -284,14 +284,18 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // so the mesh may only support direct-coded formats (FP4, E4M3-single). Checked here, on the final config,
   // since base templates (e.g. Radiance's defaultMxFPConfig) fill in lut later via copy.
   val has_quant_lut = outer.config.lut.isDefined
-  (outer.config.spatialArrayInputType, outer.config.spatialArrayWeightType) match {
-    case (a: MxFloat, w: MxFloat) if outer.config.use_mx_scaling =>
-      val pe = MxFloat.peConfig(a, w)
-      require(has_quant_lut || !MxFloat.needsQuantLut(pe),
-        s"lut = None but the mesh needs the QuantLut (act ${pe.actFormats.mkString(",")}, " +
-        s"wei ${pe.weiFormats.mkString(",")}, quad=${pe.hasMode9}); only FP4 / E4M3-single run without a LUT")
-    case _ =>
-  }
+  // LUT config handed to the requantizer: the act_out nearest finders are restricted to the formats the
+  // activation operand can take (an E4M3-only mesh builds only the E4M3 finder).
+  val lut_config_for_requant: Option[GemminiLUTConfig] =
+    (outer.config.spatialArrayInputType, outer.config.spatialArrayWeightType) match {
+      case (a: MxFloat, w: MxFloat) if outer.config.use_mx_scaling =>
+        val pe = MxFloat.peConfig(a, w)
+        require(has_quant_lut || !MxFloat.needsQuantLut(pe),
+          s"lut = None but the mesh needs the QuantLut (act ${pe.actFormats.mkString(",")}, " +
+          s"wei ${pe.weiFormats.mkString(",")}, quad=${pe.hasMode9}); only FP4 / E4M3-single run without a LUT")
+        outer.config.lut.map(_.restrictedTo(pe.actFormats))
+      case _ => outer.config.lut
+    }
   val mx_requantizer = Option.when(outer.config.use_mx_scaling && outer.config.requantizer.isDefined) {
     val q = outer.config.requantizer.get
 
@@ -304,7 +308,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       scaleMemActWriteAddrWidth = outer.config.scale_mem.get.addrBits - 1,
       scaleSize = outer.config.scaleSize,
       scaleMembasewrite = 0, // TODO: add this into the instruction
-      lutConfig = outer.config.lut,
+      lutConfig = lut_config_for_requant,
       sp_bank_entries = outer.config.sp_bank_entries,
       sp_banks = outer.config.sp_banks,
       sp_width = outer.config.sp_width,
@@ -825,6 +829,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       out.valid     := true.B
       out.bits.data := (if (rdataW >= 8) Mux(ent_bits === 8.U, buildTables(8), buildTables(6))
                         else buildTables(rdataW)).asTypeOf(Vec(numEntries, UInt(numBits.W)))
+      out.bits.entry_bits := ent_bits
       when (out.fire) { state := sIdle }
     }
 
