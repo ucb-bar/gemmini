@@ -1499,6 +1499,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val vpu_pick = PriorityEncoderOH(vpu_free)
   reservation_station.io.vec_unit_ready := VecInit(vpu_free.asUInt.orR, sr_ready && !sr_run)
   reservation_station.io.vec_pending_banks := spad.module.io.vpu_pending_banks
+  reservation_station.io.mx_packed_acc := (if (use_mx_scaling) !ex_controller.io.mx.get.mx_multi_elem else false.B)
   spad.module.io.vpu_cmd.foreach(_.zipWithIndex.foreach { case (c, i) =>
     c.valid := vec_issue.valid && !vec_is_sr && vpu_pick(i)
     c.bits := gemmini.vpu.VpuCmd.decode(vec_issue.cmd.cmd.rs1, vec_issue.cmd.cmd.rs2, c.bits.addrW)

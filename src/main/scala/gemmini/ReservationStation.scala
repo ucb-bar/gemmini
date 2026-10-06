@@ -57,6 +57,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     // vector queue: 0 = VPU idle, 1 = SPAD_REQUANT can start; spad banks with requant rows still to be written
     val vec_unit_ready = Input(Vec(2, Bool()))
     val vec_pending_banks = Input(UInt(sp_banks.W))
+    // MX single-element mode: a tile's preload C address is its 16-row acc group + a column-group offset (j * 4)
+    val mx_packed_acc = Input(Bool())
     val vec_free = Output(UInt(5.W))   // free vector-queue entries
     val ld_free = Output(UInt(log2Up(reservation_station_entries_ld + 1).W))   // free load-queue entries
 
@@ -298,6 +300,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
       val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48) * c_stride
+      // packed MX acc: the low bits of the C address pick a column group within the row group, not a row; range the
+      // group's rows (a range that starts mid-group would claim the next group's rows: false WAR on its stores)
+      when (io.mx_packed_acc && dst.bits.start.is_acc_addr) {
+        dst.bits.start.data := cmd.rs2(31, 0).asTypeOf(local_addr_t).data & (~(block_rows - 1).U(dst.bits.start.data.getWidth.W)).asUInt
+      }
       dst.bits.end := dst.bits.start + preload_rows
       dst.bits.wraps_around := dst.bits.start.add_with_overflow(preload_rows)._2
     }.elsewhen(funct === STORE_SPAD_CMD) {
