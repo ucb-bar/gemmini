@@ -1044,6 +1044,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val ex_completed = Bool()
   val ldd_completed = Bool()
   val st_completed = Bool()
+  val ex_skipped = Bool()   // LOOP_WS rs2[6]: store-only loop (no EX of its own to order its stores behind)
   val narrow_type = Bool()
 
   def all_completed(dummy: Int=0): Bool = lda_completed && ldb_completed && ldd_completed && ex_completed && st_completed
@@ -1083,6 +1084,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
     ex_completed := false.B
     ldd_completed := false.B
     st_completed := false.B
+    ex_skipped := false.B
 
     spad_only := false.B
     reuse_tiled := false.B
@@ -1344,6 +1346,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.ldd_completed := cmd.bits.cmd.rs2(5)
         loop_being_configured.ex_completed := cmd.bits.cmd.rs2(6)
         loop_being_configured.st_completed := cmd.bits.cmd.rs2(7)
+        loop_being_configured.ex_skipped := cmd.bits.cmd.rs2(6)
         loop_being_configured.inc_acc_addr := cmd.bits.cmd.rs2(8)
         loop_being_configured.spad_only := cmd.bits.cmd.rs2(9)
         loop_being_configured.reuse_tiled := cmd.bits.cmd.rs2(10) // LOOP_WS_REQUANT_TILED (gated tiled requant->spad)
@@ -1666,10 +1669,19 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC_spad.io.req.bits.dst_overlaps_operands := st_c_overlaps_a || st_c_overlaps_b
   dontTouch(stC_spad.io.req.bits.dst_overlaps_operands)
 
+  // A store-only loop (EX skipped) must not start while the older loop's EX is still unrolling. A loop's stores are
+  // otherwise ordered only against its OWN EX (stC*.io.ex_completed above): for a store-only loop that check is
+  // vacuous, and the reservation station's st<-ex accumulator RAW only sees EX commands already enqueued, so the
+  // stores can read the accumulator while the older loop's remaining computes are still to come (compute-only
+  // LOOP_WS followed by a store-only LOOP_WS over the same accumulator rows). Once the older loop's ex_completed is
+  // set, all its EX commands are in the reservation station and that RAW orders the stores. Loops with their own
+  // EX are unaffected: the EX unroller serves loops in order, so the older loop's EX is always complete by then.
+  val st_blocked = !is_resadd && loop_requesting_st.ex_skipped && loop_requesting_st_id =/= head_loop_id &&
+    head_loop.configured && !head_loop.ex_completed
   stC.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started &&
-    loop_requesting_st.configured && !loop_requesting_st.spad_only
+    loop_requesting_st.configured && !loop_requesting_st.spad_only && !st_blocked
   stC_spad.io.req.valid := !loop_requesting_st.st_started && loop_requesting_st.ex_started &&
-    loop_requesting_st.configured && loop_requesting_st.spad_only
+    loop_requesting_st.configured && loop_requesting_st.spad_only && !st_blocked
 
   when (stC.io.req.fire || stC_spad.io.req.fire) {
     loop_requesting_st.running := true.B
