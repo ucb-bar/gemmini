@@ -92,11 +92,17 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
   // Commands
   val cmd = Queue(io.cmd, st_queue_length)
-  val vaddr = cmd.bits.cmd.rs1
   val mvout_spad_rs1 = cmd.bits.cmd.rs1.asTypeOf(new MvoutSpadRs1(32, local_addr_t))
   val dst_spad_addr = mvout_spad_rs1.local_addr
   val dst_spad_stride = mvout_spad_rs1.stride
   val dst_is_spad = cmd.bits.cmd.inst.funct === STORE_SPAD_CMD
+  // A DRAM STORE_CMD may carry the J bound for its second-output-row offset (quad formats) in
+  // rs1[63:56] (0 = use the global loop_bound_j); the address is rs1[55:0].  The global bound belongs
+  // to the compute in flight, so without this an accumulator -> DRAM store of a row-major C needed a
+  // fence before the next loop's CONFIG_SCALE_MEM.
+  val dram_loop_bound_j = cmd.bits.cmd.rs1(63, 56)
+  val vaddr = Mux(dst_is_spad, cmd.bits.cmd.rs1, Cat(0.U(8.W), cmd.bits.cmd.rs1(55, 0)))
+  val loop_bound_j = Mux(!dst_is_spad && dram_loop_bound_j =/= 0.U, dram_loop_bound_j, io.loop_bound_j)
   val mvout_rs2 = cmd.bits.cmd.rs2.asTypeOf(new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t))
   val localaddr = mvout_rs2.local_addr
   val cols = mvout_rs2.num_cols
@@ -133,11 +139,11 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val mx_stride = if (config.use_mx_scaling) {
     // Gated tiled requant->spad (FP8) carries the intra-tile row in the beat term, so per-row stride is 1.
     Mux(mvout_rs2.reuse_tiled, 1.U,
-      Mux(io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j / 2.U * 4.U,
+      Mux(io.enable_wide_spad_write && !io.mx_multi_elem, loop_bound_j / 2.U * 4.U,
         // act-quad packs 2 output rows per acc row (stride *8); act-single (mode6/7) = 1 output row -> *4.
-        Mux(io.enable_wide_spad_write, io.loop_bound_j * Mux(io.mx_multi_elem_act, 8.U, 4.U),
-          Mux(!io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j / 2.U * 2.U,
-            Mux(!io.enable_wide_spad_write && io.mx_multi_elem, io.loop_bound_j * 2.U,
+        Mux(io.enable_wide_spad_write, loop_bound_j * Mux(io.mx_multi_elem_act, 8.U, 4.U),
+          Mux(!io.enable_wide_spad_write && !io.mx_multi_elem, loop_bound_j / 2.U * 2.U,
+            Mux(!io.enable_wide_spad_write && io.mx_multi_elem, loop_bound_j * 2.U,
               1.U
             )
           )
@@ -211,7 +217,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     block_counter === blocks - 1.U)
   io.dma.req.bits.chunk_id := mvout_rs2.mx_chunk_id
   io.dma.req.bits.reuse_tiled := mvout_rs2.reuse_tiled
-  io.dma.req.bits.max_j := io.loop_bound_j
+  io.dma.req.bits.max_j := loop_bound_j
   io.dma.req.bits.activation_mx_type := io.activation_mx_type
   io.dma.req.bits.mx_multi_elem := io.mx_multi_elem
   io.dma.req.bits.mx_multi_elem_act := io.mx_multi_elem_act
