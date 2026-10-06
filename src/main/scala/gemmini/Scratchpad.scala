@@ -436,9 +436,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val enable_MXQuant = Input(Bool()) //determines if mxrequantizer gets used
       val loop_bounds = Input(new MaxBounds())
       // VPU: command in, busy out, banks with store data not yet written (requant drain / store pipeline)
-      val vpu_cmd = Option.when(has_vpu)(Vec(vpu_units, Flipped(Decoupled(new gemmini.vpu.VpuCmd(log2Ceil(sp_banks * sp_bank_entries))))))
+      val vpu_cmd = Option.when(has_vpu)(Vec(vpu_params.units, Flipped(Decoupled(new gemmini.vpu.VpuCmd(log2Ceil(sp_banks * sp_bank_entries))))))
       val vpu_busy = Output(Bool())
-      val vpu_unit_busy = Output(Vec(vpu_units, Bool()))
+      val vpu_unit_busy = Output(Vec(vpu_params.units, Bool()))
       val vpu_pending_banks = Output(UInt(sp_banks.W))
       // SPAD_REQUANT code rows: lowest write priority, backpressured
       val sr_write = Option.when(has_spad_requant)(Flipped(Decoupled(new SpadRowWrite(log2Ceil(sp_banks * sp_bank_entries), spad_w))))
@@ -770,11 +770,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val vpu_wr_bank = WireDefault(VecInit(Seq.fill(sp_banks)(false.B)))
       val vpu_wr_row = WireDefault(VecInit(Seq.fill(sp_banks)(0.U(log2Ceil(sp_bank_entries).W))))
       val vpu_wr_data = WireDefault(VecInit(Seq.fill(sp_banks)(0.U(spad_w.W))))
-      val vpu_wq_busy = WireDefault(VecInit(Seq.fill(vpu_units)(false.B)))
+      val vpu_wq_busy = WireDefault(VecInit(Seq.fill(vpu_params.units)(false.B)))
       val vpus = if (!has_vpu) Seq() else {
         require(spad_w == 128 && isPow2(sp_banks) && log2Ceil(sp_banks * sp_bank_entries) <= 14,
           "VPU: 8 x BF16 spad rows, <= 14-bit spad row addresses")
-        val vs = Seq.tabulate(vpu_units)(_ => Module(new gemmini.vpu.Vpu(log2Ceil(sp_banks * sp_bank_entries), log2Ceil(sp_bank_entries))))
+        val vs = Seq.tabulate(vpu_params.units)(_ => Module(new gemmini.vpu.Vpu(log2Ceil(sp_banks * sp_bank_entries), log2Ceil(sp_bank_entries), vpu_params)))
         vs.zip(io.vpu_cmd.get).foreach { case (v, c) => v.io.cmd <> c }
         val bankOf = (a: UInt) => if (sp_banks == 1) 0.U else a(log2Ceil(sp_banks * sp_bank_entries) - 1, log2Ceil(sp_bank_entries))
         val rowOf = (a: UInt) => a(log2Ceil(sp_bank_entries) - 1, 0)
@@ -808,7 +808,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         vs
       }
       // a VPU is busy until its last write has landed
-      io.vpu_unit_busy := VecInit(Seq.tabulate(vpu_units)(i => if (has_vpu) vpus(i).io.busy || vpu_wq_busy(i) else false.B))
+      io.vpu_unit_busy := VecInit(Seq.tabulate(vpu_params.units)(i => if (has_vpu) vpus(i).io.busy || vpu_wq_busy(i) else false.B))
       io.vpu_busy := io.vpu_unit_busy.asUInt.orR
       // Reading from the SRAM banks
       bank_ios.zipWithIndex.foreach { case (bio, i) =>

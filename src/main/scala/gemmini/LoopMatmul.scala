@@ -1407,6 +1407,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
       (is_vpu, span(vc.src1, vc.rows)),
       (is_vpu && gemmini.vpu.VpuOp.usesSrc2(vc.op), span(vc.src2, gemmini.vpu.VpuCmd.src2Rows(vc))),
       (is_vpu, span(vc.dst, gemmini.vpu.VpuCmd.dstRows(vc))),
+      (is_vpu && gemmini.vpu.VpuOp.hasDst2(vc.op), span(vc.dst2, gemmini.vpu.VpuCmd.dst2Rows(vc))),
       (is_sr, span(sc.src, sr_src_rows)),
       (is_sr, span(sc.dst, sr_dst_rows)))
     def c_rows(l: LoopMatmulState): (UInt, UInt) = span(l.c_spad_addr(log2Up(max_addr) - 1, 0), 2.U * l.max_i * l.max_j * block_size.U)

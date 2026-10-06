@@ -131,6 +131,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val deps_st = Vec(reservation_station_entries_st, Bool())
     val deps_vec = Vec(n_vec, Bool())
     val opc = UDValid(new OpT)   // vector entries only: src2
+    val opd = UDValid(new OpT)   // vector entries only: second destination (EXPSUM row sums)
     val reads_act0 = Bool()      // ex entries: issued under a scale config that may read act half 0
 
     def ready(dummy: Int = 0): Bool = !(deps_ld.reduce(_ || _) || deps_ex.reduce(_ || _) || deps_st.reduce(_ || _) ||
@@ -376,6 +377,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }
     new_entry.opc.valid := false.B
     new_entry.opc.bits := DontCare
+    new_entry.opd.valid := false.B
+    new_entry.opd.bits := DontCare
     when (is_vpu) {
       val vc = gemmini.vpu.VpuCmd.decode(cmd.rs1, cmd.rs2, 14)
       new_entry.opa_is_dst := true.B
@@ -383,6 +386,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       new_entry.opb := spRange(vc.src1, vc.rows)
       new_entry.opc := spRange(vc.src2, gemmini.vpu.VpuCmd.src2Rows(vc))
       new_entry.opc.valid := gemmini.vpu.VpuOp.usesSrc2(vc.op)
+      if (vpu_params.expSum) {
+        new_entry.opd := spRange(vc.dst2, gemmini.vpu.VpuCmd.dst2Rows(vc))
+        new_entry.opd.valid := gemmini.vpu.VpuOp.hasDst2(vc.op)
+      }
     }.elsewhen (is_sreq) {
       val sc = SpadRequantCmd.decode(cmd.rs1, cmd.rs2, 14)
       val m16 = (sc.m +& 15.U) & ~15.U(17.W)
@@ -449,10 +456,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     // ---- 4th (vector) queue dependencies. ov = row-range overlap of valid operands ----
     def ov(a: UDValid[OpT], b: UDValid[OpT]): Bool = a.valid && b.valid && a.bits.overlaps(b.bits)
     def ovAny(as: Seq[UDValid[OpT]], bs: Seq[UDValid[OpT]]): Bool = (for (a <- as; b <- bs) yield ov(a, b)).reduce(_ || _)
-    def opsOf(e: Entry): Seq[UDValid[OpT]] = Seq(e.opa, e.opb, e.opc)
-    // e writes only opa (when opa_is_dst); conflict unless both sides only read
+    def opsOf(e: Entry): Seq[UDValid[OpT]] = Seq(e.opa, e.opb, e.opc, e.opd)
+    // e writes opa (when opa_is_dst) and opd (when valid); conflict unless both sides only read
     def conflicts(n: Entry, e: Entry): Bool =
-      (n.opa_is_dst && ovAny(Seq(n.opa), opsOf(e))) || (e.opa_is_dst && ovAny(opsOf(n), Seq(e.opa)))
+      (n.opa_is_dst && ovAny(Seq(n.opa), opsOf(e))) || (e.opa_is_dst && ovAny(opsOf(n), Seq(e.opa))) ||
+        ovAny(Seq(n.opd), opsOf(e)) || ovAny(opsOf(n), Seq(e.opd))
     val is_scale_cfg = funct === CONFIG_SCALE_MEM
     // a BF16 scratchpad store (rs2[63], set by StCSpad) shares the requantizer with SPAD_REQUANT beat by beat; only
     // quantized stores (scale coalescer) are ordered against it
@@ -548,7 +556,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }
 
   def entry_sp_banks(e: UDValid[Entry]): UInt =
-    Seq(e.bits.opa, e.bits.opb, e.bits.opc).map(o => Mux(o.valid, o.bits.sp_banks_mask(), 0.U)).reduce(_ | _)
+    Seq(e.bits.opa, e.bits.opb, e.bits.opc, e.bits.opd).map(o => Mux(o.valid, o.bits.sp_banks_mask(), 0.U)).reduce(_ | _)
   val vec_unit_ready = io.vec_unit_ready
   val vec_pending_banks = io.vec_pending_banks
 
@@ -655,7 +663,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   // Explicitly mark "opb" in all ld/st queues entries as being invalid.
   // This helps us to reduce the total reservation table area
-  Seq(entries_ld, entries_st).foreach { entries_type =>
+  // (ex_write_to_spad: a STORE_SPAD keeps its accumulator source range in opb, so a younger matmul's acc writes wait
+  // for its read -- without it the WAR on the accumulator is lost)
+  (if (ex_write_to_spad) Seq(entries_ld) else Seq(entries_ld, entries_st)).foreach { entries_type =>
     entries_type.foreach { e =>
       e.bits.opb.valid := false.B
       e.bits.opb.bits := DontCare
@@ -665,6 +675,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   Seq(entries_ld, entries_ex, entries_st).foreach(_.foreach { e =>
     e.bits.opc.valid := false.B
     e.bits.opc.bits := DontCare
+    e.bits.opd.valid := false.B
+    e.bits.opd.bits := DontCare
   })
   if (!has_vec) entries_vec.foreach(_.valid := false.B)
 

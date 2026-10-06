@@ -1470,7 +1470,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // retires the entry once the unit is idle again (VPU pipeline drained / SPAD_REQUANT writes + scale flush done).
   val vec_issue = reservation_station.io.issue.vec
   val vec_is_sr = vec_issue.cmd.cmd.inst.funct === SPAD_REQUANT
-  val vpu_n = outer.config.vpu_units
+  val vpu_n = outer.config.vpu_params.units
   val vpu_cmd_ready = VecInit(Seq.tabulate(vpu_n)(i => spad.module.io.vpu_cmd.map(_(i).ready).getOrElse(false.B)))
   // SPAD_REQUANT may only take the requantizer once it is empty: a retired store can still have beats in flight, so
   // wait until no accumulator-side beat has entered for (pipeline latency + 4) cycles and nothing waits at its output

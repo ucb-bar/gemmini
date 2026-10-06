@@ -518,7 +518,8 @@ object GemminiMxFPConfigs {
     has_nonlinear_activations = true,   // RELU only: has_normalizations stays false
     has_normalizations = false,
     has_vpu = true,
-    vpu_units = 2,   // two 8-lane VPUs: commands in different spad banks run side by side
+    // two 8-lane VPUs (commands in different spad banks run side by side) with the optional fused softmax ops
+    vpu_params = gemmini.vpu.VpuParams(units = 2, expSub = true, expSum = true),
     has_spad_requant = true,
     reservation_station_entries_ld = 32,   // a K/V block's mvins enter at once instead of blocking the command stream
   )
