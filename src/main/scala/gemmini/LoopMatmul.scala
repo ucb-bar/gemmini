@@ -1174,8 +1174,11 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ldab_arb.io.inA <> ldA.io.cmd
   ldab_arb.io.inB <> ldB.io.cmd
   val ab_loads_on_same_loop = ldA.io.loop_id === ldB.io.loop_id
-  val forceA = !ab_loads_on_same_loop && ldA.io.loop_id === head_loop_id
-  val forceB = !ab_loads_on_same_loop && ldB.io.loop_id === head_loop_id
+  // Force only a loader with head-loop work left: an idle loader keeps the loop_id of the last loop it served (e.g. a
+  // head matmul that skips its A/B loads), and forcing it would starve the other loader's next-loop loads until the
+  // head loop completes.
+  val forceA = !ab_loads_on_same_loop && ldA.io.loop_id === head_loop_id && !ldA.io.idle
+  val forceB = !ab_loads_on_same_loop && ldB.io.loop_id === head_loop_id && !ldB.io.idle
   ldab_arb.io.forceA := Mux(is_resadd, ab_loads_on_same_loop && !ldA.io.idle, forceA)
   ldab_arb.io.forceB := Mux(is_resadd, forceB || ldA.io.idle, forceB) 
   ldab_arb.io.weightA := 0.U
