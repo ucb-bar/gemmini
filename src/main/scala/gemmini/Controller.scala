@@ -1496,14 +1496,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val rq_quiet = mx_requantizer.map { r =>
     val lat = outer.config.requantizer.get.pipelineLatency + 4
     val quiet = RegInit(0.U(log2Ceil(lat + 1).W))
-    val quiet_all = RegInit(0.U(log2Ceil(lat + 1).W))   // since ANY beat entered (an FP4 SR shares with none)
-    when (r.io.mxacc_req.mx_data_in.fire) { quiet_all := 0.U } .elsewhen (quiet_all =/= lat.U) { quiet_all := quiet_all + 1.U }
+    // cycles with no beat entering AND none at the output (an FP4 SR shares with none): a beat still inside the pipeline
+    // shows up at the output within the latency, so lat + 4 such cycles in a row mean it is empty
+    val quiet_all = RegInit(0.U(log2Ceil(lat + 1).W))
+    when (r.io.mxacc_req.mx_data_in.fire || r.io.mxacc_req.mx_data_out.valid) { quiet_all := 0.U }
+      .elsewhen (quiet_all =/= lat.U) { quiet_all := quiet_all + 1.U }
     // BF16 beats share the requantizer with SPAD_REQUANT (they skip quantization and the scale coalescer): only
     // quantized beats must have drained, and a waiting output is fine while the accumulator side is in BF16 mode
     val q_in = r.io.mxacc_req.mx_data_in.fire && r.io.mxacc_req.mx_mode =/= MxFloatFormat.BF16
     val acc_bf16 = spad.module.io.mx_req_io.mx_mode === MxFloatFormat.BF16 && !ex_controller.io.mx.get.lut_en_out
     when (q_in) { quiet := 0.U } .elsewhen (quiet =/= lat.U) { quiet := quiet + 1.U }
-    rq_quiet_fp4 := quiet_all === lat.U && !r.io.mxacc_req.mx_data_out.valid
+    rq_quiet_fp4 := quiet_all === lat.U
     quiet === lat.U && (!r.io.mxacc_req.mx_data_out.valid || acc_bf16)
   }.getOrElse(true.B)
   val sr_flush_free = !mx_requantizer.map(_.io.scale_flush_busy).getOrElse(false.B) && sfout_outstanding === 0.U

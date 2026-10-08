@@ -314,6 +314,9 @@ class MxRequantizer[T <: Data](
 
   final_pipe_out.bits.out.quant_mx_data_out := 0.U.asTypeOf(spad_row_t)
   final_pipe_out.bits.out.is_garbage := false.B
+  // a two-beat output's garbage flag belongs to its beat: latched at the beat's quantize pulse and held, like its data,
+  // while the output waits (the live pair counter has already moved on to the next beat)
+  val garbage_held = RegInit(false.B)
   val lut_valid = quantLut.map(_.io.projected_data.valid).getOrElse(false.B)
   when(out_is_8bit) {
     final_pipe_out.valid := oldest_pipe_out.valid
@@ -321,6 +324,7 @@ class MxRequantizer[T <: Data](
     final_pipe_out.bits.out.is_garbage := false.B
   }.elsewhen(out_is_lut4) {
     when(lut_valid) {
+      garbage_held := !quant_half_counter
       when(!quant_half_counter) {
         first_half_buf     := fp6_lut_out
         quant_half_counter := true.B
@@ -328,12 +332,13 @@ class MxRequantizer[T <: Data](
         quant_half_counter := false.B
       }
     }
-    final_pipe_out.bits.out.is_garbage := !quant_half_counter &&  (oldest_pipe_out.valid)
+    final_pipe_out.bits.out.is_garbage := Mux(lut_valid, !quant_half_counter, garbage_held) && oldest_pipe_out.valid
     final_pipe_out.valid :=  (oldest_pipe_out.valid)  
     final_pipe_out.bits.out.quant_mx_data_out := Mux(lut_valid, fp6_combined, quant_data_held).asTypeOf(spad_row_t)
 
   }.elsewhen(out_is_fp4) {
     when(quantize_valid) {
+      garbage_held := !quant_half_counter
       when(!quant_half_counter) {
         first_half_buf     := extracted_data(io.outputnumLanes*4-1, 0)
         quant_half_counter := true.B
@@ -342,7 +347,7 @@ class MxRequantizer[T <: Data](
       }
     }
     final_pipe_out.valid := (oldest_pipe_out.valid)
-    final_pipe_out.bits.out.is_garbage := !quant_half_counter && oldest_pipe_out.valid
+    final_pipe_out.bits.out.is_garbage := Mux(quantize_valid, !quant_half_counter, garbage_held) && oldest_pipe_out.valid
     final_pipe_out.bits.out.quant_mx_data_out := Mux(quantize_valid, fp4_combined, quant_data_held).asTypeOf(spad_row_t)
   }
 
