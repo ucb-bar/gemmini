@@ -60,6 +60,13 @@ class MxE4M3VpuGemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(512) ++
   new chipyard.config.AbstractConfig)
 
+// MxE4M3VpuGemminiRocketConfig plus FP4 x FP4 (mode0) on the mesh.
+class MxE4M3Fp4VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPE4M3Fp4TrimmedStandaloneConfig ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
 class MxE4M3SingleGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPE4M3SingleNoLutStandaloneConfig ++       // standalone MX, E4M3 single throughput only, no QuantLut
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++

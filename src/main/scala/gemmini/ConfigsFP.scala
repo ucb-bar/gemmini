@@ -523,6 +523,13 @@ object GemminiMxFPConfigs {
     has_spad_requant = true,
     reservation_station_entries_ld = 32,   // a K/V block's mvins enter at once instead of blocking the command stream
   )
+  // e4m3Trimmed (VPU) plus FP4 x FP4 (mode0, 32x32 tile per pass) beside E4M3-single (mode8); still no LUT.
+  lazy val e4m3Fp4TrimmedMxFPConfig = e4m3TrimmedMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleFp4),
+    weightType = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleFp4),
+    spatialArrayInputType  = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleFp4),
+    spatialArrayWeightType = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleFp4),
+  )
   lazy val e5m2OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
     weightType = MxFloat.withConfig(5, 3, 2, MxConfig.e5m2Only),
@@ -846,6 +853,12 @@ class GemminiMxFPE4M3TrimmedStandaloneConfig extends Config((site, here, up) => 
   case BuildRoCC => Seq((p: Parameters) => {
     implicit val q = p; implicit val v = implicitly[ValName]
     LazyModule(new Gemmini(GemminiMxFPConfigs.e4m3TrimmedMxFPConfig))
+  })
+})
+class GemminiMxFPE4M3Fp4TrimmedStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.e4m3Fp4TrimmedMxFPConfig))
   })
 })
 class GemminiMxFPE4M3SingleNoLutStandaloneConfig extends Config((site, here, up) => {

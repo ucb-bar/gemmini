@@ -216,6 +216,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   io.dma.req.bits.mx_multi_elem := io.mx_multi_elem
   io.dma.req.bits.mx_multi_elem_act := io.mx_multi_elem_act
   io.dma.req.bits.output_mx_type := io.output_mx_type
+  io.dma.req.bits.half_pitch := Mux(dst_is_spad, dst_row_step >> 1, stride >> 1)
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore

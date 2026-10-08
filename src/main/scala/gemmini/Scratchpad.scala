@@ -62,6 +62,8 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
 
   // When set, a requant->spad beat lands within-tile-row-inner (beat << 4) instead of flat +beat.
   val reuse_tiled = Bool()
+  // half the store's row step (DRAM: bytes, spad: rows) = the output row pitch when an act-quad acc row holds 2 rows
+  val half_pitch = UInt(coreMaxAddrBits.W)
 }
 
 class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)(implicit p: Parameters) extends Module {
@@ -86,7 +88,9 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
     (io.in.bits.max_j <= 2.U && !io.in.bits.mx_multi_elem) -> ((acc_t_bits/16).U * 16.U / 2.U),
     (io.in.bits.mx_multi_elem) -> 0.U
   )))
-  val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, address_second_half_wide, address_second_half_narrow)
+  // BF16: the second row at the store's own half pitch (the live loop_bound_j may be a later loop's J)
+  val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, io.in.bits.vaddr + io.in.bits.half_pitch,
+    address_second_half_narrow)
   val second_half_invalid = io.in.bits.len < 16.U
   val out_chunk_id = Mux(is_non_fp8_acc_write, second_half.asUInt, io.in.bits.chunk_id)
 

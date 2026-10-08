@@ -596,7 +596,8 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     // (mode6/7) H=16 -> i*max_j*block_size*4. The old x8-only assumed quad and doubled the act-single
     // i-stride (tiles i>=1 landed at 2x -> rows>=16 garbage). Gate the height on mx_multi_elem_act; the
     // j-term: each J-tile = 2*DIM cols (a 64-col half) -> block_size/8 spad-rows (=4), N-independent.
-    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*Mux(req.mx_multi_elem_act, 8.U, 4.U) + j * (block_size/8).U)
+    // quad BF16: one tile (2*DIM rows if act quad) x 2*DIM cols per mvout, row pitch dram_stride elements
+    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i * Mux(req.mx_multi_elem_act, (2 * block_size).U, block_size.U) * req.dram_stride + j * (2 * block_size).U) * 2.U)
   ))
   val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
   val acc_addr_offset = (i*iter_max_j+j) * block_size.U
@@ -1046,6 +1047,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val st_completed = Bool()
   val ex_skipped = Bool()   // LOOP_WS rs2[6]: store-only loop (no EX of its own to order its stores behind)
   val narrow_type = Bool()
+  val narrow_act = Bool()
 
   def all_completed(dummy: Int=0): Bool = lda_completed && ldb_completed && ldd_completed && ex_completed && st_completed
 
@@ -1089,6 +1091,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
     spad_only := false.B
     reuse_tiled := false.B
     narrow_type := false.B
+    narrow_act := false.B
     //is_resadd := false.B
   }
 }
@@ -1339,6 +1342,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.low_d := cmd.bits.cmd.rs1(2)
         loop_being_configured.act := cmd.bits.cmd.rs1(8+Activation.bitwidth-1, 8) // TODO magic numbers
         loop_being_configured.narrow_type := io.mx_multi_elem
+        loop_being_configured.narrow_act := io.mx_multi_elem_act
         loop_being_configured.lda_started := cmd.bits.cmd.rs2(3)
         loop_being_configured.ldb_started := cmd.bits.cmd.rs2(4)
         loop_being_configured.ldd_started := cmd.bits.cmd.rs2(5)
@@ -1408,7 +1412,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     // exact footprints, as the RS computes them: BF16 source M*N/8 rows, E4M3 destination M*N/16 (M padded to 16 if tiled)
     val sc = SpadRequantCmd.decode(r1, r2, 14)
     val sr_src_rows = (sc.m * sc.n) >> 3
-    val sr_dst_rows = Mux(sc.tiled, ((((sc.m +& 15.U) & ~15.U(17.W)) * sc.n) >> 4), (sc.m * sc.n) >> 4)
+    val sr_dst_rows = Mux(sc.fp4, Mux(sc.tiled, ((((sc.m +& 31.U) & ~31.U(17.W)) * sc.n) >> 5), (sc.m * sc.n) >> 5),
+                                  Mux(sc.tiled, ((((sc.m +& 15.U) & ~15.U(17.W)) * sc.n) >> 4), (sc.m * sc.n) >> 4))
     val ranges = Seq(
       (is_vpu, span(vc.src1, vc.rows)),
       (is_vpu && gemmini.vpu.VpuOp.usesSrc2(vc.op), span(vc.src2, gemmini.vpu.VpuCmd.src2Rows(vc))),
@@ -1416,7 +1421,9 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
       (is_vpu && gemmini.vpu.VpuOp.hasDst2(vc.op), span(vc.dst2, gemmini.vpu.VpuCmd.dst2Rows(vc))),
       (is_sr, span(sc.src, sr_src_rows)),
       (is_sr, span(sc.dst, sr_dst_rows)))
-    def c_rows(l: LoopMatmulState): (UInt, UInt) = span(l.c_spad_addr(log2Up(max_addr) - 1, 0), 2.U * l.max_i * l.max_j * block_size.U)
+    // BF16 C: a tile is 2*DIM rows, x2 per quad operand (2*DIM output rows / cols)
+    def c_rows(l: LoopMatmulState): (UInt, UInt) = span(l.c_spad_addr(log2Up(max_addr) - 1, 0),
+      ((2.U * l.max_i * l.max_j * block_size.U) << l.narrow_type) << l.narrow_act)
     // a resident SR also waits for a loop reading act half 0 to issue all its computes (the RS then orders it after them)
     def hits(l: LoopMatmulState): Bool = l.configured && (ranges.map { case (v, r) =>
       v && (rows_overlap(r, a_rows(l)) || rows_overlap(r, b_rows(l)) || (l.spad_only && rows_overlap(r, c_rows(l))))
@@ -1537,7 +1544,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   }
   val lds_is_b = lds_state === 2.U
   val lds_rows = lds_loop.max_k / tilesPerMxBlock.U
-  val lds_row_bytes = Mux(lds_is_b, lds_loop.max_j, lds_loop.max_i) * block_size.U
+  // a quad operand tile is 2*DIM rows (A) / cols (B): twice the scale bytes per k-block row
+  val lds_row_bytes = Mux(lds_is_b, lds_loop.max_j << lds_loop.narrow_type, lds_loop.max_i << lds_loop.narrow_act) * block_size.U
   val lds_dest = Cat(lds_loop_id(0), 0.U(12.W))
   lds_cmd.valid := lds_state =/= 0.U
   lds_cmd.bits := DontCare
