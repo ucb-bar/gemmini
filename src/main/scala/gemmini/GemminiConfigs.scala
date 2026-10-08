@@ -110,6 +110,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              has_vpu: Boolean = false,                // BF16 vector engine on the scratchpad (VPU_EXEC)
                                                                              vpu_params: gemmini.vpu.VpuParams = gemmini.vpu.VpuParams(),  // VPU count, lanes, optional fused ops
                                                                              has_spad_requant: Boolean = false,       // SPAD_REQUANT: spad BF16 tile -> MxRequantizer
+                                                                             has_loop_retire_counter: Boolean = false, // Radiance: count of fully retired LOOP_WS (retire_io), read over MMIO
 
                                                                              use_firesim_simulation_counters: Boolean = false,
 

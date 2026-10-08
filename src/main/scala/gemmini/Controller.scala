@@ -1225,6 +1225,63 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   completion_io.completed := loop_completed
 
+  // has_loop_retire_counter (Radiance): loops_retired counts LOOP_WS that have fully retired, in issue order. The loop
+  // unit's completion pulse only says a loop's commands have all been unrolled; a loop retires once, in addition, every
+  // reservation-station entry outstanding at that pulse (plus the commands then still queued in unrolled_cmd) has
+  // freed, and the store path has drained: an acc-source store frees its entry at the acc read, before its rows land.
+  // Conservative (a loop also waits for older commands still in the station), so "loops_retired >= n" means loop n and
+  // everything issued before it is done. A kernel polls it over MMIO instead of fencing (BUSY drains all of gemmini)
+  // when it needs one loop's results, e.g. S stored by QK while the next matmuls stay queued behind it.
+  val retire_io = Option.when(has_loop_retire_counter)(IO(new Bundle {
+    val loops_retired = Output(UInt(32.W))
+  }))
+  if (has_loop_retire_counter) {
+    val valid_now = reservation_station.io.entry_valid.get
+    val alloc_oh = reservation_station.io.alloc_oh.get
+    val nE = valid_now.getWidth
+    val freed = RegNext(valid_now, 0.U(nE.W)) & ~valid_now   // entries that freed since last cycle
+
+    // commands between the loop unit and the reservation station (unrolled_cmd), counted like vec_in_q above
+    val in_q = RegInit(0.U(3.W))
+    in_q := in_q + loop_cmd.fire.asUInt - unrolled_cmd.fire.asUInt
+
+    val depth = 8
+    val pend_mask = Reg(Vec(depth, UInt(nE.W)))   // entries the loop still waits for
+    val pend_cmds = Reg(Vec(depth, UInt(3.W)))    // queued commands still to be folded into pend_mask
+    val pend_valid = RegInit(VecInit(Seq.fill(depth)(false.B)))
+    val head = RegInit(0.U(log2Ceil(depth).W))
+    val tail = RegInit(0.U(log2Ceil(depth).W))
+    val retired = RegInit(0.U(32.W))
+
+    val alloc_now = Mux(reservation_station.io.alloc.fire, alloc_oh, 0.U(nE.W))
+    for (k <- 0 until depth) {
+      val folding = pend_cmds(k) =/= 0.U && unrolled_cmd.fire
+      pend_mask(k) := (pend_mask(k) | Mux(folding, alloc_now, 0.U)) & ~freed
+      when (folding) { pend_cmds(k) := pend_cmds(k) - 1.U }
+    }
+
+    // a loop is unrolled: record what it waits for (a command dequeued this cycle is one of the in_q queued ones)
+    val unrolled = loop_completed.asUInt.orR
+    assert(PopCount(loop_completed) <= 1.U, "loop retire counter: at most one loop completes per cycle")
+    assert(!(unrolled && pend_valid(tail)), "loop retire counter: more than 8 loops unrolled but not retired")
+    when (unrolled) {
+      pend_valid(tail) := true.B
+      pend_mask(tail) := (valid_now | alloc_now) & ~freed
+      pend_cmds(tail) := in_q - unrolled_cmd.fire.asUInt
+      tail := tail + 1.U
+    }
+
+    // retire the oldest loop when nothing it waits for is left and no store data is still on its way out
+    val head_done = pend_valid(head) && pend_cmds(head) === 0.U && pend_mask(head) === 0.U &&
+      !spad.module.io.store_drain_busy.get
+    when (head_done) {
+      pend_valid(head) := false.B
+      head := head + 1.U
+      retired := retired + 1.U
+    }
+    retire_io.get.loops_retired := retired
+  }
+
   /*
   //-------------------------------------------------------------------------
   // finish muxing control signals to rob (risc) or tiler (cisc)
