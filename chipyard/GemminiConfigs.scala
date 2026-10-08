@@ -60,9 +60,15 @@ class MxE4M3VpuGemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(512) ++
   new chipyard.config.AbstractConfig)
 
-// MxE4M3VpuGemminiRocketConfig plus FP4 x FP4 (mode0) on the mesh.
+// MxE4M3VpuGemminiRocketConfig plus FP4 x FP4 (mode0) on the mesh, and an L2 that keeps more DRAM reads in flight:
+// the default (1 bank, outerLatencyCycles 40) has ceil(40 / 8 beats) = 5 outer MSHRs for the whole system, capping
+// reads at ~5.2 B/cycle at the ~62-cycle SimDRAM round trip. 128 -> 16 per bank, 4 banks (same 512 KB): 64 in flight.
 class MxE4M3Fp4VpuGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPE4M3Fp4TrimmedStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  // 4 banks x more MSHRs need 10 TL sink-id bits; the serial-TL tether's standard bundle carries 8
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++
   new chipyard.config.WithSystemBusWidth(512) ++
   new chipyard.config.AbstractConfig)
