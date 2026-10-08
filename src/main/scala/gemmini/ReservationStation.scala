@@ -30,6 +30,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val block_rows = tileRows * meshRows
   val block_cols = tileColumns * meshColumns
 
+  private val n_vec_entries = if (has_vpu || has_spad_requant) res_max_per_type min 16 else 1   // = n_vec below
+  val n_all_entries = reservation_station_entries_ld + reservation_station_entries_ex + reservation_station_entries_st +
+    n_vec_entries
+
   val max_instructions_completed_per_type_per_cycle = 2 // Every cycle, at most two instructions of a single "type" (ld/st/ex) can be completed: one through the io.completed port, and the other if it is a "complete-on-issue" instruction
 
   val io = IO(new Bundle {
@@ -61,6 +65,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val mx_packed_acc = Input(Bool())
     val vec_free = Output(UInt(5.W))   // free vector-queue entries
     val ld_free = Output(UInt(log2Up(reservation_station_entries_ld + 1).W))   // free load-queue entries
+    // has_loop_retire_counter: every entry's valid bit, and the entry allocated this cycle (one-hot), both in the
+    // order ld ++ ex ++ st ++ vec
+    val entry_valid = Option.when(has_loop_retire_counter)(Output(UInt(n_all_entries.W)))
+    val alloc_oh = Option.when(has_loop_retire_counter)(Output(UInt(n_all_entries.W)))
 
     val counter = new CounterEventIO()
   })
@@ -214,6 +222,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   val new_entry_oh = new_allocs_oh_ld ++ new_allocs_oh_ex ++ new_allocs_oh_st ++ new_allocs_oh_vec
   new_entry_oh.foreach(_ := false.B)
+  require(entries.length == n_all_entries)
+  io.entry_valid.foreach(_ := VecInit(entries.map(_.valid)).asUInt)
+  io.alloc_oh.foreach(_ := VecInit(new_entry_oh).asUInt)
 
   val alloc_fire = io.alloc.fire
 

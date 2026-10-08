@@ -442,6 +442,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val vpu_pending_banks = Output(UInt(sp_banks.W))
       // SPAD_REQUANT code rows: lowest write priority, backpressured
       val sr_write = Option.when(has_spad_requant)(Flipped(Decoupled(new SpadRowWrite(log2Ceil(sp_banks * sp_bank_entries), spad_w))))
+      // has_loop_retire_counter: store data still on its way out (write queues, DRAM / SMEM writes awaiting their acks,
+      // requant / store rows not yet written to a bank); loads are not counted
+      val store_drain_busy = Option.when(has_loop_retire_counter)(Output(Bool()))
     })
 
     val write_dispatch_q = if (use_mx_scaling) {
@@ -753,6 +756,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     io.busy := writer.module.io.busy || spad_writer.map(_.module.io.busy).getOrElse(false.B) || reader.module.io.busy ||
       write_issue_q.io.deq.valid || write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
+    io.store_drain_busy.foreach(_ := writer.module.io.busy || spad_writer.map(_.module.io.busy).getOrElse(false.B) ||
+      write_issue_q.io.deq.valid || write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid ||
+      io.vpu_pending_banks =/= 0.U)
 
     val spad_mems = {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(
