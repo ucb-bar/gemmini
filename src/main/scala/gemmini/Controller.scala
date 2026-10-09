@@ -338,6 +338,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     req.io.linear_m := 0.U
     req.io.linear_base := 0.U
     req.io.linear_resident := false.B
+    req.io.linear_pairs := false.B
     req.io.quant_mode.valid := false.B
     req.io.quant_mode.bits := 0.U
     req.io.sr_tag_in := false.B
@@ -1224,6 +1225,63 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   completion_io.completed := loop_completed
 
+  // has_loop_retire_counter (Radiance): loops_retired counts LOOP_WS that have fully retired, in issue order. The loop
+  // unit's completion pulse only says a loop's commands have all been unrolled; a loop retires once, in addition, every
+  // reservation-station entry outstanding at that pulse (plus the commands then still queued in unrolled_cmd) has
+  // freed, and the store path has drained: an acc-source store frees its entry at the acc read, before its rows land.
+  // Conservative (a loop also waits for older commands still in the station), so "loops_retired >= n" means loop n and
+  // everything issued before it is done. A kernel polls it over MMIO instead of fencing (BUSY drains all of gemmini)
+  // when it needs one loop's results, e.g. S stored by QK while the next matmuls stay queued behind it.
+  val retire_io = Option.when(has_loop_retire_counter)(IO(new Bundle {
+    val loops_retired = Output(UInt(32.W))
+  }))
+  if (has_loop_retire_counter) {
+    val valid_now = reservation_station.io.entry_valid.get
+    val alloc_oh = reservation_station.io.alloc_oh.get
+    val nE = valid_now.getWidth
+    val freed = RegNext(valid_now, 0.U(nE.W)) & ~valid_now   // entries that freed since last cycle
+
+    // commands between the loop unit and the reservation station (unrolled_cmd), counted like vec_in_q above
+    val in_q = RegInit(0.U(3.W))
+    in_q := in_q + loop_cmd.fire.asUInt - unrolled_cmd.fire.asUInt
+
+    val depth = 8
+    val pend_mask = Reg(Vec(depth, UInt(nE.W)))   // entries the loop still waits for
+    val pend_cmds = Reg(Vec(depth, UInt(3.W)))    // queued commands still to be folded into pend_mask
+    val pend_valid = RegInit(VecInit(Seq.fill(depth)(false.B)))
+    val head = RegInit(0.U(log2Ceil(depth).W))
+    val tail = RegInit(0.U(log2Ceil(depth).W))
+    val retired = RegInit(0.U(32.W))
+
+    val alloc_now = Mux(reservation_station.io.alloc.fire, alloc_oh, 0.U(nE.W))
+    for (k <- 0 until depth) {
+      val folding = pend_cmds(k) =/= 0.U && unrolled_cmd.fire
+      pend_mask(k) := (pend_mask(k) | Mux(folding, alloc_now, 0.U)) & ~freed
+      when (folding) { pend_cmds(k) := pend_cmds(k) - 1.U }
+    }
+
+    // a loop is unrolled: record what it waits for (a command dequeued this cycle is one of the in_q queued ones)
+    val unrolled = loop_completed.asUInt.orR
+    assert(PopCount(loop_completed) <= 1.U, "loop retire counter: at most one loop completes per cycle")
+    assert(!(unrolled && pend_valid(tail)), "loop retire counter: more than 8 loops unrolled but not retired")
+    when (unrolled) {
+      pend_valid(tail) := true.B
+      pend_mask(tail) := (valid_now | alloc_now) & ~freed
+      pend_cmds(tail) := in_q - unrolled_cmd.fire.asUInt
+      tail := tail + 1.U
+    }
+
+    // retire the oldest loop when nothing it waits for is left and no store data is still on its way out
+    val head_done = pend_valid(head) && pend_cmds(head) === 0.U && pend_mask(head) === 0.U &&
+      !spad.module.io.store_drain_busy.get
+    when (head_done) {
+      pend_valid(head) := false.B
+      head := head + 1.U
+      retired := retired + 1.U
+    }
+    retire_io.get.loops_retired := retired
+  }
+
   /*
   //-------------------------------------------------------------------------
   // finish muxing control signals to rob (risc) or tiler (cisc)
@@ -1299,6 +1357,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   spad.module.io.dma.read <> load_controller.io.dma
   spad.module.io.dma.write <> store_controller.io.dma
 
+  // FP4 SPAD_REQUANT next in the vector queue and not yet started (driven at the vector-queue issue below)
+  val sr_fp4_hold = WireInit(false.B)
   if (outer.config.use_mx_scaling) {
     spad.module.io.loop_bounds := ex_controller.io.mx.get.loop_bounds
 
@@ -1312,7 +1372,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     sr.foreach { u =>
       val rq = mx_requantizer.get.io.mxacc_req
       val acc = spad.module.io.mx_req_io
-      val share = u.io.active && acc.mx_mode === MxFloatFormat.BF16 && !ex_controller.io.mx.get.lut_en_out
+      // FP4 output packs two beats per output (requantizer pair state), so it never shares
+      val share = u.io.active && !u.io.fp4 && acc.mx_mode === MxFloatFormat.BF16 && !ex_controller.io.mx.get.lut_en_out
       val last_sr = RegInit(false.B)   // alternate when both have a beat
       val pick_sr = u.io.rq_in.valid && (!acc.mx_data_in.valid || !last_sr)
       val out_sr = mx_requantizer.get.io.sr_tag_out
@@ -1340,22 +1401,30 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         rq.mx_data_in.bits.fromDMA := true.B
         rq.mx_data_in.bits.chunk_id := 0.U
         rq.mx_data_in.bits.acc_bank_id := 0.U
-        rq.mx_mode := 0.U
+        rq.mx_mode := Mux(u.io.fp4, MxFloatFormat.FP4, 0.U)
         rq.mx_fp8_altfmt := false.B
         acc.mx_data_in.ready := false.B
         rq.mx_data_out.ready := u.io.rq_out.ready
         acc.mx_data_out.valid := false.B
       }
+      // an FP4 SPAD_REQUANT is next: no new accumulator beats until it starts, so the ones in flight drain to their
+      // store first (FP4 never shares: its two-beat output packing would pair them with the SR's beats)
+      when (sr_fp4_hold) {
+        rq.mx_data_in.valid := false.B
+        acc.mx_data_in.ready := false.B
+      }
       mx_requantizer.get.io.sr_tag_in := Mux(share, pick_sr, u.io.active)
       u.io.rq_in.ready := u.io.active && rq.mx_data_in.ready && (!share || pick_sr)
       u.io.rq_out.valid := u.io.active && rq.mx_data_out.valid && (!share || out_sr)
       u.io.rq_out.bits := rq.mx_data_out.bits.quant_mx_data_out.asUInt
+      u.io.rq_out_garbage := rq.mx_data_out.bits.is_garbage
       spad.module.io.sr_write.get <> u.io.wr
       mx_requantizer.get.io.linear_scales := u.io.active
       mx_requantizer.get.io.linear_gn := u.io.linear_gn
       mx_requantizer.get.io.linear_m := u.io.linear_m
       mx_requantizer.get.io.linear_base := u.io.linear_base
       mx_requantizer.get.io.linear_resident := u.io.linear_resident
+      mx_requantizer.get.io.linear_pairs := u.io.active && u.io.fp4
       u.io.flush_busy := mx_requantizer.get.io.scale_flush_busy || sfout_outstanding =/= 0.U
     }
 
@@ -1479,25 +1548,37 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val vpu_cmd_ready = VecInit(Seq.tabulate(vpu_n)(i => spad.module.io.vpu_cmd.map(_(i).ready).getOrElse(false.B)))
   // SPAD_REQUANT may only take the requantizer once it is empty: a retired store can still have beats in flight, so
   // wait until no accumulator-side beat has entered for (pipeline latency + 4) cycles and nothing waits at its output
+  sr_fp4_hold := reservation_station.io.vec_sr_fp4_waiting && !sr.map(_.io.active).getOrElse(false.B)
+  val rq_quiet_fp4 = WireInit(true.B)
   val rq_quiet = mx_requantizer.map { r =>
     val lat = outer.config.requantizer.get.pipelineLatency + 4
     val quiet = RegInit(0.U(log2Ceil(lat + 1).W))
+    // cycles with no beat entering AND none at the output (an FP4 SR shares with none): a beat still inside the pipeline
+    // shows up at the output within the latency, so lat + 4 such cycles in a row mean it is empty
+    val quiet_all = RegInit(0.U(log2Ceil(lat + 1).W))
+    when (r.io.mxacc_req.mx_data_in.fire || r.io.mxacc_req.mx_data_out.valid) { quiet_all := 0.U }
+      .elsewhen (quiet_all =/= lat.U) { quiet_all := quiet_all + 1.U }
     // BF16 beats share the requantizer with SPAD_REQUANT (they skip quantization and the scale coalescer): only
     // quantized beats must have drained, and a waiting output is fine while the accumulator side is in BF16 mode
     val q_in = r.io.mxacc_req.mx_data_in.fire && r.io.mxacc_req.mx_mode =/= MxFloatFormat.BF16
     val acc_bf16 = spad.module.io.mx_req_io.mx_mode === MxFloatFormat.BF16 && !ex_controller.io.mx.get.lut_en_out
     when (q_in) { quiet := 0.U } .elsewhen (quiet =/= lat.U) { quiet := quiet + 1.U }
+    rq_quiet_fp4 := quiet_all === lat.U
     quiet === lat.U && (!r.io.mxacc_req.mx_data_out.valid || acc_bf16)
   }.getOrElse(true.B)
-  val sr_free = !mx_requantizer.map(_.io.scale_flush_busy).getOrElse(false.B) && sfout_outstanding === 0.U && rq_quiet
+  val sr_flush_free = !mx_requantizer.map(_.io.scale_flush_busy).getOrElse(false.B) && sfout_outstanding === 0.U
+  val sr_free = sr_flush_free && rq_quiet
+  val sr_free_fp4 = sr_flush_free && rq_quiet_fp4
   val sr_ready = sr.map(_.io.cmd.ready && sr_free).getOrElse(false.B)
+  val sr_ready_fp4 = sr.map(_.io.cmd.ready && sr_free_fp4).getOrElse(false.B)
+  val vec_sr_fp4 = vec_issue.cmd.cmd.rs2(32)
   // one command in flight per vector unit (the VPUs and SPAD_REQUANT run side by side); a VPU command goes to the
   // first free VPU
   val vpu_run = RegInit(VecInit(Seq.fill(vpu_n)(false.B)))
   val sr_run = RegInit(false.B)
   val vpu_free = VecInit(Seq.tabulate(vpu_n)(i => vpu_cmd_ready(i) && !vpu_run(i)))
   val vpu_pick = PriorityEncoderOH(vpu_free)
-  reservation_station.io.vec_unit_ready := VecInit(vpu_free.asUInt.orR, sr_ready && !sr_run)
+  reservation_station.io.vec_unit_ready := VecInit(vpu_free.asUInt.orR, sr_ready && !sr_run, sr_ready_fp4 && !sr_run)
   reservation_station.io.vec_pending_banks := spad.module.io.vpu_pending_banks
   reservation_station.io.mx_packed_acc := (if (use_mx_scaling) !ex_controller.io.mx.get.mx_multi_elem else false.B)
   spad.module.io.vpu_cmd.foreach(_.zipWithIndex.foreach { case (c, i) =>
@@ -1505,10 +1586,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     c.bits := gemmini.vpu.VpuCmd.decode(vec_issue.cmd.cmd.rs1, vec_issue.cmd.cmd.rs2, c.bits.addrW)
   })
   sr.foreach { u =>
-    u.io.cmd.valid := vec_issue.valid && vec_is_sr && sr_free
+    u.io.cmd.valid := vec_issue.valid && vec_is_sr && Mux(vec_sr_fp4, sr_free_fp4, sr_free)
     u.io.cmd.bits := SpadRequantCmd.decode(vec_issue.cmd.cmd.rs1, vec_issue.cmd.cmd.rs2, u.io.cmd.bits.addrW)
   }
-  vec_issue.ready := Mux(vec_is_sr, sr_ready && !sr_run, vpu_free.asUInt.orR)
+  vec_issue.ready := Mux(vec_is_sr, Mux(vec_sr_fp4, sr_ready_fp4, sr_ready) && !sr_run, vpu_free.asUInt.orR)
   val vpu_rob = Reg(Vec(vpu_n, UInt(ROB_ID_WIDTH.W)))
   val sr_rob = Reg(UInt(ROB_ID_WIDTH.W))
   for (i <- 0 until vpu_n) when (vec_issue.fire && !vec_is_sr && vpu_pick(i)) { vpu_run(i) := true.B; vpu_rob(i) := vec_issue.rob_id }

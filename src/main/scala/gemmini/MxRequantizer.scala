@@ -100,6 +100,7 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val linear_m = Input(UInt(16.W))
   val linear_base = Input(UInt(scaleMem_addr_width.W))   // overrides scale_mem_mvout_base_addr_act / scale_resident
   val linear_resident = Input(Bool())
+  val linear_pairs = Input(Bool())   // beats arrive in row pairs (m, b), (m+1, b) (FP4 SPAD_REQUANT)
   val scale_flush_busy = Output(Bool())
   // Shared use (SPAD_REQUANT beats interleaved with BF16 accumulator beats): each beat's own mx_mode decides
   // quantize vs pass-through; quant_mode, when valid, sets the quantizer's format instead of mxacc_req.mx_mode.
@@ -313,6 +314,9 @@ class MxRequantizer[T <: Data](
 
   final_pipe_out.bits.out.quant_mx_data_out := 0.U.asTypeOf(spad_row_t)
   final_pipe_out.bits.out.is_garbage := false.B
+  // a two-beat output's garbage flag belongs to its beat: latched at the beat's quantize pulse and held, like its data,
+  // while the output waits (the live pair counter has already moved on to the next beat)
+  val garbage_held = RegInit(false.B)
   val lut_valid = quantLut.map(_.io.projected_data.valid).getOrElse(false.B)
   when(out_is_8bit) {
     final_pipe_out.valid := oldest_pipe_out.valid
@@ -320,6 +324,7 @@ class MxRequantizer[T <: Data](
     final_pipe_out.bits.out.is_garbage := false.B
   }.elsewhen(out_is_lut4) {
     when(lut_valid) {
+      garbage_held := !quant_half_counter
       when(!quant_half_counter) {
         first_half_buf     := fp6_lut_out
         quant_half_counter := true.B
@@ -327,12 +332,13 @@ class MxRequantizer[T <: Data](
         quant_half_counter := false.B
       }
     }
-    final_pipe_out.bits.out.is_garbage := !quant_half_counter &&  (oldest_pipe_out.valid)
+    final_pipe_out.bits.out.is_garbage := Mux(lut_valid, !quant_half_counter, garbage_held) && oldest_pipe_out.valid
     final_pipe_out.valid :=  (oldest_pipe_out.valid)  
     final_pipe_out.bits.out.quant_mx_data_out := Mux(lut_valid, fp6_combined, quant_data_held).asTypeOf(spad_row_t)
 
   }.elsewhen(out_is_fp4) {
     when(quantize_valid) {
+      garbage_held := !quant_half_counter
       when(!quant_half_counter) {
         first_half_buf     := extracted_data(io.outputnumLanes*4-1, 0)
         quant_half_counter := true.B
@@ -341,7 +347,7 @@ class MxRequantizer[T <: Data](
       }
     }
     final_pipe_out.valid := (oldest_pipe_out.valid)
-    final_pipe_out.bits.out.is_garbage := !quant_half_counter && oldest_pipe_out.valid
+    final_pipe_out.bits.out.is_garbage := Mux(quantize_valid, !quant_half_counter, garbage_held) && oldest_pipe_out.valid
     final_pipe_out.bits.out.quant_mx_data_out := Mux(quantize_valid, fp4_combined, quant_data_held).asTypeOf(spad_row_t)
   }
 
@@ -596,10 +602,20 @@ class MxRequantizer[T <: Data](
 
   val lin_cnt = RegInit(0.U(16.W))
   val lin_total = io.linear_m * io.linear_gn
+  // pair order: byte = lp_base + (odd row ? GN : 0) + lp_b, lp_base = even row * GN
+  val lp_base = RegInit(0.U(16.W)); val lp_b = RegInit(0.U(16.W)); val lp_r = RegInit(false.B)
+  val lin_idx = Mux(io.linear_pairs, lp_base + Mux(lp_r, io.linear_gn, 0.U) + lp_b, lin_cnt)
   when(should_compute && !flushing && !flushing_act && io.linear_scales) {
-    coalescer(lin_cnt) := scale_e8m0_vec(0)
+    coalescer(lin_idx) := scale_e8m0_vec(0)
+    val lp_last_b = lp_b === io.linear_gn - 1.U
+    lp_r := !lp_r
+    when (lp_r) {
+      lp_b := Mux(lp_last_b, 0.U, lp_b + 1.U)
+      when (lp_last_b) { lp_base := lp_base + (io.linear_gn << 1) }
+    }
     when (lin_cnt === lin_total - 1.U) {
       lin_cnt := 0.U
+      lp_base := 0.U; lp_b := 0.U; lp_r := false.B
       flushing := true.B
       flushing_act := io.linear_resident
     } .otherwise { lin_cnt := lin_cnt + 1.U }
@@ -716,6 +732,7 @@ class MxRequantizer[T <: Data](
 
   when(io.scale_mem_counter_reset_flag) {
     lin_cnt := 0.U
+    lp_base := 0.U; lp_b := 0.U; lp_r := false.B
     ag_sb := 0.U; ag_g := 0.U; ag_jg := 0.U; ag_bib := 0.U; ag_row := 0.U
     flush_row := 0.U; flushing := false.B
     flush_act_bi := 0.U; flush_act_wm := 0.U; flushing_act := false.B

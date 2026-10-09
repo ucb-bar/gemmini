@@ -30,6 +30,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val block_rows = tileRows * meshRows
   val block_cols = tileColumns * meshColumns
 
+  private val n_vec_entries = if (has_vpu || has_spad_requant) res_max_per_type min 16 else 1   // = n_vec below
+  val n_all_entries = reservation_station_entries_ld + reservation_station_entries_ex + reservation_station_entries_st +
+    n_vec_entries
+
   val max_instructions_completed_per_type_per_cycle = 2 // Every cycle, at most two instructions of a single "type" (ld/st/ex) can be completed: one through the io.completed port, and the other if it is a "complete-on-issue" instruction
 
   val io = IO(new Bundle {
@@ -54,13 +58,19 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val busy = Output(Bool())
 
-    // vector queue: 0 = VPU idle, 1 = SPAD_REQUANT can start; spad banks with requant rows still to be written
-    val vec_unit_ready = Input(Vec(2, Bool()))
+    // vector queue: 0 = VPU idle, 1 = SPAD_REQUANT can start, 2 = an FP4 SPAD_REQUANT can start (requantizer
+    // drained of every beat); spad banks with requant rows still to be written
+    val vec_unit_ready = Input(Vec(3, Bool()))
+    val vec_sr_fp4_waiting = Output(Bool())   // an FP4 SPAD_REQUANT is next and only waits for its unit
     val vec_pending_banks = Input(UInt(sp_banks.W))
     // MX single-element mode: a tile's preload C address is its 16-row acc group + a column-group offset (j * 4)
     val mx_packed_acc = Input(Bool())
     val vec_free = Output(UInt(5.W))   // free vector-queue entries
     val ld_free = Output(UInt(log2Up(reservation_station_entries_ld + 1).W))   // free load-queue entries
+    // has_loop_retire_counter: every entry's valid bit, and the entry allocated this cycle (one-hot), both in the
+    // order ld ++ ex ++ st ++ vec
+    val entry_valid = Option.when(has_loop_retire_counter)(Output(UInt(n_all_entries.W)))
+    val alloc_oh = Option.when(has_loop_retire_counter)(Output(UInt(n_all_entries.W)))
 
     val counter = new CounterEventIO()
   })
@@ -214,6 +224,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   val new_entry_oh = new_allocs_oh_ld ++ new_allocs_oh_ex ++ new_allocs_oh_st ++ new_allocs_oh_vec
   new_entry_oh.foreach(_ := false.B)
+  require(entries.length == n_all_entries)
+  io.entry_valid.foreach(_ := VecInit(entries.map(_.valid)).asUInt)
+  io.alloc_oh.foreach(_ := VecInit(new_entry_oh).asUInt)
 
   val alloc_fire = io.alloc.fire
 
@@ -400,8 +413,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }.elsewhen (is_sreq) {
       val sc = SpadRequantCmd.decode(cmd.rs1, cmd.rs2, 14)
       val m16 = (sc.m +& 15.U) & ~15.U(17.W)
+      val m32 = (sc.m +& 31.U) & ~31.U(17.W)
       new_entry.opa_is_dst := true.B
-      new_entry.opa := spRange(sc.dst, Mux(sc.tiled, (m16 * sc.n) >> 4, (sc.m * sc.n) >> 4))
+      new_entry.opa := spRange(sc.dst, Mux(sc.fp4, Mux(sc.tiled, (m32 * sc.n) >> 5, (sc.m * sc.n) >> 5),
+                                                   Mux(sc.tiled, (m16 * sc.n) >> 4, (sc.m * sc.n) >> 4)))
       new_entry.opb := spRange(sc.src, (sc.m * sc.n) >> 3)
     }
 
@@ -567,6 +582,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val vec_unit_ready = io.vec_unit_ready
   val vec_pending_banks = io.vec_pending_banks
 
+  // (after the bank gate too: holding the accumulator side while a store still owes this SR's banks would deadlock)
+  io.vec_sr_fp4_waiting := entries_vec.map(e => e.valid && e.bits.ready() && !e.bits.issued &&
+    e.bits.cmd.cmd.inst.funct === SPAD_REQUANT && e.bits.cmd.cmd.rs2(32) &&
+    (entry_sp_banks(e) & vec_pending_banks) === 0.U).reduce(_ || _)
   // Issue commands which are ready to be issued
   Seq((ldq, io.issue.ld, entries_ld), (exq, io.issue.ex, entries_ex), (stq, io.issue.st, entries_st),
     (vecq, io.issue.vec, entries_vec))
@@ -574,7 +593,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     // a vector entry also needs its unit free and no queued requant rows in its spad banks
     def unit_ok(e: UDValid[Entry]): Bool = if (q != vecq) true.B else
-      Mux(e.bits.cmd.cmd.inst.funct === SPAD_REQUANT, vec_unit_ready(1), vec_unit_ready(0)) &&
+      Mux(e.bits.cmd.cmd.inst.funct === SPAD_REQUANT, Mux(e.bits.cmd.cmd.rs2(32), vec_unit_ready(2), vec_unit_ready(1)),
+        vec_unit_ready(0)) &&
         (entry_sp_banks(e) & vec_pending_banks) === 0.U
     val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued && unit_ok(e))
     val issue_sel = PriorityEncoderOH(issue_valids)

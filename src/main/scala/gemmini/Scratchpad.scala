@@ -62,6 +62,8 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
 
   // When set, a requant->spad beat lands within-tile-row-inner (beat << 4) instead of flat +beat.
   val reuse_tiled = Bool()
+  // half the store's row step (DRAM: bytes, spad: rows) = the output row pitch when an act-quad acc row holds 2 rows
+  val half_pitch = UInt(coreMaxAddrBits.W)
 }
 
 class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)(implicit p: Parameters) extends Module {
@@ -86,7 +88,9 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
     (io.in.bits.max_j <= 2.U && !io.in.bits.mx_multi_elem) -> ((acc_t_bits/16).U * 16.U / 2.U),
     (io.in.bits.mx_multi_elem) -> 0.U
   )))
-  val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, address_second_half_wide, address_second_half_narrow)
+  // BF16: the second row at the store's own half pitch (the live loop_bound_j may be a later loop's J)
+  val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, io.in.bits.vaddr + io.in.bits.half_pitch,
+    address_second_half_narrow)
   val second_half_invalid = io.in.bits.len < 16.U
   val out_chunk_id = Mux(is_non_fp8_acc_write, second_half.asUInt, io.in.bits.chunk_id)
 
@@ -442,6 +446,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val vpu_pending_banks = Output(UInt(sp_banks.W))
       // SPAD_REQUANT code rows: lowest write priority, backpressured
       val sr_write = Option.when(has_spad_requant)(Flipped(Decoupled(new SpadRowWrite(log2Ceil(sp_banks * sp_bank_entries), spad_w))))
+      // has_loop_retire_counter: store data still on its way out (write queues, DRAM / SMEM writes awaiting their acks,
+      // requant / store rows not yet written to a bank); loads are not counted
+      val store_drain_busy = Option.when(has_loop_retire_counter)(Output(Bool()))
     })
 
     val write_dispatch_q = if (use_mx_scaling) {
@@ -753,6 +760,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     io.busy := writer.module.io.busy || spad_writer.map(_.module.io.busy).getOrElse(false.B) || reader.module.io.busy ||
       write_issue_q.io.deq.valid || write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid
+    io.store_drain_busy.foreach(_ := writer.module.io.busy || spad_writer.map(_.module.io.busy).getOrElse(false.B) ||
+      write_issue_q.io.deq.valid || write_norm_q.io.deq.valid || write_scale_q.io.deq.valid || write_dispatch_q.valid ||
+      io.vpu_pending_banks =/= 0.U)
 
     val spad_mems = {
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(
