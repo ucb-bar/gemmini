@@ -35,7 +35,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
    tileRows: Int, tileColumns: Int, meshRows: Int, meshColumns: Int,
    leftBanks: Int, upBanks: Int, meshProdPrecisionList : Seq[T],
    meshAccPrecisionList : Seq[T], use_mx_scaling: Boolean = true, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1,
-   e4m3QuadThroughput: Boolean = false, has_transposer: Boolean = true)
+   e4m3QuadThroughput: Boolean = false, has_transposer: Boolean = true, clock_gating: Boolean = true)
   extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
@@ -75,6 +75,37 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val weight_lut_en = Input(Bool())  // per-operand runtime LUT-usage: weight
   })
 
+  // Clock gating of the skew / control chains (clock_gating): the operand, control, id, last and output data chains of
+  // this wrapper and the mesh's output delays take one enable, pipe_en, which is low only while no request is held and
+  // no valid is anywhere in the pipeline. The valid chains themselves are never gated and are built from explicit
+  // registers so every stage is visible: their OR (plus the mesh's own valid stages) is the enable. With no valid in
+  // flight a frozen data chain is indistinguishable from a running one, and whenever a valid exists everything shifts
+  // in lockstep, so no consumed value changes; after reset the random register contents flush out exactly as they do
+  // without gating. Genus turns the enables into ICG cells. Elaborated only for the unbanked skew (the SRAM shifter of a
+  // banked skew runs free).
+  val gate_chains = clock_gating && leftBanks == 1 && upBanks == 1 && outBanks == 1
+  val pipe_en = Wire(Bool())
+  val any_valid = Wire(Bool())
+  // the valid chains: same structure as shifted(), ungated, with every stage register returned for the enable
+  def shiftedValid(x: Vec[Vec[Bool]], banks: Int, reverse: Boolean = false): (Seq[Vec[Bool]], Bool) = {
+    assert(x.size % banks == 0, "cannot bank without clean divisors")
+    val banked_len = x.size / banks
+    val banked_x = x.grouped(banked_len).toSeq
+    val indexes = if (reverse) banked_x.indices.reverse else banked_x.indices
+    val stages = scala.collection.mutable.ArrayBuffer[Bool]()
+    val out = (banked_x zip indexes).flatMap { case (bx, i) =>
+      val bxVec = VecInit(bx)
+      val sram_shift = i * banked_len * (tile_latency+1)
+      val SRAMShifted = Shifter(bxVec, sram_shift, true.B, true)
+      val idx = if (reverse) SRAMShifted.indices.reverse else SRAMShifted.indices
+      (SRAMShifted zip idx).map { case (srs, j) =>
+        (0 until j*(tile_latency+1)).foldLeft(srs) { (prev, _) =>
+          val r = Reg(chiselTypeOf(prev)); r := prev; stages ++= r; r
+        }
+      }
+    }
+    (out, if (stages.isEmpty) false.B else stages.reduce(_ || _))
+  }
   def shifted[T <: Data](x: Vec[Vec[T]], banks: Int, reverse: Boolean = false): Seq[Vec[T]] = {
     assert(x.size % banks == 0, "cannot bank without clean divisors")
 
@@ -91,7 +122,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
       val indexes = if (reverse) SRAMShifted.indices.reverse else SRAMShifted.indices
       val RegShifted = (SRAMShifted zip indexes).map { case (srs, j) =>
-        ShiftRegister(srs, j*(tile_latency+1))
+        if (gate_chains) ShiftRegister(srs, j*(tile_latency+1), pipe_en) else ShiftRegister(srs, j*(tile_latency+1))
       }
 
       RegShifted
@@ -156,6 +187,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   val pause = !req.valid || !input_next_row_into_spatial_array
 
+  pipe_en := (if (gate_chains) (req.valid || io.req.valid || any_valid) else true.B)
+
   // Transposer
   // has_transposer = false: no transposer is built and every operand bypasses it (WS, no transpose).
   val a_is_from_transposer = has_transposer.B &&
@@ -206,17 +239,20 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   dontTouch(mesh.io.in_b)
   dontTouch(mesh.io.in_d)
 
+  def ctrlShift[T <: Data](x: T, n: Int): T = if (gate_chains) ShiftRegister(x, n, pipe_en) else ShiftRegister(x, n)
   mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>
-    ss.foreach(_.dataflow := ShiftRegister(req.bits.pe_control.dataflow, i * (tile_latency + 1)))
-    ss.foreach(_.propagate := ShiftRegister(in_prop, i * (tile_latency + 1)))
+    ss.foreach(_.dataflow := ctrlShift(req.bits.pe_control.dataflow, i * (tile_latency + 1)))
+    ss.foreach(_.propagate := ctrlShift(in_prop, i * (tile_latency + 1)))
   }
   val result_shift = RegNext(req.bits.pe_control.shift) // TODO will this arrive at the right time if memory isn't pipelined?
   mesh.io.in_control.zipWithIndex.foreach { case (ctrl, i) =>
-    ctrl.foreach(_.shift := ShiftRegister(result_shift, i * (tile_latency + 1)))
+    ctrl.foreach(_.shift := ctrlShift(result_shift, i * (tile_latency + 1)))
   }
+  mesh.io.pipe_en := pipe_en
 
   val not_paused_vec = VecInit(Seq.fill(meshColumns)(VecInit(Seq.fill(tileColumns)(!pause))))
-  mesh.io.in_valid := shifted(not_paused_vec, upBanks)
+  val (in_valid_sh, in_valid_any) = shiftedValid(not_paused_vec, upBanks)
+  mesh.io.in_valid := in_valid_sh
 
   val matmul_id_vec = VecInit(Seq.fill(meshColumns)(VecInit(Seq.fill(tileColumns)(matmul_id))))
   mesh.io.in_id := shifted(matmul_id_vec, upBanks)
@@ -233,7 +269,9 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   } else {
     io.resp.bits.data := shifted(mesh.io.out_c, outBanks, true)
   }
-  io.resp.valid := shifted(mesh.io.out_valid, outBanks, reverse = true)(0)(0)
+  val (out_valid_sh, out_valid_any) = shiftedValid(mesh.io.out_valid, outBanks, reverse = true)
+  io.resp.valid := out_valid_sh(0)(0)
+  any_valid := in_valid_any || mesh.io.valid_in_flight || out_valid_any
 
   val out_last = shifted(mesh.io.out_last, outBanks, reverse = true)(0)(0)
   io.resp.bits.last := out_last
