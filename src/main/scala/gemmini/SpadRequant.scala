@@ -11,6 +11,9 @@ import chisel3.util._
 // FP4 (rs2[32]): blocks are fed in row pairs (m, b), (m+1, b); the requantizer packs each pair into 32 bytes (byte k =
 // row m col k low nibble | row m+1 high) = the FP4 operand-A layout, written as 2 rows at row pair p = m/2: flat
 // dst + 2*(p*GN + b) + h, tiled dst + ((p/16)*N/16 + 2b + h)*16 + p%16. Its first beat of each pair is garbage.
+// LUT (rs2[33]): same pair order / packing as FP4, but each code is the nearest index in row m's output codebook
+// (act-out LUT entry m >> G) of the LUT format given by rs2[34] (FP6 class, else FP8 class) and rs2[35] (alt format:
+// E2M3 / E5M2, else E3M2 / E4M3-quad); G = rs2[40:36]. Output codebooks: loaded flat (MX_LOAD_LUT sel 2) beforehand.
 class SpadRequantCmd(val addrW: Int) extends Bundle {
   val src   = UInt(addrW.W)
   val dst   = UInt(addrW.W)
@@ -20,15 +23,22 @@ class SpadRequantCmd(val addrW: Int) extends Bundle {
   val resident = Bool()
   val scale_addr = UInt(33.W)
   val fp4   = Bool()
+  val lut   = Bool()
+  val lut_fp6 = Bool()
+  val lut_alt = Bool()
+  val lut_g = UInt(5.W)
+  def nib: Bool = fp4 || lut   // 4-bit output: row pairs, 2 codes per byte
 }
 
 object SpadRequantCmd {
-  // rs1 = src[13:0] | dst[27:14] | tiled[28] | resident[29] | scale DRAM addr[62:30]; rs2 = M[15:0] | N[31:16] | fp4[32]
+  // rs1 = src[13:0] | dst[27:14] | tiled[28] | resident[29] | scale DRAM addr[62:30];
+  // rs2 = M[15:0] | N[31:16] | fp4[32] | lut[33] | lut fp6[34] | lut alt[35] | lut G[40:36]
   def decode(rs1: UInt, rs2: UInt, addrW: Int): SpadRequantCmd = {
     val c = Wire(new SpadRequantCmd(addrW))
     c.src := rs1(13, 0); c.dst := rs1(27, 14); c.tiled := rs1(28)
     c.resident := rs1(29); c.scale_addr := rs1(62, 30)
     c.m := rs2(15, 0); c.n := rs2(31, 16); c.fp4 := rs2(32)
+    c.lut := rs2(33); c.lut_fp6 := rs2(34); c.lut_alt := rs2(35); c.lut_g := rs2(40, 36)
     c
   }
 }
@@ -51,7 +61,11 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
     val linear_m  = Output(UInt(16.W))
     val linear_base = Output(UInt(33.W))   // scale DRAM address for this command's flush
     val linear_resident = Output(Bool())
-    val fp4 = Output(Bool())   // valid while active
+    val fp4 = Output(Bool())   // 4-bit output (FP4 or LUT: two-beat pair packing), valid while active
+    val lut = Output(Bool())   // LUT output: format / alt / G below, valid while active
+    val lut_fp6 = Output(Bool())
+    val lut_alt = Output(Bool())
+    val lut_g = Output(UInt(5.W))
     val flush_busy = Input(Bool())   // requantizer scale flush in progress
     val active  = Output(Bool())
     val busy    = Output(Bool())
@@ -62,7 +76,7 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
   val c      = Reg(new SpadRequantCmd(addrW))
   val gn     = c.n >> 5
   val total  = c.m * gn                   // blocks
-  val outTotal = Mux(c.fp4, total >> 1, total)   // outputs (2 code rows each)
+  val outTotal = Mux(c.nib, total >> 1, total)   // outputs (2 code rows each)
   val rdCnt  = Reg(UInt(20.W))            // spad rows read (4 per block)
   val outCnt = Reg(UInt(16.W))            // outputs written
   // read block walk: E4M3 (m, b) b inner; FP4 (pair, b, r) r inner. rdBase = first block of row m (or the pair's even row)
@@ -94,10 +108,10 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
     rdRow := rdRow + 1.U
     when (rdRow === 3.U) {
       val lastB = rdB === gn - 1.U
-      when (c.fp4 && !rdR) { rdR := true.B } .otherwise {
+      when (c.nib && !rdR) { rdR := true.B } .otherwise {
         rdR := false.B
         rdB := Mux(lastB, 0.U, rdB + 1.U)
-        when (lastB) { rdBase := rdBase + Mux(c.fp4, gn << 1, gn) }
+        when (lastB) { rdBase := rdBase + Mux(c.nib, gn << 1, gn) }
       }
     }
   }
@@ -126,7 +140,7 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
   val outValid = RegInit(false.B)
   val half = RegInit(false.B)
   io.rq_out.ready := !outValid
-  val rqKeep = !(c.fp4 && io.rq_out_garbage)
+  val rqKeep = !(c.nib && io.rq_out_garbage)
   assert(!(io.rq_out.fire && rqKeep) || outCnt < outTotal, "SPAD_REQUANT: more requantizer outputs than blocks it sent")
   when (io.rq_out.fire && rqKeep) { outBuf := io.rq_out.bits; outValid := true.B; half := false.B }
   val tilesK = c.n >> 4
@@ -155,7 +169,11 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
   io.linear_m := c.m
   io.linear_base := c.scale_addr
   io.linear_resident := c.resident
-  io.fp4 := c.fp4
+  io.fp4 := c.nib
+  io.lut := c.lut
+  io.lut_fp6 := c.lut_fp6
+  io.lut_alt := c.lut_alt
+  io.lut_g := c.lut_g
   io.active := active
   io.busy := active
 }

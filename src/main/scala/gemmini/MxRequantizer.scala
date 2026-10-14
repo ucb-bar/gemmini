@@ -84,6 +84,10 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val read_d = Input(Bool())
   val scale_mem_mvout_base_addr_act = Input(UInt(scaleMem_addr_width.W)) // from execute controller
   val quant_lut_update_granularity = Input(UInt(lutConfig.map(_.lutUpdateRegularityWidth).getOrElse(16).W))
+  val act_lut_halved = Input(Bool())   // act-in lookups use LUT half act_lut_half (loop-managed codebooks)
+  val act_lut_half = Input(UInt(1.W))
+  val wgt_lut_halved = Input(Bool())   // weight lookups use LUT half wgt_lut_half (loop-managed codebooks)
+  val wgt_lut_half = Input(UInt(1.W))
   val loop_bound_i = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_k = Input(UInt(iterator_bitwidth.W)) // from  controller
@@ -100,7 +104,8 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val linear_m = Input(UInt(16.W))
   val linear_base = Input(UInt(scaleMem_addr_width.W))   // overrides scale_mem_mvout_base_addr_act / scale_resident
   val linear_resident = Input(Bool())
-  val linear_pairs = Input(Bool())   // beats arrive in row pairs (m, b), (m+1, b) (FP4 SPAD_REQUANT)
+  val linear_pairs = Input(Bool())   // beats arrive in row pairs (m, b), (m+1, b) (FP4 / LUT SPAD_REQUANT)
+  val sr_lut_rows = Input(Bool())    // LUT SPAD_REQUANT: act-out codebook = the beat's row (pair order) >> G
   val scale_flush_busy = Output(Bool())
   // Shared use (SPAD_REQUANT beats interleaved with BF16 accumulator beats): each beat's own mx_mode decides
   // quantize vs pass-through; quant_mode, when valid, sets the quantizer's format instead of mxacc_req.mx_mode.
@@ -514,6 +519,7 @@ class MxRequantizer[T <: Data](
   val block_has_nan = block_has_nan_vec.reduce(_ || _)
   val block_has_inf = block_has_inf_vec.reduce(_ || _)
 
+  val sr_row = WireDefault(0.U(16.W))   // LUT SPAD_REQUANT beat row at the act-out lookup (driven below, by the pair walk)
   quantLut match {
     case Some(lut) =>
       // LUT projection source: low rdataW bits of the quantized code (full 8-bit for E5M2, low-6 for FP6).
@@ -526,6 +532,10 @@ class MxRequantizer[T <: Data](
       lut.io.spad_projected_data <> io.spad_projected_data
       lut.io.spad_deprojected_data <> io.spad_deprojected_data
       lut.io.quant_lut_update_granularity := io.quant_lut_update_granularity
+      lut.io.act_lut_halved := io.act_lut_halved
+      lut.io.act_lut_half := io.act_lut_half
+      lut.io.wgt_lut_halved := io.wgt_lut_halved
+      lut.io.wgt_lut_half := io.wgt_lut_half
       lut.io.read_a := io.read_a
       lut.io.read_d := io.read_d
       lut.io.mx_fp8_altfmt := altfmt_reg
@@ -535,6 +545,8 @@ class MxRequantizer[T <: Data](
       lut.io.loop_bound_k := io.loop_bound_k
       lut.io.quant_fp6.valid := false.B
       lut.io.quant_fp6.bits := DontCare
+      lut.io.act_out_row.valid := io.sr_lut_rows
+      lut.io.act_out_row.bits := sr_row
       lut.io.lut_write_weight <> io.lut0_write.get
       lut.io.lut_write_act_in <> io.lut1_write.get
       lut.io.lut_write_act_out <> io.lut2_write.get
@@ -604,6 +616,8 @@ class MxRequantizer[T <: Data](
   val lin_total = io.linear_m * io.linear_gn
   // pair order: byte = lp_base + (odd row ? GN : 0) + lp_b, lp_base = even row * GN
   val lp_base = RegInit(0.U(16.W)); val lp_b = RegInit(0.U(16.W)); val lp_r = RegInit(false.B)
+  val lp_row = RegInit(0.U(16.W))   // even row of the current pair (row of a beat = lp_row + lp_r)
+  sr_row := RegNext(lp_row + lp_r.asUInt)   // aligned with quantize_valid (= RegNext(should_compute))
   val lin_idx = Mux(io.linear_pairs, lp_base + Mux(lp_r, io.linear_gn, 0.U) + lp_b, lin_cnt)
   when(should_compute && !flushing && !flushing_act && io.linear_scales) {
     coalescer(lin_idx) := scale_e8m0_vec(0)
@@ -611,11 +625,11 @@ class MxRequantizer[T <: Data](
     lp_r := !lp_r
     when (lp_r) {
       lp_b := Mux(lp_last_b, 0.U, lp_b + 1.U)
-      when (lp_last_b) { lp_base := lp_base + (io.linear_gn << 1) }
+      when (lp_last_b) { lp_base := lp_base + (io.linear_gn << 1); lp_row := lp_row + 2.U }
     }
     when (lin_cnt === lin_total - 1.U) {
       lin_cnt := 0.U
-      lp_base := 0.U; lp_b := 0.U; lp_r := false.B
+      lp_base := 0.U; lp_b := 0.U; lp_r := false.B; lp_row := 0.U
       flushing := true.B
       flushing_act := io.linear_resident
     } .otherwise { lin_cnt := lin_cnt + 1.U }
@@ -732,7 +746,7 @@ class MxRequantizer[T <: Data](
 
   when(io.scale_mem_counter_reset_flag) {
     lin_cnt := 0.U
-    lp_base := 0.U; lp_b := 0.U; lp_r := false.B
+    lp_base := 0.U; lp_b := 0.U; lp_r := false.B; lp_row := 0.U
     ag_sb := 0.U; ag_g := 0.U; ag_jg := 0.U; ag_bib := 0.U; ag_row := 0.U
     flush_row := 0.U; flushing := false.B
     flush_act_bi := 0.U; flush_act_wm := 0.U; flushing_act := false.B

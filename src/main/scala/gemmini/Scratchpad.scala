@@ -919,7 +919,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // Queue fills, enq.ready=false backpressures acc_scale out.ready -> the requant Pipeline -> the acc read, so
       // the requant stalls instead of dropping. (Generalizes DIM16's 2-beat latch to N beats WITH buffering.)
       val nbeats = requant_fp8_beats
-      val sb_tiled = write_issue_q.io.deq.bits.reuse_tiled && (io.output_mx_format === 0.U) && !io.mx_fp8_altfmt && !io.mx_lut_en
+      val sb_tiled = write_issue_q.io.deq.bits.reuse_tiled   // all subbyte formats: beat b lands b tile-rows (16) below
       // Depth gives headroom for the read->enqueue pipeline in flight when the read throttle trips (below).
       val requant_q_depth = 16
       val requant_q = Module(new Queue(new Bundle {
@@ -955,7 +955,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val sr_grant = WireDefault(false.B)     // the SPAD_REQUANT row won its bank's write port this cycle
       io.sr_write.foreach(_.ready := sr_grant)
       val deqVec = requant_q.io.deq.bits.codes.asTypeOf(Vec(nbeats, UInt(spad_w.W)))
-      when (requant_q.io.deq.valid && requant_drain === 0.U) {
+      // reload on the last beat when another entry is queued: no dead cycle between entries
+      val sb_next = requant_drain === 1.U && sbw0_grant && requant_q.io.count > 1.U
+      when ((requant_q.io.deq.valid && requant_drain === 0.U) || sb_next) {
         requant_drain := nbeats.U
       } .elsewhen (requant_drain =/= 0.U && sbw0_grant) {
         requant_drain := requant_drain - 1.U

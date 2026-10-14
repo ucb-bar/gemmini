@@ -415,7 +415,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       val m16 = (sc.m +& 15.U) & ~15.U(17.W)
       val m32 = (sc.m +& 31.U) & ~31.U(17.W)
       new_entry.opa_is_dst := true.B
-      new_entry.opa := spRange(sc.dst, Mux(sc.fp4, Mux(sc.tiled, (m32 * sc.n) >> 5, (sc.m * sc.n) >> 5),
+      new_entry.opa := spRange(sc.dst, Mux(sc.nib, Mux(sc.tiled, (m32 * sc.n) >> 5, (sc.m * sc.n) >> 5),
                                                    Mux(sc.tiled, (m16 * sc.n) >> 4, (sc.m * sc.n) >> 4)))
       new_entry.opb := spRange(sc.src, (sc.m * sc.n) >> 3)
     }
@@ -584,7 +584,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   // (after the bank gate too: holding the accumulator side while a store still owes this SR's banks would deadlock)
   io.vec_sr_fp4_waiting := entries_vec.map(e => e.valid && e.bits.ready() && !e.bits.issued &&
-    e.bits.cmd.cmd.inst.funct === SPAD_REQUANT && e.bits.cmd.cmd.rs2(32) &&
+    e.bits.cmd.cmd.inst.funct === SPAD_REQUANT && (e.bits.cmd.cmd.rs2(32) || e.bits.cmd.cmd.rs2(33)) &&
     (entry_sp_banks(e) & vec_pending_banks) === 0.U).reduce(_ || _)
   // Issue commands which are ready to be issued
   Seq((ldq, io.issue.ld, entries_ld), (exq, io.issue.ex, entries_ex), (stq, io.issue.st, entries_st),
@@ -593,7 +593,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     // a vector entry also needs its unit free and no queued requant rows in its spad banks
     def unit_ok(e: UDValid[Entry]): Bool = if (q != vecq) true.B else
-      Mux(e.bits.cmd.cmd.inst.funct === SPAD_REQUANT, Mux(e.bits.cmd.cmd.rs2(32), vec_unit_ready(2), vec_unit_ready(1)),
+      Mux(e.bits.cmd.cmd.inst.funct === SPAD_REQUANT, Mux(e.bits.cmd.cmd.rs2(32) || e.bits.cmd.cmd.rs2(33),
+        vec_unit_ready(2), vec_unit_ready(1)),
         vec_unit_ready(0)) &&
         (entry_sp_banks(e) & vec_pending_banks) === 0.U
     val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued && unit_ok(e))

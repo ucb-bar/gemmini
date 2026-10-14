@@ -159,6 +159,8 @@ class RequantizerOutBundle(numLanes: Int, dataWidth: Int = 8) extends Bundle {
 class QuantLutWriteBundle(numEntries: Int, numBits: Int) extends Bundle {
   val data = Vec(numEntries, UInt(numBits.W))
   val entry_bits = UInt(6.W)   // width of the codebook entries as loaded (6 = FP6 class, 8 = FP8 class)
+  val half_mode = Bool()       // write only codebooks half*numEntries/2 .. +numEntries/2-1 (loop-managed)
+  val half = UInt(1.W)
   def this(config: (Int, Int)) = {
     this(config._1, config._2)
   }

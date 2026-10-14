@@ -156,11 +156,12 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
   // assembles num_luts*96b into the LUT buffer, and fires the selected requantizer lut port once.
   // This is the only LUT write source in both the standalone and radiance builds. Not built without a
   // QuantLut (lut = None): nothing would drive it, and MX_LOAD_LUT retires as a no-op instead.
+  val mx_lut_loader_slots = 8   // LUT-loader Gets in flight (one TL source each)
   val mx_lut_loader_client = Option.when(config.use_mx_scaling && config.lut.isDefined) {
     TLClientNode(Seq(TLMasterPortParameters.v1(
       clients = Seq(TLMasterParameters.v1(
         name     = "gemmini-mx-lut-loader",
-        sourceId = IdRange(0, 1))))))
+        sourceId = IdRange(0, mx_lut_loader_slots))))))
   }
 
   // Attach the MX nodes via the standard LazyRoCC hooks: slaves (LUT/requant regmap +
@@ -322,17 +323,25 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     ))
   }
 
+  // LUT-output SPAD_REQUANT running (driven by the sequencer below): it sets the requantizer's LUT mode and G itself
+  val sr_lut_active = WireDefault(false.B)
+  val sr_lut_g = WireDefault(0.U(5.W))
   mx_requantizer.foreach { req =>
     require(outer.config.use_mx_scaling, "use_mx_scaling needs to be true if mx_requantizer is defined")
     req.io.scaleMem_write.ready := false.B
     req.io.scale_mem_mvout_base_addr_act := ex_controller.io.mx.get.scale_mem_mvout_base_addr_act
-    req.io.quant_lut_update_granularity := ex_controller.io.mx.get.quant_lut_update_granularity
+    req.io.quant_lut_update_granularity := Mux(sr_lut_active, sr_lut_g, ex_controller.io.mx.get.quant_lut_update_granularity)
+    req.io.sr_lut_rows := sr_lut_active   // act-out codebook = the SPAD_REQUANT beat's row >> G
+    req.io.act_lut_halved := ex_controller.io.mx.get.act_lut_halved
+    req.io.act_lut_half := ex_controller.io.mx.get.act_lut_half
+    req.io.wgt_lut_halved := ex_controller.io.mx.get.wgt_lut_halved
+    req.io.wgt_lut_half := ex_controller.io.mx.get.wgt_lut_half
     // Thread the residency flag; the transposed act-write port defaults idle (the
     // scale_mem_write_act mux below drives its ready).
     req.io.scale_resident := ex_controller.io.mx.get.scale_resident
     req.io.scaleMem_write_act_resident.ready := false.B
     // E4M3-quad requant output (4-bit LUT) vs E4M3-single (8-bit): both output format0/altfmt0, split by lut_en.
-    req.io.lut_en := ex_controller.io.mx.get.lut_en_out
+    req.io.lut_en := ex_controller.io.mx.get.lut_en_out || sr_lut_active
     req.io.linear_scales := false.B
     req.io.linear_gn := 0.U
     req.io.linear_m := 0.U
@@ -551,6 +560,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val scale_loader_landed = WireDefault(VecInit(Seq.fill(4)(true.B)))
   val scale_loader_ready = WireDefault(VecInit(Seq.fill(4)(true.B)))
   val scale_cfg_evt = WireDefault(0.U.asTypeOf(Valid(UInt(3.W))))   // from ex_controller
+  val lut_half_ready = WireDefault(VecInit(Seq.fill(4)(false.B)))   // Cat(weight, half): LUT half LOADED and landed
+  val lut_cfg_evt = WireDefault(0.U.asTypeOf(Valid(UInt(4.W))))      // from ex_controller: Cat(w halved, a halved, w half, a half)
   val (scale_loader_w, scale_loader_act, scale_loader_start) = if (outer.config.use_mx_scaling) {
     val s = outer.config.scale_mem.get
     val (gnode, gedge) = outer.mx_scale_loader_client.get.out.head
@@ -761,6 +772,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       val num  = UInt(32.W)   // num_luts
       val sel  = UInt(2.W)    // 0=B/weight, 1=A/act-in, 2=C/act-out
       val entry_bits = UInt(6.W)   // DRAM codebook entry width (datatype): FP6/E2M3=6, E5M2=8
+      val half_mode = Bool()       // write one half of the cache (loop-managed act-in codebooks)
+      val half = UInt(1.W)
+      val gated = Bool()           // loop-managed: start only once that half is FREE
     }))
     start.valid := false.B
     start.bits  := DontCare
@@ -770,50 +784,110 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     out.bits  := DontCare
     val sel_out = RegInit(0.U(2.W))
 
-    val sIdle :: sReq :: sResp :: sFire :: Nil = Enum(4)
-    val state     = RegInit(sIdle)
-    val base      = Reg(UInt(coreMaxAddrBits.W))
-    val num_words = Reg(UInt(log2Ceil(bufWords + 1).W))
-    val word_idx  = Reg(UInt(log2Ceil(bufWords + 1).W))
-    val lane_r    = Reg(UInt(laneRegW.W))
-    val buffer    = Reg(Vec(bufWords, UInt(64.W)))
-    val ent_bits  = Reg(UInt(6.W))   // latched DRAM codebook entry width
+    // Up to nSlots Gets in flight (one TL source each), each the largest aligned size <= one bus beat (and
+    // <= CacheBlockBytes) that fits the remaining codebook, so every response is a single beat. The buffer is
+    // random access: a response writes its words at the word index remembered for its source (no reorder).
+    val nSlots    = outer.mx_lut_loader_slots
+    val slotW     = log2Ceil(nSlots)
+    val wordW     = log2Ceil(bufWords + 1)
+    val sizes     = Seq(64, 32, 16, 8).filter(sz => sz <= beatBytes && sz <= p(CacheBlockBytes))
+    require(sizes.nonEmpty, "MX LUT loader: bus beat and CacheBlockBytes must be >= 8")
+
+    val sIdle :: sRun :: sFire :: Nil = Enum(3)
+    val state      = RegInit(sIdle)
+    val base       = Reg(UInt(coreMaxAddrBits.W))
+    val num_words  = Reg(UInt(wordW.W))
+    val issue_word = Reg(UInt(wordW.W))   // next word to request
+    val got_words  = Reg(UInt(wordW.W))   // words received
+    val buffer     = Reg(Vec(bufWords, UInt(64.W)))
+    val ent_bits   = Reg(UInt(6.W))   // latched DRAM codebook entry width
+    val s_busy     = RegInit(VecInit(Seq.fill(nSlots)(false.B)))
+    val s_word     = Reg(Vec(nSlots, UInt(wordW.W)))           // first buffer word of the Get
+    val s_nw       = Reg(Vec(nSlots, UInt(log2Ceil(nLanes + 1).W)))   // words in the Get
+    val s_laneo    = Reg(Vec(nSlots, UInt(laneRegW.W)))        // its first lane within the beat
 
     gnode.a.valid := false.B
     gnode.a.bits  := DontCare
     gnode.d.ready := false.B
 
-    start.ready := state === sIdle
-    when (state === sIdle && start.fire) {
-      base      := start.bits.addr
+    // Start queue: a gated load waits for its half here, so it never blocks the command stream (the commands
+    // that free the half are behind it). Loop-managed half state, index Cat(weight, half), as the scale loader's:
+    // FREE -(gated load starts)-> LOADED -(rs2[20] config selects it)-> INUSE -(a config selects the other half
+    // or is not LUT-managed; ex has drained all older computes)-> FREE.
+    val start_q = Queue(start, 4)
+    val lq      = start_q.bits
+    val hFree :: hLoaded :: hInUse :: Nil = Enum(3)
+    val lstate  = RegInit(VecInit(Seq.fill(4)(hFree)))
+    val lpend   = RegInit(VecInit(Seq.fill(4)(0.U(3.W))))
+    val lq_x    = Cat(lq.sel === 0.U, lq.half)
+    val cur_hm  = Reg(Bool())
+    val cur_h   = Reg(UInt(1.W))
+    val cur_g   = Reg(Bool())
+    val cur_x   = Cat(sel_out === 0.U, cur_h)
+    start_q.ready := state === sIdle && (!lq.gated || lstate(lq_x) === hFree)
+    assert(!start_q.fire || !lq.gated || (lq.sel <= 1.U && lq.half_mode), "MX LUT loader: gated loads are act-in / weight halves")
+    when (start_q.fire) {
+      base       := lq.addr
       // native DRAM codebook = num_luts * 16 entries * entry_bits bits -> u64 words. FP6 6b=12B, E5M2 8b=16B.
-      num_words := ((start.bits.num * (start.bits.entry_bits << 1).asUInt) + 7.U) >> 3
-      word_idx  := 0.U
-      sel_out   := start.bits.sel
-      ent_bits  := start.bits.entry_bits
-      state     := Mux(start.bits.num === 0.U, sIdle, sReq)
+      num_words  := ((lq.num * (lq.entry_bits << 1).asUInt) + 7.U) >> 3
+      issue_word := 0.U
+      got_words  := 0.U
+      sel_out    := lq.sel
+      ent_bits   := lq.entry_bits
+      cur_hm     := lq.half_mode
+      cur_h      := lq.half
+      cur_g      := lq.gated
+      state      := Mux(lq.num === 0.U, sIdle, sRun)
+      when (lq.gated) { lstate(lq_x) := hLoaded }
+    }
+    for (x <- 0 until 4) {
+      val (w, h) = (x / 2, x % 2)
+      val inc = start_q.fire && lq.gated && lq_x === x.U
+      val dec = out.fire && cur_g && cur_x === x.U
+      lpend(x) := lpend(x) + inc.asUInt - dec.asUInt
+      lut_half_ready(x) := lpend(x) === 0.U && lstate(x) === hLoaded
+      // config: this memory's selected half -> INUSE; its other half -> FREE (also on a config not managing it)
+      val halved = lut_cfg_evt.bits(2 + w)
+      val sel_h  = lut_cfg_evt.bits(w)
+      when (lut_cfg_evt.valid) {
+        when (halved && sel_h === h.U) {
+          when (lstate(x) === hLoaded) { lstate(x) := hInUse }
+        } .elsewhen (lstate(x) === hInUse) {
+          lstate(x) := hFree
+        }
+      }
     }
 
-    val get_addr = base + (word_idx << 3)
-    when (state === sReq) {
-      gnode.a.valid := true.B
-      gnode.a.bits  := gedge.Get(fromSource = 0.U, toAddress = get_addr, lgSize = 3.U)._2
-      when (gnode.a.fire) {
-        lane_r := (if (nLanes > 1) get_addr(log2Ceil(beatBytes) - 1, 3) else 0.U)
-        state  := sResp
-      }
+    val get_addr  = base + (issue_word << 3)
+    val left_b    = (num_words - issue_word) << 3
+    val fits      = sizes.map(sz => get_addr(log2Ceil(sz) - 1, 0) === 0.U && left_b >= sz.U)
+    val issue_lg  = PriorityMux(fits, sizes.map(sz => log2Ceil(sz).U(3.W)))
+    val issue_nw  = (1.U(7.W) << issue_lg) >> 3
+    val free      = ~s_busy.asUInt
+    val slot      = PriorityEncoder(free)
+    gnode.a.valid := state === sRun && issue_word =/= num_words && free.orR
+    gnode.a.bits  := gedge.Get(fromSource = slot, toAddress = get_addr, lgSize = issue_lg)._2
+    when (gnode.a.fire) {
+      s_busy(slot)  := true.B
+      s_word(slot)  := issue_word
+      s_nw(slot)    := issue_nw
+      s_laneo(slot) := (if (nLanes > 1) get_addr(log2Ceil(beatBytes) - 1, 3) else 0.U)
+      issue_word    := issue_word + issue_nw
     }
 
     val dataLanes = gnode.d.bits.data.asTypeOf(Vec(nLanes, UInt(64.W)))
-    val word_data = if (nLanes > 1) dataLanes(lane_r) else gnode.d.bits.data(63, 0)
-    when (state === sResp) {
-      gnode.d.ready := true.B
-      when (gnode.d.fire) {
-        buffer(word_idx) := word_data
-        word_idx := word_idx + 1.U
-        state    := Mux(word_idx + 1.U === num_words, sFire, sReq)
+    val d_slot    = if (nSlots > 1) gnode.d.bits.source(slotW - 1, 0) else 0.U
+    gnode.d.ready := state === sRun
+    when (gnode.d.fire) {
+      for (w <- 0 until nLanes) {
+        when (w.U < s_nw(d_slot)) {
+          buffer(s_word(d_slot) + w.U) := (if (nLanes > 1) dataLanes(s_laneo(d_slot) + w.U) else dataLanes(0))
+        }
       }
+      s_busy(d_slot) := false.B
+      got_words      := got_words + s_nw(d_slot)
     }
+    when (state === sRun && got_words === num_words) { state := sFire }
 
     // Unpack the native codebook (16 entries of ent_bits each per table) into the physical LUT slots
     // (rdataW = numBits/16), low-aligning narrow formats so storage is config-independent.
@@ -831,10 +905,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       out.bits.data := (if (rdataW >= 8) Mux(ent_bits === 8.U, buildTables(8), buildTables(6))
                         else buildTables(rdataW)).asTypeOf(Vec(numEntries, UInt(numBits.W)))
       out.bits.entry_bits := ent_bits
+      out.bits.half_mode  := cur_hm
+      out.bits.half       := cur_h
       when (out.fire) { state := sIdle }
     }
 
-    lut_loader_busy := state =/= sIdle
+    lut_loader_busy := state =/= sIdle || start_q.valid
     (Some(out), Some(sel_out), Some(start))
   } else (None, None, None)
 
@@ -928,13 +1004,15 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // SPAD_REQUANT sequencer (drives the existing mx_requantizer; no new quantization logic). Its spad reads share the
   // ex read ports; responses return in request order per bank, so a per-bank FIFO routes them back.
   val sr = Option.when(has_spad_requant) {
-    require(outer.config.use_mx_scaling && mx_requantizer.isDefined && sp_width == 128 && sp_width_projected == 128,
+    // rows are STORAGE rows (sp_width_projected: BF16 data / packed codes as stored, read via read_projected); a LUT
+    // build's deprojected mesh-side row (sp_width) is wider and not involved
+    require(outer.config.use_mx_scaling && mx_requantizer.isDefined && sp_width_projected == 128,
       "SPAD_REQUANT needs the MX requantizer and 16-byte spad rows")
     val rqio = mx_requantizer.get.io.mxacc_req
-    require(rqio.mx_data_in.bits.full_mx_data_in.getWidth == 4 * sp_width &&
-      rqio.mx_data_out.bits.quant_mx_data_out.getWidth == 2 * sp_width,
+    require(rqio.mx_data_in.bits.full_mx_data_in.getWidth == 4 * sp_width_projected &&
+      rqio.mx_data_out.bits.quant_mx_data_out.getWidth == 2 * sp_width_projected,
       "SPAD_REQUANT: a requant beat must be 32 BF16 in / 32 E4M3 codes out")
-    Module(new SpadRequant(log2Ceil(sp_banks * sp_bank_entries), log2Ceil(sp_bank_entries), sp_banks, sp_width, 2048))
+    Module(new SpadRequant(log2Ceil(sp_banks * sp_bank_entries), log2Ceil(sp_bank_entries), sp_banks, sp_width_projected, 2048))
   }
   val sr_rd_ready = WireDefault(VecInit(Seq.fill(sp_banks)(false.B)))
 
@@ -1147,6 +1225,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     ex_controller.io.mx.get.scale_landed := scale_loader_landed
     ex_controller.io.mx.get.scale_ready  := scale_loader_ready
     scale_cfg_evt := ex_controller.io.mx.get.scale_cfg
+    ex_controller.io.mx.get.lut_ready := lut_half_ready
+    lut_cfg_evt := ex_controller.io.mx.get.lut_cfg
+    loop_matmul.io.lut_granularity := ex_controller.io.mx.get.quant_lut_update_granularity
     mx_requantizer.get.io.loop_bound_i := ex_controller.io.mx.get.scaleMemCntl.loop_bound_i
     mx_requantizer.get.io.loop_bound_j := ex_controller.io.mx.get.scaleMemCntl.loop_bound_j
     mx_requantizer.get.io.loop_bound_k := ex_controller.io.mx.get.scaleMemCntl.loop_bound_k
@@ -1178,6 +1259,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // the (unconditional) MX ports on loop_matmul/store_controller/spad to inert
     // defaults. The loop counters still come from loop_matmul, which always has them.
     loop_matmul.io.activation_mx_format := 0.U
+    loop_matmul.io.lut_granularity := 0.U
     loop_matmul.io.mx_multi_elem := false.B
     loop_matmul.io.mx_multi_elem_act := false.B
     loop_matmul.io.weight_mx_format := 0.U
@@ -1401,8 +1483,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         rq.mx_data_in.bits.fromDMA := true.B
         rq.mx_data_in.bits.chunk_id := 0.U
         rq.mx_data_in.bits.acc_bank_id := 0.U
-        rq.mx_mode := Mux(u.io.fp4, MxFloatFormat.FP4, 0.U)
-        rq.mx_fp8_altfmt := false.B
+        rq.mx_mode := Mux(u.io.fp4, Mux(u.io.lut, Mux(u.io.lut_fp6, MxFloatFormat.FP6, MxFloatFormat.FP8), MxFloatFormat.FP4), 0.U)
+        rq.mx_fp8_altfmt := u.io.lut && u.io.lut_alt
         acc.mx_data_in.ready := false.B
         rq.mx_data_out.ready := u.io.rq_out.ready
         acc.mx_data_out.valid := false.B
@@ -1425,6 +1507,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       mx_requantizer.get.io.linear_base := u.io.linear_base
       mx_requantizer.get.io.linear_resident := u.io.linear_resident
       mx_requantizer.get.io.linear_pairs := u.io.active && u.io.fp4
+      sr_lut_active := u.io.active && u.io.lut
+      sr_lut_g := u.io.lut_g
       u.io.flush_busy := mx_requantizer.get.io.scale_flush_busy || sfout_outstanding =/= 0.U
     }
 
@@ -1571,7 +1655,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val sr_free_fp4 = sr_flush_free && rq_quiet_fp4
   val sr_ready = sr.map(_.io.cmd.ready && sr_free).getOrElse(false.B)
   val sr_ready_fp4 = sr.map(_.io.cmd.ready && sr_free_fp4).getOrElse(false.B)
-  val vec_sr_fp4 = vec_issue.cmd.cmd.rs2(32)
+  val vec_sr_fp4 = vec_issue.cmd.cmd.rs2(32) || vec_issue.cmd.cmd.rs2(33)   // 4-bit output (FP4 or LUT)
   // one command in flight per vector unit (the VPUs and SPAD_REQUANT run side by side); a VPU command goes to the
   // first free VPU
   val vpu_run = RegInit(VecInit(Seq.fill(vpu_n)(false.B)))
@@ -1707,6 +1791,10 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
             lut_loader_start.get.bits.num  := unrolled_cmd.bits.cmd.rs2(31, 0)
             lut_loader_start.get.bits.sel  := unrolled_cmd.bits.cmd.rs2(33, 32)
             lut_loader_start.get.bits.entry_bits := unrolled_cmd.bits.cmd.rs2(39, 34)
+            // [40] half mode, [41] half, [42] gated (loop-managed act-in codebooks, issued by LoopMatmul's LdL)
+            lut_loader_start.get.bits.half_mode := unrolled_cmd.bits.cmd.rs2(40).asBool
+            lut_loader_start.get.bits.half      := unrolled_cmd.bits.cmd.rs2(41)
+            lut_loader_start.get.bits.gated     := unrolled_cmd.bits.cmd.rs2(42).asBool
             unrolled_cmd.ready := lut_loader_start.get.ready
             when (unrolled_cmd.valid && lut_loader_start.get.ready) {
               mx_lut_en := true.B
