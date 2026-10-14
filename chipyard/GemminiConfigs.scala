@@ -145,6 +145,26 @@ class MxE3M2OnlyGemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(128) ++
   new chipyard.config.AbstractConfig)
 
+// E3M2-only (LUT quad) on the MxE4M3Fp4Vpu memory system (sbus 512, 4-bank L2, 64 reads in flight), for LUT perf runs.
+class MxE3M2PerfGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPE3M2OnlyStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// MxE3M2Perf plus the VPU and SPAD_REQUANT (LUT output): FP6 E3M2 LUT MLP end to end, same memory system.
+class MxE3M2VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPE3M2VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
 class MxE2M3OnlyGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPE2M3OnlyStandaloneConfig ++
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++
