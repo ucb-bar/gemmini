@@ -74,17 +74,21 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   } else None
 }
 
-class AccPipe[T <: Data : Arithmetic](latency: Int, t: T)(implicit ev: Arithmetic[T]) extends Module {
+class AccPipe[T <: Data : Arithmetic](latency: Int, t: T, clock_gating: Boolean = true)(implicit ev: Arithmetic[T]) extends Module {
   val io = IO(new Bundle {
     val op1 = Input(t.cloneType)
     val op2 = Input(t.cloneType)
+    val valid = Input(Bool())   // an accumulate is being presented: its sum is consumed `latency` cycles later
     val sum = Output(t.cloneType)
   })
   import ev._
-  io.sum := ShiftRegister(io.op1 + io.op2, latency)
+  // clock_gating: a stage only captures when the previous stage carries an accumulate (Pipe-style valid chain), so the
+  // sum still appears exactly `latency` cycles after its operands; sums of non-accumulate cycles were never consumed.
+  io.sum := (if (clock_gating) chisel3.withReset(false.B) { Pipe(io.valid, io.op1 + io.op2, latency).bits }
+             else ShiftRegister(io.op1 + io.op2, latency))
 }
 
-class AccPipeShared[T <: Data : Arithmetic](latency: Int, t: Vec[Vec[T]], banks: Int) extends Module {
+class AccPipeShared[T <: Data : Arithmetic](latency: Int, t: Vec[Vec[T]], banks: Int, clock_gating: Boolean = true) extends Module {
   val io = IO(new Bundle {
     val in_sel = Input(Vec(banks, Bool()))
     val ina = Input(Vec(banks, t.cloneType))
@@ -95,7 +99,8 @@ class AccPipeShared[T <: Data : Arithmetic](latency: Int, t: Vec[Vec[T]], banks:
   val inb = Mux1H(io.in_sel, io.inb)
   io.out := VecInit((ina zip inb).map { case (rv, wv) =>
     VecInit((rv zip wv).map { case (re, we) =>
-      val m = Module(new AccPipe(latency, t.head.head.cloneType))
+      val m = Module(new AccPipe(latency, t.head.head.cloneType, clock_gating))
+      m.io.valid := io.in_sel.reduce(_ || _)
       m.io.op1 := re
       m.io.op2 := we
       m.io.sum
@@ -113,6 +118,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   scale_mem: Option[GemminiScalingFactorMemConfig],
   meshRows: Int,
   tileRows: Int,
+  clock_gating: Boolean = true,
 )
   (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
@@ -204,7 +210,9 @@ class AccumulatorMem[T <: Data, U <: Data](
     oldest_pipelined_write := pipelined_writes(acc_latency-1)
 
     pipelined_writes(0).valid := io.write.fire
-    pipelined_writes(0).bits  := io.write.bits
+    // a stage's data / address / mask are only read while its valid is set: capture them only then (clock gating)
+    if (clock_gating) { when (io.write.fire) { pipelined_writes(0).bits := io.write.bits } }
+    else { pipelined_writes(0).bits := io.write.bits }
     
     
 
@@ -251,12 +259,12 @@ class AccumulatorMem[T <: Data, U <: Data](
     }
   }
   for (i <- 1 until acc_latency) {
-    // always shift
-    pipelined_writes(i) := pipelined_writes(i-1)
-
-    // optional override
-    if (use_mx_scaling) {
-      when (i.U === 1.U) {
+    // the valid always shifts; with clock_gating the payload only moves behind a valid
+    pipelined_writes(i).valid := pipelined_writes(i-1).valid
+    when (pipelined_writes(i-1).valid || !clock_gating.B) {
+      pipelined_writes(i).bits := pipelined_writes(i-1).bits
+      // optional override
+      if (use_mx_scaling && i == 1) {
         pipelined_writes(i).bits.data := scaled_data
       }
     }

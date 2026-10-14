@@ -1153,7 +1153,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       }
     }
 
-    val acc_adders = Module(new AccPipeShared(acc_latency-1, acc_row_t, acc_banks))
+    val acc_adders = Module(new AccPipeShared(acc_latency-1, acc_row_t, acc_banks, config.acc_clock_gating))
 
     val acc_mems = {
       val banks = Seq.fill(acc_banks) { Module(new AccumulatorMem(
@@ -1165,6 +1165,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         config.scale_mem,
         meshRows,
         tileRows,
+        config.acc_clock_gating,
       )) }
       val bank_ios = VecInit(banks.map(_.io))
 

@@ -322,7 +322,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Instantiate the actual mesh
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecision, meshAccPrecision, use_mx_scaling,
-    e4m3QuadThroughput = e4m3QuadThroughput, has_transposer = has_transposer))
+    e4m3QuadThroughput = e4m3QuadThroughput, has_transposer = has_transposer, clock_gating = mesh_clock_gating))
  
   if (use_mx_scaling) {
     mesh.io.activation_mx_format := mx_state.get.activation_mx_format

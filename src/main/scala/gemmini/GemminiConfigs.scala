@@ -90,6 +90,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              tile_latency: Int = 0,
                                                                              mesh_output_delay: Int = 1,
+                                                                             // clock-gate the mesh wrapper's systolic skew / control chains and the mesh output delay registers
+                                                                             // while no row is in flight (enable-based; Genus infers the ICGs). Functionally invisible.
+                                                                             mesh_clock_gating: Boolean = true,
+                                                                             // clock-gate the accumulator's write pipeline and shared adder pipeline behind their valids
+                                                                             acc_clock_gating: Boolean = true,
 
                                                                              use_tree_reduction_if_possible: Boolean = true,
 
