@@ -77,9 +77,10 @@ class QuantLut(
   val finderEngine  = Module(new NearestFinderTableEngine(finderFormats, rdataWidth, log2Ceil(lutConfig(2)._1)))
   val finderTable_t = new NearestFinderTable(finderEngine.nSlots, finderEngine.thrW)
   val lutCache_act_out = RegInit(VecInit(Seq.fill(2*lutConfig(2)._1)(0.U.asTypeOf(finderTable_t))))
-  val counter_i = RegInit(0.U(6.W))
-  val counter_j = RegInit(0.U(6.W))
-  val out_counter_i = RegInit(0.U(6.W))
+  // 16 b: counter_j counts a loop's weight rows up to (J << log2LuDim) - 1 = 127 at NC 256; 6 b wrapped at 64
+  val counter_i = RegInit(0.U(16.W))
+  val counter_j = RegInit(0.U(16.W))
+  val out_counter_i = RegInit(0.U(16.W))
   // act_in write: all codebooks, or (half mode, loop-managed) only one half, from the bundle's first half
   val halfEntries = lutConfig(0)._1 / 2
   when(io.lut_write_act_in.fire) {
@@ -132,7 +133,7 @@ class QuantLut(
 
   val projectedIndices = WireDefault(VecInit(Seq.fill(outputnumLanes)(0.U(raddrWidth.W))))
   val projectedDataValid = WireDefault(false.B)
-  val counter_act_out = RegInit(0.U(log2Ceil(256).W))
+  val counter_act_out = RegInit(0.U(16.W))
   // Projection nearest-finders (act_out): one shared derived table (sorted permutation + thresholds) per
   // codebook, a key compare + popcount + permutation lookup per lane. The threshold set within a code-width
   // class is selected by mx_fp8_altfmt (0 = E4M3 / E3M2, 1 = E5M2 / E2M3); the class (8- or 6-bit codes) is

@@ -420,6 +420,24 @@ object GemminiMxFPConfigs {
       projFormat = LutFP8E4M3, actCodeWidth = 8, weiCodeWidth = 8)),
   )
 
+  // DIM=8 single-format builds (quad mesh = 256 MAC/cycle, a quarter of DIM=16): E3M2-only (FP6 LUT) and FP4 (E2M1)-only.
+  lazy val dim8E3M2OnlyMxFPConfig = dim8MxFPConfig.copy(
+    inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+    weightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+    spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+    spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+    headerFileName = "gemmini_params_dim8_e3m2.h",   // own header: elaborating DIM=8 must not overwrite the DIM=16 gemmini_params.h
+    acc_banks = 2,   // store of loop n reads one bank while loop n+1 accumulates the other (1 bank stalled stores ~34k cyc)
+  )
+  lazy val dim8Fp4OnlyMxFPConfig = dim8MxFPConfig.copy(
+    inputType  = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+    weightType = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+    spatialArrayInputType  = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+    spatialArrayWeightType = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+    headerFileName = "gemmini_params_dim8_fp4.h",   // own header: elaborating DIM=8 must not overwrite the DIM=16 gemmini_params.h
+    acc_banks = 2,   // store of loop n reads one bank while loop n+1 accumulates the other (1 bank stalled stores ~34k cyc)
+  )
+
   // FP8 E5M2 via LUT: E5M2 stored 4-bit and up-projected to 8-bit, operand lane MxFloat(5,3,2).
   lazy val e5m2MxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat(5, 3, 2, pad=false),
@@ -779,6 +797,19 @@ class GemminiMxFPDim32AllAsymStandaloneConfig extends Config((site, here, up) =>
         LazyModule(new Gemmini(GemminiMxFPConfigs.dim32AllAsymMxFPConfig))
     }
   )
+})
+
+class GemminiMxFPDim8E3M2OnlyStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.dim8E3M2OnlyMxFPConfig))
+  })
+})
+class GemminiMxFPDim8Fp4OnlyStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.dim8Fp4OnlyMxFPConfig))
+  })
 })
 
 class GemminiMxFPDim8AllStandaloneConfig extends Config((site, here, up) => {

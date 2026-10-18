@@ -66,7 +66,7 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
   val half_pitch = UInt(coreMaxAddrBits.W)
 }
 
-class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)(implicit p: Parameters) extends Module {
+class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int, fullRowLen: Int = 16)(implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new ScratchpadMemWriteRequest(local_addr_t, acc_t_bits, scale_t_bits)))
     val out = Decoupled(new ScratchpadMemWriteRequest(local_addr_t, acc_t_bits, scale_t_bits))
@@ -91,7 +91,9 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
   // BF16: the second row at the store's own half pitch (the live loop_bound_j may be a later loop's J)
   val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, io.in.bits.vaddr + io.in.bits.half_pitch,
     address_second_half_narrow)
-  val second_half_invalid = io.in.bits.len < 16.U
+  // the store's len of a full row: 16 at DIM16/32, the mesh width (8) at DIM8 for quad weights (whose second rows were
+  // all dropped); single-throughput weights keep 16, as validated at DIM8
+  val second_half_invalid = io.in.bits.len < Mux(io.in.bits.mx_multi_elem, fullRowLen.U, 16.U)
   val out_chunk_id = Mux(is_non_fp8_acc_write, second_half.asUInt, io.in.bits.chunk_id)
 
   io.out.valid := io.in.valid
@@ -452,7 +454,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     })
 
     val write_dispatch_q = if (use_mx_scaling) {
-      val write_req_expander = Module(new WriteReqExpander(local_addr_t, accType.getWidth, acc_scale_t_bits))
+      val write_req_expander = Module(new WriteReqExpander(local_addr_t, accType.getWidth, acc_scale_t_bits, math.min(16, block_cols)))
       write_req_expander.io.in <> io.dma.write.req
       Queue(write_req_expander.io.out)
     } else {

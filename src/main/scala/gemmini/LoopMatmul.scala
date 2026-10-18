@@ -691,7 +691,10 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   // The order here is k, j, i when not doing LAYERNORM or SOFTMAX. As in StCSpad: an FP8 j-group is 4 execute
   // tiles, so gate on the UNCOMPRESSED ex_j reaching the group's last tile (ej_high); the terminal group has no
   // drain margin and waits for ex_completed.
-  val last_group = j + blocks - 1.U
+  // DIM<16 quad: the widened acc row of an even j-tile also holds tile j+1 (as StCSpad); store once per pair, after both
+  val dim8_fold = (block_size < 16).B && req.mx_multi_elem
+  val j_span = Mux(dim8_fold, Mux(j + 2.U <= iter_max_j, 2.U, iter_max_j - j), blocks)
+  val last_group = j + j_span - 1.U
   val ej_high = Mux(!req.mx_multi_elem,
     Mux((last_group === iter_max_j - 1.U) && (req.max_j % 4.U =/= 0.U), req.max_j - 1.U, last_group * 4.U + 3.U),
     last_group)
@@ -724,7 +727,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     }.otherwise {
       chunk_id := 0.U
       val next_i = floorAdd(i, 1.U, iter_max_i)
-      val next_j = floorAdd(j, max_blocks, iter_max_j, next_i === 0.U)
+      val next_j = floorAdd(j, Mux(dim8_fold, 2.U, max_blocks), iter_max_j, next_i === 0.U)
 
       i := next_i
       j := next_j
@@ -931,7 +934,10 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
 
   // FP8 store j-group = 4 execute tiles; gate on the UNCOMPRESSED ex_j reaching the
   // group's last execute-tile (ej_high) so we don't read before all tiles' final-k accumulate.
-  val last_group = j + blocks - 1.U
+  // DIM<16: the widened acc row of an even j also holds j+1 (jStep 2 below), so wait for both tiles' final k
+  val fold = (block_size < 16).B
+  val j_span = Mux(fold, Mux(j + 2.U <= iter_max_j, 2.U, iter_max_j - j), blocks)
+  val last_group = j + j_span - 1.U
   val ej_high = Mux(!req.mx_multi_elem,
     Mux((last_group === iter_max_j - 1.U) && (req.max_j % 4.U =/= 0.U),
       req.max_j - 1.U,             // partial last group ends at max_j-1
@@ -1112,7 +1118,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
                  mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
                  compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2,
-                 vec_bypass: Boolean = false)
+                 vec_bypass: Boolean = false, ld_bypass: Boolean = false)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
   val tilesPerMxBlock = 32 / block_size
@@ -1422,7 +1428,9 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   // unrolling (raw commands stay in program order). SPAD_REQUANT does too, but only while the output is BF16: then
   // the loop's stores are BF16-marked and do not wait for an older SR (they share the requantizer beat by beat);
   // a quantized store would, so with a quantized output SR stays in order.
-  if (vec_bypass) {
+  // ld_bypass (MX builds): the config_ld / mvin and next-matmul scale-config passes below do not need a VPU, so a
+  // VPU-less build can still start the next matmul's loads under the previous loop's stores; vec_pass needs vec_bypass
+  if (vec_bypass || ld_bypass) {
     val f = cmd.bits.cmd.inst.funct
     val r1 = cmd.bits.cmd.rs1
     val r2 = cmd.bits.cmd.rs2
@@ -1449,7 +1457,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     def hits(l: LoopMatmulState): Bool = l.configured && (ranges.map { case (v, r) =>
       v && (rows_overlap(r, a_rows(l)) || rows_overlap(r, b_rows(l)) || (l.spad_only && rows_overlap(r, c_rows(l))))
     }.reduce(_ || _) || (is_sr && sc.resident && l.reads_act0 && !l.ex_completed))
-    val vec_pass = cmd.valid && loop_configured && (is_vpu || is_sr) && io.vec_space && !loops.map(hits).reduce(_ || _)
+    val vec_pass = vec_bypass.B && cmd.valid && loop_configured && (is_vpu || is_sr) && io.vec_space && !loops.map(hits).reduce(_ || _)
     // The next matmul's scale config and gated scale load may pass loops that have issued every load and ex command
     // (only stores left) when the output is BF16 and every such loop moves the accumulator base by half: the next
     // loop then accumulates into the other half while these stores drain. The RS orders the config after the loops'
@@ -1813,11 +1821,11 @@ object LoopMatmul {
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
             mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
             compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2,
-            vec_bypass: Boolean = false)
+            vec_bypass: Boolean = false, ld_bypass: Boolean = false)
            (implicit p: Parameters): (DecoupledIO[GemminiCmd], Bool, Vec[Bool], LoopMatmul) = {
     val mod = Module(new LoopMatmul(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
-      mvin_rs2_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t, mvout_spad_rs1_t, mvout_rs2_t, vec_bypass))
+      mvin_rs2_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t, mvout_spad_rs1_t, mvout_rs2_t, vec_bypass, ld_bypass))
     mod.io.in <> in
     mod.io.ld_completed := ld_completed
     mod.io.st_completed := st_completed
