@@ -474,6 +474,15 @@ object GemminiMxFPConfigs {
     spatialArrayInputType  = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
     spatialArrayWeightType = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
   )
+  // fp4Only plus the VPU and SPAD_REQUANT, as e3m2Vpu's: an FP4 build that can run a whole MLP. FP4 is fed and
+  // requantized as direct codes, so lut = None drops the QuantLut (as e4m3Fp4Trimmed does).
+  lazy val fp4VpuMxFPConfig = fp4OnlyMxFPConfig.copy(
+    lut = None,
+    has_vpu = true,
+    vpu_params = gemmini.vpu.VpuParams(units = 2, expSub = true, expSum = true),
+    has_spad_requant = true,
+    reservation_station_entries_ld = 32,
+  )
   lazy val e3m2OnlyMxFPConfig = standaloneMxFPConfig.copy(
     inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
     weightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
@@ -837,6 +846,12 @@ class GemminiMxFPFp4OnlyStandaloneConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq((p: Parameters) => {
     implicit val q = p; implicit val v = implicitly[ValName]
     LazyModule(new Gemmini(GemminiMxFPConfigs.fp4OnlyMxFPConfig))
+  })
+})
+class GemminiMxFPFp4VpuStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.fp4VpuMxFPConfig))
   })
 })
 class GemminiMxFPE3M2OnlyStandaloneConfig extends Config((site, here, up) => {

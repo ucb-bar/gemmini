@@ -57,7 +57,8 @@ class MxGemminiRocketConfig extends Config(
 class MxE4M3VpuGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPE4M3TrimmedStandaloneConfig ++
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++
-  new chipyard.config.WithSystemBusWidth(512) ++
+  // new freechips.rocketchip.subsystem.WithEdgeDataBits(256) ++     // 256-bit memory bus / AXI DRAM port (default 64)
+  new chipyard.config.WithSystemBusWidth(256) ++
   new chipyard.config.AbstractConfig)
 
 // MxE4M3VpuGemminiRocketConfig plus FP4 x FP4 (mode0) on the mesh, and an L2 that keeps more DRAM reads in flight:
@@ -76,6 +77,7 @@ class MxE4M3Fp4VpuGemminiRocketConfig extends Config(
 class MxE4M3SingleGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPE4M3SingleNoLutStandaloneConfig ++       // standalone MX, E4M3 single throughput only, no QuantLut
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  // new freechips.rocketchip.subsystem.WithEdgeDataBits(256) ++     // 256-bit memory bus / AXI DRAM port (default 64)
   new chipyard.config.WithSystemBusWidth(256) ++
   new chipyard.config.AbstractConfig)
 
@@ -137,6 +139,17 @@ class MxFp4OnlyGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPFp4OnlyStandaloneConfig ++
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++
   new chipyard.config.WithSystemBusWidth(128) ++
+  new chipyard.config.AbstractConfig)
+
+// FP4 only (no E4M3, no LUT) plus the VPU and SPAD_REQUANT, on MxE3M2Vpu's memory system (sbus 512, 4-bank L2,
+// 64 reads in flight).
+class MxFp4VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPFp4VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
   new chipyard.config.AbstractConfig)
 
 class MxE3M2OnlyGemminiRocketConfig extends Config(

@@ -587,8 +587,35 @@ class MxRequantizer[T <: Data](
   val n_jgroups     = Mux(num_super <= sbPerJg, 1.U, (num_super + 1.U) >> 1)
   val chunks_per_jg = Mux(num_super < sbPerJg, num_super, sbPerJg)
 
+  // The coalescer is coalesceSize bytes held as scales_per_write byte lanes (lane = byte index mod
+  // scales_per_write) of async-read Mems, not registers, so an FPGA maps it to LUTRAM: a flush reads one
+  // row across all lanes, the transposed act flush reads 8 single bytes. No reset needed: a flush only
+  // reads bytes written by the same op.
   val coalesceSize  = 2048
-  val coalescer     = RegInit(VecInit(Seq.fill(coalesceSize)(0.U(8.W))))
+  require(isPow2(scales_per_write) && scales_per_write > 1 && coalesceSize % scales_per_write == 0)
+  require(numOutBlocks <= scales_per_write, "one cycle's scale writes must land in distinct coalescer lanes")
+  val coalesceIdxBits = log2Ceil(coalesceSize)
+  val laneBits        = log2Ceil(scales_per_write)
+  val coalescer       = Seq.fill(scales_per_write)(Mem(coalesceSize / scales_per_write, UInt(8.W)))
+  def coalesceIdx(i: UInt): UInt = i.pad(coalesceIdxBits)(coalesceIdxBits - 1, 0)
+  def coalesceLane(i: UInt): UInt = coalesceIdx(i)(laneBits - 1, 0)
+  def coalesceRow(i: UInt): UInt = coalesceIdx(i) >> laneBits
+  def coalesceRead(i: UInt): UInt = VecInit(coalescer.map(_.read(coalesceRow(i))))(coalesceLane(i))
+  // Up to numOutBlocks byte writes per cycle (consecutive bytes, so distinct lanes), committed below.
+  val coal_wr_valid = WireDefault(VecInit(Seq.fill(numOutBlocks)(false.B)))
+  val coal_wr_idx   = WireDefault(VecInit(Seq.fill(numOutBlocks)(0.U(coalesceIdxBits.W))))
+  val coal_wr_data  = WireDefault(VecInit(Seq.fill(numOutBlocks)(0.U(8.W))))
+  def coalesceWrite(slot: Int, i: UInt, d: UInt): Unit = {
+    coal_wr_valid(slot) := true.B
+    coal_wr_idx(slot)   := coalesceIdx(i)
+    coal_wr_data(slot)  := d
+  }
+  for (l <- 0 until scales_per_write) {
+    val hits = coal_wr_valid.zip(coal_wr_idx).map { case (v, i) => v && coalesceLane(i) === l.U }
+    when (hits.reduce(_ || _)) {
+      coalescer(l).write(Mux1H(hits, coal_wr_idx.map(coalesceRow)), Mux1H(hits, coal_wr_data))
+    }
+  }
 
   val ag_sb  = RegInit(0.U(9.W))
   val ag_g   = RegInit(0.U(9.W))
@@ -620,7 +647,7 @@ class MxRequantizer[T <: Data](
   sr_row := RegNext(lp_row + lp_r.asUInt)   // aligned with quantize_valid (= RegNext(should_compute))
   val lin_idx = Mux(io.linear_pairs, lp_base + Mux(lp_r, io.linear_gn, 0.U) + lp_b, lin_cnt)
   when(should_compute && !flushing && !flushing_act && io.linear_scales) {
-    coalescer(lin_idx) := scale_e8m0_vec(0)
+    coalesceWrite(0, lin_idx, scale_e8m0_vec(0))
     val lp_last_b = lp_b === io.linear_gn - 1.U
     lp_r := !lp_r
     when (lp_r) {
@@ -639,12 +666,12 @@ class MxRequantizer[T <: Data](
   when(should_compute && !flushing && !flushing_act && !io.linear_scales) {
     when (isNibble) {
       for (blk <- 0 until numOutBlocks) {
-        when ((cur_b + blk.U) < GN) { coalescer(cur_byte + blk.U) := scale_e8m0_vec(blk) }
+        when ((cur_b + blk.U) < GN) { coalesceWrite(blk, cur_byte + blk.U, scale_e8m0_vec(blk)) }
       }
     } .otherwise {
-      coalescer(cur_byte) := scale_e8m0_vec(0)
+      coalesceWrite(0, cur_byte, scale_e8m0_vec(0))
       if (numOutBlocks >= 2) {
-        when ((cur_b + 1.U) < GN) { coalescer(cur_byte + 1.U) := scale_e8m0_vec(1) }
+        when ((cur_b + 1.U) < GN) { coalesceWrite(1, cur_byte + 1.U, scale_e8m0_vec(1)) }
       }
     }
     when(ag_row === (ROWS_PER_HALF - 1).U) {
@@ -705,7 +732,8 @@ class MxRequantizer[T <: Data](
   io.scaleMem_write.valid     := false.B
   io.scaleMem_write.bits.addr := Mux(io.linear_scales, io.linear_base, scale_mem_mvout_base_addr_act) +
     (flush_row << log2Ceil(scaleMem_data_width/8))
-  io.scaleMem_write.bits.data := Cat((0 until scales_per_write).map(i => coalescer(flush_base + i.U)).reverse)
+  // flush_base is row-aligned, so byte flush_base + i is lane i of one row
+  io.scaleMem_write.bits.data := Cat(coalescer.map(_.read(coalesceRow(flush_base))).reverse)
   when(flushing) {
     io.scaleMem_write.valid := true.B
     when(io.scaleMem_write.fire) {
@@ -724,7 +752,7 @@ class MxRequantizer[T <: Data](
   val words_per_bi = M_rows >> 3                                       // M/8 (M is a multiple of 8)
   val act_m0       = flush_act_wm << 3
   val act_word     = flush_act_bi * words_per_bi + flush_act_wm
-  val act_data     = Cat((0 until 8).reverse.map(j => coalescer((act_m0 + j.U) * GN + flush_act_bi)))
+  val act_data     = Cat((0 until 8).reverse.map(j => coalesceRead((act_m0 + j.U) * GN + flush_act_bi)))
 
   io.scaleMem_write_act_resident.valid     := false.B
   io.scaleMem_write_act_resident.bits.addr := (act_word << 3)         // byte addr = w*8, 0-based
