@@ -619,22 +619,22 @@ class MxRequantizer[T <: Data](
   val lp_row = RegInit(0.U(16.W))   // even row of the current pair (row of a beat = lp_row + lp_r)
   sr_row := RegNext(lp_row + lp_r.asUInt)   // aligned with quantize_valid (= RegNext(should_compute))
   val lin_idx = Mux(io.linear_pairs, lp_base + Mux(lp_r, io.linear_gn, 0.U) + lp_b, lin_cnt)
+  // a beat carries numOutBlocks consecutive blocks (b, b+1 at DIM32) of one row: file each block's scale
   when(should_compute && !flushing && !flushing_act && io.linear_scales) {
-    coalescer(lin_idx) := scale_e8m0_vec(0)
-    val lp_last_b = lp_b === io.linear_gn - 1.U
+    for (blk <- 0 until numOutBlocks) { coalescer(lin_idx + blk.U) := scale_e8m0_vec(blk) }
+    val lp_last_b = lp_b === io.linear_gn - numOutBlocks.U
     lp_r := !lp_r
     when (lp_r) {
-      lp_b := Mux(lp_last_b, 0.U, lp_b + 1.U)
+      lp_b := Mux(lp_last_b, 0.U, lp_b + numOutBlocks.U)
       when (lp_last_b) { lp_base := lp_base + (io.linear_gn << 1); lp_row := lp_row + 2.U }
     }
-    when (lin_cnt === lin_total - 1.U) {
+    when (lin_cnt === lin_total - numOutBlocks.U) {
       lin_cnt := 0.U
       lp_base := 0.U; lp_b := 0.U; lp_r := false.B; lp_row := 0.U
       flushing := true.B
       flushing_act := io.linear_resident
-    } .otherwise { lin_cnt := lin_cnt + 1.U }
+    } .otherwise { lin_cnt := lin_cnt + numOutBlocks.U }
   }
-  if (numOutBlocks != 1) assert(!io.linear_scales, "linear scale filing assumes one MX block per beat")
 
   when(should_compute && !flushing && !flushing_act && !io.linear_scales) {
     when (isNibble) {
