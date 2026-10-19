@@ -4,8 +4,10 @@ import chisel3._
 import chisel3.util._
 
 // SPAD_REQUANT: stream a row-major BF16 tile (M x N, N a multiple of 32) from the scratchpad through the existing
-// MxRequantizer. Block (m, b) = 4 consecutive spad rows src + 4*(m*GN + b) -> one requant beat -> 32 E4M3 codes
-// (2 spad rows) at dst, flat (dst + 2*(m*GN + b) + h) or operand-A tiled (dst + ((m/16)*N/16 + 2b + h)*16 + m%16).
+// MxRequantizer. Row width W bits (128 at DIM16, 64 at DIM8): a block = I = 512/W rows, its codes O = 256/W rows, an
+// operand-A tile T = W/8 rows (16x16 at W 128: I 4, O 2, T 16; 8x8: I 8, O 4, T 8). Block (m, b) = I consecutive spad
+// rows src + I*(m*GN + b) -> one requant beat -> 32 E4M3 codes (O spad rows) at dst, flat (dst + O*(m*GN + b) + h) or
+// operand-A tiled (dst + ((m/T)*N/T + O*b + h)*T + m%T); the formulas below are written for W 128.
 // Scales are filed by the requantizer's linear mode (scale k = block k) and flushed by its existing coalescer to
 // the command's own scale DRAM address (and, if resident, the act-scale memory), so no CONFIG_SCALE_MEM is involved.
 // FP4 (rs2[32]): blocks are fed in row pairs (m, b), (m+1, b); the requantizer packs each pair into 32 bytes (byte k =
@@ -31,15 +33,31 @@ class SpadRequantCmd(val addrW: Int) extends Bundle {
 }
 
 object SpadRequantCmd {
-  // rs1 = src[13:0] | dst[27:14] | tiled[28] | resident[29] | scale DRAM addr[62:30];
+  // rs1 = src[F-1:0] | dst[2F-1:F] | tiled[2F] | resident[2F+1] | scale DRAM addr[min(63, 2F+34):2F+2]
+  //   (F = VpuCmd.fieldW: 14 -> src[13:0] | dst[27:14] | tiled[28] | resident[29] | scale[62:30])
   // rs2 = M[15:0] | N[31:16] | fp4[32] | lut[33] | lut fp6[34] | lut alt[35] | lut G[40:36]
   def decode(rs1: UInt, rs2: UInt, addrW: Int): SpadRequantCmd = {
     val c = Wire(new SpadRequantCmd(addrW))
-    c.src := rs1(13, 0); c.dst := rs1(27, 14); c.tiled := rs1(28)
-    c.resident := rs1(29); c.scale_addr := rs1(62, 30)
+    val f = gemmini.vpu.VpuCmd.fieldW(addrW)
+    c.src := rs1(f - 1, 0); c.dst := rs1(2 * f - 1, f); c.tiled := rs1(2 * f)
+    c.resident := rs1(2 * f + 1); c.scale_addr := rs1(math.min(63, 2 * f + 34), 2 * f + 2)
     c.m := rs2(15, 0); c.n := rs2(31, 16); c.fp4 := rs2(32)
     c.lut := rs2(33); c.lut_fp6 := rs2(34); c.lut_alt := rs2(35); c.lut_g := rs2(40, 36)
     c
+  }
+}
+
+object SpadRequantRows {
+  // exact spad footprints for ordering (RS, LoopMatmul) at rowBytes-byte rows (16 at DIM16, 8 at DIM8; tile height T =
+  // rowBytes): BF16 source M*N*2/rowBytes rows; E4M3 destination M*N/rowBytes (M rounded up to T if tiled); 4-bit
+  // destination M*N/(2*rowBytes) (M rounded up to 2T if tiled). rowBytes 16: M*N/8, M*N/16 (M16), M*N/32 (M32).
+  def src(c: SpadRequantCmd, rowBytes: Int): UInt = (c.m * c.n) >> log2Ceil(rowBytes / 2)
+  def dst(c: SpadRequantCmd, rowBytes: Int): UInt = {
+    val lg = log2Ceil(rowBytes)
+    val mT  = (c.m +& (rowBytes - 1).U) & ~(rowBytes - 1).U(17.W)
+    val m2T = (c.m +& (2 * rowBytes - 1).U) & ~(2 * rowBytes - 1).U(17.W)
+    Mux(c.nib, Mux(c.tiled, (m2T * c.n) >> (lg + 1), (c.m * c.n) >> (lg + 1)),
+               Mux(c.tiled, (mT * c.n) >> lg, (c.m * c.n) >> lg))
   }
 }
 
@@ -49,12 +67,15 @@ class SpadRowWrite(val addrW: Int, val rowW: Int) extends Bundle {
 }
 
 class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScales: Int) extends Module {
+  require(rowW == 128 || rowW == 64, "SPAD_REQUANT: 16- or 8-byte spad rows")
+  val inRows = 512 / rowW; val outRows = 256 / rowW; val tileRows = rowW / 8   // I, O, T
+  val lgIn = log2Ceil(inRows); val lgOut = log2Ceil(outRows); val lgT = log2Ceil(tileRows)
   val io = IO(new Bundle {
     val cmd     = Flipped(Decoupled(new SpadRequantCmd(addrW)))
     val rd_req  = Decoupled(UInt(addrW.W))
     val rd_resp = Vec(nBanks, Flipped(Decoupled(UInt(rowW.W))))
-    val rq_in   = Decoupled(UInt((4 * rowW).W))   // 32 BF16, element k = bits [16k+15:16k]
-    val rq_out  = Flipped(Decoupled(UInt((2 * rowW).W)))   // 32 codes, code k = bits [8k+7:8k]
+    val rq_in   = Decoupled(UInt(512.W))   // 32 BF16, element k = bits [16k+15:16k]
+    val rq_out  = Flipped(Decoupled(UInt(256.W)))   // 32 codes, code k = bits [8k+7:8k]
     val rq_out_garbage = Input(Bool())                     // FP4: the first beat of a pair carries no output
     val wr      = Decoupled(new SpadRowWrite(addrW, rowW))
     val linear_gn = Output(UInt(16.W))
@@ -76,11 +97,11 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
   val c      = Reg(new SpadRequantCmd(addrW))
   val gn     = c.n >> 5
   val total  = c.m * gn                   // blocks
-  val outTotal = Mux(c.nib, total >> 1, total)   // outputs (2 code rows each)
-  val rdCnt  = Reg(UInt(20.W))            // spad rows read (4 per block)
+  val outTotal = Mux(c.nib, total >> 1, total)   // outputs (O code rows each)
+  val rdCnt  = Reg(UInt(20.W))            // spad rows read (I per block)
   val outCnt = Reg(UInt(16.W))            // outputs written
   // read block walk: E4M3 (m, b) b inner; FP4 (pair, b, r) r inner. rdBase = first block of row m (or the pair's even row)
-  val rdBase = Reg(UInt(16.W)); val rdB = Reg(UInt(16.W)); val rdR = Reg(Bool()); val rdRow = Reg(UInt(2.W))
+  val rdBase = Reg(UInt(16.W)); val rdB = Reg(UInt(16.W)); val rdR = Reg(Bool()); val rdRow = Reg(UInt(lgIn.W))
   val om     = Reg(UInt(16.W)); val ob = Reg(UInt(16.W))
   val drain  = RegInit(0.U(2.W))          // cycles after the last write before checking flush_busy
 
@@ -98,15 +119,15 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
 
   // ---- reads: one spad row per cycle, responses consumed in issue order (bank FIFO) ----
   val inflight = Module(new Queue(UInt(log2Ceil(nBanks max 2).W), 8))
-  val rdAddr = c.src + ((rdBase + Mux(rdR, gn, 0.U) + rdB) << 2) + rdRow
-  io.rd_req.valid := active && rdCnt < (total << 2) && inflight.io.enq.ready
+  val rdAddr = c.src + ((rdBase + Mux(rdR, gn, 0.U) + rdB) << lgIn) + rdRow
+  io.rd_req.valid := active && rdCnt < (total << lgIn) && inflight.io.enq.ready
   io.rd_req.bits := rdAddr
   inflight.io.enq.valid := io.rd_req.fire
   inflight.io.enq.bits := bankOf(rdAddr)
   when (io.rd_req.fire) {
     rdCnt := rdCnt + 1.U
     rdRow := rdRow + 1.U
-    when (rdRow === 3.U) {
+    when (rdRow === (inRows - 1).U) {
       val lastB = rdB === gn - 1.U
       when (c.nib && !rdR) { rdR := true.B } .otherwise {
         rdR := false.B
@@ -116,8 +137,8 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
     }
   }
 
-  val rowBuf = Reg(Vec(4, UInt(rowW.W)))
-  val rowCnt = RegInit(0.U(2.W))
+  val rowBuf = Reg(Vec(inRows, UInt(rowW.W)))
+  val rowCnt = RegInit(0.U(lgIn.W))
   val full   = RegInit(false.B)
   val accept = !full || io.rq_in.ready
   io.rd_resp.zipWithIndex.foreach { case (r, b) =>
@@ -132,26 +153,26 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
   when (respFire) {
     rowBuf(rowCnt) := respData
     rowCnt := rowCnt + 1.U
-    when (rowCnt === 3.U) { full := true.B }
+    when (rowCnt === (inRows - 1).U) { full := true.B }
   }
 
-  // ---- writes: 2 code rows per block ----
-  val outBuf = Reg(UInt((2 * rowW).W))
+  // ---- writes: O code rows per block ----
+  val outBuf = Reg(UInt(256.W))
   val outValid = RegInit(false.B)
-  val half = RegInit(false.B)
+  val half = RegInit(0.U(lgOut.W))   // code row of the block being written
   io.rq_out.ready := !outValid
   val rqKeep = !(c.nib && io.rq_out_garbage)
   assert(!(io.rq_out.fire && rqKeep) || outCnt < outTotal, "SPAD_REQUANT: more requantizer outputs than blocks it sent")
-  when (io.rq_out.fire && rqKeep) { outBuf := io.rq_out.bits; outValid := true.B; half := false.B }
-  val tilesK = c.n >> 4
-  val flatAddr  = c.dst + (outCnt << 1) + half.asUInt
-  val tiledAddr = c.dst + ((((om >> 4) * tilesK) + (ob << 1) + half.asUInt) << 4) + om(3, 0)
+  when (io.rq_out.fire && rqKeep) { outBuf := io.rq_out.bits; outValid := true.B; half := 0.U }
+  val tilesK = c.n >> lgT
+  val flatAddr  = c.dst + (outCnt << lgOut) + half
+  val tiledAddr = c.dst + ((((om >> lgT) * tilesK) + (ob << lgOut) + half) << lgT) + om(lgT - 1, 0)
   io.wr.valid := outValid
   io.wr.bits.addr := Mux(c.tiled, tiledAddr, flatAddr)
-  io.wr.bits.data := Mux(half, outBuf(2 * rowW - 1, rowW), outBuf(rowW - 1, 0))
+  io.wr.bits.data := outBuf.asTypeOf(Vec(outRows, UInt(rowW.W)))(half)
   when (io.wr.fire) {
-    half := !half
-    when (half) {
+    half := half + 1.U
+    when (half === (outRows - 1).U) {
       outValid := false.B
       outCnt := outCnt + 1.U
       val lastB = ob === gn - 1.U

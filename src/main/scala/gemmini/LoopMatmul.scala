@@ -1435,14 +1435,13 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     val r1 = cmd.bits.cmd.rs1
     val r2 = cmd.bits.cmd.rs2
     val is_vpu = f === VPU_EXEC
-    val vc = gemmini.vpu.VpuCmd.decode(r1, r2, 14)
+    val vc = gemmini.vpu.VpuCmd.decode(r1, r2, log2Up(max_addr))
     def span(base: UInt, n: UInt): (UInt, UInt) = (base, base +& n)
     val is_sr = f === SPAD_REQUANT && io.output_mx_format === 3.U
     // exact footprints, as the RS computes them: BF16 source M*N/8 rows, E4M3 destination M*N/16 (M padded to 16 if tiled)
-    val sc = SpadRequantCmd.decode(r1, r2, 14)
-    val sr_src_rows = (sc.m * sc.n) >> 3
-    val sr_dst_rows = Mux(sc.nib, Mux(sc.tiled, ((((sc.m +& 31.U) & ~31.U(17.W)) * sc.n) >> 5), (sc.m * sc.n) >> 5),
-                                  Mux(sc.tiled, ((((sc.m +& 15.U) & ~15.U(17.W)) * sc.n) >> 4), (sc.m * sc.n) >> 4))
+    val sc = SpadRequantCmd.decode(r1, r2, log2Up(max_addr))
+    val sr_src_rows = SpadRequantRows.src(sc, block_size)   // spad rows are block_size (DIM) bytes
+    val sr_dst_rows = SpadRequantRows.dst(sc, block_size)
     val ranges = Seq(
       (is_vpu, span(vc.src1, vc.rows)),
       (is_vpu && gemmini.vpu.VpuOp.usesSrc2(vc.op), span(vc.src2, gemmini.vpu.VpuCmd.src2Rows(vc))),

@@ -397,6 +397,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     header ++= s"#define ADDR_LEN 32\n"
     header ++= s"#define BANK_NUM $sp_banks\n"
     header ++= s"#define BANK_ROWS $sp_bank_entries\n"
+    // VPU_EXEC / SPAD_REQUANT row-address field width (gemmini.vpu.VpuCmd.fieldW): 14, 15 at DIM=8
+    header ++= s"#define SPAD_ROW_ADDR_BITS ${gemmini.vpu.VpuCmd.fieldW(log2Up(sp_banks * sp_bank_entries))}\n"
     header ++= s"#define ACC_ROWS ${acc_banks * acc_bank_entries}\n" // TODO add ACC_BANKS as well
 
     val max_bytes = 64

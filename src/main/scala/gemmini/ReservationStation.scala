@@ -400,7 +400,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     new_entry.opd.valid := false.B
     new_entry.opd.bits := DontCare
     when (is_vpu) {
-      val vc = gemmini.vpu.VpuCmd.decode(cmd.rs1, cmd.rs2, 14)
+      val vc = gemmini.vpu.VpuCmd.decode(cmd.rs1, cmd.rs2, log2Ceil(local_addr_t.spRows))
       new_entry.opa_is_dst := true.B
       new_entry.opa := spRange(vc.dst, gemmini.vpu.VpuCmd.dstRows(vc))
       new_entry.opb := spRange(vc.src1, vc.rows)
@@ -411,13 +411,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         new_entry.opd.valid := gemmini.vpu.VpuOp.hasDst2(vc.op)
       }
     }.elsewhen (is_sreq) {
-      val sc = SpadRequantCmd.decode(cmd.rs1, cmd.rs2, 14)
-      val m16 = (sc.m +& 15.U) & ~15.U(17.W)
-      val m32 = (sc.m +& 31.U) & ~31.U(17.W)
+      val sc = SpadRequantCmd.decode(cmd.rs1, cmd.rs2, log2Ceil(local_addr_t.spRows))
       new_entry.opa_is_dst := true.B
-      new_entry.opa := spRange(sc.dst, Mux(sc.nib, Mux(sc.tiled, (m32 * sc.n) >> 5, (sc.m * sc.n) >> 5),
-                                                   Mux(sc.tiled, (m16 * sc.n) >> 4, (sc.m * sc.n) >> 4)))
-      new_entry.opb := spRange(sc.src, (sc.m * sc.n) >> 3)
+      new_entry.opa := spRange(sc.dst, SpadRequantRows.dst(sc, block_cols))   // spad rows are block_cols (DIM) bytes
+      new_entry.opb := spRange(sc.src, SpadRequantRows.src(sc, block_cols))
     }
 
     val not_config = !new_entry.is_config

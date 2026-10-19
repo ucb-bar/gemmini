@@ -784,8 +784,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val vpu_wr_data = WireDefault(VecInit(Seq.fill(sp_banks)(0.U(spad_w.W))))
       val vpu_wq_busy = WireDefault(VecInit(Seq.fill(vpu_params.units)(false.B)))
       val vpus = if (!has_vpu) Seq() else {
-        require(spad_w == 128 && isPow2(sp_banks) && log2Ceil(sp_banks * sp_bank_entries) <= 14,
-          "VPU: 8 x BF16 spad rows, <= 14-bit spad row addresses")
+        require(spad_w == vpu_params.lanes * 16 && isPow2(sp_banks) && log2Ceil(sp_banks * sp_bank_entries) <= 15,
+          "VPU: one spad row = lanes x BF16 (8 at DIM16, 4 at DIM8), <= 15-bit spad row addresses")
         val vs = Seq.tabulate(vpu_params.units)(_ => Module(new gemmini.vpu.Vpu(log2Ceil(sp_banks * sp_bank_entries), log2Ceil(sp_bank_entries), vpu_params)))
         vs.zip(io.vpu_cmd.get).foreach { case (v, c) => v.io.cmd <> c }
         val bankOf = (a: UInt) => if (sp_banks == 1) 0.U else a(log2Ceil(sp_banks * sp_bank_entries) - 1, log2Ceil(sp_bank_entries))
