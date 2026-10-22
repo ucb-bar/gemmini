@@ -252,6 +252,42 @@ class MxDim32Fp4VpuGemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(512) ++
   new chipyard.config.AbstractConfig)
 
+// Multi-format VPU + SPAD_REQUANT builds (FireSim targets), MxE3M2Vpu memory system. 4x4: FP4 + E3M2.
+class MxDim4Fp4E3M2VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim4Fp4E3M2VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// 8x8: FP4 + E3M2 + E4M3.
+class MxDim8Fp4E3M2E4M3VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim8Fp4E3M2E4M3VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// 16x16: FP4 + E3M2 + E4M3, memory bus widened to the 512-bit system bus.
+class MxFp4E3M2E4M3VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPFp4E3M2E4M3VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(512) ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// MxDim32E4M3Vpu with the memory bus widened to the 512-bit system bus.
+class MxDim32E4M3VpuWideMemGemminiRocketConfig extends Config(
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(512) ++
+  new MxDim32E4M3VpuGemminiRocketConfig)
+
 class MxDim8Fp4PerfGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPDim8Fp4OnlyStandaloneConfig ++
   new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++

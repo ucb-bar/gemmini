@@ -10,8 +10,8 @@ import chisel3.util._
 // (DIM16: I 4, O 2, T 16; DIM8: I 8, O 4, T 8; DIM4: I 16, O 8, T 4; DIM32: I 4, O 2, T 32). Block (m, b) = 512/W consecutive spad rows from
 // src + (512/W)*(m*GN + b) -> 32 E4M3 codes at dst, flat (dst + O*(m*GN/B + b/B) + h) or operand-A tiled
 // (dst + ((m/T)*N/T + O*(b/B) + h)*T + m%T); the formulas below are written for W 128.
-// Scales are filed by the requantizer's linear mode (scale k = block k) and flushed by its existing coalescer to
-// the command's own scale DRAM address (and, if resident, the act-scale memory), so no CONFIG_SCALE_MEM is involved.
+// The walk is block-beat outer, row inner, so the requantizer streams the scales block-major [GN][M] (byte b*M + m)
+// to the command's scale DRAM address (and, if resident, the act-scale memory); no CONFIG_SCALE_MEM is involved.
 // FP4 (rs2[32]): blocks are fed in row pairs (m, b), (m+1, b); the requantizer packs each pair into 32 bytes (byte k =
 // row m col k low nibble | row m+1 high) = the FP4 operand-A layout, written as 2 rows at row pair p = m/2: flat
 // dst + 2*(p*GN + b) + h, tiled dst + ((p/16)*N/16 + 2b + h)*16 + p%16. Its first beat of each pair is garbage.
@@ -107,26 +107,28 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
   val outTotal = Mux(c.nib, beats >> 1, beats)   // outputs (O code rows each)
   val rdCnt  = Reg(UInt(20.W))            // spad rows read (I per beat)
   val outCnt = Reg(UInt(16.W))            // outputs written
-  // read beat walk: E4M3 (m, b) b inner; FP4 (pair, b, r) r inner; rdB = beat in row. rdBase = first block of row m (or the pair's even row)
-  val rdBase = Reg(UInt(16.W)); val rdB = Reg(UInt(16.W)); val rdR = Reg(Bool()); val rdRow = Reg(UInt(lgIn.W))
-  val om     = Reg(UInt(16.W)); val ob = Reg(UInt(16.W))
+  // beat walk: block-beat outer, row inner (rdM = 0..M-1; FP4 / LUT row pairs are consecutive rows), so each block's
+  // scales leave the requantizer in ascending m = the [GN][M] scale layout. rdRowBase = rdM * gn.
+  val rdM = Reg(UInt(16.W)); val rdB = Reg(UInt(16.W)); val rdRowBase = Reg(UInt(20.W)); val rdRow = Reg(UInt(lgIn.W))
+  // outputs: om = row (E4M3) or row pair (4-bit), inner; ob = beat, outer; outRowBase = om * gnB
+  val om     = Reg(UInt(16.W)); val ob = Reg(UInt(16.W)); val outRowBase = Reg(UInt(20.W))
   val drain  = RegInit(0.U(2.W))          // cycles after the last write before checking flush_busy
 
   io.cmd.ready := !active
   when (io.cmd.fire) {
     active := io.cmd.bits.m =/= 0.U && io.cmd.bits.n >= 32.U
     c := io.cmd.bits
-    rdCnt := 0.U; outCnt := 0.U; om := 0.U; ob := 0.U; drain := 0.U
-    rdBase := 0.U; rdB := 0.U; rdR := false.B; rdRow := 0.U
+    rdCnt := 0.U; outCnt := 0.U; om := 0.U; ob := 0.U; outRowBase := 0.U; drain := 0.U
+    rdM := 0.U; rdB := 0.U; rdRowBase := 0.U; rdRow := 0.U
   }
-  // the scale flush writes whole 32-scale rows and the resident flush 8-row words
+  // scales stream out as [GN][M] (block-major); the resident act-window writes are whole 8-row words (M % 8)
   val cmdScales = io.cmd.bits.m * (io.cmd.bits.n >> 5)
   assert(!io.cmd.fire || (io.cmd.bits.n(4 + lgBpb, 0) === 0.U && cmdScales <= maxScales.U && cmdScales(4, 0) === 0.U &&
     io.cmd.bits.m(2, 0) === 0.U), "SPAD_REQUANT: N must be a multiple of 32 (64 at 2 blocks/beat), M of 8, and M*N/32 a multiple of 32 and <= 2048")
 
   // ---- reads: one spad row per cycle, responses consumed in issue order (bank FIFO) ----
   val inflight = Module(new Queue(UInt(log2Ceil(nBanks max 2).W), 8))
-  val rdAddr = c.src + ((rdBase + Mux(rdR, gn, 0.U) + (rdB << lgBpb)) << lgBlk) + rdRow
+  val rdAddr = c.src + ((rdRowBase + (rdB << lgBpb)) << lgBlk) + rdRow
   io.rd_req.valid := active && rdCnt < (total << lgBlk) && inflight.io.enq.ready
   io.rd_req.bits := rdAddr
   inflight.io.enq.valid := io.rd_req.fire
@@ -135,12 +137,8 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
     rdCnt := rdCnt + 1.U
     rdRow := rdRow + 1.U
     when (rdRow === (inRows - 1).U) {
-      val lastB = rdB === gnB - 1.U
-      when (c.nib && !rdR) { rdR := true.B } .otherwise {
-        rdR := false.B
-        rdB := Mux(lastB, 0.U, rdB + 1.U)
-        when (lastB) { rdBase := rdBase + Mux(c.nib, gn << 1, gn) }
-      }
+      when (rdM === c.m - 1.U) { rdM := 0.U; rdRowBase := 0.U; rdB := rdB + 1.U }
+      .otherwise { rdM := rdM + 1.U; rdRowBase := rdRowBase + gn }
     }
   }
 
@@ -172,7 +170,7 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
   assert(!(io.rq_out.fire && rqKeep) || outCnt < outTotal, "SPAD_REQUANT: more requantizer outputs than blocks it sent")
   when (io.rq_out.fire && rqKeep) { outBuf := io.rq_out.bits; outValid := true.B; half := 0.U }
   val tilesK = c.n >> lgT
-  val flatAddr  = c.dst + (outCnt << lgOut) + half
+  val flatAddr  = c.dst + ((outRowBase + ob) << lgOut) + half
   val tiledAddr = c.dst + ((((om >> lgT) * tilesK) + (ob << lgOut) + half) << lgT) + om(lgT - 1, 0)
   io.wr.valid := outValid
   io.wr.bits.addr := Mux(c.tiled, tiledAddr, flatAddr)
@@ -182,9 +180,10 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
     when (half === (outRows - 1).U) {
       outValid := false.B
       outCnt := outCnt + 1.U
-      val lastB = ob === gnB - 1.U
-      ob := Mux(lastB, 0.U, ob + 1.U)
-      om := Mux(lastB, om + 1.U, om)
+      val lastM = om === Mux(c.nib, c.m >> 1, c.m) - 1.U
+      om := Mux(lastM, 0.U, om + 1.U)
+      ob := Mux(lastM, ob + 1.U, ob)
+      outRowBase := Mux(lastM, 0.U, outRowBase + gnB)
     }
   }
 

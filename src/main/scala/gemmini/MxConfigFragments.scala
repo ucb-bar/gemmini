@@ -119,6 +119,12 @@ object RequantizerDataType extends ChiselEnum {
 }
 
 
+// A scale Put with a byte mask: the requantizer's [GN][M] scale stream writes a block column's unaligned end word
+// partially (the next column's stream writes the rest).
+class ScalingFactorPutReq(addrWidth: Int, dataWidth: Int) extends ScalingFactorWriteReq(addrWidth, dataWidth) {
+  val mask = UInt((dataWidth / 8).W)
+}
+
 class ScalingFactorWriteReq(addrWidth: Int, dataWidth: Int) extends Bundle {
   val addr = UInt(addrWidth.W)
   val data = UInt(dataWidth.W)

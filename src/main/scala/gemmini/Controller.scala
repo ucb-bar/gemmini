@@ -339,6 +339,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // Thread the residency flag; the transposed act-write port defaults idle (the
     // scale_mem_write_act mux below drives its ready).
     req.io.scale_resident := ex_controller.io.mx.get.scale_resident
+    req.io.scale_read_act_sel := ex_controller.io.mx.get.scaleMemCntl.scale_mem_read_act_sel
     req.io.scaleMem_write_act_resident.ready := false.B
     // E4M3-quad requant output (4-bit LUT) vs E4M3-single (8-bit): both output format0/altfmt0, split by lut_en.
     req.io.lut_en := ex_controller.io.mx.get.lut_en_out || sr_lut_active
@@ -364,7 +365,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     IO(new Bundle {
       val requant_in_gpu = Flipped(Decoupled(new RequantizerInBundle(q.numGPUInputLanes, q.inputBits)))
       val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
-      val scale_factor_out = Decoupled(new ScalingFactorWriteReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))
+      val scale_factor_out = Decoupled(new ScalingFactorPutReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))
     })
   }
 
@@ -506,7 +507,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       // ------ scale-factor-out (push: gemmini issues fixed-size TL Puts) ------
       // Fires a TL Put on every w.fire from mx_requantizer.io.scaleMem_write.
       val sfout_wire = {
-        val w = Wire(Flipped(Decoupled(new ScalingFactorWriteReq(
+        val w = Wire(Flipped(Decoupled(new ScalingFactorPutReq(
           s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))))
 
         val (node, edge) = outer.mx_scale_fac_out_client.get.out.head
@@ -516,7 +517,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
         // Accept-then-burst (see rout_wire).
         val busy   = RegInit(false.B)
-        val req    = Reg(new ScalingFactorWriteReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))
+        val req    = Reg(new ScalingFactorPutReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))
         val beat   = RegInit(0.U(log2Ceil(nBeats + 1).W))
         val source = RegInit(0.U(4.W))
         w.ready := !busy
@@ -528,9 +529,16 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         val beatData = if (dataBytes < beatBytes)
           (req.data.pad(beatBytes * 8) << (req.addr(log2Ceil(beatBytes) - 1, 0) << 3))(beatBytes * 8 - 1, 0)
         else dataVec(beat)
+        // byte mask: a full word is a PutFull; a [GN][M] column-end word is a PutPartial of its valid bytes
+        val maskVec  = req.mask.asTypeOf(Vec(nBeats, UInt(beatBytes.W)))
+        val beatMask = if (dataBytes < beatBytes)
+          (req.mask.pad(beatBytes) << req.addr(log2Ceil(beatBytes) - 1, 0))(beatBytes - 1, 0)
+        else maskVec(beat)
+        val putFull  = edge.Put(fromSource = source, toAddress = req.addr, lgSize = log2Ceil(dataBytes).U, data = dataVec(0))._2
+        val putPart  = edge.Put(fromSource = source, toAddress = req.addr, lgSize = log2Ceil(dataBytes).U, data = dataVec(0),
+                         mask = beatMask)._2
         node.a.valid     := busy
-        node.a.bits      := edge.Put(fromSource = source, toAddress = req.addr,
-                              lgSize = log2Ceil(dataBytes).U, data = dataVec(0))._2
+        node.a.bits      := Mux(req.mask.andR, putFull, putPart)
         node.a.bits.data := beatData
         node.d.ready     := true.B
         when (busy && node.a.fire) {

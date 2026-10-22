@@ -487,6 +487,38 @@ object GemminiMxFPConfigs {
     headerFileName = "gemmini_params_dim4_e3m2_vpu.h",
   )
 
+  // Multi-format VPU builds (FireSim targets). 4x4: FP4 + E3M2; 8x8 / 16x16: FP4 + E3M2 + E4M3 (MxConfig.mxGemmini).
+  lazy val dim4Fp4E3M2VpuMxFPConfig = dim4MxFPConfig.copy(
+    inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.fp4E3M2),
+    weightType = MxFloat.withConfig(3, 3, 2, MxConfig.fp4E3M2),
+    spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.fp4E3M2),
+    spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.fp4E3M2),
+    headerFileName = "gemmini_params_dim4_fp4_e3m2_vpu.h",
+  )
+  lazy val dim8Fp4E3M2E4M3VpuMxFPConfig = dim8MxFPConfig.copy(
+    inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
+    weightType = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
+    spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
+    spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
+    acc_banks = 2,
+    has_vpu = true,
+    vpu_params = gemmini.vpu.VpuParams(units = 2, lanes = 4, expSub = true, expSum = true),
+    has_spad_requant = true,
+    reservation_station_entries_ld = 32,
+    headerFileName = "gemmini_params_dim8_fp4_e3m2_e4m3_vpu.h",
+  )
+  lazy val fp4E3M2E4M3VpuMxFPConfig = standaloneMxFPConfig.copy(
+    inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
+    weightType = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
+    spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
+    spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
+    has_vpu = true,
+    vpu_params = gemmini.vpu.VpuParams(units = 2, expSub = true, expSum = true),
+    has_spad_requant = true,
+    reservation_station_entries_ld = 32,
+    headerFileName = "gemmini_params_fp4_e3m2_e4m3_vpu.h",
+  )
+
   // DIM=32 single-format builds plus the VPU (one 32-byte spad row = 16 BF16 lanes) and SPAD_REQUANT (2 blocks per beat)
   lazy val dim32E4M3VpuMxFPConfig = dim32MxFPConfig.copy(
     inputType  = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleOnly),
@@ -920,6 +952,24 @@ class GemminiMxFPDim4E3M2VpuStandaloneConfig extends Config((site, here, up) => 
   case BuildRoCC => Seq((p: Parameters) => {
     implicit val q = p; implicit val v = implicitly[ValName]
     LazyModule(new Gemmini(GemminiMxFPConfigs.dim4E3M2VpuMxFPConfig))
+  })
+})
+class GemminiMxFPDim4Fp4E3M2VpuStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.dim4Fp4E3M2VpuMxFPConfig))
+  })
+})
+class GemminiMxFPDim8Fp4E3M2E4M3VpuStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.dim8Fp4E3M2E4M3VpuMxFPConfig))
+  })
+})
+class GemminiMxFPFp4E3M2E4M3VpuStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.fp4E3M2E4M3VpuMxFPConfig))
   })
 })
 class GemminiMxFPDim32E4M3VpuStandaloneConfig extends Config((site, here, up) => {
