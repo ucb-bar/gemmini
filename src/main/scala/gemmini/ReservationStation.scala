@@ -329,8 +329,12 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       val st_step = cmd.rs1(62, 32)
       // BF16 store (rs2[63], from StCSpad): row r writes its beats (<= 8) to consecutive rows at dst + r*step, so the
       // exact span is (rows-1)*step + 8; other flagged stores keep the conservative rows*step + 16 (tiled beats)
+      // a 512-b acc chunk is 512/(DIM*8) spad rows of BF16 (16 at DIM=4); a tiled requant output's beats (256/(DIM*8))
+      // land one 16-row tile apart. Both keep the DIM>=8 values (8, 16).
+      val bf16_beats = (512 / (block_cols * 8)) max 8
+      val tiled_span = if (block_cols >= 8) 16 else (256 / (block_cols * 8)) * 16
       val mvout_dst_rows = if (use_mx_scaling) Mux(cmd.rs1(63),
-        Mux(cmd.rs2(63), (mv_rows - 1.U) * st_step + 8.U, mv_rows * st_step + 16.U), mv_rows) else mv_rows
+        Mux(cmd.rs2(63), (mv_rows - 1.U) * st_step + bf16_beats.U, mv_rows * st_step + tiled_span.U), mv_rows) else mv_rows
 
       dst.bits.start := cmd.rs1(31, 0).asTypeOf(local_addr_t)
       dst.bits.end := dst.bits.start + mvout_dst_rows

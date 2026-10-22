@@ -90,7 +90,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   import ev._
   val block_size = meshRows*tileRows
   // Widened acc SRAM row (2*meshColumns at DIM=8); read side delivers it as 2 blocks (numChunks=2).
-  val accCols = if (config.use_mx_scaling && meshColumns*tileColumns < 16) 2*meshColumns else meshColumns
+  val accCols = if (config.use_mx_scaling) MxAccWiden(meshColumns*tileColumns)*meshColumns else meshColumns
   val numChunks = if (accCols*tileColumns < 16) 1 else 2
 
   val io = IO(new Bundle {
@@ -1294,7 +1294,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       // one wide row. SINGLE: pass the LOCAL entry offset (address % block_size = 0,2,4,6) so the acc mem can mask
       // this col-tile's 2 entries within its chunk (the chunk itself is derived from the write address there); the
       // parity would collapse 4 distinct col-tiles to one bit and they would clobber each other.
-      io.acc.write(i).bits.offset := (if (accCols != meshColumns) Mux(mx_multi_elem, (address_no_offset.asUInt >> log2Ceil(block_size).U)(0), offset) else offset)
+      io.acc.write(i).bits.offset := (if (accCols != meshColumns) Mux(mx_multi_elem, (address_no_offset.asUInt >> log2Ceil(block_size).U)(log2Ceil(accCols / meshColumns) - 1, 0), offset) else offset)
     } else {
       io.acc.write(i).valid := false.B
       io.acc.write(i).bits.addr := DontCare

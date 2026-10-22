@@ -138,7 +138,7 @@ class MxRequantizer[T <: Data](
   import ev._
   val pipelineLatency = config.pipelineLatency
   // Widened acc SRAM row (2*meshColumns at DIM=8) delivered to the requant as one wide row = 2 blocks.
-  val accCols = if (meshColumns*tileColumns < 16) 2*meshColumns else meshColumns
+  val accCols = MxAccWiden(meshColumns*tileColumns)*meshColumns
   val acc_row_t = Vec(accCols, Vec(tileColumns, accType))
   // spad_row_t holds one requant beat's output = numOutputLanes codes.
   val spad_row_t = Vec(config.numOutputLanes/tileColumns, Vec(tileColumns, weightTypeProjected))

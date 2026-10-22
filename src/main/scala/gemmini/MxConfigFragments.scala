@@ -165,3 +165,9 @@ class QuantLutWriteBundle(numEntries: Int, numBits: Int) extends Bundle {
     this(config._1, config._2)
   }
 }
+
+// DIM<16 MX acc widen: the acc SRAM row holds W = 16/DIM col-tiles (a DIM=16-shaped row: one 32-col MX block for each
+// of 2 output rows), so the DIM=16 store / requant logic runs unchanged. 1 at DIM>=16 (2 at DIM=8, 4 at DIM=4).
+object MxAccWiden {
+  def apply(dim: Int): Int = if (dim < 16) 16 / dim else 1
+}

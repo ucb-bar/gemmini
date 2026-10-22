@@ -195,6 +195,25 @@ class MxDim8Fp4VpuGemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(512) ++
   new chipyard.config.AbstractConfig)
 
+// 4x4 quad meshes (8x8 output tile per K=4 pass) + VPU (2 x 2 BF16 lanes) + SPAD_REQUANT, MxE3M2Vpu memory system.
+class MxDim4Fp4VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim4Fp4VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+class MxDim4E3M2VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim4E3M2VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
 // MxE3M2Vpu with FP4 (E2M1) only.
 class MxFp4VpuGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPFp4VpuStandaloneConfig ++

@@ -455,6 +455,38 @@ object GemminiMxFPConfigs {
     headerFileName = "gemmini_params_dim8_fp4_vpu.h",
   )
 
+  // DIM=4 (4x4 mesh, quad: an 8x8 output tile per K=4 pass), mirrors the DIM=8 single-format VPU builds. All acc rows bf16.
+  lazy val dim4MxFPConfig = standaloneMxFPConfig.copy(
+    meshRows = 4,
+    meshColumns = 4,
+    meshProdPrecisionList = Seq.fill(4) {MxFloat(4, 4, 4, true, false)},
+    meshAccPrecisionList  = Seq.fill(4) {MxFloat(8, 8, 4, true, false)},
+    scale_mem = standaloneMxFPConfig.scale_mem.map(_.copy(subbankLineSizeInBytes = 4)),
+    // 128 KB of 4-B rows = 32768 rows: keeps VPU_EXEC / SPAD_REQUANT row addresses at 15 bits (as DIM=8); 256 KB would
+    // need 16, which leaves SPAD_REQUANT's rs1 only 30 bits of scale DRAM address
+    sp_capacity = CapacityInKilobytes(128),
+    requantizer = standaloneMxFPConfig.requantizer.map(_.copy(numOutputLanes = 32, numGPUInputLanes = 4)),
+    acc_banks = 2,
+    has_vpu = true,
+    vpu_params = gemmini.vpu.VpuParams(units = 2, lanes = 2, expSub = true, expSum = true),   // a 4-B row = 2 BF16
+    has_spad_requant = true,
+    reservation_station_entries_ld = 32,
+  )
+  lazy val dim4Fp4VpuMxFPConfig = dim4MxFPConfig.copy(
+    inputType  = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+    weightType = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+    spatialArrayInputType  = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+    spatialArrayWeightType = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
+    headerFileName = "gemmini_params_dim4_fp4_vpu.h",
+  )
+  lazy val dim4E3M2VpuMxFPConfig = dim4MxFPConfig.copy(
+    inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+    weightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+    spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+    spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
+    headerFileName = "gemmini_params_dim4_e3m2_vpu.h",
+  )
+
   // DIM=32 single-format builds plus the VPU (one 32-byte spad row = 16 BF16 lanes) and SPAD_REQUANT (2 blocks per beat)
   lazy val dim32E4M3VpuMxFPConfig = dim32MxFPConfig.copy(
     inputType  = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleOnly),
@@ -876,6 +908,18 @@ class GemminiMxFPDim8Fp4VpuStandaloneConfig extends Config((site, here, up) => {
   case BuildRoCC => Seq((p: Parameters) => {
     implicit val q = p; implicit val v = implicitly[ValName]
     LazyModule(new Gemmini(GemminiMxFPConfigs.dim8Fp4VpuMxFPConfig))
+  })
+})
+class GemminiMxFPDim4Fp4VpuStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.dim4Fp4VpuMxFPConfig))
+  })
+})
+class GemminiMxFPDim4E3M2VpuStandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.dim4E3M2VpuMxFPConfig))
   })
 })
 class GemminiMxFPDim32E4M3VpuStandaloneConfig extends Config((site, here, up) => {

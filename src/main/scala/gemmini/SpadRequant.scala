@@ -7,7 +7,7 @@ import chisel3.util._
 // MxRequantizer. Row width W bits (128 at DIM16, 64 at DIM8, 256 at DIM32): a block = 512/W rows, its codes 256/W rows,
 // an operand-A tile T = W/8 rows. A requant beat carries B blocks (b..b+B-1) of one row: B = 1 at DIM8/16, 2 at DIM32
 // (64-lane requantizer, N a multiple of 64), so a beat reads I = B*512/W rows and writes O = B*256/W code rows
-// (DIM16: I 4, O 2, T 16; DIM8: I 8, O 4, T 8; DIM32: I 4, O 2, T 32). Block (m, b) = 512/W consecutive spad rows from
+// (DIM16: I 4, O 2, T 16; DIM8: I 8, O 4, T 8; DIM4: I 16, O 8, T 4; DIM32: I 4, O 2, T 32). Block (m, b) = 512/W consecutive spad rows from
 // src + (512/W)*(m*GN + b) -> 32 E4M3 codes at dst, flat (dst + O*(m*GN/B + b/B) + h) or operand-A tiled
 // (dst + ((m/T)*N/T + O*(b/B) + h)*T + m%T); the formulas below are written for W 128.
 // Scales are filed by the requantizer's linear mode (scale k = block k) and flushed by its existing coalescer to
@@ -69,8 +69,8 @@ class SpadRowWrite(val addrW: Int, val rowW: Int) extends Bundle {
 }
 
 class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScales: Int, blocksPerBeat: Int = 1) extends Module {
-  require((blocksPerBeat == 1 && (rowW == 128 || rowW == 64)) || (blocksPerBeat == 2 && rowW == 256),
-    "SPAD_REQUANT: 16- or 8-byte spad rows (1 block per beat) or 32-byte rows (2)")
+  require((blocksPerBeat == 1 && Seq(32, 64, 128).contains(rowW)) || (blocksPerBeat == 2 && rowW == 256),
+    "SPAD_REQUANT: 16-, 8- or 4-byte spad rows (1 block per beat) or 32-byte rows (2)")
   val inRows = 512 * blocksPerBeat / rowW; val outRows = 256 * blocksPerBeat / rowW; val tileRows = rowW / 8   // I, O, T
   val blkRows = 512 / rowW   // spad rows per block
   val lgIn = log2Ceil(inRows); val lgOut = log2Ceil(outRows); val lgT = log2Ceil(tileRows)

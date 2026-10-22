@@ -45,7 +45,10 @@ class ScalingFactorMem(
   val doubleBufferFactor = 2
   val totalSizeBytes = depth*sramWidth*numBanks/8
   val bytesPerBank = sramWidth / 8
-  val scaleWords = sramWidth / 64
+  require(sramWidth >= 64 || sramWidth == 32, "scale-mem lines: 4 bytes or a multiple of 8")
+  // 64-bit loader words per bank line; a 4-byte line (DIM=4) holds half a word: the word spans the internal bank pair
+  val scaleWords = (sramWidth / 64) max 1
+  val halfWordLines = sramWidth < 64
   val AddrWidth = log2Ceil(totalSizeBytes)
   val bankaddressWidth = log2Ceil(numBanks)
   val totalScales = 2*meshRows*tileRows
@@ -140,7 +143,14 @@ class ScalingFactorMem(
   dontTouch(write_row_addr_w_nonfp8)
   dontTouch(bank_idx_w_nonfp8)
 
-  when(write_weight_counter === (scaleWords-1).U && io.scale_mem_write_w.fire){
+  if (halfWordLines) {
+    // 4-byte lines (quad only): word bytes 0-3 -> internal bank 0, 4-7 -> internal bank 1, same row (8-B aligned)
+    val halves = io.scale_mem_write_w.bits.data.asTypeOf(Vec(2, bankDataT))
+    when (io.scale_mem_write_w.fire) {
+      for (h <- 0 until 2; b <- 0 until 2) when (bank_idx_w_nonfp8 === h.U) { banks(2*h + b).write(write_row_addr_w_nonfp8, halves(b)) }
+    }
+    assert(!(io.scale_mem_write_w.fire && fp8Mode_wei), "4-byte scale-mem lines support quad (2-bank) scales only")
+  } else when(write_weight_counter === (scaleWords-1).U && io.scale_mem_write_w.fire){
     write_weight_counter := 0.U
     val write_bytes = Cat((0 until scaleWords).reverse.map(k =>
       if (k == scaleWords-1) io.scale_mem_write_w.bits.data else write_weight_words(k))).asTypeOf(bankDataT)
@@ -171,7 +181,13 @@ class ScalingFactorMem(
   dontTouch(bank_idx_act_internal)
   dontTouch(write_row_addr_act_nonfp8)
   dontTouch(bank_idx_act_nonfp8)
-  when(write_act_counter === (scaleWords-1).U && io.scale_mem_write_act.fire) {
+  if (halfWordLines) {
+    val halves = io.scale_mem_write_act.bits.data.asTypeOf(Vec(2, bankDataT))
+    when (io.scale_mem_write_act.fire) {
+      for (h <- 0 until 2; b <- 0 until 2) when (bank_idx_act_nonfp8 === h.U) { banks(4 + 2*h + b).write(write_row_addr_act_nonfp8, halves(b)) }
+    }
+    assert(!(io.scale_mem_write_act.fire && fp8Mode_act), "4-byte scale-mem lines support quad (2-bank) scales only")
+  } else when(write_act_counter === (scaleWords-1).U && io.scale_mem_write_act.fire) {
       write_act_counter := 0.U
       val write_bytes = Cat((0 until scaleWords).reverse.map(k =>
         if (k == scaleWords-1) io.scale_mem_write_act.bits.data else write_act_words(k))).asTypeOf(bankDataT)

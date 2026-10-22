@@ -351,7 +351,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   // MX acc read chunk = half a (widened) acc row = one quad output row; the writer holds it whole and drains it as
   // maxBytes Puts (DIM16/DIM8: 512 b = fp8_chunk_bits; DIM32 quad: 1024 b = a 128-B BF16 row -> two 64-B Puts)
   val acc_chunk_w = {
-    val cols = if (block_cols < 16) 2 * meshColumns else meshColumns
+    val cols = MxAccWiden(block_cols) * meshColumns
     (accType.getWidth * cols * tileColumns) / (if (cols * tileColumns < 16) 1 else 2)
   }
   val writer_data_width = if (use_mx_scaling) { if (acc_read_full_width) fp8_chunk_bits max acc_chunk_w else 2*spad_w }
@@ -376,7 +376,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     // acc_row_t = the mesh-side write width (unchanged). accCols = the widened acc SRAM row (2*meshColumns at
     // DIM=8), which the read side (chunk_t/read_resp) delivers to the requant as one wide row = 2 blocks.
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
-    val accCols = if (use_mx_scaling && meshColumns*tileColumns < 16) 2*meshColumns else meshColumns
+    val accCols = if (use_mx_scaling) MxAccWiden(meshColumns*tileColumns)*meshColumns else meshColumns
     val spad_row_t = if (use_mx_scaling) Vec(config.requantizer.get.numOutputLanes/tileColumns, Vec(tileColumns, weightTypeProjected))
                      else Vec(meshColumns, Vec(tileColumns, inputType))
     val numChunks = if (accCols*tileColumns < 16) 1 else 2

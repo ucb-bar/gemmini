@@ -1006,8 +1006,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val sr = Option.when(has_spad_requant) {
     // rows are STORAGE rows (sp_width_projected: BF16 data / packed codes as stored, read via read_projected); a LUT
     // build's deprojected mesh-side row (sp_width) is wider and not involved
-    require(outer.config.use_mx_scaling && mx_requantizer.isDefined && Seq(64, 128, 256).contains(sp_width_projected),
-      "SPAD_REQUANT needs the MX requantizer and 8-, 16- or 32-byte spad rows")
+    require(outer.config.use_mx_scaling && mx_requantizer.isDefined && Seq(32, 64, 128, 256).contains(sp_width_projected),
+      "SPAD_REQUANT needs the MX requantizer and 4-, 8-, 16- or 32-byte spad rows")
     val rqio = mx_requantizer.get.io.mxacc_req
     // blocks per requant beat: 1 (32 lanes, DIM8/16) or 2 (64 lanes, DIM32: the requantizer scales both blocks)
     val bpb = rqio.mx_data_out.bits.quant_mx_data_out.getWidth / 256

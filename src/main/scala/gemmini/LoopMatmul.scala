@@ -691,9 +691,11 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   // The order here is k, j, i when not doing LAYERNORM or SOFTMAX. As in StCSpad: an FP8 j-group is 4 execute
   // tiles, so gate on the UNCOMPRESSED ex_j reaching the group's last tile (ej_high); the terminal group has no
   // drain margin and waits for ex_completed.
-  // DIM<16 quad: the widened acc row of an even j-tile also holds tile j+1 (as StCSpad); store once per pair, after both
+  // DIM<16 quad: the widened acc row of tile j (j a multiple of W = MxAccWiden) also holds tiles j+1..j+W-1 (as
+  // StCSpad); store once per W-group, after all of them
+  val accWiden = MxAccWiden(block_size)
   val dim8_fold = (block_size < 16).B && req.mx_multi_elem
-  val j_span = Mux(dim8_fold, Mux(j + 2.U <= iter_max_j, 2.U, iter_max_j - j), blocks)
+  val j_span = Mux(dim8_fold, Mux(j + accWiden.U <= iter_max_j, accWiden.U, iter_max_j - j), blocks)
   val last_group = j + j_span - 1.U
   val ej_high = Mux(!req.mx_multi_elem,
     Mux((last_group === iter_max_j - 1.U) && (req.max_j % 4.U =/= 0.U), req.max_j - 1.U, last_group * 4.U + 3.U),
@@ -727,7 +729,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     }.otherwise {
       chunk_id := 0.U
       val next_i = floorAdd(i, 1.U, iter_max_i)
-      val next_j = floorAdd(j, Mux(dim8_fold, 2.U, max_blocks), iter_max_j, next_i === 0.U)
+      val next_j = floorAdd(j, Mux(dim8_fold, accWiden.U, max_blocks), iter_max_j, next_i === 0.U)
 
       i := next_i
       j := next_j
@@ -836,9 +838,10 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     assert((req.max_j >= tilesPerMxBlock.U) && (req.max_j % tilesPerMxBlock.U === 0.U), "tiles need to be multiples of mxBlockSize")
   }
 
-  // DIM=8 widen: the acc row is 2*block_size wide (a full block for 2 output rows) = DIM=16-shaped. Mimic
-  // DIM=16's store: 2 chunks per wide read (the 2 output rows), and step col-tiles by 2 (2 col-tiles/block).
-  val accBlockSize = if (block_size < 16) 2*block_size else block_size
+  // DIM<16 widen: the acc row is W*block_size wide (W = MxAccWiden: a full block for 2 output rows) = DIM=16-shaped.
+  // Mimic DIM=16's store: 2 chunks per wide read (the 2 output rows), and step col-tiles by W (W col-tiles/block).
+  val accWiden = MxAccWiden(block_size)
+  val accBlockSize = accWiden * block_size
   val numChunks = accBlockSize / 8
   // Single fmt0 requant: chunk1 (block1, cols 32-63) sits ONE requant output below chunk0, = the block's
   // spad-row span = tilesPerMxBlock (mxBlockSize/DIM: 2 at DIM16, 4 at DIM8). Hardcoded 2 only held at DIM16;
@@ -934,9 +937,9 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
 
   // FP8 store j-group = 4 execute tiles; gate on the UNCOMPRESSED ex_j reaching the
   // group's last execute-tile (ej_high) so we don't read before all tiles' final-k accumulate.
-  // DIM<16: the widened acc row of an even j also holds j+1 (jStep 2 below), so wait for both tiles' final k
+  // DIM<16: the widened acc row of tile j also holds j+1..j+W-1 (jStep W below), so wait for all their final k
   val fold = (block_size < 16).B
-  val j_span = Mux(fold, Mux(j + 2.U <= iter_max_j, 2.U, iter_max_j - j), blocks)
+  val j_span = Mux(fold, Mux(j + accWiden.U <= iter_max_j, accWiden.U, iter_max_j - j), blocks)
   val last_group = j + j_span - 1.U
   val ej_high = Mux(!req.mx_multi_elem,
     Mux((last_group === iter_max_j - 1.U) && (req.max_j % 4.U =/= 0.U),
@@ -973,9 +976,9 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     }.otherwise {
       chunk_id := 0.U
       val next_i = floorAdd(i, 1.U, iter_max_i)
-      // DIM=8 widen: step j by 2 (the odd col-tile folds back to the same physical row, so skip it; even j's
-      // advance to the next 64-col physical-row group). Both quad and single. N=64 has iter_max_j=2 -> j=0 only.
-      val jStep = Mux((block_size < 16).B, 2.U, max_blocks)
+      // DIM<16 widen: step j by W (tiles j+1..j+W-1 fold back to the same physical row, so skip them; j advances to
+      // the next physical-row group). Both quad and single.
+      val jStep = Mux((block_size < 16).B, accWiden.U, max_blocks)
       val next_j = floorAdd(j, jStep, iter_max_j, next_i === 0.U)
 
       i := next_i
