@@ -100,9 +100,11 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
   io.out.valid := io.in.valid
   io.out.bits := io.in.bits
   // Acc (and garbage, which is acc-tagged) keep 16; spad-source requests keep the real row length (DIM32 = 32).
-  // A quad x quad acc write carries one whole output row (quadRowLen 4-B units: 16 at DIM8/16, 32 = 128 B at DIM32).
+  // A quad x quad acc write carries one whole output row (quadRowLen 4-B units: 16 at DIM8/16, 32 = 128 B at DIM32);
+  // so does an E4M3-single BF16 chunk (2*DIM cols).
   io.out.bits.len := Mux(io.in.bits.laddr.is_acc_addr,
-    Mux(is_non_fp8_acc_write && io.in.bits.mx_multi_elem, quadRowLen.U, 16.U), io.in.bits.len)
+    Mux((is_non_fp8_acc_write && io.in.bits.mx_multi_elem) ||
+        (!io.in.bits.mx_multi_elem_act && io.in.bits.output_mx_type === 3.U), quadRowLen.U, 16.U), io.in.bits.len)
   io.out.bits.chunk_id := out_chunk_id
   io.out.bits.store_en := Mux(is_non_fp8_acc_write, !second_half || !second_half_invalid, io.in.bits.store_en)
   io.out.bits.vaddr   := Mux(is_non_fp8_acc_write && second_half,

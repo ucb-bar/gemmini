@@ -574,12 +574,14 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     assert((req.max_j >= tilesPerMxBlock.U) && (req.max_j % tilesPerMxBlock.U === 0.U), "tiles need to be multiples of mxBlockSize")
   }
 
-  val numChunks = block_size / 8
+  // E4M3-single j-group (4 tiles) = 2 acc chunks at DIM >= 16 (2*DIM cols each); DIM 8 stores its group in 1
+  val numChunks = if (block_size >= 16) 2 else block_size / 8
   // DRAM offsets in BYTES: the StCSpad spad-row formula x DIM bytes, with its implicit row pitch (N * elem)
   // replaced by dram_stride * elem so N-chunked loops land in a wider C. One acc chunk = 32 bf16 / 32 fp8 cols.
   val out_bf16 = req.output_mx_format === 3.U || req.full_c
-  val chunk_dram_stride = Mux(out_bf16, (2 * tilesPerMxBlock * block_size).U, (tilesPerMxBlock * block_size).U)
-  val bf16_j_bytes = (if (block_size < 16) block_size else block_size / 2) * block_size
+  val chunk_dram_stride = if (block_size >= 16) Mux(out_bf16, (4 * block_size).U, (2 * block_size).U)   // 2*DIM cols
+    else Mux(out_bf16, (2 * tilesPerMxBlock * block_size).U, (tilesPerMxBlock * block_size).U)
+  val bf16_j_bytes = 8 * block_size   // E4M3-single bf16 j-group: 4 tiles x DIM cols x 2 B
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
 
@@ -847,8 +849,10 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   // spad-row span = tilesPerMxBlock (mxBlockSize/DIM: 2 at DIM16, 4 at DIM8). Hardcoded 2 only held at DIM16;
   // at DIM=8 a block spans 4 rows so +2 overwrote block0's beats 2-3. Gate on DIM<16 to keep DIM>=16 identical.
   val single_chunk_stride = if (block_size < 16) tilesPerMxBlock else 2
-  val chunk_spad_stride = Mux(req.output_mx_format === 3.U || req.full_c, (2 * tilesPerMxBlock).U,
-    Mux(req.reuse_tiled && req.output_mx_format === 0.U, (block_size * tilesPerMxBlock).U, single_chunk_stride.U))
+  // E4M3-single bf16 chunk = 2*DIM cols = 4 spad rows at DIM >= 16; DIM 8 and full_c keep 2*tilesPerMxBlock
+  val chunk_spad_stride = Mux(req.full_c, (2 * tilesPerMxBlock).U,
+    Mux(req.output_mx_format === 3.U, (if (block_size >= 16) 4 else 2 * tilesPerMxBlock).U,
+      Mux(req.reuse_tiled && req.output_mx_format === 0.U, (block_size * tilesPerMxBlock).U, single_chunk_stride.U)))
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
   assert(max_block_len == 1, "there might be hw bugs if block length > 1, disabled for now")
@@ -867,9 +871,8 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     Mux(req.reuse_tiled,
       (i * req.max_j) * block_size.U * 2.U + j * (block_size * 2).U,
       (i * req.max_j) * block_size.U * 2.U + j * 2.U), Seq(
-    // DIM=8 single fmt3: each j-group is a 64-col half = one physical acc row = block_size spad-rows apart (N>64
-    // spans multiple physical rows). full_c and DIM16/32 keep block_size/2.
-    (req.full_c || (req.output_mx_format === 3.U && !req.mx_multi_elem)) -> ((i * req.max_j) * block_size.U * 2.U + j*Mux(req.full_c, (block_size/2).U, (if (block_size < 16) block_size else block_size/2).U)),
+    // single fmt3: a j-group (4 tiles x DIM bf16 cols = 8*DIM B) is 8 spad rows at every DIM; full_c keeps block_size/2.
+    (req.full_c || (req.output_mx_format === 3.U && !req.mx_multi_elem)) -> ((i * req.max_j) * block_size.U * 2.U + j*Mux(req.full_c, (block_size/2).U, 8.U)),
     (!req.mx_multi_elem && (req.output_mx_format === 0.U)) ->
       Mux(req.reuse_tiled,
         // GATED tiled (FP8): i*tiles_N*16 + 64*j  (j-term x16 vs flat -> within-tile-row-inner layout)

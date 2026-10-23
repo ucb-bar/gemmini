@@ -487,12 +487,12 @@ object GemminiMxFPConfigs {
     headerFileName = "gemmini_params_dim4_e3m2_vpu.h",
   )
 
-  // Multi-format VPU builds (FireSim targets). 4x4: FP4 + E3M2; 8x8 / 16x16: FP4 + E3M2 + E4M3 (MxConfig.mxGemmini).
+  // Multi-format VPU builds (FireSim targets): FP4 + E3M2 + E4M3 (MxConfig.mxGemmini) at 4x4 (trial), 8x8, 16x16.
   lazy val dim4Fp4E3M2VpuMxFPConfig = dim4MxFPConfig.copy(
-    inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.fp4E3M2),
-    weightType = MxFloat.withConfig(3, 3, 2, MxConfig.fp4E3M2),
-    spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.fp4E3M2),
-    spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.fp4E3M2),
+    inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
+    weightType = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
+    spatialArrayInputType  = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
+    spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
     headerFileName = "gemmini_params_dim4_fp4_e3m2_vpu.h",
   )
   lazy val dim8Fp4E3M2E4M3VpuMxFPConfig = dim8MxFPConfig.copy(

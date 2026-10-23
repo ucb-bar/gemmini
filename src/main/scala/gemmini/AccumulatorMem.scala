@@ -354,7 +354,9 @@ class AccumulatorMem[T <: Data, U <: Data](
     // DIM=8 widen: single throughput packs 4 col-tiles per chunk at 2-entry granularity, so the mask must isolate
     // a single col-tile (2 entries = one accType-pair). Use 2-entry (16-byte) mask granularity for the widen mem
     // (8 bits at DIM=8) instead of the default 4-entry (32-byte); non-widen (DIM16/32) keeps the coarse default.
-    val mask_len_wide = if (widen) t_wide.getWidth / (8 * 16) else t_wide.getWidth / (8 * 32)
+    // widened: one mask bit per col-tile of single throughput = gEnt = DIM/4 8-B entries (2 at DIM=8, 1 at DIM=4)
+    val gEnt   = ((meshRows*tileRows) / 4) max 1
+    val mask_len_wide = if (widen) t_wide.getWidth / (8 * 8 * gEnt) else t_wide.getWidth / (8 * 32)
     val mem = AsymmetricTwoPortSyncMem(n, t_wide, mask_len_wide, if (use_mx_scaling) numChunks else 2) // TODO We assume byte-alignment here. Use aligned_to instead
 
     // place a single col-tile (8 entries: rowR[0..half-1], rowR+1[half..]) into the wide row's quadrants:
@@ -378,25 +380,20 @@ class AccumulatorMem[T <: Data, U <: Data](
       e
     }
 
-    // SINGLE throughput (mx_multi_elem=false): the 8-wide write already carries one output row's 32 cols
-    // (4 col-tiles offset-packed by fmt0_data). It is contiguous, so route the WHOLE block to chunk0 (par 0)
-    // or chunk1 (par 1) — no 2-row/2-col quad split. par = the block-index low bit (col-tiles 0..3 -> block N
-    // -> chunk0, col-tiles 4..7 -> block N+1 -> chunk1, folded onto the same physical row by foldW).
+    // SINGLE throughput (mx_multi_elem=false): a write carries one output row of a 4-col-tile group (t.length entries,
+    // offset-packed by fmt0_data), contiguous, so the whole group goes to slot p = the group index mod W (entries
+    // [p*t.length, (p+1)*t.length)), folded onto one physical row by foldW. DIM=8: 2 slots (the 2 blocks); DIM=4: 4.
     def placeSingle(src: Vec[Vec[T]], parity: UInt): Vec[Vec[T]] = {
       val w = WireInit(0.U.asTypeOf(t_wide))
-      when (parity === 0.U) {
-        for (k <- 0 until t.length) { w(k) := src(k) }
-      } .otherwise {
-        for (k <- 0 until t.length) { w(t.length + k) := src(k) }
+      for (p <- 0 until W) when (parity(lgW - 1, 0) === p.U) {
+        for (k <- 0 until t.length) { w(p*t.length + k) := src(k) }
       }
       w
     }
     def extractSingle(src: Vec[Vec[T]], parity: UInt): Vec[Vec[T]] = {
       val e = WireInit(0.U.asTypeOf(t))
-      when (parity === 0.U) {
-        for (k <- 0 until t.length) { e(k) := src(k) }
-      } .otherwise {
-        for (k <- 0 until t.length) { e(k) := src(t.length + k) }
+      for (p <- 0 until W) when (parity(lgW - 1, 0) === p.U) {
+        for (k <- 0 until t.length) { e(k) := src(p*t.length + k) }
       }
       e
     }
@@ -417,7 +414,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     // offset (0,2,4,6); the CHUNK is the write address' block-index bit (col-tiles 0-3 -> block N -> chunk0, 4-7 ->
     // block N+1 -> chunk1, folded onto the same physical row).
     val wr_chunk = Mux(io.mx_multi_elem, wr_par(lgW - 1, 0),
-      (oldest_pipelined_write.bits.addr >> log2Ceil(meshRows*tileRows).U)(0))
+      (oldest_pipelined_write.bits.addr >> log2Ceil(meshRows*tileRows).U)(lgW - 1, 0))
     if (widen) {
       mem.io.waddr := foldW(oldest_pipelined_write.bits.addr, wr_chunk)
       // QUAD interleaves each col-tile's two quads (8-bit mask: chunk-group ((q/2)%2) reproduces the old 4-entry
@@ -425,10 +422,10 @@ class AccumulatorMem[T <: Data, U <: Data](
       // chunk, so it masks ONLY that pair (bit = chunk*half + local_offset/2); otherwise it clobbers the 3 sibling
       // col-tiles sharing the chunk (root cause of the DIM=8 single failure).
       mem.io.wdata := Mux(io.mx_multi_elem, placeWide(wr_data, wr_par), placeSingle(wr_data, wr_chunk))
-      val single_mask_bit = Mux(wr_chunk(0), (mask_len_wide/2).U, 0.U) + (wr_par >> 1)
+      val single_mask_bit = wr_chunk * (t.length / gEnt).U + (wr_par >> log2Ceil(gEnt))
       mem.io.mask  := Mux(io.mx_multi_elem,
-        // quad: mask bit q (2 entries) belongs to col-tile ((2q / half) mod W)
-        VecInit((0 until mask_len_wide).map(q => ((2 * q / half) % W).U === wr_par(lgW - 1, 0))),
+        // quad: mask bit q (gEnt entries) belongs to col-tile ((gEnt*q / half) mod W)
+        VecInit((0 until mask_len_wide).map(q => ((gEnt * q / half) % W).U === wr_par(lgW - 1, 0))),
         VecInit((0 until mask_len_wide).map(q => q.U === single_mask_bit)))
     } else {
       mem.io.waddr := oldest_pipelined_write.bits.addr
@@ -441,7 +438,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       // full-width read (accumulate RMW): fold the address (same parity) + extract the quadrant pair.
       val rd_par = io.write.bits.offset
       // SINGLE: chunk (fold parity) comes from the read address' block bit, not the offset field (= local offset).
-      val rd_chunk = (io.write.bits.addr >> log2Ceil(meshRows*tileRows).U)(0)
+      val rd_chunk = (io.write.bits.addr >> log2Ceil(meshRows*tileRows).U)(lgW - 1, 0)
       mem.io.raddr_full := (if (widen) foldW(io.write.bits.addr, Mux(io.mx_multi_elem, rd_par, rd_chunk)) else io.write.bits.addr)
       mem.io.ren_full := io.write.fire && io.write.bits.acc
       // rdata_full is the SyncMem read output 1 cycle after raddr was set, so extractWide must use the parity of
