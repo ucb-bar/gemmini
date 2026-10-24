@@ -234,6 +234,16 @@ class MxDim32E4M3VpuGemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(512) ++
   new chipyard.config.AbstractConfig)
 
+// MxDim32E4M3Vpu with acc_banks = 2 (store / accumulate overlap across native loops)
+class MxDim32E4M3VpuAcc2GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim32E4M3VpuAcc2StandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
 class MxDim32E3M2VpuGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPDim32E3M2VpuStandaloneConfig ++
   new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++

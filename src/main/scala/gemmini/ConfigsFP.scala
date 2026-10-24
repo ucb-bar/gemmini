@@ -532,6 +532,11 @@ object GemminiMxFPConfigs {
     reservation_station_entries_ld = 32,
     headerFileName = "gemmini_params_dim32_e4m3_vpu.h",
   )
+  // dim32E4M3Vpu with the dual-bank accumulator (a loop's C store reads one bank while the next accumulates the other)
+  lazy val dim32E4M3VpuAcc2MxFPConfig = dim32E4M3VpuMxFPConfig.copy(
+    acc_banks = 2,
+    headerFileName = "gemmini_params_dim32_e4m3_vpu_acc2.h",
+  )
   lazy val dim32E3M2VpuMxFPConfig = dim32MxFPConfig.copy(
     inputType  = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
     weightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
@@ -976,6 +981,12 @@ class GemminiMxFPDim32E4M3VpuStandaloneConfig extends Config((site, here, up) =>
   case BuildRoCC => Seq((p: Parameters) => {
     implicit val q = p; implicit val v = implicitly[ValName]
     LazyModule(new Gemmini(GemminiMxFPConfigs.dim32E4M3VpuMxFPConfig))
+  })
+})
+class GemminiMxFPDim32E4M3VpuAcc2StandaloneConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiMxFPConfigs.dim32E4M3VpuAcc2MxFPConfig))
   })
 })
 class GemminiMxFPDim32E3M2VpuStandaloneConfig extends Config((site, here, up) => {

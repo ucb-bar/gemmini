@@ -629,7 +629,8 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   mvout_cmd_rs2.num_rows := rows.asUInt
   mvout_cmd_rs2.num_cols := cols.asUInt
   mvout_cmd_rs2.local_addr := cast_to_acc_addr(mvout_cmd_rs2.local_addr, sp_addr, accumulate = false.B, read_full = req.full_c)
-  mvout_cmd_rs2.mx_chunk_id := chunk_id
+  // DIM=8 E4M3-single: the 2x-widened acc row holds 4-tile groups j, j+1 in sub-banks 0 / 1 -> read sub-bank j & 1
+  mvout_cmd_rs2.mx_chunk_id := (if (block_size == 8) Mux(!req.mx_multi_elem, j(0).asUInt, chunk_id) else chunk_id)
   mvout_cmd_rs2.reuse_tiled := false.B // DRAM store path never tiles (dst is not spad)
   mvout_cmd.rs2 := mvout_cmd_rs2.asUInt
 
