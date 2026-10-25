@@ -536,7 +536,8 @@ class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val mx_multi_elem_act = Bool()   // ACTIVATION (output-row) throughput
 }
 
-class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int, tilesPerMxBlock: Int, mvout_rs2_t: MvoutRs2)
+class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int, tilesPerMxBlock: Int, mvout_rs2_t: MvoutRs2,
+                    use_mx_scaling: Boolean = true)
                    (implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new LoopMatmulStCReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, concurrent_loops)))
@@ -605,7 +606,9 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     // quad BF16: one tile (2*DIM rows if act quad) x 2*DIM cols per mvout, row pitch dram_stride elements
     ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i * Mux(req.mx_multi_elem_act, (2 * block_size).U, block_size.U) * req.dram_stride + j * (2 * block_size).U) * 2.U)
   ))
-  val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
+  // non-MX (the controller drives mx_multi_elem): upstream's offset, one DIM x DIM tile of input_w (acc_w if full_c)
+  val plain_dram_offset = (i * req.dram_stride + j) * block_size.U * Mux(req.full_c, (acc_w / 8).U, (input_w / 8).U)
+  val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(if (use_mx_scaling) dram_offset else plain_dram_offset)
   val acc_addr_offset = (i*iter_max_j+j) * block_size.U
   val sp_addr = acc_addr_start + acc_addr_offset
   val blocks = Mux(j + max_blocks <= iter_max_j, max_blocks, iter_max_j-j)
@@ -697,7 +700,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   // DIM<16 quad: the widened acc row of tile j (j a multiple of W = MxAccWiden) also holds tiles j+1..j+W-1 (as
   // StCSpad); store once per W-group, after all of them
   val accWiden = MxAccWiden(block_size)
-  val dim8_fold = (block_size < 16).B && req.mx_multi_elem
+  val dim8_fold = (use_mx_scaling && block_size < 16).B && req.mx_multi_elem   // non-MX acc rows are not widened
   val j_span = Mux(dim8_fold, Mux(j + accWiden.U <= iter_max_j, accWiden.U, iter_max_j - j), blocks)
   val last_group = j + j_span - 1.U
   val ej_high = Mux(!req.mx_multi_elem,
@@ -1125,7 +1128,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
                  mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
                  compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2,
-                 vec_bypass: Boolean = false, ld_bypass: Boolean = false)
+                 vec_bypass: Boolean = false, ld_bypass: Boolean = false, use_mx_scaling: Boolean = true)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
   val tilesPerMxBlock = 32 / block_size
@@ -1183,7 +1186,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val ldD = Module(new LoopMatmulLdD(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, max_block_len, max_block_len_acc, concurrent_loops, mvin_rs2_t))
   val ex = Module(new LoopMatmulExecute(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t))
   // max_block_len 1 (as stC_spad): an MX mvout covers one 4-tile j-group; wider would skip groups.
-  val stC = Module(new LoopMatmulStC(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, 1, concurrent_loops, tilesPerMxBlock, mvout_rs2_t))
+  val stC = Module(new LoopMatmulStC(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, 1, concurrent_loops, tilesPerMxBlock, mvout_rs2_t,
+    use_mx_scaling))
   val stC_spad = Module(new LoopMatmulStCSpad(block_size, iterator_bitwidth, max_addr, max_acc_addr, input_w, acc_w, 1, concurrent_loops, tilesPerMxBlock, mvout_spad_rs1_t, mvout_rs2_t))
 
   // Create command queue
@@ -1827,11 +1831,12 @@ object LoopMatmul {
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
             mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
             compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2,
-            vec_bypass: Boolean = false, ld_bypass: Boolean = false)
+            vec_bypass: Boolean = false, ld_bypass: Boolean = false, use_mx_scaling: Boolean = true)
            (implicit p: Parameters): (DecoupledIO[GemminiCmd], Bool, Vec[Bool], LoopMatmul) = {
     val mod = Module(new LoopMatmul(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
-      mvin_rs2_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t, mvout_spad_rs1_t, mvout_rs2_t, vec_bypass, ld_bypass))
+      mvin_rs2_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t, mvout_spad_rs1_t, mvout_rs2_t, vec_bypass, ld_bypass,
+      use_mx_scaling))
     mod.io.in <> in
     mod.io.ld_completed := ld_completed
     mod.io.st_completed := st_completed

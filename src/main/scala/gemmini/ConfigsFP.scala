@@ -117,6 +117,34 @@ object GemminiFPConfigs {
                                                mvin_scale_acc_args = Some(ScaleArguments((t: Float, u: Float) => t * u, 4, Float(8, 24), -1, identity = "1.0", c_str="((x) * (scale))")),
                                               )
 
+  // BF16 baselines for the standalone MX builds: plain (non-MX) Gemmini (hardfloat BF16 FMA PEs, FP32 accumulator), no
+  // LUT / scale factors / requantizer, plus the dual VPU. Memory side (spad/acc capacity, acc banks, DMA widths and
+  // in-flight reqs, RS depth, WS dataflow) as standaloneMxFPConfig. One spad row = DIM BF16, so the VPU has DIM lanes.
+  lazy val BF16BaselineConfig = BF16DefaultConfig.copy(
+    // spad rows / elem_t follow the projected types, which defaultFPConfig leaves at FP32
+    inputTypeProjected = Float(8, 8),
+    weightTypeProjected = Float(8, 8),
+    dataflow = Dataflow.WS,
+    sp_singleported = false,
+    acc_banks = 2,
+    acc_sub_banks = 1,
+    dma_maxbytes = 64,
+    dma_buswidth = 512,
+    max_spad_writer_bytes = 64,
+    spad_writer_dma_width = 512,
+    max_in_flight_mem_reqs = 32,
+    reservation_station_entries_ld = 32,
+  )
+  // Mesh rows sum in BF16 (= spatialArrayOutputType, as upstream Gemmini BF16); the empty-list default would make the
+  // tiles FP32 behind a BF16 mesh port.
+  private def bf16Dim(dim: Int) = BF16BaselineConfig.copy(meshRows = dim, meshColumns = dim,
+    meshAccPrecisionList = Seq.fill(dim)(Float(8, 8)),
+    has_vpu = true, vpu_params = gemmini.vpu.VpuParams(units = 2, lanes = dim, expSub = true, expSum = true),
+    headerFileName = s"gemmini_params_bf16_dim${dim}_vpu.h")
+  lazy val BF16Dim8BaselineConfig  = bf16Dim(8)
+  lazy val BF16Dim16BaselineConfig = bf16Dim(16)
+  lazy val BF16Dim32BaselineConfig = bf16Dim(32).copy(max_in_flight_mem_reqs = 64)   // as dim32E4M3VpuMxFPConfig
+
 
   val chipFP32Config = FP32DefaultConfig.copy(sp_capacity=CapacityInKilobytes(32), acc_capacity=CapacityInKilobytes(8), dataflow=Dataflow.WS,
     acc_scale_args = Some(ScaleArguments((t: Float, u: Float) => {t}, 1, Float(8, 24), -1, identity = "1.0",
@@ -211,6 +239,26 @@ class GemminiBF16Default8Config extends Config((site, here, up) => {
         LazyModule(new Gemmini(GemminiFPConfigs.BF16Default8Config))
     }
   )
+})
+
+//===========BFLOAT16 baselines for the MX builds (8x8, 16x16, 32x32)=========
+class GemminiBF16Dim8BaselineConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiFPConfigs.BF16Dim8BaselineConfig))
+  })
+})
+class GemminiBF16Dim16BaselineConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiFPConfigs.BF16Dim16BaselineConfig))
+  })
+})
+class GemminiBF16Dim32BaselineConfig extends Config((site, here, up) => {
+  case BuildRoCC => Seq((p: Parameters) => {
+    implicit val q = p; implicit val v = implicitly[ValName]
+    LazyModule(new Gemmini(GemminiFPConfigs.BF16Dim32BaselineConfig))
+  })
 })
 
 object GemminiMxFPConfigs {
@@ -526,10 +574,12 @@ object GemminiMxFPConfigs {
     spatialArrayInputType  = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleOnly),
     spatialArrayWeightType = MxFloat.withConfig(4, 4, 1, MxConfig.e4m3SingleOnly),
     lut = None,
+    acc_banks = 2,   // dual-bank like the DIM 8 / DIM 16 VPU builds (dim32MxFPConfig defaults to 1)
     has_vpu = true,
     vpu_params = gemmini.vpu.VpuParams(units = 2, lanes = 16, expSub = true, expSum = true),
     has_spad_requant = true,
     reservation_station_entries_ld = 32,
+    max_in_flight_mem_reqs = 64,   // DMA bandwidth = in-flight reqs x bytes / round trip; 32 measured ~8 B/cycle
     headerFileName = "gemmini_params_dim32_e4m3_vpu.h",
   )
   // dim32E4M3Vpu with the dual-bank accumulator (a loop's C store reads one bank while the next accumulates the other)

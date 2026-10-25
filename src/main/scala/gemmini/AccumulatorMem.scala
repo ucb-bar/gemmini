@@ -356,7 +356,10 @@ class AccumulatorMem[T <: Data, U <: Data](
     // (8 bits at DIM=8) instead of the default 4-entry (32-byte); non-widen (DIM16/32) keeps the coarse default.
     // widened: one mask bit per col-tile of single throughput = gEnt = DIM/4 8-B entries (2 at DIM=8, 1 at DIM=4)
     val gEnt   = ((meshRows*tileRows) / 4) max 1
-    val mask_len_wide = if (widen) t_wide.getWidth / (8 * 8 * gEnt) else t_wide.getWidth / (8 * 32)
+    // non-widen mask granularity: 32 B for MX; one accumulator element for non-MX (a DIM=8 FP32 row is only 32 B,
+    // too few mask bits for the 2 sub-banks)
+    val maskBytes = if (use_mx_scaling) 32 else acc_type.getWidth / 8
+    val mask_len_wide = if (widen) t_wide.getWidth / (8 * 8 * gEnt) else t_wide.getWidth / (8 * maskBytes)
     val mem = AsymmetricTwoPortSyncMem(n, t_wide, mask_len_wide, if (use_mx_scaling) numChunks else 2) // TODO We assume byte-alignment here. Use aligned_to instead
 
     // place a single col-tile (8 entries: rowR[0..half-1], rowR+1[half..]) into the wide row's quadrants:
@@ -430,7 +433,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     } else {
       mem.io.waddr := oldest_pipelined_write.bits.addr
       mem.io.wdata := wr_data
-      mem.io.mask := VecInit(oldest_pipelined_write.bits.mask.grouped(32).map(_.reduce(_ || _)).toSeq)
+      mem.io.mask := VecInit(oldest_pipelined_write.bits.mask.grouped(maskBytes).map(_.reduce(_ || _)).toSeq)
     }
     mem.io.wen := oldest_pipelined_write.valid
 

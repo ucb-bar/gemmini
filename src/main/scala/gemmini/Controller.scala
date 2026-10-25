@@ -1222,7 +1222,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t),
-    vec_bypass = has_vpu || has_spad_requant, ld_bypass = use_mx_scaling) }
+    vec_bypass = has_vpu || has_spad_requant, ld_bypass = use_mx_scaling, use_mx_scaling = use_mx_scaling) }
   
   if (use_mx_scaling) {
     loop_matmul.io.activation_mx_format := ex_controller.io.mx.get.activation_mx_format_out
@@ -1269,7 +1269,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     // defaults. The loop counters still come from loop_matmul, which always has them.
     loop_matmul.io.activation_mx_format := 0.U
     loop_matmul.io.lut_granularity := 0.U
-    loop_matmul.io.mx_multi_elem := false.B
+    // true = one tile per DIM x DIM acc block (upstream addressing); false is the E4M3-single 4-tiles-per-group packing
+    loop_matmul.io.mx_multi_elem := true.B
     loop_matmul.io.mx_multi_elem_act := false.B
     loop_matmul.io.weight_mx_format := 0.U
     loop_matmul.io.output_mx_format := 0.U
