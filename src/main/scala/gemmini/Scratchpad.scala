@@ -460,7 +460,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val mvin_scale_acc_finished = mvin_scale_acc_out.fire && mvin_scale_acc_out.bits.last
     val zero_writer_finished = zero_writer_pixel_repeater.io.resp.fire && zero_writer_pixel_repeater.io.resp.bits.last
 
-    val zero_writer_bytes_read = Mux(zero_writer_pixel_repeater.io.resp.bits.laddr.is_acc_addr,
+    // Count zero-writer bytes at the width the LoadController allocated them with: accType only when the
+    // mvin carries accType data (has_acc_bitwidth = accumulator address && !shrink), inputType otherwise
+    val zero_writer_bytes_read = Mux(zero_writer_pixel_repeater.io.resp.bits.tag.has_acc_bitwidth,
       zero_writer_pixel_repeater.io.resp.bits.tag.cols * (accType.getWidth / 8).U,
       zero_writer_pixel_repeater.io.resp.bits.tag.cols * (inputType.getWidth / 8).U)
 
