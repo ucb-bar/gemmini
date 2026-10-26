@@ -326,7 +326,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val not_config = !new_entry.is_config
     when (is_load) {
       // war/waw (after ex) | war/waw (after st)
-      new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && !e.bits.issued }) // same q
+      // Loads can complete out of order (zero-mvins bypass the DMA reader, and TileLink responses can return out of
+      // order), so a load must also wait for an older, already issued load that writes the same rows (waw)
+      new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && (!e.bits.issued ||
+        (not_config && e.bits.opa.valid && new_entry.opa.bits.overlaps(e.bits.opa.bits))) }) // same q
 
       new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && !new_entry.is_config && (
         (new_entry.opa.bits.overlaps(e.bits.opa.bits) && e.bits.opa.valid) || // waw if preload, war if compute
@@ -467,7 +470,15 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         entries_type_.zipWithIndex.foreach { case (e, i) =>
           val deps_type = if (q == ldq) e.bits.deps_ld else if (q == exq) e.bits.deps_ex else e.bits.deps_st
           if ((q == q_) && (q_ != stq)) {
-            deps_type(issue_id) := false.B // TODO(richard): normal mvouts should not be blocked until complete
+            // a load keeps its dependency on an older load to the same rows until that load completes (waw)
+            val keep_waw = if (q == ldq) {
+              val e_bits = Mux(new_allocs_oh_ld(i), new_entry, e.bits)
+              !e_bits.is_config && e_bits.opa.valid && issue_entry.bits.opa.valid &&
+                e_bits.opa.bits.overlaps(issue_entry.bits.opa.bits)
+            } else false.B
+            when (!keep_waw) {
+              deps_type(issue_id) := false.B // TODO(richard): normal mvouts should not be blocked until complete
+            }
           } else {
             when (issue_entry.bits.complete_on_issue) {
               deps_type(issue_id) := false.B
