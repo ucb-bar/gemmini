@@ -43,6 +43,16 @@ class ExControllerMxScalingIO(
   val scale_ready = Input(Vec(4, Bool()))
   // CONFIG_SCALE_MEM executed: bits = Cat(rs2[17] managed, wgt half, act half); drives the halves' release.
   val scale_cfg = Output(Valid(UInt(3.W)))
+  // Loop-managed codebook halves, index = Cat(weight, half): LOADED by a gated LUT load and landed -> a rs2[20]
+  // (act-in) / rs2[21] (weight) config may take them.
+  val lut_ready = Input(Vec(4, Bool()))
+  // CONFIG_SCALE_MEM executed: bits = Cat(rs2[21] wgt halved, rs2[20] act halved, wgt half, act half); drives the
+  // LUT halves' release.
+  val lut_cfg = Output(Valid(UInt(4.W)))
+  val act_lut_halved = Output(Bool())   // act-in lookups use LUT half act_lut_half ({half, local})
+  val act_lut_half = Output(UInt(1.W))
+  val wgt_lut_halved = Output(Bool())   // weight lookups use LUT half wgt_lut_half ({half, local})
+  val wgt_lut_half = Output(UInt(1.W))
 }
 
 class ExControllerMxScalingRegs (scale_mem_write_addr_width: Int) extends Bundle {
@@ -62,6 +72,10 @@ class ExControllerMxScalingRegs (scale_mem_write_addr_width: Int) extends Bundle
   val scale_mem_read_w_sel = UInt(1.W)
   val scale_mem_counter_reset_flag = UInt(1.W)
   val scale_resident = Bool()   // MX_SCALE_RESIDENT (rs1 bit 62 of CONFIG_SCALE_MEM)
+  val act_lut_halved = Bool()   // rs2[20]: act-in codebooks in LUT half act_lut_half (loop-managed)
+  val act_lut_half = UInt(1.W)
+  val wgt_lut_halved = Bool()   // rs2[21]: weight codebooks in LUT half wgt_lut_half (loop-managed)
+  val wgt_lut_half = UInt(1.W)
 
   // loop bounds
   val loop_bound_i = UInt(9.W)
@@ -76,7 +90,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   import ev._
   val block_size = meshRows*tileRows
   // Widened acc SRAM row (2*meshColumns at DIM=8); read side delivers it as 2 blocks (numChunks=2).
-  val accCols = if (config.use_mx_scaling && meshColumns*tileColumns < 16) 2*meshColumns else meshColumns
+  val accCols = if (config.use_mx_scaling) MxAccWiden(meshColumns*tileColumns)*meshColumns else meshColumns
   val numChunks = if (accCols*tileColumns < 16) 1 else 2
 
   val io = IO(new Bundle {
@@ -199,6 +213,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.mx.get.scale_mem_mvout_base_addr_act := mx_state.get.scale_mem_mvout_base_addr_act
     io.mx.get.quant_lut_update_granularity := mx_state.get.quant_lut_update_granularity
     io.mx.get.scale_resident := mx_state.get.scale_resident
+    io.mx.get.act_lut_halved := mx_state.get.act_lut_halved
+    io.mx.get.act_lut_half := mx_state.get.act_lut_half
+    io.mx.get.wgt_lut_halved := mx_state.get.wgt_lut_halved
+    io.mx.get.wgt_lut_half := mx_state.get.wgt_lut_half
 
     // loop bounds
     io.mx.get.loop_bounds.i := mx_state.get.loop_bound_i
@@ -304,7 +322,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Instantiate the actual mesh
   val mesh = Module(new MeshWithDelays(spatialArrayInputType, spatialArrayWeightType, spatialArrayOutputType, accType, mesh_tag, dataflow, tree_reduction, tile_latency, mesh_output_delay,
     tileRows, tileColumns, meshRows, meshColumns, shifter_banks, shifter_banks, meshProdPrecision, meshAccPrecision, use_mx_scaling,
-    e4m3QuadThroughput = e4m3QuadThroughput, has_transposer = has_transposer))
+    e4m3QuadThroughput = e4m3QuadThroughput, has_transposer = has_transposer, clock_gating = mesh_clock_gating))
  
   if (use_mx_scaling) {
     mesh.io.activation_mx_format := mx_state.get.activation_mx_format
@@ -514,6 +532,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.mx.get.scaleMemCntl.baseAddress_w := mx_state.get.scale_mem_mvin_base_addr_w
     io.mx.get.scale_cfg.valid := false.B
     io.mx.get.scale_cfg.bits  := Cat(rs2s(0)(17), rs1s(0)(61), rs1s(0)(60))
+    io.mx.get.lut_cfg.valid := false.B
+    io.mx.get.lut_cfg.bits  := Cat(rs2s(0)(21), rs2s(0)(20), rs1s(0)(61), rs1s(0)(60))
   }
 
   when (!firing) {
@@ -805,7 +825,10 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
                      // rs2[18]: act scales reused in place (no act load issued)
                      (!rs2s(0)(17) ||
                       ((rs2s(0)(18) || io.mx.get.scale_ready(rs1s(0)(60))) &&
-                       io.mx.get.scale_ready(Cat(1.U(1.W), rs1s(0)(61)))))
+                       io.mx.get.scale_ready(Cat(1.U(1.W), rs1s(0)(61))))) &&
+                     // rs2[20]: loop-managed act-in codebooks -- its half (= act half) LOADED and landed
+                     (!rs2s(0)(20) || io.mx.get.lut_ready(Cat(0.U(1.W), rs1s(0)(60)))) &&
+                     (!rs2s(0)(21) || io.mx.get.lut_ready(Cat(1.U(1.W), rs1s(0)(61))))
                      else true.B)) {
             // Latch the CONFIG_SCALE_MEM registers, gated on a valid queue head via the enclosing
             // when. rs1 layout: dram 0-32, tiles_I 33-41, tiles_J 42-50, tiles_K 51-59,
@@ -820,7 +843,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               mx_state.get.scale_mem_counter_reset_flag := rs1s(0)(62)
               mx_state.get.scale_resident := rs1s(0)(63)
               mx_state.get.quant_lut_update_granularity := rs2s(0)(15,0)
+              mx_state.get.act_lut_halved := rs2s(0)(20)
+              mx_state.get.act_lut_half := rs1s(0)(60)
+              mx_state.get.wgt_lut_halved := rs2s(0)(21)
+              mx_state.get.wgt_lut_half := rs1s(0)(61)
               io.mx.get.scale_cfg.valid := true.B
+              io.mx.get.lut_cfg.valid := true.B
             }
             io.completed := cmd.bits(0).rob_id
             cmd.pop := 1.U
@@ -1285,7 +1313,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       // one wide row. SINGLE: pass the LOCAL entry offset (address % block_size = 0,2,4,6) so the acc mem can mask
       // this col-tile's 2 entries within its chunk (the chunk itself is derived from the write address there); the
       // parity would collapse 4 distinct col-tiles to one bit and they would clobber each other.
-      io.acc.write(i).bits.offset := (if (accCols != meshColumns) Mux(mx_multi_elem, (address_no_offset.asUInt >> log2Ceil(block_size).U)(0), offset) else offset)
+      io.acc.write(i).bits.offset := (if (accCols != meshColumns) Mux(mx_multi_elem, (address_no_offset.asUInt >> log2Ceil(block_size).U)(log2Ceil(accCols / meshColumns) - 1, 0), offset) else offset)
     } else {
       io.acc.write(i).valid := false.B
       io.acc.write(i).bits.addr := DontCare

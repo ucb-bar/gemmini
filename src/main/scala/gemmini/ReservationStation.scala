@@ -329,8 +329,12 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       val st_step = cmd.rs1(62, 32)
       // BF16 store (rs2[63], from StCSpad): row r writes its beats (<= 8) to consecutive rows at dst + r*step, so the
       // exact span is (rows-1)*step + 8; other flagged stores keep the conservative rows*step + 16 (tiled beats)
+      // a 512-b acc chunk is 512/(DIM*8) spad rows of BF16 (16 at DIM=4); a tiled requant output's beats (256/(DIM*8))
+      // land one 16-row tile apart. Both keep the DIM>=8 values (8, 16).
+      val bf16_beats = (512 / (block_cols * 8)) max 8
+      val tiled_span = if (block_cols >= 8) 16 else (256 / (block_cols * 8)) * 16
       val mvout_dst_rows = if (use_mx_scaling) Mux(cmd.rs1(63),
-        Mux(cmd.rs2(63), (mv_rows - 1.U) * st_step + 8.U, mv_rows * st_step + 16.U), mv_rows) else mv_rows
+        Mux(cmd.rs2(63), (mv_rows - 1.U) * st_step + bf16_beats.U, mv_rows * st_step + tiled_span.U), mv_rows) else mv_rows
 
       dst.bits.start := cmd.rs1(31, 0).asTypeOf(local_addr_t)
       dst.bits.end := dst.bits.start + mvout_dst_rows
@@ -400,7 +404,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     new_entry.opd.valid := false.B
     new_entry.opd.bits := DontCare
     when (is_vpu) {
-      val vc = gemmini.vpu.VpuCmd.decode(cmd.rs1, cmd.rs2, 14)
+      val vc = gemmini.vpu.VpuCmd.decode(cmd.rs1, cmd.rs2, log2Ceil(local_addr_t.spRows))
       new_entry.opa_is_dst := true.B
       new_entry.opa := spRange(vc.dst, gemmini.vpu.VpuCmd.dstRows(vc))
       new_entry.opb := spRange(vc.src1, vc.rows)
@@ -411,13 +415,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         new_entry.opd.valid := gemmini.vpu.VpuOp.hasDst2(vc.op)
       }
     }.elsewhen (is_sreq) {
-      val sc = SpadRequantCmd.decode(cmd.rs1, cmd.rs2, 14)
-      val m16 = (sc.m +& 15.U) & ~15.U(17.W)
-      val m32 = (sc.m +& 31.U) & ~31.U(17.W)
+      val sc = SpadRequantCmd.decode(cmd.rs1, cmd.rs2, log2Ceil(local_addr_t.spRows))
       new_entry.opa_is_dst := true.B
-      new_entry.opa := spRange(sc.dst, Mux(sc.fp4, Mux(sc.tiled, (m32 * sc.n) >> 5, (sc.m * sc.n) >> 5),
-                                                   Mux(sc.tiled, (m16 * sc.n) >> 4, (sc.m * sc.n) >> 4)))
-      new_entry.opb := spRange(sc.src, (sc.m * sc.n) >> 3)
+      new_entry.opa := spRange(sc.dst, SpadRequantRows.dst(sc, block_cols))   // spad rows are block_cols (DIM) bytes
+      new_entry.opb := spRange(sc.src, SpadRequantRows.src(sc, block_cols))
     }
 
     val not_config = !new_entry.is_config
@@ -584,7 +585,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   // (after the bank gate too: holding the accumulator side while a store still owes this SR's banks would deadlock)
   io.vec_sr_fp4_waiting := entries_vec.map(e => e.valid && e.bits.ready() && !e.bits.issued &&
-    e.bits.cmd.cmd.inst.funct === SPAD_REQUANT && e.bits.cmd.cmd.rs2(32) &&
+    e.bits.cmd.cmd.inst.funct === SPAD_REQUANT && (e.bits.cmd.cmd.rs2(32) || e.bits.cmd.cmd.rs2(33)) &&
     (entry_sp_banks(e) & vec_pending_banks) === 0.U).reduce(_ || _)
   // Issue commands which are ready to be issued
   Seq((ldq, io.issue.ld, entries_ld), (exq, io.issue.ex, entries_ex), (stq, io.issue.st, entries_st),
@@ -593,7 +594,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     // a vector entry also needs its unit free and no queued requant rows in its spad banks
     def unit_ok(e: UDValid[Entry]): Bool = if (q != vecq) true.B else
-      Mux(e.bits.cmd.cmd.inst.funct === SPAD_REQUANT, Mux(e.bits.cmd.cmd.rs2(32), vec_unit_ready(2), vec_unit_ready(1)),
+      Mux(e.bits.cmd.cmd.inst.funct === SPAD_REQUANT, Mux(e.bits.cmd.cmd.rs2(32) || e.bits.cmd.cmd.rs2(33),
+        vec_unit_ready(2), vec_unit_ready(1)),
         vec_unit_ready(0)) &&
         (entry_sp_banks(e) & vec_pending_banks) === 0.U
     val issue_valids = entries_type.map(e => e.valid && e.bits.ready() && !e.bits.issued && unit_ok(e))

@@ -26,6 +26,11 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
                                    e4m3QuadThroughput: Boolean = false) extends Module {
 
   val io = IO(new Bundle {
+    // enable for the output-delay data and id / last chains: low only while no valid is anywhere in the pipeline
+    val pipe_en = Input(Bool())
+    // OR of every valid register inside the mesh (tile valid chains and output-delay valid stages) and every tile's
+    // in_valid / out_valid: the wrapper's enable source. The valid chains themselves are never gated.
+    val valid_in_flight = Output(Bool())
     val weight_mx_format = Input(UInt(2.W))
     val activation_mx_format = Input(UInt(2.W))
     val mx_fp8_altfmt = Input(Bool())   // activation sub-format alt (E5M2/E2M3 vs E4M3/E3M2)
@@ -56,6 +61,9 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     }
   val meshT = mesh.transpose
   
+  val validStages = scala.collection.mutable.ArrayBuffer[Bool]()
+  def shiftValid(x: Vec[Bool], n: Int): Vec[Bool] =
+    (0 until n).foldLeft(x) { (prev, _) => val r = Reg(chiselTypeOf(prev)); r := prev; validStages ++= r; r }
   def pipe[T <: Data](valid: Bool, t: T, latency: Int): T = {
     // The default "Pipe" function apparently resets the valid signals to false.B. We would like to avoid using global
     // signals in the Mesh, so over here, we make it clear that the reset signal will never be asserted
@@ -162,7 +170,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_valid(c)) {
       case (in_v, tile) =>
-        tile.io.in_valid := ShiftRegister(in_v, tile_latency+1)
+        tile.io.in_valid := shiftValid(in_v, tile_latency+1)
         tile.io.out_valid
     }
   }
@@ -171,7 +179,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_id(c)) {
       case (in_id, tile) =>
-        tile.io.in_id := ShiftRegister(in_id, tile_latency+1)
+        tile.io.in_id := ShiftRegister(in_id, tile_latency+1, io.pipe_en)
         tile.io.out_id
     }
   }
@@ -180,7 +188,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   for (c <- 0 until meshColumns) {
     meshT(c).foldLeft(io.in_last(c)) {
       case (in_last, tile) =>
-        tile.io.in_last := ShiftRegister(in_last, tile_latency+1)
+        tile.io.in_last := ShiftRegister(in_last, tile_latency+1, io.pipe_en)
         tile.io.out_last
     }
   }
@@ -190,11 +198,12 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   for (((((((b, c), v), ctrl), id), last), tile) <- io.out_b zip io.out_c zip io.out_valid zip io.out_control zip io.out_id zip io.out_last zip mesh.last) {
     // TODO we pipelined this to make physical design easier. Consider removing these if possible
     // TODO shouldn't we clock-gate these signals with "garbage" as well?
-    b := ShiftRegister(tile.io.out_b, output_delay)
-    c := ShiftRegister(tile.io.out_c, output_delay)
-    v := ShiftRegister(tile.io.out_valid, output_delay)
-    ctrl := ShiftRegister(tile.io.out_control, output_delay)
-    id := ShiftRegister(tile.io.out_id, output_delay)
-    last := ShiftRegister(tile.io.out_last, output_delay)
+    b := ShiftRegister(tile.io.out_b, output_delay, io.pipe_en)
+    c := ShiftRegister(tile.io.out_c, output_delay, io.pipe_en)
+    v := shiftValid(tile.io.out_valid, output_delay)
+    ctrl := ShiftRegister(tile.io.out_control, output_delay, io.pipe_en)
+    id := ShiftRegister(tile.io.out_id, output_delay, io.pipe_en)
+    last := ShiftRegister(tile.io.out_last, output_delay, io.pipe_en)
   }
+  io.valid_in_flight := (validStages.toSeq ++ mesh.flatten.flatMap(t => t.io.in_valid ++ t.io.out_valid)).reduce(_ || _)
 }

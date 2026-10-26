@@ -29,6 +29,11 @@ class QuantLutIO(
   val read_a = Input(Bool())
   val read_d = Input(Bool())
   val quant_lut_update_granularity = Input(UInt(lutConfig.lutUpdateRegularityWidth.W))
+  val act_lut_halved = Input(Bool())   // act-in lookups use LUT half act_lut_half: {half, local}
+  val act_lut_half = Input(UInt(1.W))
+  val act_out_row = Input(Valid(UInt(16.W)))   // LUT SPAD_REQUANT: act-out codebook = row >> G (counter_act_out left alone)
+  val wgt_lut_halved = Input(Bool())   // weight lookups use LUT half wgt_lut_half: {half, local}
+  val wgt_lut_half = Input(UInt(1.W))
   val mx_fp8_altfmt = Input(Bool())   // act-out projection sub-format: 1 = E5M2/E2M3 finder, 0 = E4M3/E3M2
   val output_mx_format = Input(UInt(2.W)) // requant output code: 0=fp8, 1=fp6, 2=fp4 (picks the finder family)
 }
@@ -72,24 +77,37 @@ class QuantLut(
   val finderEngine  = Module(new NearestFinderTableEngine(finderFormats, rdataWidth, log2Ceil(lutConfig(2)._1)))
   val finderTable_t = new NearestFinderTable(finderEngine.nSlots, finderEngine.thrW)
   val lutCache_act_out = RegInit(VecInit(Seq.fill(2*lutConfig(2)._1)(0.U.asTypeOf(finderTable_t))))
-  val counter_i = RegInit(0.U(6.W))
-  val counter_j = RegInit(0.U(6.W))
-  val out_counter_i = RegInit(0.U(6.W))
-  // act_in write
+  // 16 b: counter_j counts a loop's weight rows up to (J << log2LuDim) - 1 = 127 at NC 256; 6 b wrapped at 64
+  val counter_i = RegInit(0.U(16.W))
+  val counter_j = RegInit(0.U(16.W))
+  val out_counter_i = RegInit(0.U(16.W))
+  // act_in write: all codebooks, or (half mode, loop-managed) only one half, from the bundle's first half
+  val halfEntries = lutConfig(0)._1 / 2
   when(io.lut_write_act_in.fire) {
     for (lane <- 0 until lutConfig(0)._1) {
-      for (entry <- 0 until 16) {
-        lutCache_act_in(lane)(entry) := io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+      val (h, src) = (lane / halfEntries, lane % halfEntries)
+      when (!io.lut_write_act_in.bits.half_mode || io.lut_write_act_in.bits.half === h.U) {
+        for (entry <- 0 until 16) {
+          lutCache_act_in(lane)(entry) := Mux(io.lut_write_act_in.bits.half_mode,
+            io.lut_write_act_in.bits.data(src)((entry+1)*rdataWidth-1, entry*rdataWidth),
+            io.lut_write_act_in.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth))
+        }
       }
     }
   }
   io.lut_write_act_in.ready := true.B
 
-  // weight write
+  // weight write: all codebooks, or (half mode, loop-managed) only one half, from the bundle's first half
+  val halfEntriesW = lutConfig(1)._1 / 2
   when(io.lut_write_weight.fire) {
     for (lane <- 0 until lutConfig(1)._1) {
-      for (entry <- 0 until 16) {
-        lutCache_weight(lane)(entry) := io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth)
+      val (h, src) = (lane / halfEntriesW, lane % halfEntriesW)
+      when (!io.lut_write_weight.bits.half_mode || io.lut_write_weight.bits.half === h.U) {
+        for (entry <- 0 until 16) {
+          lutCache_weight(lane)(entry) := Mux(io.lut_write_weight.bits.half_mode,
+            io.lut_write_weight.bits.data(src)((entry+1)*rdataWidth-1, entry*rdataWidth),
+            io.lut_write_weight.bits.data(lane)((entry+1)*rdataWidth-1, entry*rdataWidth))
+        }
       }
     }
   }
@@ -115,7 +133,7 @@ class QuantLut(
 
   val projectedIndices = WireDefault(VecInit(Seq.fill(outputnumLanes)(0.U(raddrWidth.W))))
   val projectedDataValid = WireDefault(false.B)
-  val counter_act_out = RegInit(0.U(log2Ceil(256).W))
+  val counter_act_out = RegInit(0.U(16.W))
   // Projection nearest-finders (act_out): one shared derived table (sorted permutation + thresholds) per
   // codebook, a key compare + popcount + permutation lookup per lane. The threshold set within a code-width
   // class is selected by mx_fp8_altfmt (0 = E4M3 / E3M2, 1 = E5M2 / E2M3); the class (8- or 6-bit codes) is
@@ -134,13 +152,15 @@ class QuantLut(
   }
 
   when(io.quant_fp6.valid) {
-    proj_table := lutCache_act_out(counter_act_out >> io.quant_lut_update_granularity)
+    proj_table := lutCache_act_out(Mux(io.act_out_row.valid, io.act_out_row.bits, counter_act_out) >> io.quant_lut_update_granularity)
     for (i <- 0 until outputnumLanes) {
       proj_in(i) := io.quant_fp6.bits(i)
       projectedIndices(i) := proj_nearest(i)
     }
     projectedDataValid := true.B
-    when (counter_act_out === ((io.loop_bound_i << log2Lanes.U) - 1.U)){
+    when (io.act_out_row.valid) {
+      // SPAD_REQUANT rows: the matmul requant's counter is not advanced
+    }.elsewhen (counter_act_out === ((io.loop_bound_i << log2Lanes.U) - 1.U)){
       counter_act_out := 0.U
     }.otherwise{
       counter_act_out := counter_act_out + 1.U
@@ -195,8 +215,12 @@ class QuantLut(
           counter_i := counter_i + 1.U
         } 
         // Route by the runtime read_a tag, so the activation operand may live in any scratchpad bank.
-        used_lut_act_0 := lutCache_act_in((counter_i << 1.U) >> io.quant_lut_update_granularity)
-        used_lut_act_1 := lutCache_act_in(((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity)
+        val act_local_0 = (counter_i << 1.U) >> io.quant_lut_update_granularity
+        val act_local_1 = ((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity
+        def act_idx(l: UInt): UInt = Mux(io.act_lut_halved, Cat(io.act_lut_half, l(log2Ceil(halfEntries) - 1, 0)), l)
+        assert(!io.act_lut_halved || act_local_1 < halfEntries.U, "QuantLut: loop-managed act-in block needs > half the codebooks")
+        used_lut_act_0 := lutCache_act_in(act_idx(act_local_0))
+        used_lut_act_1 := lutCache_act_in(act_idx(act_local_1))
         for (k <- 0 until luDim) { //act data layout is 2 interleaved 4-bit codes per k (kNa1,kNa0), total 2*luDim lanes
           val chunk_4bit_0 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 3, 2*k*4)
           val chunk_4bit_1 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 7, 2*k*4 + 4)
@@ -213,8 +237,11 @@ class QuantLut(
           counter_j := counter_j + 1.U
         }
         // Route by the runtime read_d tag, so weights may live in any scratchpad bank.
+        def wgt_local(k: Int): UInt = (((counter_j >> log2LuDim.U) << log2Lanes.U) + k.U) >> io.quant_lut_update_granularity
+        assert(!io.wgt_lut_halved || wgt_local(depLanes - 1) < halfEntriesW.U, "QuantLut: loop-managed weight block needs > half the codebooks")
         for (k <- 0 until depLanes) {
-          val used_lut_w = lutCache_weight((((counter_j >> log2LuDim.U) << log2Lanes.U) + k.U) >> io.quant_lut_update_granularity)
+          val wl = wgt_local(k)
+          val used_lut_w = lutCache_weight(Mux(io.wgt_lut_halved, Cat(io.wgt_lut_half, wl(log2Ceil(halfEntriesW) - 1, 0)), wl))
           val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
           deprojected_bits(k) := used_lut_w(chunk_4bit)
 

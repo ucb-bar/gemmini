@@ -49,6 +49,7 @@ object GemminiISA {
   val LOOP_WS_CONFIG_SCALE_STRIDES = 32.U // rs1/rs2 = A/B scale row pitch (bytes per E8M0 k-block row)
   val SPAD_REQUANT = 34.U // rs1 = src[13:0] | dst[27:14] | tiled[28]; rs2 = M[15:0] | N[31:16]
   val VPU_EXEC = 33.U // rs1 = src1[13:0] | src2[27:14] | dst[41:28] | rows[57:42]; rs2 = op[3:0] | bcast[4] | rlen[14:5] | imm[31:16]
+  val LOOP_WS_CONFIG_LUTS = 35.U // rs1 = act-in, rs2 = weight codebook DRAM addr (0 = not loop-managed)
 
   
   // rs1[2:0] values

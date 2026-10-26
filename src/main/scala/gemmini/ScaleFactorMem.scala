@@ -45,7 +45,10 @@ class ScalingFactorMem(
   val doubleBufferFactor = 2
   val totalSizeBytes = depth*sramWidth*numBanks/8
   val bytesPerBank = sramWidth / 8
-  val scaleWords = sramWidth / 64
+  require(sramWidth >= 64 || sramWidth == 32, "scale-mem lines: 4 bytes or a multiple of 8")
+  // 64-bit loader words per bank line; a 4-byte line (DIM=4) holds half a word: the word spans the internal bank pair
+  val scaleWords = (sramWidth / 64) max 1
+  val halfWordLines = sramWidth < 64
   val AddrWidth = log2Ceil(totalSizeBytes)
   val bankaddressWidth = log2Ceil(numBanks)
   val totalScales = 2*meshRows*tileRows
@@ -68,7 +71,29 @@ class ScalingFactorMem(
   val depth_sram = depth
   val half_sfMem_rows = depth_sram * numBanks / 2
   val bankDataT = Vec(bytesPerBank, UInt(8.W))
-  val banks = Seq.fill(numBanks)(SyncReadMem(depth_sram, bankDataT))
+  // 4-byte lines: each bank is 2 row-interleaved sub-banks (row r -> sub r(0), row r >> 1), so one 8-B loader word
+  // fills logical rows r, r+1 of one bank (single-throughput layout) in one cycle. One write call per sub-bank.
+  val nSub = if (halfWordLines) 2 else 1
+  require(depth_sram % nSub == 0)
+  class ScaleBank {
+    private val subs = Seq.fill(nSub)(SyncReadMem(depth_sram / nSub, bankDataT))
+    private val wen = Seq.fill(nSub)(WireDefault(false.B))
+    private val waddr = Seq.fill(nSub)(WireDefault(0.U(log2Up(depth_sram / nSub).W)))
+    private val wdata = Seq.fill(nSub)(WireDefault(VecInit(Seq.fill(bytesPerBank)(0.U(8.W)))))
+    private def setW(s: Int, row: UInt, d: Vec[UInt]): Unit = { wen(s) := true.B; waddr(s) := row; wdata(s) := d }
+    def write(row: UInt, d: Vec[UInt]): Unit =
+      if (nSub == 1) setW(0, row, d)
+      else for (s <- 0 until nSub) when (row(0) === s.U) { setW(s, row >> 1, d) }
+    def writePair(rowEven: UInt, lo: Vec[UInt], hi: Vec[UInt]): Unit = {   // logical rows rowEven, rowEven + 1
+      require(nSub == 2)
+      setW(0, rowEven >> 1, lo); setW(1, rowEven >> 1, hi)
+    }
+    def read(row: UInt, en: Bool): Vec[UInt] =
+      if (nSub == 1) subs(0).read(row, en)
+      else { val d = subs.map(_.read(row >> 1, en)); Mux(RegEnable(row(0), en), d(1), d(0)) }
+    def finish(): Unit = for (s <- 0 until nSub) when (wen(s)) { subs(s).write(waddr(s), wdata(s)) }
+  }
+  val banks = Seq.fill(numBanks)(new ScaleBank)
 
   val read_fire = io.read_req.fire && io.read_req.bits.scaling_enable
   val read_fire_d1 = RegNext(read_fire, false.B)
@@ -140,7 +165,18 @@ class ScalingFactorMem(
   dontTouch(write_row_addr_w_nonfp8)
   dontTouch(bank_idx_w_nonfp8)
 
-  when(write_weight_counter === (scaleWords-1).U && io.scale_mem_write_w.fire){
+  if (halfWordLines) {
+    // 4-byte lines: quad -> word bytes 0-3 / 4-7 to the bank pair, same row; single -> rows r, r+1 of one bank
+    val halves = io.scale_mem_write_w.bits.data.asTypeOf(Vec(2, bankDataT))
+    when (io.scale_mem_write_w.fire) {
+      when (fp8Mode_wei) {
+        for (b <- 0 until 4) when (bank_idx_w_fp8 === b.U) { banks(b).writePair(write_row_addr_w_fp8, halves(0), halves(1)) }
+      }.otherwise {
+        for (h <- 0 until 2; b <- 0 until 2) when (bank_idx_w_nonfp8 === h.U) { banks(2*h + b).write(write_row_addr_w_nonfp8, halves(b)) }
+      }
+    }
+    assert(!(io.scale_mem_write_w.fire && fp8Mode_wei && write_row_addr_w_fp8(0)), "scale word not 8-B aligned")
+  } else when(write_weight_counter === (scaleWords-1).U && io.scale_mem_write_w.fire){
     write_weight_counter := 0.U
     val write_bytes = Cat((0 until scaleWords).reverse.map(k =>
       if (k == scaleWords-1) io.scale_mem_write_w.bits.data else write_weight_words(k))).asTypeOf(bankDataT)
@@ -171,7 +207,17 @@ class ScalingFactorMem(
   dontTouch(bank_idx_act_internal)
   dontTouch(write_row_addr_act_nonfp8)
   dontTouch(bank_idx_act_nonfp8)
-  when(write_act_counter === (scaleWords-1).U && io.scale_mem_write_act.fire) {
+  if (halfWordLines) {
+    val halves = io.scale_mem_write_act.bits.data.asTypeOf(Vec(2, bankDataT))
+    when (io.scale_mem_write_act.fire) {
+      when (fp8Mode_act) {
+        for (b <- 0 until 4) when (bank_idx_act_fp8 === b.U) { banks(4 + b).writePair(write_row_addr_act_fp8, halves(0), halves(1)) }
+      }.otherwise {
+        for (h <- 0 until 2; b <- 0 until 2) when (bank_idx_act_nonfp8 === h.U) { banks(4 + 2*h + b).write(write_row_addr_act_nonfp8, halves(b)) }
+      }
+    }
+    assert(!(io.scale_mem_write_act.fire && fp8Mode_act && write_row_addr_act_fp8(0)), "scale word not 8-B aligned")
+  } else when(write_act_counter === (scaleWords-1).U && io.scale_mem_write_act.fire) {
       write_act_counter := 0.U
       val write_bytes = Cat((0 until scaleWords).reverse.map(k =>
         if (k == scaleWords-1) io.scale_mem_write_act.bits.data else write_act_words(k))).asTypeOf(bankDataT)
@@ -246,6 +292,7 @@ class ScalingFactorMem(
   val read_fire_banks_d1 = RegNext(read_fire_banks)
   val bank_data_0 = VecInit((0 until 4).map { i =>  banks(i).read(read_row_addr_w_real, read_fire_banks(i))})
   val bank_data_1 = VecInit((0 until 4).map { i =>  banks(i+4).read(read_row_addr_act_real, read_fire_banks(i+4))})
+  banks.foreach(_.finish())
 
   // ACT scales: 16-wide (single, 1 bank) iff fp8Mode_act, else 32-wide (quad, 2 banks). Independent of wei.
   when(fp8Mode_act){

@@ -119,6 +119,12 @@ object RequantizerDataType extends ChiselEnum {
 }
 
 
+// A scale Put with a byte mask: the requantizer's [GN][M] scale stream writes a block column's unaligned end word
+// partially (the next column's stream writes the rest).
+class ScalingFactorPutReq(addrWidth: Int, dataWidth: Int) extends ScalingFactorWriteReq(addrWidth, dataWidth) {
+  val mask = UInt((dataWidth / 8).W)
+}
+
 class ScalingFactorWriteReq(addrWidth: Int, dataWidth: Int) extends Bundle {
   val addr = UInt(addrWidth.W)
   val data = UInt(dataWidth.W)
@@ -159,7 +165,15 @@ class RequantizerOutBundle(numLanes: Int, dataWidth: Int = 8) extends Bundle {
 class QuantLutWriteBundle(numEntries: Int, numBits: Int) extends Bundle {
   val data = Vec(numEntries, UInt(numBits.W))
   val entry_bits = UInt(6.W)   // width of the codebook entries as loaded (6 = FP6 class, 8 = FP8 class)
+  val half_mode = Bool()       // write only codebooks half*numEntries/2 .. +numEntries/2-1 (loop-managed)
+  val half = UInt(1.W)
   def this(config: (Int, Int)) = {
     this(config._1, config._2)
   }
+}
+
+// DIM<16 MX acc widen: the acc SRAM row holds W = 16/DIM col-tiles (a DIM=16-shaped row: one 32-col MX block for each
+// of 2 output rows), so the DIM=16 store / requant logic runs unchanged. 1 at DIM>=16 (2 at DIM=8, 4 at DIM=4).
+object MxAccWiden {
+  def apply(dim: Int): Int = if (dim < 16) 16 / dim else 1
 }

@@ -145,6 +145,168 @@ class MxE3M2OnlyGemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(128) ++
   new chipyard.config.AbstractConfig)
 
+// E3M2-only (LUT quad) on the MxE4M3Fp4Vpu memory system (sbus 512, 4-bank L2, 64 reads in flight), for LUT perf runs.
+class MxE3M2PerfGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPE3M2OnlyStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// MxE3M2Perf plus the VPU and SPAD_REQUANT (LUT output): FP6 E3M2 LUT MLP end to end, same memory system.
+class MxE3M2VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPE3M2VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// DIM=8 (8x8 quad mesh, 256 MAC/cycle) on the same memory system as MxE3M2Perf: E3M2-only (FP6 LUT) and FP4-only.
+class MxDim8E3M2PerfGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim8E3M2OnlyStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// MxE3M2Vpu on the 8x8 mesh: E3M2-only LUT + VPU (2 x 4 BF16 lanes, fused ops), MxE3M2Perf memory system; no SPAD_REQUANT yet.
+class MxDim8E3M2VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim8E3M2VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// MxDim8E3M2Vpu with FP4 (E2M1) only.
+class MxDim8Fp4VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim8Fp4VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// 4x4 quad meshes (8x8 output tile per K=4 pass) + VPU (2 x 2 BF16 lanes) + SPAD_REQUANT, MxE3M2Vpu memory system.
+class MxDim4Fp4VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim4Fp4VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+class MxDim4E3M2VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim4E3M2VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// MxE3M2Vpu with FP4 (E2M1) only.
+class MxFp4VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPFp4VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// 32x32 single-format meshes + VPU (2 x 16 BF16 lanes) + SPAD_REQUANT, MxE3M2Vpu memory system.
+class MxDim32E4M3VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim32E4M3VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// MxDim32E4M3Vpu with acc_banks = 2 (store / accumulate overlap across native loops)
+class MxDim32E4M3VpuAcc2GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim32E4M3VpuAcc2StandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+class MxDim32E3M2VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim32E3M2VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+class MxDim32Fp4VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim32Fp4VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// Multi-format VPU + SPAD_REQUANT builds (FireSim targets), MxE3M2Vpu memory system. 4x4: FP4 + E3M2.
+class MxDim4Fp4E3M2VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim4Fp4E3M2VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// 8x8: FP4 + E3M2 + E4M3.
+class MxDim8Fp4E3M2E4M3VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim8Fp4E3M2E4M3VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// 16x16: FP4 + E3M2 + E4M3, memory bus widened to the 512-bit system bus.
+class MxFp4E3M2E4M3VpuGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPFp4E3M2E4M3VpuStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(512) ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
+// MxDim32E4M3Vpu with the memory bus widened to the 512-bit system bus.
+class MxDim32E4M3VpuWideMemGemminiRocketConfig extends Config(
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(512) ++
+  new MxDim32E4M3VpuGemminiRocketConfig)
+
+class MxDim8Fp4PerfGemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDim8Fp4OnlyStandaloneConfig ++
+  new freechips.rocketchip.subsystem.WithInclusiveCache(outerLatencyCycles = 128) ++
+  new freechips.rocketchip.subsystem.WithNBanks(4) ++
+  new testchipip.serdes.WithSerialTLBundleParams(testchipip.serdes.TLSerdesser.STANDARD_TLBUNDLE_PARAMS.copy(sinkBits = 16)) ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new chipyard.config.AbstractConfig)
+
 class MxE2M3OnlyGemminiRocketConfig extends Config(
   new gemmini.GemminiMxFPE2M3OnlyStandaloneConfig ++
   new freechips.rocketchip.rocket.WithNHugeCores(1) ++

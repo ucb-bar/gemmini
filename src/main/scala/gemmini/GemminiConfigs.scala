@@ -90,6 +90,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
                                                                              tile_latency: Int = 0,
                                                                              mesh_output_delay: Int = 1,
+                                                                             // clock-gate the mesh wrapper's systolic skew / control chains and the mesh output delay registers
+                                                                             // while no row is in flight (enable-based; Genus infers the ICGs). Functionally invisible.
+                                                                             mesh_clock_gating: Boolean = true,
+                                                                             // clock-gate the accumulator's write pipeline and shared adder pipeline behind their valids
+                                                                             acc_clock_gating: Boolean = true,
 
                                                                              use_tree_reduction_if_possible: Boolean = true,
 
@@ -392,6 +397,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     header ++= s"#define ADDR_LEN 32\n"
     header ++= s"#define BANK_NUM $sp_banks\n"
     header ++= s"#define BANK_ROWS $sp_bank_entries\n"
+    // VPU_EXEC / SPAD_REQUANT row-address field width (gemmini.vpu.VpuCmd.fieldW): 14, 15 at DIM=8
+    header ++= s"#define SPAD_ROW_ADDR_BITS ${gemmini.vpu.VpuCmd.fieldW(log2Up(sp_banks * sp_bank_entries))}\n"
     header ++= s"#define ACC_ROWS ${acc_banks * acc_bank_entries}\n" // TODO add ACC_BANKS as well
 
     val max_bytes = 64

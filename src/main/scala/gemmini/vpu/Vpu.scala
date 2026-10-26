@@ -39,11 +39,15 @@ class VpuCmd(val addrW: Int) extends Bundle {
 }
 
 object VpuCmd {
-  // VPU_EXEC: rs1 = src1[13:0] | src2[27:14] | dst[41:28] | rows[57:42]
+  // row-address field width of VPU_EXEC / SPAD_REQUANT: 14, or the spad's row-address width when wider (DIM=8: 15)
+  def fieldW(addrW: Int): Int = math.max(14, addrW)
+  // VPU_EXEC: rs1 = src1[F-1:0] | src2[2F-1:F] | dst[3F-1:2F] | rows[3F+15:3F]  (F = fieldW: 14 -> [13:0] .. [57:42])
   //           rs2 = op[3:0] | bcast[4] | rlen[14:5] | imm[31:16]
   def decode(rs1: UInt, rs2: UInt, addrW: Int): VpuCmd = {
     val c = Wire(new VpuCmd(addrW))
-    c.src1 := rs1(13, 0); c.src2 := rs1(27, 14); c.dst := rs1(41, 28); c.rows := rs1(57, 42)
+    val f = fieldW(addrW)
+    require(3 * f + 16 <= 64, "VPU_EXEC: row addresses too wide for rs1")
+    c.src1 := rs1(f - 1, 0); c.src2 := rs1(2 * f - 1, f); c.dst := rs1(3 * f - 1, 2 * f); c.rows := rs1(3 * f + 15, 3 * f)
     c.op := rs2(3, 0); c.bcast := rs2(4); c.rlen := rs2(14, 5); c.imm := rs2(31, 16)
     c
   }
