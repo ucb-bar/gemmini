@@ -221,10 +221,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       when(ext_mem.read_req.fire) { r_source.inc() }
       when(ext_mem.write_req.fire) { w_source.inc() }
     }
+    // RADIANCE FIX: one source counter per bank.  A counter shared by all banks advances on every bank's
+    // request, so a read waiting on one bank sees its source id reissued on the same bank after 32 cycles
+    // with a read on any bank -- measured in RTL sim as TLMonitor "'A' channel re-used a source ID" at the
+    // shared-memory distributor.  Per bank, dma_q bounds outstanding reads to 4 < num_ids, so a
+    // per-bank counter never reuses an outstanding id.
+    val spad_r_sources = Seq.fill(outer.spad_read_nodes.out.size)(Counter(outer.num_ids))
+    val spad_w_sources = Seq.fill(outer.spad_write_nodes.out.size)(Counter(outer.num_ids))
     (outer.spad_read_nodes.out zip outer.spad_write_nodes.out)
       .zipWithIndex.foreach{ case (((r_node, r_edge), (w_node, w_edge)), i) =>
         connect(ext_mem_spad(i), i * outer.mem_depth * outer.mem_width, log2Up(outer.spad_data_len),
-          r_node, r_edge, source_counters(0), w_node, w_edge, source_counters(1))
+          r_node, r_edge, spad_r_sources(i), w_node, w_edge, spad_w_sources(i))
     }
 
 
