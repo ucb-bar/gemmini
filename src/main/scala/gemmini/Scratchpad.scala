@@ -530,6 +530,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     // DIM16/32 (accCols==meshColumns there); DIM8 gets the full chunk width so the bf16 store walks all 8 beats.
     val acc_write_w = if (use_mx_scaling) acc_chunk_w else acc_w
     val requant_fp8_beats = (config.requantizer.map(_.numOutputLanes * 8).getOrElse(2*spad_w) / spad_w) max 1
+    // spad rows per acc row on the non-subbyte acc -> spad store path (non-MX: the scaled row is exactly one spad row)
+    val acc_spad_beats = if (use_mx_scaling) requant_fp8_beats else 1
     val writeData = Wire(Valid(UInt((spad_w max acc_write_w).W)))
     writeData.valid := write_issue_q.io.deq.bits.laddr.is_garbage() || (acc_scale_unit.io.out.bits.is_garbage)
     writeData.bits := DontCare
@@ -538,7 +540,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     // Write the requant FP8 output (256b = 2 bank rows) into the internal scratchpad banks via a
     // bio.write source; the 2-beat bank write asserts requant_spad_consume on its 2nd beat.
-    val requant_to_spad = if (use_mx_scaling && ex_write_to_spad) {
+    // Non-MX builds reuse the same bank-write path for STORE_SPAD: one acc row, scaled to inputType, = one spad row.
+    val requant_to_spad = if (ex_write_to_spad) {
       write_issue_q.io.deq.valid && write_issue_q.io.deq.bits.dest.asBool &&
         write_issue_q.io.deq.bits.laddr.is_acc_addr && !write_issue_q.io.deq.bits.laddr.is_garbage()
     } else false.B
@@ -1068,9 +1071,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           zero_writer_pixel_repeater.io.resp.ready := true.B // TODO we combinationally couple valid and ready signals
         }.elsewhen (requantwrite) {
           // FP8 (2 beats) or non-requant BF16 (4 beats): drain into consecutive bank rows, consume last.
-          val narrowVec = acc_scale_unit.io.out.bits.data.asUInt.asTypeOf(Vec(requant_fp8_beats, UInt(spad_w.W)))
+          val narrowVec = acc_scale_unit.io.out.bits.data.asUInt.asTypeOf(Vec(acc_spad_beats, UInt(spad_w.W)))
           val wideVec   = acc_scale_unit.io.out.bits.full_data.asUInt.asTypeOf(Vec(acc_write_w / spad_w, UInt(spad_w.W)))
-          val last_beat = Mux(requant_bf16, (acc_write_w / spad_w - 1).U, (requant_fp8_beats - 1).U)
+          val last_beat = Mux(requant_bf16, (acc_write_w / spad_w - 1).U, (acc_spad_beats - 1).U)
           // reuse_tiled (8-bit E4M3-single only): beat lands one tile-row (16 rows) below instead of flat.
           val tiled_beat = write_issue_q.io.deq.bits.reuse_tiled && (io.output_mx_format === 0.U) && !io.mx_fp8_altfmt && !io.mx_lut_en
           bio.write.addr := requant_dst_row + Mux(tiled_beat, (requant_half << 4).asUInt, requant_half)

@@ -151,7 +151,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val dst_stride_abs = dst_spad_stride(31)
   val dst_row_step = if (config.use_mx_scaling) Mux(dst_stride_abs, dst_spad_stride(30, 0), dst_spad_stride * mx_stride)
                      else Mux(dst_stride_abs, 1.U, dst_spad_stride)
-  val current_dst_spad_addr = dst_spad_addr.asUInt + row_counter * dst_row_step
+  // non-MX: each DIM-col block of the stored rows is one spad tile of block_rows rows (MX packs blocks into its rows)
+  val dst_block_offset = if (config.use_mx_scaling) 0.U else block_counter * block_rows.U * dst_row_step
+  val current_dst_spad_addr = dst_spad_addr.asUInt + row_counter * dst_row_step + dst_block_offset
 
   val pool_row_addr = localaddr + (orow * pool_ocols +& ocol)
   when (orow_is_negative || ocol_is_negative || orow >= pool_orows || ocol >= pool_ocols) {
