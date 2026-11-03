@@ -356,7 +356,12 @@ class AccumulatorMem[T <: Data, U <: Data](
     // too few mask bits for the 2 sub-banks)
     val maskBytes = if (use_mx_scaling) 32 else acc_type.getWidth / 8
     val mask_len_wide = if (widen) t_wide.getWidth / (8 * 8 * gEnt) else t_wide.getWidth / (8 * maskBytes)
-    val mem = AsymmetricTwoPortSyncMem(n, t_wide, mask_len_wide, if (use_mx_scaling) numChunks else 2) // TODO We assume byte-alignment here. Use aligned_to instead
+    // widen: W col-tiles share one W-wide row, so depth n/W keeps the SRAM at the configured capacity
+    val dimR   = meshRows*tileRows
+    val lgD    = log2Ceil(dimR)
+    val memRows = if (widen) n / W else n
+    if (widen) require(n % (W * dimR) == 0, s"acc rows $n must be a multiple of W*DIM = ${W * dimR}")
+    val mem = AsymmetricTwoPortSyncMem(memRows, t_wide, mask_len_wide, if (use_mx_scaling) numChunks else 2) // TODO We assume byte-alignment here. Use aligned_to instead
 
     // place a single col-tile (8 entries: rowR[0..half-1], rowR+1[half..]) into the wide row's quadrants:
     //   parity 0 -> rowR->idx0(0..half-1), rowR+1->idx2(2*half..); parity 1 -> rowR->idx1(half..), rowR+1->idx3(3*half..)
@@ -405,6 +410,9 @@ class AccumulatorMem[T <: Data, U <: Data](
     // W col-tiles fold onto one physical row: subtract (tile index mod W) * block_size
     val blkSize = (meshRows*tileRows).U
     def foldW(a: UInt, par: UInt): UInt = a - par(lgW - 1, 0) * blkSize
+    // folded tile index is a multiple of W: drop those lgW zero bits -> physical row (tile/W)*DIM + r
+    def compressW(f: UInt): UInt = Cat(f >> (lgD + lgW), f(lgD - 1, 0))(log2Ceil(memRows) - 1, 0)
+    def physRow(a: UInt, par: UInt): UInt = compressW(foldW(a, par))
 
     // write
     val wr_data = Mux(oldest_pipelined_write.bits.acc, adder_sum, oldest_pipelined_write.bits.data)
@@ -415,7 +423,9 @@ class AccumulatorMem[T <: Data, U <: Data](
     val wr_chunk = Mux(io.mx_multi_elem, wr_par(lgW - 1, 0),
       (oldest_pipelined_write.bits.addr >> log2Ceil(meshRows*tileRows).U)(lgW - 1, 0))
     if (widen) {
-      mem.io.waddr := foldW(oldest_pipelined_write.bits.addr, wr_chunk)
+      mem.io.waddr := physRow(oldest_pipelined_write.bits.addr, wr_chunk)
+      assert(!oldest_pipelined_write.valid || (foldW(oldest_pipelined_write.bits.addr, wr_chunk) >> lgD)(lgW - 1, 0) === 0.U,
+        "widened acc write: folded tile index not a multiple of W")
       // QUAD interleaves each col-tile's two quads (8-bit mask: chunk-group ((q/2)%2) reproduces the old 4-entry
       // 0,2 vs 1,3 exactly). SINGLE writes ONE col-tile = 2 entries at [local_offset, local_offset+1] within its
       // chunk, so it masks ONLY that pair (bit = chunk*half + local_offset/2); otherwise it clobbers the 3 sibling
@@ -438,7 +448,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       val rd_par = io.write.bits.offset
       // SINGLE: chunk (fold parity) comes from the read address' block bit, not the offset field (= local offset).
       val rd_chunk = (io.write.bits.addr >> log2Ceil(meshRows*tileRows).U)(lgW - 1, 0)
-      mem.io.raddr_full := (if (widen) foldW(io.write.bits.addr, Mux(io.mx_multi_elem, rd_par, rd_chunk)) else io.write.bits.addr)
+      mem.io.raddr_full := (if (widen) physRow(io.write.bits.addr, Mux(io.mx_multi_elem, rd_par, rd_chunk)) else io.write.bits.addr)
       mem.io.ren_full := io.write.fire && io.write.bits.acc
       // rdata_full is the SyncMem read output 1 cycle after raddr was set, so extractWide must use the parity of
       // the write that FIRED the read (delayed by the read latency), not the current cycle's offset. Otherwise the
@@ -455,7 +465,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       // folded (even) rows (read parity = the read address' tile-base bit).
       val bankSelBits = if (numChunks > 1) log2Up(numChunks) else 1
       val rr_par = (io.read.req.bits.addr >> log2Ceil(meshRows*tileRows).U)(lgW - 1, 0)
-      mem.io.raddr_half := (if (widen) Cat(foldW(io.read.req.bits.addr, rr_par), io.read.req.bits.chunk_id(bankSelBits - 1, 0))
+      mem.io.raddr_half := (if (widen) Cat(physRow(io.read.req.bits.addr, rr_par), io.read.req.bits.chunk_id(bankSelBits - 1, 0))
                             else Cat(io.read.req.bits.addr, io.read.req.bits.chunk_id(bankSelBits - 1, 0)))
       mem.io.ren_half := io.read.req.fire
 
