@@ -517,6 +517,25 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
 // StC
 
+// Shared StC / StCSpad iteration. Single throughput: j counts 4-tile groups; at DIM<16 one acc row holds W groups,
+// so j steps by W and the row is read as 2 chunks of chunkTiles tiles each.
+object MxStoreIter {
+  def fold(geom: MxGeom, useMx: Boolean): Bool = (useMx && geom.W > 1).B
+  def jSpan(geom: MxGeom, fold: Bool, j: UInt, iterMaxJ: UInt, blocks: UInt): UInt =
+    Mux(fold, Mux(j + geom.W.U <= iterMaxJ, geom.W.U, iterMaxJ - j), blocks)
+  // chunks holding data at step j = ceil(tiles left in this acc row / chunkTiles)
+  def chunks(geom: MxGeom, j: UInt, maxJ: UInt): UInt = {
+    val rem  = maxJ - (j << 2)
+    val span = Mux(rem > (4 * geom.W).U, (4 * geom.W).U, rem)
+    (span +& (geom.chunkTiles - 1).U) >> log2Ceil(geom.chunkTiles)
+  }
+  // last execute tile (uncompressed ex_j) the store of groups j..lastGroup waits for
+  def ejHigh(multi: Bool, lastGroup: UInt, iterMaxJ: UInt, maxJ: UInt): UInt =
+    Mux(!multi,
+      Mux((lastGroup === iterMaxJ - 1.U) && (maxJ % 4.U =/= 0.U), maxJ - 1.U, lastGroup * 4.U + 3.U),
+      lastGroup)
+}
+
 class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterator_bitwidth: Int, val max_acc_addr: Int, val concurrent_loops: Int) extends Bundle {
   val max_k = UInt(iterator_bitwidth.W)
   val max_j = UInt(iterator_bitwidth.W)
@@ -575,8 +594,6 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     assert((req.max_j >= tilesPerMxBlock.U) && (req.max_j % tilesPerMxBlock.U === 0.U), "tiles need to be multiples of mxBlockSize")
   }
 
-  // E4M3-single j-group (4 tiles) = 2 acc chunks at DIM >= 16 (2*DIM cols each); DIM 8 stores its group in 1
-  val numChunks = if (block_size >= 16) 2 else block_size / 8
   // DRAM offsets in BYTES: the StCSpad spad-row formula x DIM bytes, with its implicit row pitch (N * elem)
   // replaced by dram_stride * elem so N-chunked loops land in a wider C. One acc chunk = 2R cols.
   val out_bf16 = req.output_mx_format === 3.U || req.full_c
@@ -632,8 +649,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   mvout_cmd_rs2.num_rows := rows.asUInt
   mvout_cmd_rs2.num_cols := cols.asUInt
   mvout_cmd_rs2.local_addr := cast_to_acc_addr(mvout_cmd_rs2.local_addr, sp_addr, accumulate = false.B, read_full = req.full_c)
-  // DIM=8 E4M3-single: the 2x-widened acc row holds 4-tile groups j, j+1 in sub-banks 0 / 1 -> read sub-bank j & 1
-  mvout_cmd_rs2.mx_chunk_id := (if (block_size == 8) Mux(!req.mx_multi_elem, j(0).asUInt, chunk_id) else chunk_id)
+  mvout_cmd_rs2.mx_chunk_id := chunk_id
   mvout_cmd_rs2.reuse_tiled := false.B // DRAM store path never tiles (dst is not spad)
   mvout_cmd.rs2 := mvout_cmd_rs2.asUInt
 
@@ -697,15 +713,12 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   // The order here is k, j, i when not doing LAYERNORM or SOFTMAX. As in StCSpad: an FP8 j-group is 4 execute
   // tiles, so gate on the UNCOMPRESSED ex_j reaching the group's last tile (ej_high); the terminal group has no
   // drain margin and waits for ex_completed.
-  // DIM<16 quad: the widened acc row of tile j (j a multiple of W) also holds tiles j+1..j+W-1 (as
-  // StCSpad); store once per W-group, after all of them
-  val accWiden = MxGeom(block_size).W
-  val dim8_fold = (use_mx_scaling && block_size < 16).B && req.mx_multi_elem   // non-MX acc rows are not widened
-  val j_span = Mux(dim8_fold, Mux(j + accWiden.U <= iter_max_j, accWiden.U, iter_max_j - j), blocks)
+  // DIM<16: the widened acc row of j also holds j+1..j+W-1; store once per W-group, after all of them
+  val geom = MxGeom(block_size)
+  val fold = MxStoreIter.fold(geom, use_mx_scaling)   // non-MX acc rows are not widened
+  val j_span = MxStoreIter.jSpan(geom, fold, j, iter_max_j, blocks)
   val last_group = j + j_span - 1.U
-  val ej_high = Mux(!req.mx_multi_elem,
-    Mux((last_group === iter_max_j - 1.U) && (req.max_j % 4.U =/= 0.U), req.max_j - 1.U, last_group * 4.U + 3.U),
-    last_group)
+  val ej_high = MxStoreIter.ejHigh(req.mx_multi_elem, last_group, iter_max_j, req.max_j)
   val terminal_needs_drain = (last_group === iter_max_j - 1.U) && (iter_max_j > 1.U)
   val ex_ahead = WireInit(io.ex_completed ||
     ((req.act =/= Activation.LAYERNORM) && (req.act =/= Activation.SOFTMAX) &&
@@ -727,15 +740,12 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   when (req.dram_addr === 0.U) {
     state := idle
   }.elsewhen (io.cmd.fire && state === st) {
-    // A partial last j-group (max_j % 4 tiles) holds fewer acc chunks; storing all numChunks writes garbage past it.
-    val tiles_this_j = Mux(j === iter_max_j - 1.U && req.max_j % 4.U =/= 0.U, req.max_j % 4.U, 4.U)
-    val chunks_this_j = tiles_this_j * numChunks.U / 4.U
-    when (!req.mx_multi_elem && chunk_id < (chunks_this_j - 1.U)) {
+    when (!req.mx_multi_elem && chunk_id < (MxStoreIter.chunks(geom, j, req.max_j) - 1.U)) {
       chunk_id := chunk_id + 1.U
     }.otherwise {
       chunk_id := 0.U
       val next_i = floorAdd(i, 1.U, iter_max_i)
-      val next_j = floorAdd(j, Mux(dim8_fold, accWiden.U, max_blocks), iter_max_j, next_i === 0.U)
+      val next_j = floorAdd(j, Mux(fold, geom.W.U, max_blocks), iter_max_j, next_i === 0.U)
 
       i := next_i
       j := next_j
@@ -847,8 +857,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   // DIM<16 widen: the acc row is W*block_size wide (a full block for 2 output rows) = DIM=16-shaped.
   // Mimic DIM=16's store: 2 chunks per wide read (the 2 output rows), and step col-tiles by W (W col-tiles/block).
   val geom = MxGeom(block_size)
-  val accWiden = geom.W
-  val accBlockSize = accWiden * block_size
+  val accBlockSize = geom.W * block_size
   // chunk1 sits one requant output below chunk0: codeBeats (8-bit) / bf16Beats (bf16) spad rows; full_c keeps 2T
   val single_chunk_stride = geom.codeBeats
   val chunk_spad_stride = Mux(req.full_c, (2 * tilesPerMxBlock).U,
@@ -862,8 +871,6 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val j = Reg(UInt(iterator_bitwidth.W))
   val i = Reg(UInt(iterator_bitwidth.W))
   val chunk_id = RegInit(0.U(GemminiISA.MX_CHUNK_ID_BITS.W))
-  val fp8_tiles_this_j = Mux(j === iter_max_j - 1.U && req.max_j % 4.U =/= 0.U, req.max_j % 4.U, 4.U)
-  val chunks_this_j = fp8_tiles_this_j / 2.U
 
   val acc_addr_start = req.src_addr
 
@@ -942,14 +949,10 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   // FP8 store j-group = 4 execute tiles; gate on the UNCOMPRESSED ex_j reaching the
   // group's last execute-tile (ej_high) so we don't read before all tiles' final-k accumulate.
   // DIM<16: the widened acc row of tile j also holds j+1..j+W-1 (jStep W below), so wait for all their final k
-  val fold = (block_size < 16).B
-  val j_span = Mux(fold, Mux(j + accWiden.U <= iter_max_j, accWiden.U, iter_max_j - j), blocks)
+  val fold = MxStoreIter.fold(geom, true)
+  val j_span = MxStoreIter.jSpan(geom, fold, j, iter_max_j, blocks)
   val last_group = j + j_span - 1.U
-  val ej_high = Mux(!req.mx_multi_elem,
-    Mux((last_group === iter_max_j - 1.U) && (req.max_j % 4.U =/= 0.U),
-      req.max_j - 1.U,             // partial last group ends at max_j-1
-      last_group * 4.U + 3.U),     // full group = 4 execute tiles
-    last_group)                    // non-FP8: one execute tile per group
+  val ej_high = MxStoreIter.ejHigh(req.mx_multi_elem, last_group, iter_max_j, req.max_j)
   // terminal j-group has no drain margin: route it through drain-gated ex_completed, not the early ex_i window.
   val terminal_needs_drain = (last_group === iter_max_j - 1.U) && (iter_max_j > 1.U)
   // WAR hazard: if the output aliases an A/B row a later execute tile still reads, releasing the store on
@@ -975,15 +978,13 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   io.loop_id := req.loop_id
 
   when (io.cmd.fire && state === st) {
-    when (!req.mx_multi_elem && chunk_id < (chunks_this_j - 1.U)) {
+    when (!req.mx_multi_elem && chunk_id < (MxStoreIter.chunks(geom, j, req.max_j) - 1.U)) {
       chunk_id := chunk_id + 1.U
     }.otherwise {
       chunk_id := 0.U
       val next_i = floorAdd(i, 1.U, iter_max_i)
-      // DIM<16 widen: step j by W (tiles j+1..j+W-1 fold back to the same physical row, so skip them; j advances to
-      // the next physical-row group). Both quad and single.
-      val jStep = Mux((block_size < 16).B, accWiden.U, max_blocks)
-      val next_j = floorAdd(j, jStep, iter_max_j, next_i === 0.U)
+      // DIM<16 widen: step j by W (j+1..j+W-1 fold onto the same physical row). Both quad and single.
+      val next_j = floorAdd(j, Mux(fold, geom.W.U, max_blocks), iter_max_j, next_i === 0.U)
 
       i := next_i
       j := next_j
@@ -1739,9 +1740,10 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     loop_requesting_st.b_addr_end, loop_requesting_st.b_ex_spad_id * (max_addr / concurrent_loops).U)
   val st_b_lo = st_b_hi -& (loop_requesting_st.max_k * loop_requesting_st.max_j * block_size.U)
   val st_c_lo = loop_requesting_st.c_spad_addr
-  val st_c_span = Mux(io.output_mx_format === 3.U || loop_requesting_st.full_c,
+  // quad tiles are 2*DIM rows (act) / cols (weight): x2 each
+  val st_c_span = (Mux(io.output_mx_format === 3.U || loop_requesting_st.full_c,
     2.U * loop_requesting_st.max_i * loop_requesting_st.max_j * block_size.U,
-    loop_requesting_st.max_i * loop_requesting_st.max_j * block_size.U)
+    loop_requesting_st.max_i * loop_requesting_st.max_j * block_size.U) << (io.mx_multi_elem.asUInt +& io.mx_multi_elem_act.asUInt)).asUInt
   val st_c_hi = st_c_lo +& st_c_span
   val st_c_overlaps_a = (st_c_lo < st_a_hi) && (st_a_lo < st_c_hi)
   val st_c_overlaps_b = (st_c_lo < st_b_hi) && (st_b_lo < st_c_hi)

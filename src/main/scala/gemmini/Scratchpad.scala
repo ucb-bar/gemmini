@@ -1000,8 +1000,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val drain_beat = nbeats.U - requant_drain
       sbw0_valid := requant_drain =/= 0.U
       sbw0_bank  := requant_q.io.deq.bits.bank
-      // tiled: beat b = K-tile b of the operand-A layout, one tile height (16 rows; DIM at DIM>=32) below
-      sbw0_addr  := requant_q.io.deq.bits.row + Mux(requant_q.io.deq.bits.tiled, (drain_beat << log2Ceil(block_rows max 16)).asUInt, drain_beat)
+      // tiled: beat b = K-tile b of the operand-A layout, b K-tile heights below
+      sbw0_addr  := requant_q.io.deq.bits.row + Mux(requant_q.io.deq.bits.tiled, (drain_beat << log2Ceil(config.mxGeom.kTileRows)).asUInt, drain_beat)
       sbw0_data  := deqVec(drain_beat)
 
       // Writing to the SRAM banks
@@ -1066,9 +1066,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           val narrowVec = acc_scale_unit.io.out.bits.data.asUInt.asTypeOf(Vec(acc_spad_beats, UInt(spad_w.W)))
           val wideVec   = acc_scale_unit.io.out.bits.full_data.asUInt.asTypeOf(Vec(acc_write_w / spad_w, UInt(spad_w.W)))
           val last_beat = Mux(requant_bf16, (acc_write_w / spad_w - 1).U, (acc_spad_beats - 1).U)
-          // reuse_tiled (8-bit E4M3-single only): beat lands one tile-row (16 rows) below instead of flat.
+          // reuse_tiled (8-bit E4M3): beat b lands b K-tile heights below instead of flat.
           val tiled_beat = write_issue_q.io.deq.bits.reuse_tiled && (io.output_mx_format === 0.U) && !io.mx_fp8_altfmt && !io.mx_lut_en
-          bio.write.addr := requant_dst_row + Mux(tiled_beat, (requant_half << 4).asUInt, requant_half)
+          bio.write.addr := requant_dst_row + Mux(tiled_beat, (requant_half << log2Ceil(config.mxGeom.kTileRows)).asUInt, requant_half)
           bio.write.data := Mux(requant_bf16, wideVec(requant_half), narrowVec(requant_half))
           bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
           requant_half := Mux(requant_half === last_beat, 0.U, requant_half + 1.U)

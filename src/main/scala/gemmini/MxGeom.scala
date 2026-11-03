@@ -11,6 +11,8 @@ case class MxGeom(dim: Int, mxBlock: Int = 32) {
   val blocksPerBeat = lanesPerBeat / mxBlock  // MX blocks per acc read beat
   val codeBeats     = lanesPerBeat / dim      // spad rows per 8-bit requant beat
   val bf16Beats     = 2 * lanesPerBeat / dim  // spad rows per bf16 beat
+  val chunkTiles    = lanesPerBeat / dim      // mesh col-tiles covered by one acc read chunk (one output row)
+  val kTileRows     = dim                     // operand-A tiled layout: spad rows per K-tile (LdA tile = DIM rows)
 }
 
 object MxGeom {
