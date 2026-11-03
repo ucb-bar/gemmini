@@ -388,7 +388,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val state = RegInit(idle)
 
   val req = Reg(new LoopMatmulExecuteReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops))
-  val block_ij = Mux(req.narrow_type, (block_size).U, block_size.U)
+  val block_ij = block_size.U
   val c_addr_start = /*(BigInt(1) << 31).U |*/ req.c_addr_start
   val b_addr_start = req.b_addr_end - req.max_k * req.max_j * block_size.U
 
@@ -578,10 +578,10 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   // E4M3-single j-group (4 tiles) = 2 acc chunks at DIM >= 16 (2*DIM cols each); DIM 8 stores its group in 1
   val numChunks = if (block_size >= 16) 2 else block_size / 8
   // DRAM offsets in BYTES: the StCSpad spad-row formula x DIM bytes, with its implicit row pitch (N * elem)
-  // replaced by dram_stride * elem so N-chunked loops land in a wider C. One acc chunk = 32 bf16 / 32 fp8 cols.
+  // replaced by dram_stride * elem so N-chunked loops land in a wider C. One acc chunk = 2R cols.
   val out_bf16 = req.output_mx_format === 3.U || req.full_c
-  val chunk_dram_stride = if (block_size >= 16) Mux(out_bf16, (4 * block_size).U, (2 * block_size).U)   // 2*DIM cols
-    else Mux(out_bf16, (2 * tilesPerMxBlock * block_size).U, (tilesPerMxBlock * block_size).U)
+  val geomR = MxGeom(block_size).R
+  val chunk_dram_stride = Mux(out_bf16, (4 * geomR).U, (2 * geomR).U)
   val bf16_j_bytes = 8 * block_size   // E4M3-single bf16 j-group: 4 tiles x DIM cols x 2 B
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
@@ -697,9 +697,9 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   // The order here is k, j, i when not doing LAYERNORM or SOFTMAX. As in StCSpad: an FP8 j-group is 4 execute
   // tiles, so gate on the UNCOMPRESSED ex_j reaching the group's last tile (ej_high); the terminal group has no
   // drain margin and waits for ex_completed.
-  // DIM<16 quad: the widened acc row of tile j (j a multiple of W = MxAccWiden) also holds tiles j+1..j+W-1 (as
+  // DIM<16 quad: the widened acc row of tile j (j a multiple of W) also holds tiles j+1..j+W-1 (as
   // StCSpad); store once per W-group, after all of them
-  val accWiden = MxAccWiden(block_size)
+  val accWiden = MxGeom(block_size).W
   val dim8_fold = (use_mx_scaling && block_size < 16).B && req.mx_multi_elem   // non-MX acc rows are not widened
   val j_span = Mux(dim8_fold, Mux(j + accWiden.U <= iter_max_j, accWiden.U, iter_max_j - j), blocks)
   val last_group = j + j_span - 1.U
@@ -844,18 +844,15 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     assert((req.max_j >= tilesPerMxBlock.U) && (req.max_j % tilesPerMxBlock.U === 0.U), "tiles need to be multiples of mxBlockSize")
   }
 
-  // DIM<16 widen: the acc row is W*block_size wide (W = MxAccWiden: a full block for 2 output rows) = DIM=16-shaped.
+  // DIM<16 widen: the acc row is W*block_size wide (a full block for 2 output rows) = DIM=16-shaped.
   // Mimic DIM=16's store: 2 chunks per wide read (the 2 output rows), and step col-tiles by W (W col-tiles/block).
-  val accWiden = MxAccWiden(block_size)
+  val geom = MxGeom(block_size)
+  val accWiden = geom.W
   val accBlockSize = accWiden * block_size
-  val numChunks = accBlockSize / 8
-  // Single fmt0 requant: chunk1 (block1, cols 32-63) sits ONE requant output below chunk0, = the block's
-  // spad-row span = tilesPerMxBlock (mxBlockSize/DIM: 2 at DIM16, 4 at DIM8). Hardcoded 2 only held at DIM16;
-  // at DIM=8 a block spans 4 rows so +2 overwrote block0's beats 2-3. Gate on DIM<16 to keep DIM>=16 identical.
-  val single_chunk_stride = if (block_size < 16) tilesPerMxBlock else 2
-  // E4M3-single bf16 chunk = 2*DIM cols = 4 spad rows at DIM >= 16; DIM 8 and full_c keep 2*tilesPerMxBlock
+  // chunk1 sits one requant output below chunk0: codeBeats (8-bit) / bf16Beats (bf16) spad rows; full_c keeps 2T
+  val single_chunk_stride = geom.codeBeats
   val chunk_spad_stride = Mux(req.full_c, (2 * tilesPerMxBlock).U,
-    Mux(req.output_mx_format === 3.U, (if (block_size >= 16) 4 else 2 * tilesPerMxBlock).U,
+    Mux(req.output_mx_format === 3.U, geom.bf16Beats.U,
       Mux(req.reuse_tiled && req.output_mx_format === 0.U, (block_size * tilesPerMxBlock).U, single_chunk_stride.U)))
 
   val max_blocks = Mux(req.full_c, 1.U, Mux(iter_max_j <= max_block_len.U, iter_max_j, max_block_len.U))
@@ -1131,7 +1128,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
                  vec_bypass: Boolean = false, ld_bypass: Boolean = false, use_mx_scaling: Boolean = true)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
-  val tilesPerMxBlock = 32 / block_size
+  val tilesPerMxBlock = MxGeom(block_size).T
   val max_block_len = (dma_max_bytes / (block_size * input_w / 8)) max 1
   val max_block_len_acc = (dma_max_bytes / (block_size * acc_w / 8)) max 1
   val max_block_size = 2 * block_size  // 32, for sizing pad fields
@@ -1319,16 +1316,14 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
     switch (cmd.bits.cmd.inst.funct) {
       is (LOOP_WS_CONFIG_BOUNDS) {
-        val is_narrow = io.mx_multi_elem
-        val divisor = Mux(is_narrow, 1.U, 1.U)
 
         loop_being_configured.max_k := cmd.bits.cmd.rs2(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2)
-        loop_being_configured.max_j := cmd.bits.cmd.rs2(iterator_bitwidth * 2 - 1, iterator_bitwidth) / divisor
-        loop_being_configured.max_i := cmd.bits.cmd.rs2(iterator_bitwidth-1, 0) / divisor
+        loop_being_configured.max_j := cmd.bits.cmd.rs2(iterator_bitwidth * 2 - 1, iterator_bitwidth)
+        loop_being_configured.max_i := cmd.bits.cmd.rs2(iterator_bitwidth-1, 0)
 
         loop_being_configured.pad_k := cmd.bits.cmd.rs1(iterator_bitwidth * 3 - 1, iterator_bitwidth * 2)
-        loop_being_configured.pad_j := cmd.bits.cmd.rs1(iterator_bitwidth * 2 - 1, iterator_bitwidth) / divisor
-        loop_being_configured.pad_i := cmd.bits.cmd.rs1(iterator_bitwidth-1, 0) / divisor
+        loop_being_configured.pad_j := cmd.bits.cmd.rs1(iterator_bitwidth * 2 - 1, iterator_bitwidth)
+        loop_being_configured.pad_i := cmd.bits.cmd.rs1(iterator_bitwidth-1, 0)
       }
 
       is (LOOP_WS_CONFIG_ADDRS_AB) {

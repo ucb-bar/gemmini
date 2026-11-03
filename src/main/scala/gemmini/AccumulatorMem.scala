@@ -68,7 +68,7 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   val mx_multi_elem_act = Input(Bool()) // ACTIVATION (output-row) throughput: 2 rows/lane iff quad act
   val mx_fp8_altfmt = Input(Bool()) // code0 sub-format: 1 = E5M2 (4-bit LUT output), 0 = E4M3
   // Shared ScalingFactorMem (one per Scratchpad): this bank's read on write fire, and the broadcast response.
-  val scale_rd_req = if (use_mx_scaling) Some(Output(Valid(new ScalingFactorReadReq(7)))) else None
+  val scale_rd_req = if (use_mx_scaling) Some(Output(Valid(new ScalingFactorReadReq))) else None
   val scale_rd_resp = if (use_mx_scaling) {
     Some(Input(Valid(new ScalingFactorReadResp(2*meshRows*tileRows, 2*meshRows*tileRows))))
   } else None
@@ -130,18 +130,15 @@ class AccumulatorMem[T <: Data, U <: Data](
   
   import ev._
 
-  // DIM<16 widen: SRAM row is W = MxAccWiden(DIM) x t; numChunks=2 splits it into 2 sub-banks = the 2 blocks (rowR, rowR+1).
-  val accColsMem = if (use_mx_scaling) t.length * MxAccWiden(meshRows*tileRows) else t.length
-  val numChunks = if (accColsMem < 16) 1 else 2
+  // MX acc row = MxGeom.R entries (W col-tiles at DIM<16); numChunks=2 sub-banks = the 2 output rows.
+  val accColsMem = if (use_mx_scaling) MxGeom(meshRows*tileRows).R else t.length
+  val numChunks = MxGeom.accChunks(use_mx_scaling, accColsMem)
   val chunk_t = if (use_mx_scaling) Vec(accColsMem / numChunks, t.head.cloneType)
                 else Vec(t.length, t.head.cloneType)
 
   // TODO unify this with TwoPortSyncMemIO
   val io = IO(new AccumulatorMemIO(n, t, scale_t, chunk_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows))
 
-  def calculateScaleAddr(write_addr: UInt): UInt = {
-    (write_addr & (~("h_f".U)).asUInt).asUInt  // derive the scale-mem read addr from the accumulator write addr
-  }
 
   def applyE9M0Scale[T <: Data](
     value: T,
@@ -221,7 +218,6 @@ class AccumulatorMem[T <: Data, U <: Data](
     val scale_resp = io.scale_rd_resp.get
     scale_req.valid := io.write.fire
     scale_req.bits.scaling_enable := io.write.fire
-    scale_req.bits.addr := calculateScaleAddr(io.write.bits.addr)
     val dim = meshRows * tileRows
     // resp is broadcast to all banks; it is this bank's iff this bank wrote last cycle (one bank writes/cycle)
     when(scale_resp.valid && pipelined_writes(0).valid) {
@@ -347,7 +343,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     // a quadrant pair (idx0,2 or idx1,3) chosen by the write offset (0,2,4,6 -> parity 0,1,0,1); the second
     // col-tile fills the gaps. Reading the low 8 entries (idx0+idx1) then yields rowR's full 32-col block.
     val widen  = use_mx_scaling && (meshRows*tileRows < 16)
-    val W      = MxAccWiden(meshRows*tileRows)   // col-tiles per widened row (2 at DIM=8, 4 at DIM=4)
+    val W      = MxGeom(meshRows*tileRows).W
     val lgW    = log2Ceil(W) max 1
     val half   = t.length / 2
     val t_wide = if (widen) Vec(t.length*W, t.head.cloneType) else t

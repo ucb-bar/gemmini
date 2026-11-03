@@ -30,7 +30,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val block_rows = tileRows * meshRows
   val block_cols = tileColumns * meshColumns
 
-  private val n_vec_entries = if (has_vpu || has_spad_requant) res_max_per_type min 16 else 1   // = n_vec below
+  private val n_vec_entries = if (has_vpu || spad_requant_en) res_max_per_type min 16 else 1   // = n_vec below
   val n_all_entries = reservation_station_entries_ld + reservation_station_entries_ex + reservation_station_entries_st +
     n_vec_entries
 
@@ -86,7 +86,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   // 4th queue: VPU_EXEC / SPAD_REQUANT (one entry, never allocated, when neither unit is built)
   val vecq = 3
   val vecqu = 3.U(2.W)
-  val has_vec = has_vpu || has_spad_requant
+  val has_vec = has_vpu || spad_requant_en
   val n_vec = if (has_vec) res_max_per_type min 16 else 1   // a block's vector work enters at once (ids fit the per-type width)
 
   class OpT extends Bundle {
@@ -376,7 +376,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val is_norm = funct === CONFIG_CMD && config_cmd_type === CONFIG_NORM // normalization commands are a subset of store commands, so they still go in the store queue
 
     val is_vpu = has_vpu.B && funct === VPU_EXEC
-    val is_sreq = has_spad_requant.B && funct === SPAD_REQUANT
+    val is_sreq = spad_requant_en.B && funct === SPAD_REQUANT
     val is_vec = is_vpu || is_sreq
 
     new_entry.q := Mux1H(Seq(

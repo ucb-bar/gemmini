@@ -101,12 +101,9 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val localaddr = mvout_rs2.local_addr
   val cols = mvout_rs2.num_cols
   val rows = mvout_rs2.num_rows
-  // DIM<16 MX acc widen: the acc row is MxAccWiden*meshColumns wide (DIM=16-shaped) and is read via its 2 chunks, so a
-  // wide acc read is ONE physical row -- block-stepping the address by block_stride folds back onto the same row
-  // (duplicate read). Count blocks/len at the widened width so it is a single block, matching DIM=16. Acc source
-  // only; DIM>=16 and spad-source mvouts keep block_cols byte-identical.
-  val eff_block_cols = if (use_mx_scaling && block_rows < 16)
-                         Mux(localaddr.is_acc_addr, (MxAccWiden(block_rows) * block_cols).U(cols.getWidth.W), block_cols.U(cols.getWidth.W))
+  // MX acc source: one wide read = one physical acc row of MxGeom.R entries (block-stepping would re-read it)
+  val eff_block_cols = if (use_mx_scaling)
+                         Mux(localaddr.is_acc_addr, MxGeom(block_rows).R.U(cols.getWidth.W), block_cols.U(cols.getWidth.W))
                        else block_cols.U(cols.getWidth.W)
   val blocks = (cols / eff_block_cols) + (cols % eff_block_cols =/= 0.U)
 

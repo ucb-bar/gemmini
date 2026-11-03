@@ -95,35 +95,8 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
 
   val node = if (config.use_dedicated_tl_port) tlNode else atlNode
 
-  // Standalone MMIO path to the requantizer endpoints; parent config attaches to pbus.
-  // Disabled in radiance builds (use_shared_ext_mem=true), which expose them as mx_io.
+  // Standalone scale-factor-out Put client; radiance builds (use_shared_ext_mem) expose it as mx_io instead.
   val use_mx_mmio = config.use_mx_scaling && !config.use_shared_ext_mem
-  // The requant-in regmap and requant-out Put client serve only the MMIO (GPU) requant path; the
-  // scale-factor-out client below is used by the matmul flow and is kept whenever use_mx_mmio.
-  val use_mx_mmio_requant = use_mx_mmio && config.has_mx_mmio_requant
-  val mx_mmio_node = Option.when(use_mx_mmio_requant) {
-    TLRegisterNode(
-      address     = Seq(AddressSet(config.mx_mmio_base.getOrElse(config.tl_ext_mem_base + 0x100000L), 0xfffL)),
-      device      = new SimpleDevice("gemmini-mx-mmio", Seq("ucbbar,gemmini-mx-mmio")),
-      beatBytes   = 8,
-      concurrency = 1)
-  }
-  // Push-side master for requantizer output: issues a TL Put to out.bits.address on each result.
-  val mx_requant_out_client = Option.when(use_mx_mmio_requant) {
-    val q = config.requantizer.get
-    val minBytes = q.numOutputLanes * q.minOutputBits / 8
-    val maxBytes = q.numOutputLanes * q.maxOutputBits / 8
-    TLClientNode(Seq(TLMasterPortParameters.v1(
-      clients = Seq(TLMasterParameters.v2(
-        name     = "gemmini-mx-requant-out",
-        sourceId = IdRange(0, 1 << q.outputIdBits),
-        emits    = TLMasterToSlaveTransferSizes(
-          putFull    = TransferSizes(minBytes, maxBytes),
-          putPartial = TransferSizes(minBytes, maxBytes)
-        )
-      ))
-    )))
-  }
   // Push-side master for output scaling factors: gemmini issues fixed-width
   // TL Puts whenever mx_requantizer.io.scaleMem_write fires.
   val mx_scale_fac_out_client = Option.when(use_mx_mmio) {
@@ -164,17 +137,8 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
         sourceId = IdRange(0, mx_lut_loader_slots))))))
   }
 
-  // Attach the MX nodes via the standard LazyRoCC hooks: slaves (LUT/requant regmap +
-  // scale window) <- stlNode (tile slave port); out clients -> tlNode -> sbus. In radiance only the
-  // two loader clients exist; the tile connects tlNode to its master port.
-  if (use_mx_mmio_requant) {
-    val mx_slave_xbar = TLXbar()
-    mx_slave_xbar := stlNode
-    // Fragmenter (not just a width widget) so the regmap advertises [1,64] upstream and stays
-    // homogeneous with DRAM for the gemmini DMA's TLB page lookup; it still sees <=8B beats.
-    mx_mmio_node.foreach      { _ := TLFragmenter(8, p(CacheBlockBytes)) := mx_slave_xbar }
-  }
-  mx_requant_out_client.foreach   { client => tlNode := TLBuffer() := client }
+  // MX out clients attach via the standard LazyRoCC hook: tlNode -> sbus. In radiance only the two loader
+  // clients exist; the tile connects tlNode to its master port.
   mx_scale_fac_out_client.foreach { client => tlNode := TLBuffer() := client }
   mx_scale_loader_client.foreach  { client => tlNode := TLBuffer() := client }
   mx_lut_loader_client.foreach    { client => tlNode := TLBuffer() := client }
@@ -355,154 +319,21 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   }
 
 
-  // Radiance-side requantizer ports. Scale-mem and LUT contents are not part of mx_io: they are
+  // Radiance-side requantizer scale-factor port. Scale-mem and LUT contents are not part of mx_io: they are
   // loaded only by the funct-27/29 DMA loaders (see mx_scale_loader_client / mx_lut_loader_client).
   val mx_io = Option.when(outer.config.use_mx_scaling && outer.config.use_shared_ext_mem) {
     require(outer.config.requantizer.isDefined, "requantizer needs to be defined if using mx_scaling")
-    val q = outer.config.requantizer.get
     val s = outer.config.scale_mem.get
 
     IO(new Bundle {
-      val requant_in_gpu = Flipped(Decoupled(new RequantizerInBundle(q.numGPUInputLanes, q.inputBits)))
-      val requant_out = Decoupled(new RequantizerOutBundle(q.numOutputLanes, q.maxOutputBits))
       val scale_factor_out = Decoupled(new ScalingFactorPutReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))
     })
   }
 
   val sfout_outstanding = WireDefault(0.U(5.W))   // scale-factor-out Puts awaiting their D ack
-  val (mmio_requant_in_gpu, mmio_requant_out, mmio_scale_factor_out) =
+  val mmio_scale_factor_out =
     if (outer.use_mx_mmio) {
       val s = outer.config.scale_mem.get
-      val q = outer.config.requantizer.get
-
-      // ------ helper: latch a flat dataW-bit reg from N×64-bit MMIO writes ------
-      def dataRegFields(base: Int, data_reg: UInt, dataW: Int, offset: Int)
-        : Seq[(Int, Seq[RegField])] = {
-        val data_words = (dataW + 63) / 64
-        Seq.tabulate(data_words) { i =>
-          val hi = math.min(dataW - 1, 64 * (i + 1) - 1)
-          val lo = 64 * i
-          val width = hi - lo + 1
-          (base + offset + 8 * i) -> Seq(RegField(width,
-            RegReadFn(data_reg(hi, lo)),
-            RegWriteFn((wvalid, wdata) => {
-              when (wvalid) {
-                data_reg := (data_reg & ~(((BigInt(1) << width) - 1).U << lo.U).asUInt) |
-                            (wdata(width - 1, 0) << lo.U).asUInt
-              }
-              true.B
-            })))
-        }
-      }
-
-      def goField(base: Int, offset: Int, staged: Bool): (Int, Seq[RegField]) = {
-        (base + offset) -> Seq(RegField(1,
-          RegReadFn(staged),
-          RegWriteFn((wvalid, _) => {
-            when (wvalid && !staged) { staged := true.B }
-            !staged
-          })))
-      }
-
-      // ------ requantizer-in port (data Vec + address + dataType + go) ------
-      def requantInPort(base: Int): (DecoupledIO[RequantizerInBundle], Seq[(Int, Seq[RegField])]) = {
-        val numLanes = q.numGPUInputLanes
-        val laneBits = q.inputBits
-        val dataW    = numLanes * laneBits
-        val w = Wire(Decoupled(new RequantizerInBundle(numLanes, laneBits)))
-
-        val staged    = RegInit(false.B)
-        val addr_reg  = RegInit(0.U(32.W))
-        val dtype_reg = RegInit(0.U(2.W))
-        val data_reg  = RegInit(0.U(dataW.W))
-
-        w.valid         := staged
-        w.bits.address  := addr_reg
-        w.bits.dataType := dtype_reg.asTypeOf(RequantizerDataType())
-        w.bits.data     := data_reg.asTypeOf(Vec(numLanes, UInt(laneBits.W)))
-        when (w.fire) { staged := false.B }
-
-        val fields = Seq(
-          (base + 0x000) -> Seq(RegField(32, addr_reg)),
-          (base + 0x008) -> Seq(RegField(2, dtype_reg)),
-          goField(base, 0x030, staged)
-        ) ++ dataRegFields(base, data_reg, dataW, 0x010)
-
-        (w, fields)
-      }
-
-      // ------ LUT write port (data Vec only, no addr/dtype) ------
-      def lutPort(base: Int, idx: Int): (DecoupledIO[QuantLutWriteBundle], Seq[(Int, Seq[RegField])]) = {
-        val (numEntries, numBits) = outer.config.lut.get(idx)
-        val dataW = numEntries * numBits
-        val w = Wire(Decoupled(new QuantLutWriteBundle(numEntries, numBits)))
-
-        val staged   = RegInit(false.B)
-        val data_reg = RegInit(0.U(dataW.W))
-
-        w.valid     := staged
-        w.bits.data := data_reg.asTypeOf(Vec(numEntries, UInt(numBits.W)))
-        when (w.fire) { staged := false.B }
-
-        val data_words   = (dataW + 63) / 64
-        val go_offset = data_words * 8  // immediately after the data block
-
-        val fields = Seq(
-          goField(base, go_offset, staged)
-        ) ++ dataRegFields(base, data_reg, dataW, 0x000)
-
-        (w, fields)
-      }
-
-      // ------ requant-out (push: gemmini issues TL Puts via mx_requant_out_client) ------
-      val rout_wire = Option.when(outer.use_mx_mmio_requant) {
-        val numLanes = q.numOutputLanes
-        val laneBits = q.maxOutputBits
-        val w = Wire(Flipped(Decoupled(new RequantizerOutBundle(numLanes, laneBits))))
-
-        val (node, edge) = outer.mx_requant_out_client.get.out.head
-        val fullWidth = q.numOutputLanes
-        val halfWidth = q.numOutputLanes / 2
-        val beatBytes  = node.params.dataBits / 8
-        val nBeatsFull = (fullWidth + beatBytes - 1) / beatBytes
-        val nBeatsHalf = (halfWidth + beatBytes - 1) / beatBytes
-
-        // Accept-then-burst: latch the request, then drive the (possibly multibeat) Put from the latched
-        // copy, holding one source across all beats (TL forbids the source changing mid-burst) and slicing
-        // data per beat. Latching also keeps w.ready off w.bits, avoiding a combinational loop.
-        val busy   = RegInit(false.B)
-        val req    = Reg(new RequantizerOutBundle(numLanes, laneBits))
-        val beat   = RegInit(0.U(log2Ceil(nBeatsFull + 1).W))
-        val source = RegInit(0.U(q.outputIdBits.W))
-        w.ready := !busy
-        when (w.fire) { req := w.bits; busy := true.B; beat := 0.U }
-
-        val isFP4 = req.dataType === RequantizerDataType.FP4 || req.dataType === RequantizerDataType.FP6
-        val putData = Mux(isFP4,
-          Mux(req.address(log2Ceil(halfWidth)),
-            (req.data(halfWidth - 1, 0) << halfWidth).asTypeOf(UInt(fullWidth.W)),
-            req.data),
-          req.data)
-        val dataVec = putData.asTypeOf(Vec(nBeatsFull, UInt((beatBytes * 8).W)))
-        val last = beat === Mux(isFP4, (nBeatsHalf - 1).U, (nBeatsFull - 1).U)
-        // A Put narrower than the beat must sit in the lanes its address selects; putData already
-        // places the FP4 half within fullWidth, so shift by the fullWidth-granular beat offset.
-        val beatData = if (fullWidth < beatBytes)
-          (putData.pad(beatBytes * 8) << (Cat(req.address(log2Ceil(beatBytes) - 1, log2Ceil(fullWidth)),
-                                              0.U(log2Ceil(fullWidth).W)) << 3))(beatBytes * 8 - 1, 0)
-        else dataVec(beat)
-        node.a.valid     := busy
-        node.a.bits      := edge.Put(fromSource = source, toAddress = req.address,
-                              lgSize = Mux(isFP4, log2Ceil(halfWidth).U, log2Ceil(fullWidth).U),
-                              data = dataVec(0))._2
-        node.a.bits.data := beatData
-        node.d.ready     := true.B
-        when (busy && node.a.fire) {
-          beat := beat + 1.U
-          when (last) { busy := false.B; beat := 0.U; source := source + 1.U }
-        }
-        w
-      }
 
       // ------ scale-factor-out (push: gemmini issues fixed-size TL Puts) ------
       // Fires a TL Put on every w.fire from mx_requantizer.io.scaleMem_write.
@@ -515,7 +346,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         val beatBytes = node.params.dataBits / 8
         val nBeats    = (dataBytes + beatBytes - 1) / beatBytes
 
-        // Accept-then-burst (see rout_wire).
+        // Accept-then-burst: latch the request, then drive the (possibly multibeat) Put from the latched copy,
+        // holding one source across all beats and slicing data per beat; keeps w.ready off w.bits.
         val busy   = RegInit(false.B)
         val req    = Reg(new ScalingFactorPutReq(s.ScaleMemWriteAddrWidth, s.ScaleMemWriteDataWidth))
         val beat   = RegInit(0.U(log2Ceil(nBeats + 1).W))
@@ -551,15 +383,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         w
       }
 
-      val rin_wire = Option.when(outer.use_mx_mmio_requant) {
-        val (w, fields) = requantInPort(0x080)
-        outer.mx_mmio_node.get.regmap(fields: _*)
-        w
-      }
-
-      (rin_wire, rout_wire, Some(sfout_wire))
+      Some(sfout_wire)
     } else {
-      (None, None, None)
+      None
     }
   // ---- funct-27 MX_LOAD_SCALES: DMA loader (8-byte Gets from DRAM -> scale-mem write beats) ----
   // Replays the (addr = i*8, data = little-endian 64b) beat sequence byte-identically to the CPU flat
@@ -959,22 +785,11 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
                            Mux(lut_out_sel.get === 1.U, r1.ready, r2.ready))
     }
 
-    // Requantizer in/out and output scale factors: raw ports for the radiance tile (mx_io), or the
-    // standalone MMIO regmap + push clients.
+    // Output scale factors: a raw port for the radiance tile (mx_io), or the standalone Put client.
     if (outer.config.use_shared_ext_mem) {
       val b = mx_io.get
-      mx_requantizer.get.io.requant_data_in_gpu <> b.requant_in_gpu
-      mx_requantizer.get.io.requant_data_out    <> b.requant_out
       b.scale_factor_out                        <> mx_requantizer.get.io.scaleMem_write
     } else {
-      if (outer.use_mx_mmio_requant) {
-        mx_requantizer.get.io.requant_data_in_gpu <> mmio_requant_in_gpu.get
-        mx_requantizer.get.io.requant_data_out    <> mmio_requant_out.get
-      } else {
-        mx_requantizer.get.io.requant_data_in_gpu.valid := false.B
-        mx_requantizer.get.io.requant_data_in_gpu.bits  := DontCare
-        mx_requantizer.get.io.requant_data_out.ready    := true.B
-      }
       mmio_scale_factor_out.get                 <> mx_requantizer.get.io.scaleMem_write
     }
 
@@ -1011,7 +826,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
   // SPAD_REQUANT sequencer (drives the existing mx_requantizer; no new quantization logic). Its spad reads share the
   // ex read ports; responses return in request order per bank, so a per-bank FIFO routes them back.
-  val sr = Option.when(has_spad_requant) {
+  val sr = Option.when(spad_requant_en) {
     // rows are STORAGE rows (sp_width_projected: BF16 data / packed codes as stored, read via read_projected); a LUT
     // build's deprojected mesh-side row (sp_width) is wider and not involved
     require(outer.config.use_mx_scaling && mx_requantizer.isDefined && Seq(32, 64, 128, 256).contains(sp_width_projected),
@@ -1222,7 +1037,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new PreloadRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new PreloadRs(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t),
-    vec_bypass = has_vpu || has_spad_requant, ld_bypass = use_mx_scaling, use_mx_scaling = use_mx_scaling) }
+    vec_bypass = has_vpu || spad_requant_en, ld_bypass = use_mx_scaling, use_mx_scaling = use_mx_scaling) }
   
   if (use_mx_scaling) {
     loop_matmul.io.activation_mx_format := ex_controller.io.mx.get.activation_mx_format_out

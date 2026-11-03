@@ -106,7 +106,7 @@ class AccumulatorScale[T <: Data, U <: Data](
 
   import ev._
 
-  val numChunks = if (fullDataType.length*fullDataType.head.size < 16) 1 else 2
+  val numChunks = MxGeom.accChunks(use_mx_scaling, fullDataType.length*fullDataType.head.size)
   val chunk_t = if (use_mx_scaling) Vec(fullDataType.length / numChunks, fullDataType.head.cloneType)
                 else Vec(fullDataType.length, fullDataType.head.cloneType)
 

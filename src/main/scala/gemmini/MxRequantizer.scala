@@ -43,8 +43,6 @@ object MxFloatFormat {
 class MxRequantizerAccResp[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rDataType: Vec[Vec[T]]) extends Bundle {
   val out = new MxRequantizerAccMemDataOut[T] (rDataType, fullDataType)
   val mx_mode = UInt(2.W)
-  val is_gpu = Bool()
-  val gpu_addr = UInt(32.W)
   val from_sr = Bool()   // owner tag: a SPAD_REQUANT beat (vs an accumulator beat), returned with the output
 }
 
@@ -65,14 +63,12 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   spad_row_t: Vec[Vec[T]],
   half_t: Vec[Vec[T]],
   iterator_bitwidth: Int,
-  config: GemminiRequantizerConfig
+  config: GemminiRequantizerConfig,
+  lanesPerBeat: Int
 ) extends Bundle {
-  val inputnumLanes = config.numInputLanes
-  val outputnumLanes = config.numOutputLanes
+  val outputnumLanes = lanesPerBeat
   val inputdataWidth = config.inputBits
   val mxacc_req = Flipped(new MxRequantizerAccMemIO[T](acc_row_t, spad_row_t, half_t))
-  val requant_data_in_gpu = Flipped(Decoupled(new RequantizerInBundle(config.numGPUInputLanes, inputdataWidth)))
-  val requant_data_out = Decoupled(new RequantizerOutBundle(outputnumLanes))
   val scaleMem_write = Decoupled(new ScalingFactorPutReq(scaleMem_addr_width, scaleMem_data_width))   // byte-masked
   // LUT write ports exist only when the QuantLut is built (lutConfig defined).
   val lut0_write = lutConfig.map(l => Flipped(Decoupled(new QuantLutWriteBundle(l(0)))))
@@ -138,13 +134,13 @@ class MxRequantizer[T <: Data](
   
   import ev._
   val pipelineLatency = config.pipelineLatency
-  // Widened acc SRAM row (2*meshColumns at DIM=8) delivered to the requant as one wide row = 2 blocks.
-  val accCols = MxAccWiden(meshColumns*tileColumns)*meshColumns
+  val geom = MxGeom(meshColumns*tileColumns)
+  val accCols = geom.R
   val acc_row_t = Vec(accCols, Vec(tileColumns, accType))
-  // spad_row_t holds one requant beat's output = numOutputLanes codes.
-  val spad_row_t = Vec(config.numOutputLanes/tileColumns, Vec(tileColumns, weightTypeProjected))
-  val numChunks = if (accCols*tileColumns < 16) 1 else 2
-  val tilesPerMxBlock = scaleSize / (meshColumns*tileColumns)
+  // spad_row_t holds one requant beat's output = lanesPerBeat codes.
+  val spad_row_t = Vec(geom.lanesPerBeat/tileColumns, Vec(tileColumns, weightTypeProjected))
+  val numChunks = geom.numChunks
+  val tilesPerMxBlock = geom.T
   val half_acc_row_t = Vec((accCols*tileColumns)/numChunks, Vec(tileColumns, accType))
   val inputdataWidth = config.inputBits
   val io = IO(new MxRequantizerIO[T](
@@ -164,7 +160,8 @@ class MxRequantizer[T <: Data](
     spad_row_t,
     half_acc_row_t,
     iterator_bitwidth,
-    config
+    config,
+    geom.lanesPerBeat
   ))
   dontTouch(io)
   val scale_mem_mvout_base_addr_act = io.scale_mem_mvout_base_addr_act
@@ -206,11 +203,6 @@ class MxRequantizer[T <: Data](
   val (exp_bits, mant_bits, pmax, log2_pmax_floor_raw) = MxFloatFormat(format_reg)
   // Block-scale floor = 0 for every (format, altfmt) so chained requant outputs stay in acc/finder range.
   val log2_pmax_floor = log2_pmax_floor_raw
-  val data_buffer_counter = RegInit(0.U(1.W))
-  //buffer twice for 16-lane mode
-  val half_lanes = config.numGPUInputLanes
-  val input_32_buffer = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(inputdataWidth.W))))
-  val input_16_buffer_gpu = RegInit(VecInit(Seq.fill(io.outputnumLanes/2)(0.U(inputdataWidth.W))))
   val should_compute = Wire(Bool())
   val quantize_valid = RegNext(should_compute)
   val quantized_buffer = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(8.W)))) 
@@ -257,20 +249,6 @@ class MxRequantizer[T <: Data](
     iterator_bitwidth = iterator_bitwidth
   )) }
 
-  when(io.requant_data_in_gpu.fire) {
-     for (i <- 0 until half_lanes) {
-      input_16_buffer_gpu(i) := io.requant_data_in_gpu.bits.data(i)
-    }
-    data_buffer_counter := ~data_buffer_counter
-  }
-  
-  val gpu_addr = RegInit(0.U((32).W))
-  when(io.requant_data_in_gpu.fire && data_buffer_counter === 0.U && datapath_pack_mode === 8.U){
-    gpu_addr := io.requant_data_in_gpu.bits.address 
-  }.elsewhen(io.requant_data_in_gpu.fire && data_buffer_counter === 0.U && datapath_pack_mode =/= 8.U && !quant_half_counter){
-    gpu_addr := io.requant_data_in_gpu.bits.address >> 1
-  }
-
   when(io.mxacc_req.mx_data_in.fire) {
     pipe_in.valid := true.B
     pipe_in.bits.mx_mode := io.mxacc_req.mx_mode
@@ -278,19 +256,7 @@ class MxRequantizer[T <: Data](
     pipe_in.bits.out.fromDMA := io.mxacc_req.mx_data_in.bits.fromDMA
     pipe_in.bits.out.chunk_id := io.mxacc_req.mx_data_in.bits.chunk_id
     pipe_in.bits.out.acc_bank_id := io.mxacc_req.mx_data_in.bits.acc_bank_id
-    pipe_in.bits.is_gpu := false.B
-    pipe_in.bits.gpu_addr := 0.U
     pipe_in.bits.from_sr := io.sr_tag_in
-
-  }.elsewhen(io.requant_data_in_gpu.fire && data_buffer_counter === 1.U) {
-    pipe_in.valid := true.B
-    pipe_in.bits.mx_mode := format_reg
-    val combined = input_16_buffer_gpu ++ io.requant_data_in_gpu.bits.data
-    pipe_in.bits.out.full_mx_data_out := VecInit(combined).asTypeOf(half_acc_row_t)
-    pipe_in.bits.out.fromDMA := false.B
-    pipe_in.bits.is_gpu := true.B
-    pipe_in.bits.gpu_addr := gpu_addr
-    pipe_in.bits.from_sr := false.B
   }
 
 
@@ -385,56 +351,20 @@ class MxRequantizer[T <: Data](
   dontTouch(can_enqueue_wire)
     // Only allow input handshake when queue has space
   io.mxacc_req.mx_data_in.ready := can_enqueue
-  io.requant_data_in_gpu.ready := can_enqueue && !io.mxacc_req.mx_data_in.fire 
   
   io.mxacc_req.mx_data_out.bits.is_garbage := final_pipe_out.bits.out.is_garbage
   io.mxacc_req.mx_data_out.bits.full_mx_data_out := final_pipe_out.bits.out.full_mx_data_out
   io.mxacc_req.mx_data_out.bits.quant_mx_data_out  := final_pipe_out.bits.out.quant_mx_data_out
-  io.mxacc_req.mx_data_out.valid := (final_pipe_out.valid || full_precision_valid) && !final_pipe_out.bits.is_gpu
+  io.mxacc_req.mx_data_out.valid := (final_pipe_out.valid || full_precision_valid)
   io.mxacc_req.mx_data_out.bits.fromDMA := final_pipe_out.bits.out.fromDMA
   io.mxacc_req.mx_data_out.bits.acc_bank_id := final_pipe_out.bits.out.acc_bank_id
   io.mxacc_req.mx_data_out.bits.chunk_id := final_pipe_out.bits.out.chunk_id
   io.sr_tag_out := final_pipe_out.bits.from_sr
 
 
-  final_pipe_out.ready := Mux(final_pipe_out.bits.is_gpu,
-    io.requant_data_out.ready  || final_pipe_out.bits.out.is_garbage,
-    io.mxacc_req.mx_data_out.ready)
+  final_pipe_out.ready := io.mxacc_req.mx_data_out.ready
   oldest_pipe_out.ready := final_pipe_out.ready
   
-
-  val gpu_out_held = RegInit(0.U(256.W))
-  val helding_flag = RegInit(0.U)
-  when (io.requant_data_out.fire){
-    helding_flag := 0.U
-  }.elsewhen(final_pipe_out.bits.is_gpu && final_pipe_out.valid && !io.requant_data_out.ready && !final_pipe_out.bits.out.is_garbage){
-    helding_flag := 1.U
-  }
-
-  when(final_pipe_out.bits.is_gpu && final_pipe_out.valid && !final_pipe_out.bits.out.is_garbage){
-    when(helding_flag === 1.U && io.requant_data_out.ready){
-      io.requant_data_out.bits.data := gpu_out_held
-      io.requant_data_out.valid := true.B
-      io.requant_data_out.bits.dataType := RequantizerDataType(format_reg)
-      io.requant_data_out.bits.address :=  final_pipe_out.bits.gpu_addr
-    }.elsewhen(helding_flag === 0.U && io.requant_data_out.ready){
-      io.requant_data_out.bits.data := final_pipe_out.bits.out.quant_mx_data_out.asUInt
-      io.requant_data_out.valid := true.B
-      io.requant_data_out.bits.dataType := RequantizerDataType(format_reg)
-      io.requant_data_out.bits.address :=  final_pipe_out.bits.gpu_addr
-    }.otherwise{
-      gpu_out_held := final_pipe_out.bits.out.quant_mx_data_out.asUInt
-      io.requant_data_out.bits.data := 0.U
-      io.requant_data_out.valid := false.B
-      io.requant_data_out.bits.dataType := RequantizerDataType(format_reg)
-      io.requant_data_out.bits.address := final_pipe_out.bits.gpu_addr
-    }
-  }.otherwise{
-    io.requant_data_out.bits.data := 0.U
-    io.requant_data_out.valid := false.B
-    io.requant_data_out.bits.dataType := RequantizerDataType(format_reg)
-    io.requant_data_out.bits.address := final_pipe_out.bits.gpu_addr
-  }
 
   should_compute := false.B
   when (can_enqueue) {
@@ -453,7 +383,7 @@ class MxRequantizer[T <: Data](
   )
 
   val mxBlockSize    = 32
-  val numOutBlocks   = io.outputnumLanes / mxBlockSize
+  val numOutBlocks   = geom.blocksPerBeat
   val EPS_BIASED_EXP = 104.U(8.W)
   val scale_e8m0_vec    = Wire(Vec(numOutBlocks, UInt(8.W)))
   val neg_e8m0_vec      = Wire(Vec(numOutBlocks, UInt(8.W)))
@@ -579,10 +509,8 @@ class MxRequantizer[T <: Data](
   //   nibble: sb=block(b),    bib=row-half,    m=32*g+16*bib+row, b=sb   (2 rows/beat)
   val ROWS_PER_HALF = meshColumns * tileColumns
   val isNibble      = out_is_fp4 || out_is_lut4
-  // nibble GN = blocks-per-output-row = N/32 = loop_bound_j * (cols-per-tile) / 32 = loop_bound_j*block_cols/16.
-  // == loop_bound_j*numOutBlocks at DIM16/32 (block_cols/16 == numOutBlocks); differs only at DIM=8 (tile<block).
-  val nibbleGN      = if (meshColumns*tileColumns < 16) ((io.loop_bound_j * (meshColumns*tileColumns).U) >> 4).asUInt
-                      else (io.loop_bound_j * numOutBlocks.U)
+  // nibble GN = blocks per output row = N/32, N = loop_bound_j * 2*DIM (quad tile width)
+  val nibbleGN      = ((io.loop_bound_j * (2 * geom.dim).U) >> log2Ceil(geom.mxBlock)).asUInt
   val GN            = Mux(io.linear_scales, io.linear_gn,
                         Mux(isNibble, nibbleGN, (io.loop_bound_j >> log2Ceil(tilesPerMxBlock)).asUInt))
   val tiles_I       = io.loop_bound_i

@@ -8,7 +8,6 @@ case class GemminiScalingFactorMemConfig(
   sizeInBytes: BigInt = 16 << 10,
   subbankLineSizeInBytes: Int = 16,
   subbanksPerBank: Int = 2,
-  gpuInputWidthBytes: Int = 8,
   numBanks: Int = 8,
   ScaleMemWriteDataWidth: Int = 256,
   ScaleMemWriteAddrWidth: Int = 33,
@@ -20,17 +19,9 @@ case class GemminiScalingFactorMemConfig(
   def lineOffsetBits = log2Ceil(bankWidthBytes) 
 }
 
+// Lane count / output geometry come from MxGeom (DIM); BF16 in from the acc or SPAD_REQUANT only.
 case class GemminiRequantizerConfig(
-  baseAddr: BigInt = 0x10000000L + 0x8000,
-  numGPUInputLanes: Int = 16,
-  numInputLanes: Int = 64, // 16 for fp8, 64 for fp6/fp4
-  numOutputLanes: Int = 32,
-  gpuMaxFactor: Int = 2, // maximum fp16->fp8 for gpus, determines address space size
-  gpuWordSize: Int = 4,
   inputBits: Int = 16,
-  minOutputBits: Int = 4,
-  maxOutputBits: Int = 8,
-  outputIdBits: Int = 3,
   lutUpdateRegularityW : Int = 128,  // how many elements the LUT updates at once
   lutUpdateRegularityActIn : Int = 128,
   lutUpdateRegularityActOut : Int = 128,
@@ -106,19 +97,6 @@ case class GemminiLUTConfig(
   def numTables = numBits.length
 }
 
-object RequantizerDataType extends ChiselEnum {
-  val FP8, FP6, FP4 = Value
-
-  def widthBits(x: Type): UInt = {
-    Mux(x === FP4, 4.U(4.W), 8.U(4.W))
-  }
-
-  def toUInt(x: Type): UInt = {
-    Mux(x === FP8, 0.U(2.W), Mux(x === FP6, 1.U(2.W), 2.U(2.W)))
-  }
-}
-
-
 // A scale Put with a byte mask: the requantizer's [GN][M] scale stream writes a block column's unaligned end word
 // partially (the next column's stream writes the rest).
 class ScalingFactorPutReq(addrWidth: Int, dataWidth: Int) extends ScalingFactorWriteReq(addrWidth, dataWidth) {
@@ -150,18 +128,6 @@ class ScalingFactorCntl(max_block: Int) extends Bundle {
   val scale_mem_counter_reset_flag = Bool()
 }
 
-class RequantizerInBundle(numLanes: Int, dataWidth: Int = 16) extends Bundle {
-  val data = Vec(numLanes, UInt(dataWidth.W))
-  val address = UInt(32.W) // in bytes
-  val dataType = RequantizerDataType()
-}
-
-class RequantizerOutBundle(numLanes: Int, dataWidth: Int = 8) extends Bundle {
-  val data = UInt((numLanes * dataWidth).W) // no active byte lanes (valid from lsb)
-  val address = UInt(32.W)
-  val dataType = RequantizerDataType() // data type determines response size
-}
-
 class QuantLutWriteBundle(numEntries: Int, numBits: Int) extends Bundle {
   val data = Vec(numEntries, UInt(numBits.W))
   val entry_bits = UInt(6.W)   // width of the codebook entries as loaded (6 = FP6 class, 8 = FP8 class)
@@ -172,8 +138,3 @@ class QuantLutWriteBundle(numEntries: Int, numBits: Int) extends Bundle {
   }
 }
 
-// DIM<16 MX acc widen: the acc SRAM row holds W = 16/DIM col-tiles (a DIM=16-shaped row: one 32-col MX block for each
-// of 2 output rows), so the DIM=16 store / requant logic runs unchanged. 1 at DIM>=16 (2 at DIM=8, 4 at DIM=4).
-object MxAccWiden {
-  def apply(dim: Int): Int = if (dim < 16) 16 / dim else 1
-}

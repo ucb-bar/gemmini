@@ -80,11 +80,6 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
   val is_non_fp8_acc_write = is_acc_write && io.in.bits.mx_multi_elem_act
   val gmem_multiplier = Mux(io.in.bits.dest =/= 0.U, 1.U, 16.U)
 
-  val address_second_half_wide = io.in.bits.vaddr + (gmem_multiplier * MuxCase(4.U, Seq(
-    (io.in.bits.max_j <= 2.U && !io.in.bits.mx_multi_elem) -> ((acc_t_bits/16).U * 16.U),
-    (io.in.bits.mx_multi_elem) -> (4.U * io.in.bits.max_j)
-    )))
-
   val address_second_half_narrow = io.in.bits.vaddr + (gmem_multiplier * MuxCase(2.U, Seq(
     (io.in.bits.max_j <= 2.U && !io.in.bits.mx_multi_elem) -> ((acc_t_bits/16).U * 16.U / 2.U),
     (io.in.bits.mx_multi_elem) -> 0.U
@@ -353,7 +348,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   // MX acc read chunk = half a (widened) acc row = one quad output row; the writer holds it whole and drains it as
   // maxBytes Puts (DIM16/DIM8: 512 b = fp8_chunk_bits; DIM32 quad: 1024 b = a 128-B BF16 row -> two 64-B Puts)
   val acc_chunk_w = {
-    val cols = MxAccWiden(block_cols) * meshColumns
+    val cols = MxGeom(block_cols).W * meshColumns
     (accType.getWidth * cols * tileColumns) / (if (cols * tileColumns < 16) 1 else 2)
   }
   val writer_data_width = if (use_mx_scaling) { if (acc_read_full_width) fp8_chunk_bits max acc_chunk_w else 2*spad_w }
@@ -378,10 +373,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     // acc_row_t = the mesh-side write width (unchanged). accCols = the widened acc SRAM row (2*meshColumns at
     // DIM=8), which the read side (chunk_t/read_resp) delivers to the requant as one wide row = 2 blocks.
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
-    val accCols = if (use_mx_scaling) MxAccWiden(meshColumns*tileColumns)*meshColumns else meshColumns
-    val spad_row_t = if (use_mx_scaling) Vec(config.requantizer.get.numOutputLanes/tileColumns, Vec(tileColumns, weightTypeProjected))
+    val accCols = if (use_mx_scaling) MxGeom(meshColumns*tileColumns).R else meshColumns
+    val spad_row_t = if (use_mx_scaling) Vec(config.mxGeom.lanesPerBeat/tileColumns, Vec(tileColumns, weightTypeProjected))
                      else Vec(meshColumns, Vec(tileColumns, inputType))
-    val numChunks = if (accCols*tileColumns < 16) 1 else 2
+    val numChunks = MxGeom.accChunks(use_mx_scaling, accCols*tileColumns)
     val chunk_t = if (use_mx_scaling) Vec((accCols*tileColumns)/numChunks, Vec(tileColumns, accType))
                   else Vec(meshColumns, Vec(tileColumns, accType))
 
@@ -406,7 +401,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         ))))
         val read_resp = Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
           Vec(accCols, Vec(tileColumns, accType)),
-          if (config.use_mx_scaling) Vec(config.requantizer.get.numOutputLanes/tileColumns, Vec(tileColumns, weightType)) else Vec(meshColumns, Vec(tileColumns, inputType)),
+          if (config.use_mx_scaling) Vec(config.mxGeom.lanesPerBeat/tileColumns, Vec(tileColumns, weightType)) else Vec(meshColumns, Vec(tileColumns, inputType)),
           if (config.use_mx_scaling) Vec((accCols*tileColumns)/numChunks, Vec(tileColumns, accType)) else Vec(meshColumns, Vec(tileColumns, accType))
         )))
         val write = Flipped(Vec(acc_banks, Decoupled(new AccumulatorWriteReq(
@@ -458,7 +453,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val vpu_unit_busy = Output(Vec(vpu_params.units, Bool()))
       val vpu_pending_banks = Output(UInt(sp_banks.W))
       // SPAD_REQUANT code rows: lowest write priority, backpressured
-      val sr_write = Option.when(has_spad_requant)(Flipped(Decoupled(new SpadRowWrite(log2Ceil(sp_banks * sp_bank_entries), spad_w))))
+      val sr_write = Option.when(spad_requant_en)(Flipped(Decoupled(new SpadRowWrite(log2Ceil(sp_banks * sp_bank_entries), spad_w))))
       // has_loop_retire_counter: store data still on its way out (write queues, DRAM / SMEM writes awaiting their acks,
       // requant / store rows not yet written to a bank); loads are not counted
       val store_drain_busy = Option.when(has_loop_retire_counter)(Output(Bool()))
@@ -529,7 +524,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     // (256b) and truncate the 512b chunk -> base the write width on accCols (the widened row). Byte-identical for
     // DIM16/32 (accCols==meshColumns there); DIM8 gets the full chunk width so the bf16 store walks all 8 beats.
     val acc_write_w = if (use_mx_scaling) acc_chunk_w else acc_w
-    val requant_fp8_beats = (config.requantizer.map(_.numOutputLanes * 8).getOrElse(2*spad_w) / spad_w) max 1
+    val requant_fp8_beats = (config.requantizer.map(_ => config.mxGeom.lanesPerBeat * 8).getOrElse(2*spad_w) / spad_w) max 1
     // spad rows per acc row on the non-subbyte acc -> spad store path (non-MX: the scaled row is exactly one spad row)
     val acc_spad_beats = if (use_mx_scaling) requant_fp8_beats else 1
     val writeData = Wire(Valid(UInt((spad_w max acc_write_w).W)))
@@ -925,11 +920,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val requant_valid_fire = requant_to_spad && acc_scale_unit.io.out.valid &&
         acc_scale_unit.io.out.bits.fromDMA && !acc_scale_unit.io.out.bits.is_garbage
 
-      // Subbyte bank-write slots (slot1 used only by the 2-beat latch path).
+      // Subbyte bank-write slot
       val sbw0_valid = WireDefault(false.B); val sbw0_bank = WireDefault(requant_dst_bank)
       val sbw0_addr  = WireDefault(requant_dst_row); val sbw0_data = WireDefault(0.U(spad_w.W))
-      val sbw1_valid = WireDefault(false.B); val sbw1_bank = WireDefault(requant_dst_bank)
-      val sbw1_addr  = WireDefault(requant_dst_row); val sbw1_data = WireDefault(0.U(spad_w.W))
       // SUBBYTE (fp8 code) store: the requant output FREE-RUNS (a fresh 256-bit row every ~2-3 cycles) but the
       // serial N-beat drain (N banks-rows in one bank) needs ~N cycles, so a single latch drops rows produced mid-
       // drain. Buffer each valid row (codes + dst) in a Queue; the store drains from the stable Queue head. When the
@@ -1043,11 +1036,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           acc_scale_unit.io.out.bits.fromDMA && !acc_scale_unit.io.out.bits.is_garbage &&
           (requant_dst_bank === i.U) && bio.write.ready
         val requant_beat0 = sbw0_valid && (sbw0_bank === i.U) && bio.write.ready
-        val requant_beat1 = sbw1_valid && (sbw1_bank === i.U) && bio.write.ready
         val srwrite = io.sr_write.map(w => w.valid && (if (sp_banks == 1) true.B
           else w.bits.addr(log2Ceil(sp_banks * sp_bank_entries) - 1, log2Ceil(sp_bank_entries)) === i.U)).getOrElse(false.B)
 
-        bio.write.valid := vpuwrite || exwrite || dmaread || zerowrite || requantwrite || requant_beat0 || requant_beat1 || srwrite
+        bio.write.valid := vpuwrite || exwrite || dmaread || zerowrite || requantwrite || requant_beat0 || srwrite
 
         when (vpuwrite) {
           bio.write.addr := vpu_wr_row(i)
@@ -1085,10 +1077,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           sbw0_grant := true.B
           bio.write.addr := sbw0_addr
           bio.write.data := sbw0_data
-          bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
-        }.elsewhen (requant_beat1) {
-          bio.write.addr := sbw1_addr
-          bio.write.data := sbw1_data
           bio.write.mask := VecInit(Seq.fill((spad_w / (aligned_to * 8)) max 1)(true.B))
         }.elsewhen (srwrite) {
           sr_grant := true.B

@@ -324,7 +324,6 @@ object GemminiMxFPConfigs {
       Seq.fill(1) {MxFloat(8, 8, 4, true, false)},
 
     scaleSize = 32,
-    enable_lut = true,
     mvin_scale_args = None,
     mvin_scale_acc_args = None,
     mvin_scale_shared = false,
@@ -349,17 +348,7 @@ object GemminiMxFPConfigs {
     has_nonlinear_activations = false,
 
     num_counter = 8,
-    requantizer = Some(GemminiRequantizerConfig( 
-      baseAddr = 0x10000000L,
-      numInputLanes = 64,
-      numOutputLanes = 32,
-      gpuMaxFactor = 2,
-      gpuWordSize = 4,
-      inputBits = 16,
-      minOutputBits = 4,
-      maxOutputBits = 8,
-      outputIdBits = 3
-    )),
+    requantizer = Some(GemminiRequantizerConfig()),
     scale_mem = Some(GemminiScalingFactorMemConfig(
         baseAddr = 0x10000000L + 0x8000,
         sizeInBytes = 16 << 10,
@@ -372,7 +361,6 @@ object GemminiMxFPConfigs {
   lazy val testMxFPConfig = defaultMxFPConfig.copy(testConfig = true)
   lazy val testRequantizerLutMxFPConfig = defaultMxFPConfig.copy(
     testConfig = true,
-    enable_lut = true,
     lut = Some(GemminiLUTConfig())
   )
 
@@ -391,8 +379,7 @@ object GemminiMxFPConfigs {
     acc_banks = 2,   // store of loop n reads one bank while loop n+1 accumulates the other
     lut = Some(GemminiLUTConfig()),
     // Scale-factor RAM window 0x20000000..0x20003fff: weight scales at +0x0000, activation at +0x2000.
-    scale_mem = Some(defaultMxFPConfig.scale_mem.get.copy(baseAddr = 0x20000000L)),
-    mx_mmio_base = Some(0x20010000L)   // LUT/requant regmap, off the scale window
+    scale_mem = Some(defaultMxFPConfig.scale_mem.get.copy(baseAddr = 0x20000000L))
   )
 
   lazy val dim32MxFPConfig = standaloneMxFPConfig.copy(
@@ -407,9 +394,6 @@ object GemminiMxFPConfigs {
       Seq.fill(1) {MxFloat(8, 8, 4, true, false)} ++
       Seq.fill(16){MxFloat(8, 8, 4, true, false)},
     scale_mem = standaloneMxFPConfig.scale_mem.map(_.copy(subbankLineSizeInBytes = 32)),
-    // DIM=32: requant processes 2 output rows/cycle = 2*meshColumns*tileColumns lanes (was 32 = the
-    // DIM=16 value). Widens extracted_data 256->512 bits so all 64 fp8 codes are produced+written/cycle.
-    requantizer = standaloneMxFPConfig.requantizer.map(_.copy(numOutputLanes = 2*32*1))
   )
 
   // DIM=32 twin of allMxFPConfig: every MX format {FP4,E3M2,E2M3,E4M3,E5M2} on the 32x32 mesh, 8-bit LUT
@@ -447,9 +431,6 @@ object GemminiMxFPConfigs {
     meshProdPrecisionList = Seq.fill(8) {MxFloat(4, 4, 4, true, false)},
     meshAccPrecisionList  = Seq.fill(8) {MxFloat(8, 8, 4, true, false)},   // all 8 rows bf16
     scale_mem = standaloneMxFPConfig.scale_mem.map(_.copy(subbankLineSizeInBytes = 8)),
-    // DIM=8 widen: acc SRAM row = accCols(2*meshColumns) = a full 32-col block per output row, mirroring DIM=16
-    // (numChunks=2 -> 2 sub-banks = 2 blocks; chunk_t=accCols/2=one block; numOutBlocks=1). numGPUInputLanes<=2*meshCol.
-    requantizer = standaloneMxFPConfig.requantizer.map(_.copy(numOutputLanes = 4*8*1, numGPUInputLanes = 8))
   )
   lazy val dim8AllMxFPConfig = dim8MxFPConfig.copy(
     inputType  = MxFloat(4, 4, 2, pad=false),
@@ -482,7 +463,6 @@ object GemminiMxFPConfigs {
   lazy val dim8E3M2VpuMxFPConfig = dim8E3M2OnlyMxFPConfig.copy(
     has_vpu = true,
     vpu_params = gemmini.vpu.VpuParams(units = 2, lanes = 4, expSub = true, expSum = true),
-    has_spad_requant = true,
     reservation_station_entries_ld = 32,
     headerFileName = "gemmini_params_dim8_e3m2_vpu.h",
   )
@@ -498,7 +478,6 @@ object GemminiMxFPConfigs {
   lazy val dim8Fp4VpuMxFPConfig = dim8Fp4OnlyMxFPConfig.copy(
     has_vpu = true,
     vpu_params = gemmini.vpu.VpuParams(units = 2, lanes = 4, expSub = true, expSum = true),
-    has_spad_requant = true,
     reservation_station_entries_ld = 32,
     headerFileName = "gemmini_params_dim8_fp4_vpu.h",
   )
@@ -513,11 +492,9 @@ object GemminiMxFPConfigs {
     // 128 KB of 4-B rows = 32768 rows: keeps VPU_EXEC / SPAD_REQUANT row addresses at 15 bits (as DIM=8); 256 KB would
     // need 16, which leaves SPAD_REQUANT's rs1 only 30 bits of scale DRAM address
     sp_capacity = CapacityInKilobytes(128),
-    requantizer = standaloneMxFPConfig.requantizer.map(_.copy(numOutputLanes = 32, numGPUInputLanes = 4)),
     acc_banks = 2,
     has_vpu = true,
     vpu_params = gemmini.vpu.VpuParams(units = 2, lanes = 2, expSub = true, expSum = true),   // a 4-B row = 2 BF16
-    has_spad_requant = true,
     reservation_station_entries_ld = 32,
   )
   lazy val dim4Fp4VpuMxFPConfig = dim4MxFPConfig.copy(
@@ -551,7 +528,6 @@ object GemminiMxFPConfigs {
     acc_banks = 2,
     has_vpu = true,
     vpu_params = gemmini.vpu.VpuParams(units = 2, lanes = 4, expSub = true, expSum = true),
-    has_spad_requant = true,
     reservation_station_entries_ld = 32,
     headerFileName = "gemmini_params_dim8_fp4_e3m2_e4m3_vpu.h",
   )
@@ -562,7 +538,6 @@ object GemminiMxFPConfigs {
     spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.mxGemmini),
     has_vpu = true,
     vpu_params = gemmini.vpu.VpuParams(units = 2, expSub = true, expSum = true),
-    has_spad_requant = true,
     reservation_station_entries_ld = 32,
     headerFileName = "gemmini_params_fp4_e3m2_e4m3_vpu.h",
   )
@@ -577,7 +552,6 @@ object GemminiMxFPConfigs {
     acc_banks = 2,   // dual-bank like the DIM 8 / DIM 16 VPU builds (dim32MxFPConfig defaults to 1)
     has_vpu = true,
     vpu_params = gemmini.vpu.VpuParams(units = 2, lanes = 16, expSub = true, expSum = true),
-    has_spad_requant = true,
     reservation_station_entries_ld = 32,
     max_in_flight_mem_reqs = 64,   // DMA bandwidth = in-flight reqs x bytes / round trip; 32 measured ~8 B/cycle
     headerFileName = "gemmini_params_dim32_e4m3_vpu.h",
@@ -594,7 +568,6 @@ object GemminiMxFPConfigs {
     spatialArrayWeightType = MxFloat.withConfig(3, 3, 2, MxConfig.e3m2Only),
     has_vpu = true,
     vpu_params = gemmini.vpu.VpuParams(units = 2, lanes = 16, expSub = true, expSum = true),
-    has_spad_requant = true,
     reservation_station_entries_ld = 32,
     headerFileName = "gemmini_params_dim32_e3m2_vpu.h",
   )
@@ -605,7 +578,6 @@ object GemminiMxFPConfigs {
     spatialArrayWeightType = MxFloat.withConfig(2, 2, 2, MxConfig.fp4Only),
     has_vpu = true,
     vpu_params = gemmini.vpu.VpuParams(units = 2, lanes = 16, expSub = true, expSum = true),
-    has_spad_requant = true,
     reservation_station_entries_ld = 32,
     headerFileName = "gemmini_params_dim32_fp4_vpu.h",
   )
@@ -675,14 +647,12 @@ object GemminiMxFPConfigs {
   lazy val e3m2VpuMxFPConfig = e3m2OnlyMxFPConfig.copy(
     has_vpu = true,
     vpu_params = gemmini.vpu.VpuParams(units = 2, expSub = true, expSum = true),
-    has_spad_requant = true,
     reservation_station_entries_ld = 32,
   )
   // fp4Only plus the VPU and SPAD_REQUANT, as e3m2Vpu
   lazy val fp4VpuMxFPConfig = fp4OnlyMxFPConfig.copy(
     has_vpu = true,
     vpu_params = gemmini.vpu.VpuParams(units = 2, expSub = true, expSum = true),
-    has_spad_requant = true,
     reservation_station_entries_ld = 32,
     headerFileName = "gemmini_params_fp4_vpu.h",
   )
@@ -719,14 +689,12 @@ object GemminiMxFPConfigs {
     has_first_layer_optimizations = false,
     has_im2col = false,
     has_transposer = false,
-    has_mx_mmio_requant = false,
     has_acc_mvin = false,
     has_nonlinear_activations = true,   // RELU only: has_normalizations stays false
     has_normalizations = false,
     has_vpu = true,
     // two 8-lane VPUs (commands in different spad banks run side by side) with the optional fused softmax ops
     vpu_params = gemmini.vpu.VpuParams(units = 2, expSub = true, expSum = true),
-    has_spad_requant = true,
     reservation_station_entries_ld = 32,   // a K/V block's mvins enter at once instead of blocking the command stream
   )
   // e4m3Trimmed (VPU) plus FP4 x FP4 (mode0, 32x32 tile per pass) beside E4M3-single (mode8); still no LUT.

@@ -89,9 +89,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   import config._
   import ev._
   val block_size = meshRows*tileRows
-  // Widened acc SRAM row (2*meshColumns at DIM=8); read side delivers it as 2 blocks (numChunks=2).
-  val accCols = if (config.use_mx_scaling) MxAccWiden(meshColumns*tileColumns)*meshColumns else meshColumns
-  val numChunks = if (accCols*tileColumns < 16) 1 else 2
+  val accCols = if (config.use_mx_scaling) config.mxGeom.R else meshColumns
+  val numChunks = MxGeom.accChunks(config.use_mx_scaling, accCols*tileColumns)
 
   val io = IO(new Bundle {
     val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
@@ -113,7 +112,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
       val read_resp = Flipped(Vec(acc_banks, Decoupled(new AccumulatorScaleResp(
         Vec(accCols, Vec(tileColumns, accType)),
-        if (config.use_mx_scaling) Vec(config.requantizer.get.numOutputLanes/tileColumns, Vec(tileColumns, weightType)) else Vec(meshColumns, Vec(tileColumns, inputType)),
+        if (config.use_mx_scaling) Vec(config.mxGeom.lanesPerBeat/tileColumns, Vec(tileColumns, weightType)) else Vec(meshColumns, Vec(tileColumns, inputType)),
         if (config.use_mx_scaling) Vec((accCols*tileColumns)/numChunks, Vec(tileColumns, accType)) else Vec(meshColumns, Vec(tileColumns, accType))
       ))))
 

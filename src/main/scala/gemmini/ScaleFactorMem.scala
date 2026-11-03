@@ -4,8 +4,7 @@ import chisel3._
 import chisel3.util._
 
 
-class ScalingFactorReadReq(addrWidth: Int) extends Bundle {
-  val addr = UInt(addrWidth.W) 
+class ScalingFactorReadReq extends Bundle {
   val scaling_enable = Bool() 
 }
 
@@ -17,7 +16,7 @@ class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: 
   // writes happen to all interleaved banks for a line
   val scale_mem_write_w = Flipped(Decoupled(new ScalingFactorWriteReq(addrWidth, dataWidth)))
   val scale_mem_write_act = Flipped(Decoupled(new ScalingFactorWriteReq(addrWidth, dataWidth)))
-  val read_req = Flipped(Decoupled(new ScalingFactorReadReq(7)))
+  val read_req = Flipped(Decoupled(new ScalingFactorReadReq))
   val read_resp = Decoupled(new ScalingFactorReadResp(numRows, numCols))
   val dataType = Input(UInt(2.W))
   val mx_multi_elem = Input(Bool())   // WEIGHT (output-column) throughput: 2 cols/lane iff quad weight
@@ -237,10 +236,8 @@ class ScalingFactorMem(
   val max_block_fp8 = meshRows * tileRows
   val max_block_non_fp8 = 2 * meshRows * tileRows
 
-  // MX block = 32 elements. tilesPerMxBlock k-tiles share one block scale -> advance the scale-row
-  // address once every tilesPerMxBlock k-tiles. DIM16: 32/16=2 -> shift 1; DIM32: 32/32=1 -> shift 0.
-  val tilesPerMxBlock = 32 / (meshRows*tileRows)
-  val kScaleShift = log2Ceil(tilesPerMxBlock max 1)
+  // MxGeom.T k-tiles share one block scale -> advance the scale-row address once every T k-tiles
+  val kScaleShift = log2Ceil(MxGeom(meshRows*tileRows).T)
   val row_addr_width = log2Ceil(2*depth_sram)
   val read_row_addr_act = Wire(UInt(row_addr_width.W))
   val read_row_addr_w = Wire(UInt(row_addr_width.W))

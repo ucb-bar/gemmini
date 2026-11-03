@@ -110,11 +110,10 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              // Instantiation gates for units the MX matmul flow does not use (false = not built).
                                                                              has_im2col: Boolean = true,
                                                                              has_transposer: Boolean = true,          // AlwaysOutTransposer + TransposePreloadUnroller
-                                                                             has_mx_mmio_requant: Boolean = true,     // MMIO requant-in regmap + requant-out Put client
                                                                              has_acc_mvin: Boolean = true,            // mvin into the accumulator (bias path)
                                                                              has_vpu: Boolean = false,                // BF16 vector engine on the scratchpad (VPU_EXEC)
                                                                              vpu_params: gemmini.vpu.VpuParams = gemmini.vpu.VpuParams(),  // VPU count, lanes, optional fused ops
-                                                                             has_spad_requant: Boolean = false,       // SPAD_REQUANT: spad BF16 tile -> MxRequantizer
+                                                                             has_spad_requant: Boolean = true,        // SPAD_REQUANT: spad BF16 tile -> MxRequantizer (MX + requantizer only)
                                                                              has_loop_retire_counter: Boolean = false, // Radiance: count of fully retired LOOP_WS (retire_io), read over MMIO
 
                                                                              use_firesim_simulation_counters: Boolean = false,
@@ -127,14 +126,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              scale_mem: Option[GemminiScalingFactorMemConfig] = None,
                                                                              requantizer: Option[GemminiRequantizerConfig] = None,
                                                                              lut: Option[GemminiLUTConfig] = None,
-                                                                             enable_lut: Boolean = true,
                                                                              use_mx_scaling: Boolean = true,
                                                                              testConfig: Boolean = false,
-                                                                             headerFileName: String = "gemmini_params.h",
-                                                                             // Base of the standalone LUT/requant-in MMIO regmap (mx_mmio_node). Scale
-                                                                             // factors use a separate flat window at scale_mem.baseAddr, not this.
-                                                                             // None => tl_ext_mem_base + 0x100000.
-                                                                             mx_mmio_base: Option[BigInt] = None
+                                                                             headerFileName: String = "gemmini_params.h"
                                                        ) {
   // Deprojected operand-row width: sized to the wider of the two operands so an asymmetric build whose
   // activation (inputType) is wider than its weight still fits (symmetric/weight-wide builds unchanged).
@@ -241,8 +235,13 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val LOG2_DIM        = log2Up(DIM)
   val LOG2_DIM_COUNT  = log2Up(DIM + 1)
   require(DIM >= 2, "the systolic array must have DIM of at least 2")
-  val tilesPerMxBlock = scaleSize / DIM
   require(scaleSize % DIM == 0, "mx block size needs to be multiple of DIM")
+  lazy val mxGeom = MxGeom(DIM, scaleSize)
+  val spad_requant_en = has_spad_requant && use_mx_scaling && requantizer.isDefined
+  if (use_mx_scaling && requantizer.isDefined) {
+    require(Seq(4, 8, 16, 32).contains(DIM) && scaleSize == 32, s"MX supports DIM 4/8/16/32 with block 32, got DIM $DIM block $scaleSize")
+    require(tileRows == 1 && tileColumns == 1, "MX assumes 1x1 PE tiles")
+  }
 
   //==========================================================================
   // cisc-gemmini miscellaneous constants (some redundant with above)

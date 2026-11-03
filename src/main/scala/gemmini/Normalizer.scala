@@ -243,9 +243,9 @@ class Normalizer[T <: Data, U <: Data](max_len: Int, num_reduce_lanes: Int, num_
 
   assert(isPow2(n_lanes))
 
-  // MX: one chunk of the WIDENED acc row (DIM<16: MxAccWiden col-tiles per row), as the acc read delivers it
-  val wideLen = fullDataType.length * (if (use_mx_scaling) MxAccWiden(fullDataType.length*fullDataType.head.size) else 1)
-  val numChunks = if (wideLen*fullDataType.head.size < 16) 1 else 2
+  // MX: one chunk of the MxGeom.R-entry acc row, as the acc read delivers it
+  val wideLen = if (use_mx_scaling) MxGeom(fullDataType.length*fullDataType.head.size).R else fullDataType.length
+  val numChunks = MxGeom.accChunks(use_mx_scaling, wideLen*fullDataType.head.size)
   val half_t = if (use_mx_scaling) Vec(wideLen / numChunks, fullDataType.head.cloneType)
                else Vec(fullDataType.length, fullDataType.head.cloneType)
 
@@ -811,8 +811,8 @@ object Normalizer {
   def passthru[T <: Data, U <: Data](max_len: Int, num_stats: Int, fullDataType: Vec[Vec[T]], scale_t: U, use_mx_scaling: Boolean)
                                     (implicit ev: Arithmetic[T]): (DecoupledIO[NormalizedInput[T,U]], DecoupledIO[NormalizedOutput[T,U]]) = {
 
-    val wideLen = fullDataType.length * (if (use_mx_scaling) MxAccWiden(fullDataType.length*fullDataType.head.size) else 1)
-    val numChunks = if (wideLen*fullDataType.head.size < 16) 1 else 2
+    val wideLen = if (use_mx_scaling) MxGeom(fullDataType.length*fullDataType.head.size).R else fullDataType.length
+    val numChunks = MxGeom.accChunks(use_mx_scaling, wideLen*fullDataType.head.size)
     val half_t = if (use_mx_scaling) Vec(wideLen/numChunks, fullDataType.head.cloneType)
                  else Vec(fullDataType.length, fullDataType.head.cloneType)
     val norm_unit_passthru_q = Module(new Queue(new NormalizedInput[T,U](max_len, num_stats, fullDataType, scale_t, half_t), 2))
