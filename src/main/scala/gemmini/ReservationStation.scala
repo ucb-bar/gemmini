@@ -324,15 +324,12 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       // TODO: make it so that spad move has its own load config states
       val mv_cols = cmd.rs2(32 + mvout_cols_bits - 1, 32)
       val mv_rows = cmd.rs2(48 + mvout_rows_bits - 1, 48)
-      // MX: an absolute row step (rs1 bit 63) spreads the rows: [dst, dst + rows*step + 16) also covers the tiled
-      // layout's second beat 16 rows below each row
+      // MX: an absolute row step (rs1 bit 63) spreads the rows. BF16 store (rs2[63]): row r's bf16Beats beats (kept
+      // >= 8) are consecutive at dst + r*step; others: rows*step + the tiled beats (codeBeats, one K-tile apart)
       val st_step = cmd.rs1(62, 32)
-      // BF16 store (rs2[63], from StCSpad): row r writes its beats (<= 8) to consecutive rows at dst + r*step, so the
-      // exact span is (rows-1)*step + 8; other flagged stores keep the conservative rows*step + 16 (tiled beats)
-      // a 512-b acc chunk is 512/(DIM*8) spad rows of BF16 (16 at DIM=4), kept >= 8; a tiled requant output's
-      // codeBeats beats land one K-tile height apart
-      val bf16_beats = (512 / (block_cols * 8)) max 8
-      val tiled_span = (MxGeom(block_cols).codeBeats - 1) * MxGeom(block_cols).kTileRows
+      val geom = MxGeom(block_cols)
+      val bf16_beats = geom.bf16Beats max 8
+      val tiled_span = (geom.codeBeats - 1) * geom.kTileRows
       val mvout_dst_rows = if (use_mx_scaling) Mux(cmd.rs1(63),
         Mux(cmd.rs2(63), (mv_rows - 1.U) * st_step + bf16_beats.U, mv_rows * st_step + tiled_span.U), mv_rows) else mv_rows
 
