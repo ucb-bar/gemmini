@@ -460,8 +460,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     })
 
     val write_dispatch_q = if (use_mx_scaling) {
-      val write_req_expander = Module(new WriteReqExpander(local_addr_t, accType.getWidth, acc_scale_t_bits, math.min(16, block_cols),
-        acc_chunk_w / 32))
+      // row lengths in 4-B units: quad-weight row min(DIM, 16); quad x quad output row R (one acc chunk)
+      val write_req_expander = Module(new WriteReqExpander(local_addr_t, accType.getWidth, acc_scale_t_bits,
+        config.mxGeom.dim min 16, config.mxGeom.R))
       write_req_expander.io.in <> io.dma.write.req
       Queue(write_req_expander.io.out)
     } else {
