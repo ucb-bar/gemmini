@@ -67,7 +67,8 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
 }
 
 class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int, fullRowLen: Int = 16,
-                       quadRowLen: Int = 16)(implicit p: Parameters) extends Module {
+                       quadRowLen: Int = 16, chunkEntries: Int = 8, partialChunks: Boolean = false)
+                      (implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new ScratchpadMemWriteRequest(local_addr_t, acc_t_bits, scale_t_bits)))
     val out = Decoupled(new ScratchpadMemWriteRequest(local_addr_t, acc_t_bits, scale_t_bits))
@@ -97,9 +98,13 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
   // Acc (and garbage, which is acc-tagged) keep 16; spad-source requests keep the real row length (DIM32 = 32).
   // A quad x quad acc write carries one whole output row (quadRowLen 4-B units: 16 at DIM8/16, 32 = 128 B at DIM32);
   // so does an E4M3-single BF16 chunk (2*DIM cols).
-  io.out.bits.len := Mux(io.in.bits.laddr.is_acc_addr,
-    Mux((is_non_fp8_acc_write && io.in.bits.mx_multi_elem) ||
-        (!io.in.bits.mx_multi_elem_act && io.in.bits.output_mx_type === 3.U), quadRowLen.U, 16.U), io.in.bits.len)
+  // single-weight partial chunk (DIM32 only): the store's own length (4-B units: BF16 2/entry, FP8 1/entry)
+  val partial_chunk = partialChunks.B && is_acc_write && !io.in.bits.mx_multi_elem && !io.in.bits.mx_multi_elem_act &&
+    io.in.bits.len < chunkEntries.U
+  io.out.bits.len := Mux(partial_chunk, Mux(io.in.bits.output_mx_type === 3.U, io.in.bits.len << 1, io.in.bits.len),
+    Mux(io.in.bits.laddr.is_acc_addr,
+      Mux((is_non_fp8_acc_write && io.in.bits.mx_multi_elem) ||
+          (!io.in.bits.mx_multi_elem_act && io.in.bits.output_mx_type === 3.U), quadRowLen.U, 16.U), io.in.bits.len))
   io.out.bits.chunk_id := out_chunk_id
   io.out.bits.store_en := Mux(is_non_fp8_acc_write, !second_half || !second_half_invalid, io.in.bits.store_en)
   io.out.bits.vaddr   := Mux(is_non_fp8_acc_write && second_half,
@@ -462,7 +467,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val write_dispatch_q = if (use_mx_scaling) {
       // row lengths in 4-B units: quad-weight row min(DIM, 16); quad x quad output row R (one acc chunk)
       val write_req_expander = Module(new WriteReqExpander(local_addr_t, accType.getWidth, acc_scale_t_bits,
-        config.mxGeom.dim min 16, config.mxGeom.R))
+        config.mxGeom.dim min 16, config.mxGeom.R, config.mxGeom.chunkEntries, config.mxGeom.partialChunks))
       write_req_expander.io.in <> io.dma.write.req
       Queue(write_req_expander.io.out)
     } else {
@@ -1066,7 +1071,12 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           // FP8 (2 beats) or non-requant BF16 (4 beats): drain into consecutive bank rows, consume last.
           val narrowVec = acc_scale_unit.io.out.bits.data.asUInt.asTypeOf(Vec(acc_spad_beats, UInt(spad_w.W)))
           val wideVec   = acc_scale_unit.io.out.bits.full_data.asUInt.asTypeOf(Vec(acc_write_w / spad_w, UInt(spad_w.W)))
-          val last_beat = Mux(requant_bf16, (acc_write_w / spad_w - 1).U, (acc_spad_beats - 1).U)
+          val full_last = Mux(requant_bf16, (acc_write_w / spad_w - 1).U, (acc_spad_beats - 1).U)
+          // DIM32 single-weight: beats = the expander's len (4-B units) in DIM-byte spad rows (half for a partial chunk)
+          val len_last  = ((write_issue_q.io.deq.bits.len << 2) >> log2Ceil(block_cols)).asUInt - 1.U
+          val single_w  = !write_issue_q.io.deq.bits.mx_multi_elem && !write_issue_q.io.deq.bits.mx_multi_elem_act
+          val last_beat = if (config.mxGeom.partialChunks) Mux(single_w, len_last, full_last)
+                          else full_last
           // reuse_tiled (8-bit E4M3): beat b lands b K-tile heights below instead of flat.
           val tiled_beat = write_issue_q.io.deq.bits.reuse_tiled && (io.output_mx_format === 0.U) && !io.mx_fp8_altfmt && !io.mx_lut_en
           bio.write.addr := requant_dst_row + Mux(tiled_beat, (requant_half << log2Ceil(config.mxGeom.kTileRows)).asUInt, requant_half)

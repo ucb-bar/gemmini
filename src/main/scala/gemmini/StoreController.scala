@@ -130,10 +130,10 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val mx_stride = if (config.use_mx_scaling) {
     // Gated tiled requant->spad (FP8) carries the intra-tile row in the beat term, so per-row stride is 1.
     Mux(mvout_rs2.reuse_tiled, 1.U,
-      Mux(io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j / 2.U * 4.U,
+      Mux(io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j * 2.U,
         // act-quad packs 2 output rows per acc row (stride *8); act-single (mode6/7) = 1 output row -> *4.
         Mux(io.enable_wide_spad_write, io.loop_bound_j * Mux(io.mx_multi_elem_act, 8.U, 4.U),
-          Mux(!io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j / 2.U * 2.U,
+          Mux(!io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j,
             Mux(!io.enable_wide_spad_write && io.mx_multi_elem, io.loop_bound_j * 2.U,
               1.U
             )

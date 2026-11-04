@@ -13,6 +13,8 @@ case class MxGeom(dim: Int, mxBlock: Int = 32) {
   val bf16Beats     = 2 * lanesPerBeat / dim  // spad rows per bf16 beat
   val chunkTiles    = lanesPerBeat / dim      // mesh col-tiles covered by one acc read chunk (one output row)
   val kTileRows     = dim                     // operand-A tiled layout: spad rows per K-tile (LdA tile = DIM rows)
+  val chunkEntries  = R / 2                   // acc entries per chunk
+  val partialChunks = chunkTiles > T          // a chunk spans >1 MX block (DIM32): a row's last chunk can be half full
 }
 
 object MxGeom {
