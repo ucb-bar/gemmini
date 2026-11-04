@@ -1216,7 +1216,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   val w_mask = if (use_mx_scaling) {
     // Single-throughput (E4M3 1/lane) uses the fmt0 element mask; multi (incl. E4M3-quad) uses the full mask.
-    Mux(!mx_multi_elem, VecInit((0 until block_size).map(e => offset <= e.U && e.U < (offset +& w_matrix_cols / 4.U))),
+    def win(base: UInt, e: Int) = base <= e.U && e.U < (base +& w_matrix_cols / 4.U)
+    Mux(!mx_multi_elem, VecInit((0 until block_size).map(e =>
+      win(offset, e) || (mx_multi_elem_act && win(offset +& (block_size / 2).U, e)))),
       VecInit((0 until block_size).map(_.U < w_matrix_cols))) // This is an element-wise mask, rather than a byte-wise mask
   } else {
       VecInit((0 until block_size).map(_.U < w_matrix_cols))
@@ -1282,8 +1284,17 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           val words = cols.grouped(4).map { g => Cat(g(3), g(2), g(1), g(0)) }.toSeq
           VecInit(words ++ Seq.fill(words.length)(0.U(64.W))).asUInt.asTypeOf(io.acc.write(i).bits.data)
         }
-        // Single E4M3 -> fmt0; act-single/wei-quad -> singleActQuadWei; both quad -> packed (2x2).
-        io.acc.write(i).bits.data := Mux(!mx_multi_elem, fmt0_data,
+        // ACT quad, WEI single (mode2/5): lanes 0,1 = rows 2r,2r+1; a col-tile pair shares the quad layout, this
+        // tile's D cols at lane offset (0 or D/4) of each row half
+        val quadActSingleWei = {
+          val elems = mesh.io.resp.bits.data.flatten.map(_.withWidthOf(accType).asUInt)
+          def words(lo: Int) = elems.map(_(lo + 15, lo)).grouped(4).map(g => Cat(g.reverse)).toSeq
+          val z = Seq.fill(block_size / 4)(0.U(64.W))
+          (VecInit(words(0) ++ z ++ words(16) ++ z).asUInt << (offset * 64.U)).asTypeOf(io.acc.write(i).bits.data)
+        }
+        // Single E4M3 -> fmt0; act-single/wei-quad -> singleActQuadWei; act-quad/wei-single -> quadActSingleWei;
+        // both quad -> packed (2x2).
+        io.acc.write(i).bits.data := Mux(!mx_multi_elem, Mux(mx_multi_elem_act, quadActSingleWei, fmt0_data),
           Mux(!mx_multi_elem_act, singleActQuadWei, packed_data))
       }
 

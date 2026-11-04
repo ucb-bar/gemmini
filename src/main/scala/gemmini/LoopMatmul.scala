@@ -347,6 +347,7 @@ class LoopMatmulExecuteReq(val block_size: Int, val coreMaxAddrBits: Int, val it
   val c_addr_start = UInt(log2Up(max_acc_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
   val narrow_type = Bool()
+  val narrow_act = Bool()
   val skip = Bool()
   val scale_cfg = Bool()   // loop manages its scales: open the ex stream with CONFIG_SCALE_MEM(this loop, wait)
   val scale_a_reuse = Bool()   // its A scales are already resident in its half (no A load was issued)
@@ -409,8 +410,11 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   // single: per-i C stride in tiles = max_j rounded up to whole W-group acc rows (4W tiles; 4 at DIM>=16)
   val tilesPerAccRow = 4 * MxGeom(block_size).W
   val ceil_max_j4 = ((req.max_j + (tilesPerAccRow - 1).U) >> log2Ceil(tilesPerAccRow)) << log2Ceil(tilesPerAccRow)
+  // act-quad x wei-single: col-tiles j, j+1 share one quad acc row (j odd at lane offset DIM/4)
+  val pair_max_j = (req.max_j + 1.U) >> 1
   val c_addr = Mux(req.narrow_type, c_addr_start + (i * req.max_j + j) * block_size.U,
-    c_addr_start + (i * ceil_max_j4 + j) * (block_size / 4).U)
+    Mux(req.narrow_act, c_addr_start + (i * pair_max_j + (j >> 1)) * block_size.U + j(0) * (block_size / 4).U,
+      c_addr_start + (i * ceil_max_j4 + j) * (block_size / 4).U))
 
   val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
   val a_rows = block_ij - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)       
@@ -1305,15 +1309,21 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ex.io.ld_j := ldB.io.j
   ex.io.ld_i := ldA.io.i
 
+  // act-quad x wei-single: stores see col-tile pairs as quad tiles. ex_j = 2q+1: pair q done for rows < ex_i;
+  // ex_j = 2q: pairs < q done, pair q not started (-> pair q, ex_i 0)
+  val st_pair = io.mx_multi_elem_act && !io.mx_multi_elem
+  val st_ex_j = Mux(st_pair, ex.io.j >> 1, ex.io.j)
+  val st_ex_i = Mux(st_pair && !ex.io.j(0), 0.U, ex.io.i)
+
   stC.io.ex_completed := (ex.io.loop_id =/= stC.io.loop_id) || ex.io.idle
   stC.io.ex_k := ex.io.k
-  stC.io.ex_j := ex.io.j
-  stC.io.ex_i := ex.io.i
+  stC.io.ex_j := st_ex_j
+  stC.io.ex_i := st_ex_i
 
   stC_spad.io.ex_completed := (ex.io.loop_id =/= stC_spad.io.loop_id) || ex.io.idle
   stC_spad.io.ex_k := ex.io.k
-  stC_spad.io.ex_j := ex.io.j
-  stC_spad.io.ex_i := ex.io.i
+  stC_spad.io.ex_j := st_ex_j
+  stC_spad.io.ex_i := st_ex_i
 
   // when loop matmul is used as resadd unroller
   // skip ex
@@ -1672,6 +1682,9 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ex.io.req.bits.c_addr_start := ex_c_addr_start
   ex.io.req.bits.loop_id := loop_requesting_ex_id
   ex.io.req.bits.narrow_type := loop_requesting_ex.narrow_type
+  ex.io.req.bits.narrow_act := loop_requesting_ex.narrow_act
+  assert(!(ex.io.req.fire && ex.io.req.bits.narrow_act && !ex.io.req.bits.narrow_type && ex.io.req.bits.max_j(0)),
+    "act-quad x wei-single: max_j must be even (col-tile pairs share a quad acc row)")
   ex.io.req.bits.skip := is_resadd
   ex.io.req.bits.scale_cfg := loop_requesting_ex.a_scale_addr =/= 0.U
   ex.io.req.bits.scale_a_reuse := loop_requesting_ex.lds_a_reuse
@@ -1721,7 +1734,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val loop_requesting_st_id = Mux(head_loop.st_started, tail_loop_id, head_loop_id)
   val loop_requesting_st = loops(loop_requesting_st_id)
   stC.io.req.bits.max_k := Mux(is_resadd, 1.U, loop_requesting_st.max_k)
-  stC.io.req.bits.max_j := loop_requesting_st.max_j
+  val st_max_j = Mux(st_pair, loop_requesting_st.max_j >> 1, loop_requesting_st.max_j)
+  stC.io.req.bits.max_j := st_max_j
   stC.io.req.bits.max_i := loop_requesting_st.max_i
   stC.io.req.bits.pad_j := loop_requesting_st.pad_j
   stC.io.req.bits.pad_i := loop_requesting_st.pad_i
@@ -1734,11 +1748,11 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.is_resadd := is_resadd
   stC.io.req.bits.output_mx_format := io.output_mx_format
   stC.io.req.bits.activation_mx_format := io.activation_mx_format
-  stC.io.req.bits.mx_multi_elem := io.mx_multi_elem
+  stC.io.req.bits.mx_multi_elem := io.mx_multi_elem || st_pair
   stC.io.req.bits.mx_multi_elem_act := io.mx_multi_elem_act
 
   stC_spad.io.req.bits.max_k := Mux(is_resadd, 1.U, loop_requesting_st.max_k)
-  stC_spad.io.req.bits.max_j := loop_requesting_st.max_j
+  stC_spad.io.req.bits.max_j := st_max_j
   stC_spad.io.req.bits.max_i := loop_requesting_st.max_i
   stC_spad.io.req.bits.pad_j := loop_requesting_st.pad_j
   stC_spad.io.req.bits.pad_i := loop_requesting_st.pad_i
@@ -1750,7 +1764,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC_spad.io.req.bits.is_resadd := is_resadd
   stC_spad.io.req.bits.output_mx_format := io.output_mx_format
   stC_spad.io.req.bits.activation_mx_format := io.activation_mx_format
-  stC_spad.io.req.bits.mx_multi_elem := io.mx_multi_elem
+  stC_spad.io.req.bits.mx_multi_elem := io.mx_multi_elem || st_pair
   stC_spad.io.req.bits.mx_multi_elem_act := io.mx_multi_elem_act
   stC_spad.io.req.bits.reuse_tiled := loop_requesting_st.reuse_tiled
 

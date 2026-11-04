@@ -383,6 +383,18 @@ class ScalingFactorMem(
           io.read_resp.bits.combined_scales(i) := Cat(0.U(27.W), single_scale(8, 0))
         }
       }
+    }.elsewhen(!fp8Mode_act && fp8Mode_wei){
+      // ACT quad, WEI single (mode2/5): act rows 2c, 2c+1 x the tile's dim weight cols -> elements 0..dim/4-1 =
+      // row 2c (4 cols each), dim/4..dim/2-1 = row 2c+1
+      val d = meshRows*tileRows
+      val buf = Mux(scale_counter_d1 === 0.U, combined_scales_buffer, combined_scales_buffer_reg)
+      val r0 = VecInit(buf(scale_counter_d1 << 1.U).take(d)).asUInt
+      val r1 = VecInit(buf((scale_counter_d1 << 1.U) + 1.U).take(d)).asUInt
+      val scale_all = Cat(r1, r0)
+      for (i <- 0 until meshRows*tileRows) {
+        if (i < d/2) io.read_resp.bits.combined_scales(i) := scale_all(36*i+35, 36*i)
+        else       io.read_resp.bits.combined_scales(i) := 0.U
+      }
     }.elsewhen(fp8Mode_act && !fp8Mode_wei){
       // ACT single, WEI quad (mode6/7): 1 act-row per step (scale_counter direct), 32 wei-cols -> 8
       // elements of 4 cols (act(r) x 4 wei); no second output row (elems 8..15 = 0).

@@ -221,8 +221,22 @@ class AccumulatorMem[T <: Data, U <: Data](
     val dim = meshRows * tileRows
     // resp is broadcast to all banks; it is this bank's iff this bank wrote last cycle (one bank writes/cycle)
     when(scale_resp.valid && pipelined_writes(0).valid) {
+      // ACT quad, WEI single: two dim/4 windows (row 2r at offset, row 2r+1 at dim/2 + offset); resp lane k = row
+      // 2r scales for k < dim/4, row 2r+1 scales for k in [dim/4, dim/2)
+      when(!io.mx_multi_elem && io.mx_multi_elem_act) {
+        val offset = pipelined_writes(0).bits.offset
+        for (i <- 0 until dim) {
+          val dataElement = pipelined_writes(0).bits.data(i).asUInt
+          val in0 = i.U >= offset && i.U < (offset +& (dim / 4).U)
+          val in1 = i.U >= (offset +& (dim / 2).U) && i.U < (offset +& (3 * dim / 4).U)
+          val k = Mux(in1, i.U - offset - (dim / 4).U, i.U - offset)
+          val scale = scale_resp.bits.combined_scales(k)
+          val scaled = VecInit(dataElement.asTypeOf(Vec(4, UInt(16.W))).zipWithIndex.map { case (e, j) =>
+            applyE9M0Scale(e, scale(j*9 + 8, j*9), 8, 7) }).asUInt
+          scaled_data(i) := Mux(in0 || in1, scaled, 0.U).asTypeOf(pipelined_writes(0).bits.data(i))
+        }
       // Narrow dim/4 window only for E4M3-single; E4M3-quad and E5M2 use the full-width path below.
-      when(dataType === 0.U && !io.mx_multi_elem && !io.mx_fp8_altfmt) {
+      }.elsewhen(dataType === 0.U && !io.mx_multi_elem && !io.mx_fp8_altfmt) {
         for (i <- 0 until dim) {
           val dataElement = Wire(UInt(64.W))
           val offset = pipelined_writes(0).bits.offset
@@ -430,12 +444,15 @@ class AccumulatorMem[T <: Data, U <: Data](
       // 0,2 vs 1,3 exactly). SINGLE writes ONE col-tile = 2 entries at [local_offset, local_offset+1] within its
       // chunk, so it masks ONLY that pair (bit = chunk*half + local_offset/2); otherwise it clobbers the 3 sibling
       // col-tiles sharing the chunk (root cause of the DIM=8 single failure).
-      mem.io.wdata := Mux(io.mx_multi_elem, placeWide(wr_data, wr_par), placeSingle(wr_data, wr_chunk))
+      mem.io.wdata := Mux(io.mx_multi_elem || io.mx_multi_elem_act, placeWide(wr_data, wr_chunk), placeSingle(wr_data, wr_chunk))
       val single_mask_bit = wr_chunk * (t.length / gEnt).U + (wr_par >> log2Ceil(gEnt))
-      mem.io.mask  := Mux(io.mx_multi_elem,
-        // quad: mask bit q (gEnt entries) belongs to col-tile ((gEnt*q / half) mod W)
-        VecInit((0 until mask_len_wide).map(q => ((gEnt * q / half) % W).U === wr_par(lgW - 1, 0))),
-        VecInit((0 until mask_len_wide).map(q => q.U === single_mask_bit)))
+      // quad: mask bit q (gEnt entries) belongs to col-tile ((gEnt*q / half) mod W)
+      def quadBit(q: Int) = ((gEnt * q / half) % W).U === wr_chunk
+      // act-quad x wei-single: one col-tile of the pair = mask bit (q mod half/gEnt) = local offset / gEnt
+      val pair_sub = wr_par >> log2Ceil(gEnt)
+      mem.io.mask  := Mux(io.mx_multi_elem, VecInit((0 until mask_len_wide).map(quadBit)),
+        Mux(io.mx_multi_elem_act, VecInit((0 until mask_len_wide).map(q => quadBit(q) && (q % (half / gEnt)).U === pair_sub)),
+          VecInit((0 until mask_len_wide).map(q => q.U === single_mask_bit))))
     } else {
       mem.io.waddr := oldest_pipelined_write.bits.addr
       mem.io.wdata := wr_data
@@ -457,7 +474,8 @@ class AccumulatorMem[T <: Data, U <: Data](
       // SINGLE: RMW read picks the chunk by the read address' block bit (rd_chunk above); QUAD uses the offset-field
       // parity. Both delayed by RegNext to match the SyncMem read latency.
       rdata_for_adder := (if (widen) Mux(io.mx_multi_elem, extractWide(mem.io.rdata_full, RegNext(rd_par)),
-                                                           extractSingle(mem.io.rdata_full, RegNext(rd_chunk)))
+                                   Mux(io.mx_multi_elem_act, extractWide(mem.io.rdata_full, RegNext(rd_chunk)),
+                                                           extractSingle(mem.io.rdata_full, RegNext(rd_chunk))))
                           else mem.io.rdata_full)
 
       // half-width read: address = {row, bank_sel}. numChunks=2 sub-banks = the 2 blocks (rowR/rowR+1);
