@@ -410,7 +410,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   // single: per-i C stride in tiles = max_j rounded up to whole W-group acc rows (4W tiles; 4 at DIM>=16)
   val tilesPerAccRow = 4 * MxGeom(block_size).W
   val ceil_max_j4 = ((req.max_j + (tilesPerAccRow - 1).U) >> log2Ceil(tilesPerAccRow)) << log2Ceil(tilesPerAccRow)
-  // act-quad x wei-single: col-tiles j, j+1 share one quad acc row (j odd at lane offset DIM/4)
+  // act-quad x wei-single: col-tiles j, j+1 share one quad acc row (j odd at lane offset DIM/4); odd max_j: last half full
   val pair_max_j = (req.max_j + 1.U) >> 1
   val c_addr = Mux(req.narrow_type, c_addr_start + (i * req.max_j + j) * block_size.U,
     Mux(req.narrow_act, c_addr_start + (i * pair_max_j + (j >> 1)) * block_size.U + j(0) * (block_size / 4).U,
@@ -571,6 +571,7 @@ class LoopMatmulStCReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val activation_mx_format = UInt(2.W)
   val mx_multi_elem = Bool()   // throughput: 2 elements/lane (datatype-independent)
   val mx_multi_elem_act = Bool()   // ACTIVATION (output-row) throughput
+  val pair = Bool()   // act-quad x wei-single: max_j single col-tiles stored as ceil(max_j/2) quad pairs
 }
 
 class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, max_block_len: Int, concurrent_loops: Int, tilesPerMxBlock: Int, mvout_rs2_t: MvoutRs2,
@@ -602,7 +603,11 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val req = Reg(new LoopMatmulStCReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, concurrent_loops))
 
-  val iter_max_j = Mux(!req.mx_multi_elem, (req.max_j + 3.U) / 4.U, req.max_j)
+  val iter_max_j = Mux(!req.mx_multi_elem, (req.max_j + 3.U) / 4.U, Mux(req.pair, (req.max_j + 1.U) >> 1, req.max_j))
+  // quad output width in DIM-col tiles (N/DIM): 2 per quad tile, 1 per pair member
+  val quad_nd = Mux(req.pair, req.max_j, req.max_j << 1)
+  // an odd pair count leaves the last pair half full (DIM cols = DIM/2 quad col units)
+  val pair_pad = Mux(req.pair && req.max_j(0), (block_size / 2).U, 0.U)
   val iter_max_i = req.max_i
   val ex_j_compressed = Mux(!req.mx_multi_elem, io.ex_j / 4.U, io.ex_j)
   val ex_i_compressed = io.ex_i
@@ -653,7 +658,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     MxStoreIter.chunkValidTiles(geom, j, req.max_j, chunk_id) * (block_size / 4).U -
       Mux(MxStoreIter.chunkEndsRow(geom, j, req.max_j, chunk_id), req.pad_j, 0.U)
   }, {
-    blocks * block_size.U - Mux(j + blocks >= iter_max_j, req.pad_j, 0.U)
+    blocks * block_size.U - Mux(j + blocks >= iter_max_j, req.pad_j +& pair_pad, 0.U)
   })
   val rows = block_size.U - Mux(i === iter_max_i-1.U, req.pad_i, 0.U)
 
@@ -737,7 +742,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val fold = MxStoreIter.fold(geom, use_mx_scaling)   // non-MX acc rows are not widened
   // quad at DIM<16: a W-wide acc row is only fully written when N is a multiple of the 32-col MX block
   when(state =/= idle && req.mx_multi_elem && fold) {
-    assert(req.max_j % geom.W.U === 0.U, "quad at DIM<16: max_j must be a multiple of W (N a multiple of the MX block)")
+    assert(iter_max_j % geom.W.U === 0.U, "quad at DIM<16: max_j must be a multiple of W (N a multiple of the MX block)")
   }
   val j_span = MxStoreIter.jSpan(geom, fold, j, iter_max_j, blocks)
   val last_group = j + j_span - 1.U
@@ -830,6 +835,7 @@ class LoopMatmulStCSpadReq(val block_size: Int, val iterator_bitwidth: Int, val 
   val activation_mx_format = UInt(2.W)
   val mx_multi_elem = Bool()   // throughput: 2 elements/lane (datatype-independent)
   val mx_multi_elem_act = Bool()   // ACTIVATION (output-row) throughput
+  val pair = Bool()   // act-quad x wei-single: max_j single col-tiles stored as ceil(max_j/2) quad pairs
   // Output C region overlaps an A/B operand region this loop still reads (decided at dispatch);
   // gates the store on full execute drain.
   val dst_overlaps_operands = Bool()
@@ -867,7 +873,11 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
 
   val req = Reg(new LoopMatmulStCSpadReq(block_size, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops))
 
-  val iter_max_j = Mux(!req.mx_multi_elem, (req.max_j + 3.U) / 4.U, req.max_j)
+  val iter_max_j = Mux(!req.mx_multi_elem, (req.max_j + 3.U) / 4.U, Mux(req.pair, (req.max_j + 1.U) >> 1, req.max_j))
+  // quad output width in DIM-col tiles (N/DIM): 2 per quad tile, 1 per pair member
+  val quad_nd = Mux(req.pair, req.max_j, req.max_j << 1)
+  // an odd pair count leaves the last pair half full (DIM cols = DIM/2 quad col units)
+  val pair_pad = Mux(req.pair && req.max_j(0), (block_size / 2).U, 0.U)
   val iter_max_i = req.max_i
   val ex_j_compressed = Mux(!req.mx_multi_elem, io.ex_j / 4.U, io.ex_j)
   val ex_i_compressed = io.ex_i
@@ -916,7 +926,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     // (mode6/7) H=16 -> i*max_j*block_size*4. The old x8-only assumed quad and doubled the act-single
     // i-stride (tiles i>=1 landed at 2x -> rows>=16 garbage). Gate the height on mx_multi_elem_act.
     // j-term: J-tile = 2*DIM bf16 cols = 4*DIM B = 4 flat spad rows at every DIM.
-    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i*req.max_j)*block_size.U*Mux(req.mx_multi_elem_act, 8.U, 4.U) + j * 4.U)
+    ((req.mx_multi_elem) && (req.output_mx_format === 3.U)) -> ((i*quad_nd)*block_size.U*Mux(req.mx_multi_elem_act, 4.U, 2.U) + j * 4.U)
     ))
   val dst_addr = Mux(!req.mx_multi_elem,
     req.dst_addr + dst_offset + chunk_id * chunk_spad_stride,
@@ -931,7 +941,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
       Mux(MxStoreIter.chunkEndsRow(geom, j, req.max_j, chunk_id), req.pad_j, 0.U)
   }, {
     // DIM=8 widen: one read covers the wide row = 2 col-tiles = accBlockSize (16) cols, mimicking DIM=16.
-    blocks * accBlockSize.U - Mux(j + blocks >= iter_max_j, req.pad_j, 0.U)
+    blocks * accBlockSize.U - Mux(j + blocks >= iter_max_j, req.pad_j +& pair_pad, 0.U)
   })
   val rows = block_size.U - Mux(i === iter_max_i-1.U, req.pad_i, 0.U)
 
@@ -949,7 +959,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val st_wide = req.output_mx_format === 3.U
   val st_row_step = Mux(req.reuse_tiled, 1.U,
     Mux(st_wide && !req.mx_multi_elem, st_j * 2.U,   // single row pitch: N*2/DIM (BF16), N/DIM (FP8); odd max_j at DIM32
-      Mux(st_wide, st_j * Mux(req.mx_multi_elem_act, 8.U, 4.U),
+      Mux(st_wide, quad_nd * Mux(req.mx_multi_elem_act, 4.U, 2.U),
         Mux(!req.mx_multi_elem, st_j, st_j * 2.U))))
   mvout_cmd_rs1.stride := (BigInt(1) << 31).U | st_row_step.pad(31)
   mvout_cmd.rs1 := mvout_cmd_rs1.asUInt
@@ -976,7 +986,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val fold = MxStoreIter.fold(geom, true)
   // quad at DIM<16: a W-wide acc row is only fully written when N is a multiple of the 32-col MX block
   when(state =/= idle && req.mx_multi_elem && fold) {
-    assert(req.max_j % geom.W.U === 0.U, "quad at DIM<16: max_j must be a multiple of W (N a multiple of the MX block)")
+    assert(iter_max_j % geom.W.U === 0.U, "quad at DIM<16: max_j must be a multiple of W (N a multiple of the MX block)")
   }
   val j_span = MxStoreIter.jSpan(geom, fold, j, iter_max_j, blocks)
   val last_group = j + j_span - 1.U
@@ -1683,8 +1693,6 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ex.io.req.bits.loop_id := loop_requesting_ex_id
   ex.io.req.bits.narrow_type := loop_requesting_ex.narrow_type
   ex.io.req.bits.narrow_act := loop_requesting_ex.narrow_act
-  assert(!(ex.io.req.fire && ex.io.req.bits.narrow_act && !ex.io.req.bits.narrow_type && ex.io.req.bits.max_j(0)),
-    "act-quad x wei-single: max_j must be even (col-tile pairs share a quad acc row)")
   ex.io.req.bits.skip := is_resadd
   ex.io.req.bits.scale_cfg := loop_requesting_ex.a_scale_addr =/= 0.U
   ex.io.req.bits.scale_a_reuse := loop_requesting_ex.lds_a_reuse
@@ -1734,8 +1742,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val loop_requesting_st_id = Mux(head_loop.st_started, tail_loop_id, head_loop_id)
   val loop_requesting_st = loops(loop_requesting_st_id)
   stC.io.req.bits.max_k := Mux(is_resadd, 1.U, loop_requesting_st.max_k)
-  val st_max_j = Mux(st_pair, loop_requesting_st.max_j >> 1, loop_requesting_st.max_j)
-  stC.io.req.bits.max_j := st_max_j
+  stC.io.req.bits.max_j := loop_requesting_st.max_j
   stC.io.req.bits.max_i := loop_requesting_st.max_i
   stC.io.req.bits.pad_j := loop_requesting_st.pad_j
   stC.io.req.bits.pad_i := loop_requesting_st.pad_i
@@ -1749,10 +1756,11 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.output_mx_format := io.output_mx_format
   stC.io.req.bits.activation_mx_format := io.activation_mx_format
   stC.io.req.bits.mx_multi_elem := io.mx_multi_elem || st_pair
+  stC.io.req.bits.pair := st_pair
   stC.io.req.bits.mx_multi_elem_act := io.mx_multi_elem_act
 
   stC_spad.io.req.bits.max_k := Mux(is_resadd, 1.U, loop_requesting_st.max_k)
-  stC_spad.io.req.bits.max_j := st_max_j
+  stC_spad.io.req.bits.max_j := loop_requesting_st.max_j
   stC_spad.io.req.bits.max_i := loop_requesting_st.max_i
   stC_spad.io.req.bits.pad_j := loop_requesting_st.pad_j
   stC_spad.io.req.bits.pad_i := loop_requesting_st.pad_i
@@ -1765,6 +1773,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC_spad.io.req.bits.output_mx_format := io.output_mx_format
   stC_spad.io.req.bits.activation_mx_format := io.activation_mx_format
   stC_spad.io.req.bits.mx_multi_elem := io.mx_multi_elem || st_pair
+  stC_spad.io.req.bits.pair := st_pair
   stC_spad.io.req.bits.mx_multi_elem_act := io.mx_multi_elem_act
   stC_spad.io.req.bits.reuse_tiled := loop_requesting_st.reuse_tiled
 

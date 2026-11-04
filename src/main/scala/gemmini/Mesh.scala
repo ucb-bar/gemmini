@@ -103,7 +103,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   // Quad build promotes a sig4 operand to a quad mode only when THAT operand's own LUT is enabled.
   val mode = requiredPEMode(typeA, typeW,
     if (e4m3QuadThroughput) io.act_lut_en else false.B,
-    if (e4m3QuadThroughput) io.weight_lut_en else false.B)
+    if (e4m3QuadThroughput) io.weight_lut_en else false.B,
+    (inputType, weightType) match { case (a: MxFloat, w: MxFloat) => MxFloat.peConfig(a, w).hasQuadSingle; case _ => false })
   
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage

@@ -643,7 +643,7 @@ object Arithmetic {
         // Per-operand lut_en promotes a sig4 operand to its quad mode (9/10/11) if the build elaborated it.
         val mode = requiredPEMode(typeA, typeW,
           if (macConfig.hasMode9) act_lut_en else false.B,
-          if (macConfig.hasMode9) weight_lut_en else false.B)
+          if (macConfig.hasMode9) weight_lut_en else false.B, macConfig.hasQuadSingle)
 
         val rec_c = if (self.isRecoded) self.bits else VecInit(self.bits.asTypeOf(Vec(4, UInt((self.expWidth + self.sigWidth).W))).map(f => recFNFromFN(self.expWidth, self.sigWidth, f))).asUInt
 

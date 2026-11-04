@@ -101,10 +101,13 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
   // single-weight partial chunk (DIM32 only): the store's own length (4-B units: BF16 2/entry, FP8 1/entry)
   val partial_chunk = partialChunks.B && is_acc_write && !io.in.bits.mx_multi_elem && !io.in.bits.mx_multi_elem_act &&
     io.in.bits.len < chunkEntries.U
+  // act-quad x wei-single, odd col-tile count (DIM32 only): the last pair is half full -> the store's own length
+  val partial_pair = partialChunks.B && is_non_fp8_acc_write && io.in.bits.mx_multi_elem && io.in.bits.len < quadRowLen.U
   io.out.bits.len := Mux(partial_chunk, Mux(io.in.bits.output_mx_type === 3.U, io.in.bits.len << 1, io.in.bits.len),
+    Mux(partial_pair, io.in.bits.len,
     Mux(io.in.bits.laddr.is_acc_addr,
       Mux((is_non_fp8_acc_write && io.in.bits.mx_multi_elem) ||
-          (!io.in.bits.mx_multi_elem_act && io.in.bits.output_mx_type === 3.U), quadRowLen.U, 16.U), io.in.bits.len))
+          (!io.in.bits.mx_multi_elem_act && io.in.bits.output_mx_type === 3.U), quadRowLen.U, 16.U), io.in.bits.len)))
   io.out.bits.chunk_id := out_chunk_id
   io.out.bits.store_en := Mux(is_non_fp8_acc_write, !second_half || !second_half_invalid, io.in.bits.store_en)
   io.out.bits.vaddr   := Mux(is_non_fp8_acc_write && second_half,
@@ -1075,7 +1078,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           // DIM32 single-weight: beats = the expander's len (4-B units) in DIM-byte spad rows (half for a partial chunk)
           val len_last  = ((write_issue_q.io.deq.bits.len << 2) >> log2Ceil(block_cols)).asUInt - 1.U
           val single_w  = !write_issue_q.io.deq.bits.mx_multi_elem && !write_issue_q.io.deq.bits.mx_multi_elem_act
-          val last_beat = if (config.mxGeom.partialChunks) Mux(single_w, len_last, full_last)
+          // act-quad x wei-single half-full last pair: BF16 row shorter than the quad row
+          val half_pair = requant_bf16 && write_issue_q.io.deq.bits.mx_multi_elem && write_issue_q.io.deq.bits.mx_multi_elem_act &&
+                          write_issue_q.io.deq.bits.len < config.mxGeom.R.U
+          val last_beat = if (config.mxGeom.partialChunks) Mux(single_w || half_pair, len_last, full_last)
                           else full_last
           // reuse_tiled (8-bit E4M3): beat b lands b K-tile heights below instead of flat.
           val tiled_beat = write_issue_q.io.deq.bits.reuse_tiled && (io.output_mx_format === 0.U) && !io.mx_fp8_altfmt && !io.mx_lut_en
