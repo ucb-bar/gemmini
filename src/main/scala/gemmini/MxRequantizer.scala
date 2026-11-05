@@ -87,6 +87,7 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val loop_bound_i = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_k = Input(UInt(iterator_bitwidth.W)) // from  controller
+  val pair = Input(Bool())   // act-quad x wei-single: loop_bound_j counts DIM-col tiles, not 2*DIM quad tiles
   val scale_mem_counter_reset_flag = Input(Bool())
   // When set, the coalescer also flushes act block-scales transposed to [GN][M] onto
   // scaleMem_write_act_resident (64b/beat); otherwise that port is idle.
@@ -509,8 +510,8 @@ class MxRequantizer[T <: Data](
   //   nibble: sb=block(b),    bib=row-half,    m=32*g+16*bib+row, b=sb   (2 rows/beat)
   val ROWS_PER_HALF = meshColumns * tileColumns
   val isNibble      = out_is_fp4 || out_is_lut4
-  // nibble GN = blocks per output row = N/32, N = loop_bound_j * 2*DIM (quad tile width)
-  val nibbleGN      = ((io.loop_bound_j * (2 * geom.dim).U) >> log2Ceil(geom.mxBlock)).asUInt
+  // nibble GN = blocks per output row = N/32, N = loop_bound_j * 2*DIM (quad tile width; DIM for pairs)
+  val nibbleGN      = ((io.loop_bound_j * Mux(io.pair, geom.dim.U, (2 * geom.dim).U)) >> log2Ceil(geom.mxBlock)).asUInt
   val GN            = Mux(io.linear_scales, io.linear_gn,
                         Mux(isNibble, nibbleGN, (io.loop_bound_j >> log2Ceil(tilesPerMxBlock)).asUInt))
   val tiles_I       = io.loop_bound_i

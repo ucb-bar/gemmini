@@ -1055,6 +1055,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     mx_requantizer.get.io.loop_bound_i := ex_controller.io.mx.get.scaleMemCntl.loop_bound_i
     mx_requantizer.get.io.loop_bound_j := ex_controller.io.mx.get.scaleMemCntl.loop_bound_j
     mx_requantizer.get.io.loop_bound_k := ex_controller.io.mx.get.scaleMemCntl.loop_bound_k
+    mx_requantizer.get.io.pair := ex_controller.io.mx.get.mx_multi_elem_act && !ex_controller.io.mx.get.mx_multi_elem
 
     // act-quad x wei-single stores as quad x quad over col-tile pairs
     val st_pair = ex_controller.io.mx.get.mx_multi_elem_act && !ex_controller.io.mx.get.mx_multi_elem

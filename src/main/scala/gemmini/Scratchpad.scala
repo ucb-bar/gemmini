@@ -79,18 +79,13 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
   // Split the acc write into 2 output ROWS (row0 elems 0-7, row1 elems 8-15) only when the ACTIVATION is
   // quad (2 rows/lane). For a single-act / quad-wei dual tile (mode6/7) there is 1 output row -> no split.
   val is_non_fp8_acc_write = is_acc_write && io.in.bits.mx_multi_elem_act
-  val gmem_multiplier = Mux(io.in.bits.dest =/= 0.U, 1.U, 16.U)
-
-  val address_second_half_narrow = io.in.bits.vaddr + (gmem_multiplier * MuxCase(2.U, Seq(
-    (io.in.bits.max_j <= 2.U && !io.in.bits.mx_multi_elem) -> ((acc_t_bits/16).U * 16.U / 2.U),
-    (io.in.bits.mx_multi_elem) -> 0.U
-  )))
-  // BF16: the second row at the store's own half pitch (the live loop_bound_j may be a later loop's J)
-  val address_second_half  = Mux(io.in.bits.output_mx_type === 3.U, io.in.bits.vaddr + io.in.bits.half_pitch,
-    address_second_half_narrow)
-  // the store's len of a full row: 16 at DIM16/32, the mesh width (8) at DIM8 for quad weights (whose second rows were
-  // all dropped); single-throughput weights keep 16, as validated at DIM8
-  val second_half_invalid = io.in.bits.len < Mux(io.in.bits.mx_multi_elem, fullRowLen.U, 16.U)
+  // act-quad stores always arrive as quad (act-quad x wei-single is stored as col-tile pairs). BF16: the second row at
+  // the store's own half pitch; 4-bit outputs pack rows 2r, 2r+1 into one byte row -> same address
+  val address_second_half = Mux(io.in.bits.output_mx_type === 3.U, io.in.bits.vaddr + io.in.bits.half_pitch,
+    io.in.bits.vaddr)
+  // a row shorter than the mesh width (fullRowLen 4-B units) has no second row
+  val second_half_invalid = io.in.bits.len < fullRowLen.U
+  assert(!(io.in.valid && is_non_fp8_acc_write && !io.in.bits.mx_multi_elem), "act-quad acc store must arrive as quad")
   val out_chunk_id = Mux(is_non_fp8_acc_write, second_half.asUInt, io.in.bits.chunk_id)
 
   io.out.valid := io.in.valid

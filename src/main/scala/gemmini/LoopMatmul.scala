@@ -634,7 +634,7 @@ class LoopMatmulStC(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   val acc_addr_start = /*(BigInt(1) << 31).U | (req.full_c << 29.U).asUInt |*/ req.addr_start
 
-  val dram_offset =  MuxCase((i * req.max_j) * block_size.U * 2.U + j*(block_size/8).U, Seq(
+  val dram_offset =  MuxCase((i * quad_nd) * block_size.U + j*(block_size/8).U, Seq(
     (req.full_c || (req.output_mx_format === 3.U && !req.mx_multi_elem)) ->
       (i * block_size.U * req.dram_stride * 2.U + j * Mux(req.full_c, ((block_size / 2) * block_size).U, bf16_j_bytes.U)),
     (!req.mx_multi_elem && (req.output_mx_format === 0.U)) -> (i * block_size.U * req.dram_stride + j * (4 * block_size).U),
@@ -910,8 +910,8 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val dst_offset = MuxCase(
     // FP4/FP6 requant: flat = i*N + 2*j; gated tiled = i*N + 32*j (j-term x16 -> tiled operand layout).
     Mux(req.reuse_tiled,
-      (i * req.max_j) * block_size.U * 2.U + j * (block_size * 2).U,
-      (i * req.max_j) * block_size.U * 2.U + j * 2.U), Seq(
+      (i * quad_nd) * block_size.U + j * (block_size * 2).U,
+      (i * quad_nd) * block_size.U + j * 2.U), Seq(
     // single fmt3: a j-group (4 tiles x DIM bf16 cols = 8*DIM B) is 8 spad rows at every DIM; full_c keeps block_size/2.
     (req.full_c || (req.output_mx_format === 3.U && !req.mx_multi_elem)) -> ((i * req.max_j) * block_size.U * 2.U + j*Mux(req.full_c, (block_size/2).U, 8.U)),
     (!req.mx_multi_elem && (req.output_mx_format === 0.U)) ->
@@ -960,7 +960,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val st_row_step = Mux(req.reuse_tiled, 1.U,
     Mux(st_wide && !req.mx_multi_elem, st_j * 2.U,   // single row pitch: N*2/DIM (BF16), N/DIM (FP8); odd max_j at DIM32
       Mux(st_wide, quad_nd * Mux(req.mx_multi_elem_act, 4.U, 2.U),
-        Mux(!req.mx_multi_elem, st_j, st_j * 2.U))))
+        Mux(!req.mx_multi_elem, st_j, quad_nd))))
   mvout_cmd_rs1.stride := (BigInt(1) << 31).U | st_row_step.pad(31)
   mvout_cmd.rs1 := mvout_cmd_rs1.asUInt
 
