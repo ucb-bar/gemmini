@@ -159,3 +159,19 @@ class MxE4M3OnlyGemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(128) ++
   new freechips.rocketchip.subsystem.WithEdgeDataBits(128) ++
   new chipyard.config.AbstractConfig)
+
+// Two MX Gemminis per core: 16x16 (custom3) + 32x32 (custom2). FP4 sym, E4M3s sym, A8W4 (E4M3s act x FP4 wei).
+class MxDualA8W4GemminiBoomConfig extends Config(
+  new gemmini.GemminiMxFPDualA8W4Config ++
+  new boom.v3.common.WithNMediumBooms(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(128) ++
+  new chipyard.config.AbstractConfig)
+
+// Rocket twin, plus E3M2 sym.
+class MxDualA8W4E3M2GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDualA8W4E3M2Config ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(128) ++
+  new chipyard.config.AbstractConfig)
