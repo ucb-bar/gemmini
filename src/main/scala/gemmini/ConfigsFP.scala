@@ -469,13 +469,16 @@ object GemminiMxFPConfigs {
     inActBusWidth = 12, inWeiBusWidth = 12, expAdderWidths = Seq(4, 4, 4, 4))
   private def dual(c: MxCfg, lane: Lane, cfg: MxConfig, op: OpcodeSet, hdr: String,
                    lut: Option[GemminiLUTConfig] = None): MxCfg =
-    sym(c, lane, cfg).copy(lut = lut, opcodes = op, headerFileName = hdr)
+    vpu(sym(c, lane, cfg).copy(lut = lut, opcodes = op, headerFileName = hdr, acc_banks = 2))  // VPU + store/compute overlap
   val a8w4Dim16MxFPConfig = dual(standaloneMxFPConfig, e4m3s, a8w4Mx, OpcodeSet.custom3, "gemmini_params_a8w4_dim16.h")
   val a8w4Dim32MxFPConfig = dual(dim32MxFPConfig, e4m3s, a8w4Mx, OpcodeSet.custom2, "gemmini_params_a8w4_dim32.h")
   val a8w4E3M2Dim16MxFPConfig = dual(standaloneMxFPConfig, e3m2, a8w4E3M2Mx, OpcodeSet.custom3,
     "gemmini_params_a8w4_e3m2_dim16.h", standaloneMxFPConfig.lut)  // E3M2 needs the QuantLut
   val a8w4E3M2Dim32MxFPConfig = dual(dim32MxFPConfig, e3m2, a8w4E3M2Mx, OpcodeSet.custom2,
     "gemmini_params_a8w4_e3m2_dim32.h", standaloneMxFPConfig.lut)  // E3M2 needs the QuantLut
+  val a8w4Dim8MxFPConfig = dual(dim8MxFPConfig, e4m3s, a8w4Mx, OpcodeSet.custom2, "gemmini_params_a8w4_dim8.h")
+  val a8w4E3M2Dim8MxFPConfig = dual(dim8MxFPConfig, e3m2, a8w4E3M2Mx, OpcodeSet.custom2,
+    "gemmini_params_a8w4_e3m2_dim8.h", standaloneMxFPConfig.lut)  // E3M2 needs the QuantLut
 
   val asymFp4Fp6MxFPConfig = asym(MxConfig.asymFp4Fp6, fp4, e3m2)
   val asymFp6Fp4MxFPConfig = asym(MxConfig.asymFp6Fp4, e3m2, fp4)
@@ -564,9 +567,10 @@ class GemminiMxFPAsymE4M3E2M3StandaloneConfig extends WithMxFPGemmini(GemminiMxF
 class GemminiMxFPTestConfig extends WithMxFPGemmini(GemminiMxFPConfigs.testMxFPConfig)
 class GemminiRequantizerLutMxFPTestConfig extends WithMxFPGemmini(GemminiMxFPConfigs.testRequantizerLutMxFPConfig)
 
-// Two independent MX Gemminis on one tile: 16x16 (custom3) + 32x32 (custom2), nothing shared but the tile's RoCC ports.
-class WithDualMxFPGemmini(c16: GemminiMxFPConfigs.MxCfg, c32: GemminiMxFPConfigs.MxCfg) extends Config((site, here, up) => {
-  case BuildRoCC => Seq(c16, c32).map { cfg => (p: Parameters) => {
+// Two independent MX Gemminis on one tile: 16x16 (custom3) + a 32x32 or 8x8 (custom2), nothing shared but the tile's
+// RoCC ports.
+class WithDualMxFPGemmini(c16: GemminiMxFPConfigs.MxCfg, c2: GemminiMxFPConfigs.MxCfg) extends Config((site, here, up) => {
+  case BuildRoCC => Seq(c16, c2).map { cfg => (p: Parameters) => {
     implicit val q = p; implicit val v = implicitly[ValName]
     LazyModule(new Gemmini(cfg))
   }: freechips.rocketchip.tile.LazyRoCC }
@@ -575,3 +579,8 @@ class GemminiMxFPDualA8W4Config extends WithDualMxFPGemmini(
   GemminiMxFPConfigs.a8w4Dim16MxFPConfig, GemminiMxFPConfigs.a8w4Dim32MxFPConfig)
 class GemminiMxFPDualA8W4E3M2Config extends WithDualMxFPGemmini(
   GemminiMxFPConfigs.a8w4E3M2Dim16MxFPConfig, GemminiMxFPConfigs.a8w4E3M2Dim32MxFPConfig)
+// 16x16 (custom3) + 8x8 (custom2)
+class GemminiMxFPDualA8W4Dim8Config extends WithDualMxFPGemmini(
+  GemminiMxFPConfigs.a8w4Dim16MxFPConfig, GemminiMxFPConfigs.a8w4Dim8MxFPConfig)
+class GemminiMxFPDualA8W4E3M2Dim8Config extends WithDualMxFPGemmini(
+  GemminiMxFPConfigs.a8w4E3M2Dim16MxFPConfig, GemminiMxFPConfigs.a8w4E3M2Dim8MxFPConfig)

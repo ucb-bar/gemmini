@@ -175,3 +175,18 @@ class MxDualA8W4E3M2GemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(512) ++
   new freechips.rocketchip.subsystem.WithEdgeDataBits(128) ++
   new chipyard.config.AbstractConfig)
+
+// The two dual configs above with 16x16 (custom3) + 8x8 (custom2).
+class MxDualA8W4Dim8GemminiBoomConfig extends Config(
+  new gemmini.GemminiMxFPDualA8W4Dim8Config ++
+  new boom.v3.common.WithNMediumBooms(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(128) ++
+  new chipyard.config.AbstractConfig)
+
+class MxDualA8W4E3M2Dim8GemminiRocketConfig extends Config(
+  new gemmini.GemminiMxFPDualA8W4E3M2Dim8Config ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(128) ++
+  new chipyard.config.AbstractConfig)
