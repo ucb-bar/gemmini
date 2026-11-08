@@ -480,6 +480,18 @@ object GemminiMxFPConfigs {
   val a8w4E3M2Dim8MxFPConfig = dual(dim8MxFPConfig, e3m2, a8w4E3M2Mx, OpcodeSet.custom2,
     "gemmini_params_a8w4_e3m2_dim8.h", standaloneMxFPConfig.lut)  // E3M2 needs the QuantLut
 
+  // Single Gemmini (Medium BOOM, FireSim): E4M3 only + the E4M3 QuantLut, 2 VPUs, full BF16 multipliers and adders.
+  private def bf16Arith(c: MxCfg): MxCfg = c.copy(
+    meshProdPrecisionList = Seq.fill(c.meshRows)(MxFloat(8, 8, 4, true, false)),
+    meshAccPrecisionList = Seq.fill(c.meshRows)(MxFloat(8, 8, 4, true, false)))
+  private def e4m3LutBf16(c: MxCfg, hdr: String): MxCfg =
+    bf16Arith(vpu(sym(c, e4m3, MxConfig.e4m3Only)).copy(lut = lut8(LutFP8E4M3), acc_banks = 2, headerFileName = hdr))
+  val e4m3LutBf16Dim16MxFPConfig = e4m3LutBf16(standaloneMxFPConfig, "gemmini_params_e4m3_lut_bf16_dim16.h")
+  val e4m3LutBf16Dim32MxFPConfig = e4m3LutBf16(dim32MxFPConfig, "gemmini_params_e4m3_lut_bf16_dim32.h")
+  // Same build, no LUT: E4M3 single act x E2M1 wei (A8W4, mode6) + FP4 sym (mode0) + E4M3 single sym (mode8).
+  val a8w4Bf16Dim16MxFPConfig = bf16Arith(vpu(sym(standaloneMxFPConfig, e4m3s, a8w4Mx)).copy(
+    lut = None, acc_banks = 2, headerFileName = "gemmini_params_a8w4_bf16_dim16.h"))
+
   val asymFp4Fp6MxFPConfig = asym(MxConfig.asymFp4Fp6, fp4, e3m2)
   val asymFp6Fp4MxFPConfig = asym(MxConfig.asymFp6Fp4, e3m2, fp4)
   val asymE5M2Fp4MxFPConfig = asym(MxConfig.asymE5M2Fp4, e5m2, fp4, lut8(LutFP8E5M2))
@@ -564,6 +576,9 @@ class GemminiMxFPAsymE3M2E2M3StandaloneConfig extends WithMxFPGemmini(GemminiMxF
 class GemminiMxFPAsymE5M2E2M3StandaloneConfig extends WithMxFPGemmini(GemminiMxFPConfigs.asymE5M2E2M3MxFPConfig)
 class GemminiMxFPAsymE2M3E4M3StandaloneConfig extends WithMxFPGemmini(GemminiMxFPConfigs.asymE2M3E4M3MxFPConfig)
 class GemminiMxFPAsymE4M3E2M3StandaloneConfig extends WithMxFPGemmini(GemminiMxFPConfigs.asymE4M3E2M3MxFPConfig)
+class GemminiMxFPE4M3LutBf16Dim16Config extends WithMxFPGemmini(GemminiMxFPConfigs.e4m3LutBf16Dim16MxFPConfig)
+class GemminiMxFPE4M3LutBf16Dim32Config extends WithMxFPGemmini(GemminiMxFPConfigs.e4m3LutBf16Dim32MxFPConfig)
+class GemminiMxFPA8W4Bf16Dim16Config extends WithMxFPGemmini(GemminiMxFPConfigs.a8w4Bf16Dim16MxFPConfig)
 class GemminiMxFPTestConfig extends WithMxFPGemmini(GemminiMxFPConfigs.testMxFPConfig)
 class GemminiRequantizerLutMxFPTestConfig extends WithMxFPGemmini(GemminiMxFPConfigs.testRequantizerLutMxFPConfig)
 

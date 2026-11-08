@@ -190,3 +190,27 @@ class MxDualA8W4E3M2Dim8GemminiRocketConfig extends Config(
   new chipyard.config.WithSystemBusWidth(512) ++
   new freechips.rocketchip.subsystem.WithEdgeDataBits(128) ++
   new chipyard.config.AbstractConfig)
+
+// One Gemmini 16x16: E4M3 + E4M3 LUT, 2 VPUs, full BF16 PE arithmetic; 512-bit sbus, 32 B DRAM port.
+class MxE4M3LutBf16Dim16GemminiBoomConfig extends Config(
+  new gemmini.GemminiMxFPE4M3LutBf16Dim16Config ++
+  new boom.v3.common.WithNMediumBooms(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(256) ++
+  new chipyard.config.AbstractConfig)
+
+// One Gemmini 32x32: E4M3 + E4M3 LUT, 2 VPUs, full BF16 PE arithmetic; 512-bit sbus, 32 B DRAM port.
+class MxE4M3LutBf16Dim32GemminiBoomConfig extends Config(
+  new gemmini.GemminiMxFPE4M3LutBf16Dim32Config ++
+  new boom.v3.common.WithNMediumBooms(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(256) ++
+  new chipyard.config.AbstractConfig)
+
+// One Gemmini 16x16: E4M3 act x E2M1 wei (+ FP4 sym, E4M3 sym), no LUT, 2 VPUs, full BF16 PE arithmetic; 512-bit sbus, 32 B DRAM port.
+class MxA8W4Bf16Dim16GemminiBoomConfig extends Config(
+  new gemmini.GemminiMxFPA8W4Bf16Dim16Config ++
+  new boom.v3.common.WithNMediumBooms(1) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(256) ++
+  new chipyard.config.AbstractConfig)
