@@ -306,8 +306,12 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         )
       }
 
-      dst.bits.end := dst.bits.start + total_mvin_rows
-      dst.bits.wraps_around := dst.bits.start.add_with_overflow(total_mvin_rows)._2
+      // pixel repeats also write the pixel_repeats rows below the mvin, so only the start moves down, not the end
+      val pixel_repeat_rows = if (has_first_layer_optimizations) {
+        Mux(cmd.rs2(31, 0).asTypeOf(local_addr_t).is_acc_addr, 0.U, pixel_repeats)
+      } else 0.U
+      dst.bits.end := dst.bits.start + (total_mvin_rows +& pixel_repeat_rows)
+      dst.bits.wraps_around := dst.bits.start.add_with_overflow(total_mvin_rows +& pixel_repeat_rows)._2
     }
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
