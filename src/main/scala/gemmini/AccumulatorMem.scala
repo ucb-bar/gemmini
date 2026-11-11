@@ -220,8 +220,10 @@ class AccumulatorMem[T <: Data, U <: Data](
         (read _, write _)
       } else {
         val mem = SyncReadMem(n / acc_sub_banks, Vec(mask_len, mask_elem))
-        io.ext_mem.get(i).read_req.bits := 0.U((mask_len * mask_elem.getWidth).W)
-        io.ext_mem.get(i).read_req.valid := false.B
+        io.ext_mem.foreach { ext_mem =>
+          ext_mem(i).read_req.bits := 0.U((mask_len * mask_elem.getWidth).W)
+          ext_mem(i).read_req.valid := false.B
+        }
 
         def read(addr: UInt, ren: Bool): Data = mem.read(addr, ren)
         def write(addr: UInt, wdata: Vec[UInt], wmask: Vec[Bool]) = if (use_tl_ext_ram) {
