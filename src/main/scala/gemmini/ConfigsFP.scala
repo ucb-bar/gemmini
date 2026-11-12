@@ -442,7 +442,7 @@ object GemminiMxFPConfigs {
   val fp4VpuMxFPConfig = vpu(fp4OnlyMxFPConfig).copy(headerFileName = "gemmini_params_fp4_vpu.h")
   val e2m3OnlyMxFPConfig = sym(standaloneMxFPConfig, e2m3, MxConfig.e2m3Only).copy(lut = lut6(LutFP6E2M3))
   val e4m3OnlyMxFPConfig = sym(standaloneMxFPConfig, e4m3, MxConfig.e4m3Only).copy(lut = lut8(LutFP8E4M3))
-  val e4m3SingleNoLutMxFPConfig = e4m3Single(standaloneMxFPConfig)
+  val e4m3SingleNoLutMxFPConfig = e4m3Single(standaloneMxFPConfig).copy(max_in_flight_mem_reqs = 64)  // Radiance's Gemmini
   val e4m3TrimmedMxFPConfig = vpu(e4m3SingleNoLutMxFPConfig).copy(
     has_loop_conv = false,
     has_first_layer_optimizations = false,

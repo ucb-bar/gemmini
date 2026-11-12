@@ -62,6 +62,8 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     val io = IO(new Bundle {
       val req = Flipped(Decoupled(new StreamReadRequest(spad_rows, acc_rows, config.mvin_scale_t_bits)))
       val resp = Decoupled(new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to, config.mvin_scale_t_bits))
+      // dma_dual_lane: the second lane's rows (scratchpad only; accumulator mvins stay on lane 0)
+      val resp2 = Option.when(config.dma_dual_lane)(Decoupled(new StreamReadResponse(spadWidth, accWidth, spad_rows, acc_rows, aligned_to, config.mvin_scale_t_bits)))
       val tlb = new FrontendTLBIO
       val busy = Output(Bool())
       val flush = Input(Bool())
@@ -81,31 +83,62 @@ class StreamReader[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T
     core.module.io.flush := io.flush
 
     xactTracker.io.alloc <> core.module.io.reserve
-    xactTracker.io.peek.xactid := RegEnableThru(core.module.io.beatData.bits.xactid, beatPacker.io.req.fire)
-    xactTracker.io.peek.pop := beatPacker.io.in.fire && core.module.io.beatData.bits.last
 
-    core.module.io.beatData.ready := beatPacker.io.in.ready
-    beatPacker.io.req.valid := core.module.io.beatData.valid
-    beatPacker.io.req.bits := xactTracker.io.peek.entry
-    beatPacker.io.req.bits.lg_len_req := core.module.io.beatData.bits.lg_len_req
-    beatPacker.io.in.valid := core.module.io.beatData.valid
-    beatPacker.io.in.bits := core.module.io.beatData.bits.data
+    val beat = core.module.io.beatData
+    if (!config.dma_dual_lane) {
+      xactTracker.io.peek.xactid := RegEnableThru(beat.bits.xactid, beatPacker.io.req.fire)
+      xactTracker.io.peek.pop := beatPacker.io.in.fire && beat.bits.last
 
-    beatPacker.io.out.ready := io.resp.ready
-    io.resp.valid := beatPacker.io.out.valid
-    io.resp.bits.data := beatPacker.io.out.bits.data
-    io.resp.bits.addr := beatPacker.io.out.bits.addr
-    io.resp.bits.mask := beatPacker.io.out.bits.mask
-    io.resp.bits.is_acc := beatPacker.io.out.bits.is_acc
-    io.resp.bits.accumulate := beatPacker.io.out.bits.accumulate
-    io.resp.bits.has_acc_bitwidth := beatPacker.io.out.bits.has_acc_bitwidth
-    io.resp.bits.scale := RegEnable(xactTracker.io.peek.entry.scale, beatPacker.io.req.fire)
-    io.resp.bits.repeats := RegEnable(xactTracker.io.peek.entry.repeats, beatPacker.io.req.fire)
-    io.resp.bits.pixel_repeats := RegEnable(xactTracker.io.peek.entry.pixel_repeats, beatPacker.io.req.fire)
-    io.resp.bits.len := RegEnable(xactTracker.io.peek.entry.len, beatPacker.io.req.fire)
-    io.resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, beatPacker.io.req.fire)
-    io.resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, beatPacker.io.req.fire)
-    io.resp.bits.last := beatPacker.io.out.bits.last
+      beat.ready := beatPacker.io.in.ready
+      beatPacker.io.req.valid := beat.valid
+      beatPacker.io.req.bits := xactTracker.io.peek.entry
+      beatPacker.io.req.bits.lg_len_req := beat.bits.lg_len_req
+      beatPacker.io.in.valid := beat.valid
+      beatPacker.io.in.bits := beat.bits.data
+    }
+
+    def drive(resp: DecoupledIO[StreamReadResponse[_]], bp: BeatMerger[_]): Unit = {
+      bp.io.out.ready := resp.ready
+      resp.valid := bp.io.out.valid
+      resp.bits.data := bp.io.out.bits.data
+      resp.bits.addr := bp.io.out.bits.addr
+      resp.bits.mask := bp.io.out.bits.mask
+      resp.bits.is_acc := bp.io.out.bits.is_acc
+      resp.bits.accumulate := bp.io.out.bits.accumulate
+      resp.bits.has_acc_bitwidth := bp.io.out.bits.has_acc_bitwidth
+      resp.bits.scale := RegEnable(xactTracker.io.peek.entry.scale, bp.io.req.fire)
+      resp.bits.repeats := RegEnable(xactTracker.io.peek.entry.repeats, bp.io.req.fire)
+      resp.bits.pixel_repeats := RegEnable(xactTracker.io.peek.entry.pixel_repeats, bp.io.req.fire)
+      resp.bits.len := RegEnable(xactTracker.io.peek.entry.len, bp.io.req.fire)
+      resp.bits.cmd_id := RegEnable(xactTracker.io.peek.entry.cmd_id, bp.io.req.fire)
+      resp.bits.bytes_read := RegEnable(xactTracker.io.peek.entry.bytes_to_read, bp.io.req.fire)
+      resp.bits.last := bp.io.out.bits.last
+    }
+    drive(io.resp, beatPacker)
+
+    // Dual lane: a second BeatMerger takes a response whenever the first is still draining one, so two responses turn
+    // into scratchpad rows at once (each BeatMerger writes one row per cycle). Every response is one beat (a beat is at
+    // least a whole request), so a BeatMerger takes its request and its data in the same cycle, and the tracker entry
+    // is looked up combinationally from the beat's source.
+    val beatPacker2 = Option.when(config.dma_dual_lane) {
+      require(beatBits / 8 >= maxBytes, "dma_dual_lane: every read response must be one beat")
+      val bp2 = Module(new BeatMerger(beatBits, maxBytes, spadWidth, accWidth, spad_rows, acc_rows, maxBytes, aligned_to, meshRows, config.mvin_scale_t_bits, nCmds))
+      xactTracker.io.peek.xactid := beat.bits.xactid
+      val entry = xactTracker.io.peek.entry
+      val to0 = beatPacker.io.req.ready
+      val to1 = !to0 && bp2.io.req.ready && !entry.is_acc
+      for ((bp, sel) <- Seq((beatPacker, to0), (bp2, to1))) {
+        bp.io.req.valid := beat.valid && sel
+        bp.io.req.bits := entry
+        bp.io.req.bits.lg_len_req := beat.bits.lg_len_req
+        bp.io.in.valid := beat.valid && sel
+        bp.io.in.bits := beat.bits.data
+      }
+      beat.ready := (to0 && beatPacker.io.in.ready) || (to1 && bp2.io.in.ready)
+      xactTracker.io.peek.pop := beat.fire && beat.bits.last
+      drive(io.resp2.get, bp2)
+      bp2
+    }
 
     io.counter := DontCare
     io.counter.collect(core.module.io.counter)
@@ -640,6 +673,16 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
 
     io.counter.connectExternalCounter(CounterExternal.WDMA_BYTES_SENT, total_bytes_sent)
     io.counter.connectExternalCounter(CounterExternal.WDMA_TOTAL_LATENCY, total_latency)
+
+    // Write requests in flight, as the read DMA's (XactTracker)
+    val inflight = PopCount(xactBusy)
+    val inflight_max = RegInit(0.U(log2Up(nXacts + 1).W))
+    inflight_max := Mux(inflight > inflight_max, inflight, inflight_max)
+    PerfCounter(inflight, "wdma_inflight_sum", "write DMA requests in flight, summed over cycles")
+    PerfCounter(inflight =/= 0.U, "wdma_inflight_busy_cycles", "cycles with any write DMA request in flight")
+    PerfCounter(inflight >= (nXacts / 2).U, "wdma_inflight_half_cycles", "cycles with at least half the write DMA limit in flight")
+    PerfCounter(xactBusy.andR, "wdma_inflight_full_cycles", "cycles with the write DMA limit in flight (no new request can issue)")
+    PerfCounter.identity(inflight_max, "wdma_inflight_max", "most write DMA requests in flight at once so far")
 
     if (use_firesim_simulation_counters) {
       PerfCounter(state =/= s_idle, "wdma_active_cycles", "cycles during which write read dma is active")

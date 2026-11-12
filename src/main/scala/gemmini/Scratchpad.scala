@@ -201,7 +201,7 @@ class MxRequantizerAccMemIO[T <: Data: Arithmetic](fullDataType: Vec[Vec[T]], rD
 }
 
 class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, use_shared_ext_mem: Boolean, is_dummy: Boolean,
-                     has_vpu: Boolean = false) extends Module {
+                     has_vpu: Boolean = false, dual_write: Boolean = false) extends Module {
   // This is essentially a pipelined SRAM with the ability to stall pipeline stages
 
   require(w % aligned_to == 0 || w < aligned_to)
@@ -211,12 +211,16 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   val io = IO(new Bundle {
     val read = Flipped(new ScratchpadReadIO(n, w))
     val write = Flipped(new ScratchpadWriteIO(n, w, mask_len))
+    // dual_write: a second row write (the second DMA lane's), taken when `write` is idle or writes the other row of
+    // the same row pair
+    val write2 = Option.when(dual_write)(Flipped(new ScratchpadWriteIO(n, w, mask_len)))
     val ext_mem = if (use_shared_ext_mem) Some(new ExtMemIO) else None
     // VPU read: owns the SRAM read port this cycle, data valid exactly one cycle later (vpu_rdata)
     val vpu_rd = Option.when(has_vpu)(Flipped(Valid(UInt(log2Ceil(n).W))))
     val vpu_rdata = Option.when(has_vpu)(Output(UInt(w.W)))
   })
   require(!has_vpu || (!is_dummy && !use_shared_ext_mem && !single_ported), "VPU needs a dual-ported SyncReadMem bank")
+  require(!dual_write || (use_shared_ext_mem && !is_dummy), "dual_write: shared external scratchpad only")
   val vpu_ren = io.vpu_rd.map(_.valid).getOrElse(false.B)
 
   val ren = io.read.req.fire
@@ -283,14 +287,40 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     val wq = Module(new Queue(ext_mem.write_req.bits.cloneType, 2))
     ext_mem.write_req <> wq.io.deq
 
-    wq.io.enq.valid := io.write.valid
-    io.write.ready := wq.io.enq.ready
-    wq.io.enq.bits.addr := io.write.addr
-    wq.io.enq.bits.data := io.write.data
-    if (aligned_to >= w) {
-      wq.io.enq.bits.mask := VecInit((~(0.U(mask_len.W))).asBools).asUInt
+    if (!dual_write) {
+      wq.io.enq.valid := io.write.valid
+      io.write.ready := wq.io.enq.ready
+      wq.io.enq.bits.addr := io.write.addr
+      wq.io.enq.bits.data := io.write.data
+      if (aligned_to >= w) {
+        wq.io.enq.bits.mask := VecInit((~(0.U(mask_len.W))).asBools).asUInt
+      } else {
+        wq.io.enq.bits.mask := io.write.mask.asUInt
+      }
     } else {
-      wq.io.enq.bits.mask := io.write.mask.asUInt
+      // Two-row writes: ext_mem takes row pairs (addr = row / 2, data = rows 2k+1 : 2k, a byte mask per row). A lone
+      // row write fills its half; `write` and `write2` to the two rows of one pair go out as one write.
+      require(w % 8 == 0 && (w / 8) % mask_len == 0, "dual_write: whole-byte rows and mask granules")
+      val rowBytes = w / 8
+      def byteMask(m: Vec[Bool]): UInt =
+        if (aligned_to >= w) ~0.U(rowBytes.W) else FillInterleaved(rowBytes / mask_len, m.asUInt)
+      val w1 = io.write
+      val w2 = io.write2.get
+      // w2.ready must not depend on w2.valid (the source gates its valid on ready): pair test on the addresses only
+      val pair = (w1.addr >> 1) === (w2.addr >> 1) && w1.addr(0) =/= w2.addr(0)
+      val take2 = w2.valid && (!w1.valid || pair)
+      io.write.ready := wq.io.enq.ready
+      w2.ready := wq.io.enq.ready && (!w1.valid || pair)
+
+      val halves = Seq.tabulate(2) { h =>
+        val from1 = w1.valid && w1.addr(0) === h.U
+        val from2 = take2 && w2.addr(0) === h.U
+        (Mux(from1, w1.data, w2.data), Mux(from1, byteMask(w1.mask), Mux(from2, byteMask(w2.mask), 0.U(rowBytes.W))))
+      }
+      wq.io.enq.valid := w1.valid || take2
+      wq.io.enq.bits.addr := Mux(w1.valid, w1.addr >> 1, w2.addr >> 1)
+      wq.io.enq.bits.data := Cat(halves(1)._1, halves(0)._1)
+      wq.io.enq.bits.mask := Cat(halves(1)._2, halves(0)._2)
     }
     // assert(wq.io.enq.ready || (!io.write.en), "TODO (richard): fix this if triggered")
   } else { // use valid only interface
@@ -743,23 +773,65 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     val mvin_scale_acc_finished = mvin_scale_acc_out.fire && mvin_scale_acc_out.bits.last
     val zero_writer_finished = zero_writer_pixel_repeater.io.resp.fire && zero_writer_pixel_repeater.io.resp.bits.last
 
+    // dma_dual_lane: the reader's second lane gets its own mvin path (scaler + pixel repeater), written into the
+    // banks' second write port. Its rows are scratchpad rows only (the reader keeps accumulator mvins on lane 1).
+    val mvin2_pixel_repeater = reader.module.io.resp2.map { r2 =>
+      val (in2, out2) = VectorScalarMultiplier(
+        config.mvin_scale_args,
+        config.weightType, config.meshColumns * config.tileColumns, chiselTypeOf(reader.module.io.resp.bits),
+        is_acc = false
+      )
+      assert(!(r2.valid && r2.bits.is_acc), "dual-lane DMA: an accumulator mvin on the second lane")
+      in2.valid := r2.valid
+      in2.bits.in := r2.bits.data.asTypeOf(chiselTypeOf(in2.bits.in))
+      in2.bits.scale := r2.bits.scale.asTypeOf(mvin_scale_t)
+      in2.bits.repeats := r2.bits.repeats
+      in2.bits.pixel_repeats := r2.bits.pixel_repeats
+      in2.bits.last := r2.bits.last
+      in2.bits.tag := r2.bits
+      r2.ready := in2.ready
+
+      val pr2 = Module(new PixelRepeater(weightType, local_addr_t, block_cols, aligned_to, out2.bits.tag.cloneType, passthrough = !has_first_layer_optimizations))
+      pr2.io.req.valid := out2.valid
+      pr2.io.req.bits.in := out2.bits.out
+      pr2.io.req.bits.mask := out2.bits.tag.mask take pr2.io.req.bits.mask.size
+      pr2.io.req.bits.laddr := out2.bits.tag.addr.asTypeOf(local_addr_t) + out2.bits.row
+      pr2.io.req.bits.len := out2.bits.tag.len
+      pr2.io.req.bits.pixel_repeats := out2.bits.tag.pixel_repeats
+      pr2.io.req.bits.last := out2.bits.last
+      pr2.io.req.bits.tag := out2.bits.tag
+      out2.ready := pr2.io.req.ready
+      pr2.io.resp.ready := false.B
+      pr2
+    }
+    // One DMA read completion a cycle: a second-lane last row waits for a cycle with no first-lane or accumulator
+    // last row, and the zero writer's last row waits for all three.
+    val mvin2_last_ok = !((mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.last) ||
+      (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
+    val mvin2_last_pending = mvin2_pixel_repeater.map(p => p.io.resp.valid && p.io.resp.bits.last).getOrElse(false.B)
+    val mvin2_finished = mvin2_pixel_repeater.map(p => p.io.resp.fire && p.io.resp.bits.last).getOrElse(false.B)
+
     val zero_writer_bytes_read = Mux(zero_writer_pixel_repeater.io.resp.bits.laddr.is_acc_addr,
       zero_writer_pixel_repeater.io.resp.bits.tag.cols * (accType.getWidth / 8).U,
       zero_writer_pixel_repeater.io.resp.bits.tag.cols * (weightTypeProjected.getWidth / 8).U)
 
     // For DMA read responses, mvin_scale gets first priority, then mvin_scale_acc, and then zero_writer
-    io.dma.read.resp.valid := mvin_scale_finished || mvin_scale_acc_finished || zero_writer_finished
+    io.dma.read.resp.valid := mvin_scale_finished || mvin_scale_acc_finished || mvin2_finished || zero_writer_finished
+    assert(PopCount(Seq(mvin_scale_finished, mvin_scale_acc_finished, mvin2_finished, zero_writer_finished)) <= 1.U,
+      "two DMA read completions in one cycle")
 
     // io.dma.read.resp.bits.cmd_id := MuxCase(zero_writer.io.resp.bits.tag.cmd_id, Seq(
     io.dma.read.resp.bits.cmd_id := MuxCase(zero_writer_pixel_repeater.io.resp.bits.tag.cmd_id, Seq(
       // mvin_scale_finished -> mvin_scale_out.bits.tag.cmd_id,
       mvin_scale_finished -> mvin_scale_pixel_repeater.io.resp.bits.tag.cmd_id,
-      mvin_scale_acc_finished -> mvin_scale_acc_out.bits.tag.cmd_id))
+      mvin_scale_acc_finished -> mvin_scale_acc_out.bits.tag.cmd_id) ++
+      mvin2_pixel_repeater.map(p => mvin2_finished -> p.io.resp.bits.tag.cmd_id))
 
     io.dma.read.resp.bits.bytesRead := MuxCase(zero_writer_bytes_read, Seq(
       // mvin_scale_finished -> mvin_scale_out.bits.tag.bytes_read,
       mvin_scale_finished -> mvin_scale_pixel_repeater.io.resp.bits.tag.bytes_read,
-      mvin_scale_acc_finished -> mvin_scale_acc_out.bits.tag.bytes_read))
+      mvin_scale_acc_finished -> mvin_scale_acc_out.bits.tag.bytes_read) ++
+      mvin2_pixel_repeater.map(p => mvin2_finished -> p.io.resp.bits.tag.bytes_read))
 
     io.tlb(0) <> writer.module.io.tlb
     io.tlb(1) <> reader.module.io.tlb
@@ -784,7 +856,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val banks = Seq.fill(sp_banks) { Module(new ScratchpadBank(
         sp_bank_entries, spad_w,
         aligned_to, config.sp_singleported,
-        use_shared_ext_mem, is_dummy, has_vpu
+        use_shared_ext_mem, is_dummy, has_vpu, dual_write = config.dma_dual_lane
       )) }
       val bank_ios = VecInit(banks.map(_.io))
 
@@ -1018,9 +1090,29 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         // val laddr = mvin_scale_out.bits.tag.addr.asTypeOf(local_addr_t) + mvin_scale_out.bits.row
         val laddr = mvin_scale_pixel_repeater.io.resp.bits.laddr
 
+        // Second DMA lane: its rows take the bank's second write port. When both lanes want this bank for rows of
+        // different row pairs, the lane on the lower row goes first: the lanes drain rows a + k * stride and
+        // a + 1 + k * stride, so this brings them into step and later rows merge into one two-row write.
+        val lane2_first = mvin2_pixel_repeater.map { p2 =>
+          val laddr2 = p2.io.resp.bits.laddr
+          val want2 = p2.io.resp.valid && !laddr2.is_acc_addr && laddr2.sp_bank() === i.U &&
+            (!p2.io.resp.bits.last || mvin2_last_ok)
+          val w2 = bio.write2.get
+          w2.valid := want2 && w2.ready
+          w2.addr := laddr2.sp_row()
+          w2.data := p2.io.resp.bits.out.asUInt
+          w2.mask := p2.io.resp.bits.mask take ((spad_w / (aligned_to * 8)) max 1)
+          when (w2.valid) { p2.io.resp.ready := true.B }
+
+          val lane1_here = mvin_scale_pixel_repeater.io.resp.valid && !mvin_scale_pixel_repeater.io.resp.bits.tag.is_acc &&
+            laddr.sp_bank() === i.U
+          val pair = (laddr.sp_row() >> 1) === (laddr2.sp_row() >> 1) && laddr.sp_row()(0) =/= laddr2.sp_row()(0)
+          want2 && lane1_here && !pair && laddr2.sp_row() < laddr.sp_row()
+        }.getOrElse(false.B)
+
         // val dmaread = mvin_scale_out.valid && !mvin_scale_out.bits.tag.is_acc &&
         val dmaread = mvin_scale_pixel_repeater.io.resp.valid && !mvin_scale_pixel_repeater.io.resp.bits.tag.is_acc &&
-          (laddr.sp_bank() === i.U) && bio.write.ready
+          (laddr.sp_bank() === i.U) && bio.write.ready && !lane2_first
 
         // We need to make sure that we don't try to return a dma read resp from both zero_writer and either mvin_scale
         // or mvin_acc_scale at the same time. The scalers always get priority in those cases
@@ -1030,7 +1122,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           zero_writer_pixel_repeater.io.resp.bits.laddr.sp_bank() === i.U &&
           // !((mvin_scale_out.valid && mvin_scale_out.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
           !((mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last)) &&
-          bio.write.ready
+          !mvin2_last_pending && bio.write.ready
 
         // Source directly from acc_scale_unit.io.out (registered), not writeData, to avoid a comb cycle
         // through requant_spad_consume. Data written verbatim, keeping the mesh-input interleaved format.
@@ -1366,7 +1458,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val zerowrite = zero_writer_pixel_repeater.io.resp.valid && zero_writer_pixel_repeater.io.resp.bits.laddr.is_acc_addr &&
           zero_writer_pixel_repeater.io.resp.bits.laddr.acc_bank() === i.U &&
           // !((mvin_scale_out.valid && mvin_scale_out.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
-          !((mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last))
+          !((mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last)) &&
+          !mvin2_last_pending
 
         val consecutive_write_block = RegInit(false.B)
         if (acc_singleported) {

@@ -128,7 +128,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              lut: Option[GemminiLUTConfig] = None,
                                                                              use_mx_scaling: Boolean = true,
                                                                              testConfig: Boolean = false,
-                                                                             headerFileName: String = "gemmini_params.h"
+                                                                             headerFileName: String = "gemmini_params.h",
+                                                                             // Two DMA read lanes (two BeatMergers, two mvin write paths) and a two-row (2 x spad row)
+                                                                             // write port per scratchpad bank: two responses drain at once, and rows 2k / 2k+1 written
+                                                                             // in the same cycle merge into one Put. Shared TL scratchpad (use_tl_ext_mem) only.
+                                                                             dma_dual_lane: Boolean = false
                                                        ) {
   // Deprojected operand-row width: sized to the wider of the two operands so an asymmetric build whose
   // activation (inputType) is wider than its weight still fits (symmetric/weight-wide builds unchanged).

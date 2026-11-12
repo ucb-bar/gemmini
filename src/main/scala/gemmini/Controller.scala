@@ -47,6 +47,8 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
 
   val mem_depth = config.sp_bank_entries * spad_data_len / max_data_len
   val mem_width = max_data_len
+  // dma_dual_lane: each bank writes a row pair (two rows, byte-masked) per Put
+  val write_width = if (config.dma_dual_lane) 2 * mem_width else mem_width
 
   println(f"unified shared memory size: ${mem_depth}x${mem_width}x${config.sp_banks}")
 
@@ -76,9 +78,9 @@ class Gemmini[T <: Data : Arithmetic, U <: Data, V <: Data](val config: GemminiA
     TLMasterPortParameters.v1(Seq(TLMasterParameters.v1(
       name = s"spad_write_node_$i",
       sourceId = IdRange(0, num_ids),
-      supportsProbe = TransferSizes(mem_width, mem_width),
-      supportsPutFull = TransferSizes(mem_width, mem_width),
-      supportsPutPartial = TransferSizes(mem_width, mem_width)
+      supportsProbe = TransferSizes(write_width, write_width),
+      supportsPutFull = TransferSizes(write_width, write_width),
+      supportsPutPartial = TransferSizes(write_width, write_width)
     )))
   }) else TLIdentityNode()
 
@@ -160,21 +162,21 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val ext_mem_acc = outer.spad.module.io.ext_mem.get.acc
     val source_counters = Seq.fill(4)(Counter(outer.num_ids))
 
-    def connect(ext_mem: ExtMemIO, bank_base: Int, req_size: Int, r_node: TLBundle, r_edge: TLEdgeOut, r_source: Counter,
-                w_node: TLBundle, w_edge: TLEdgeOut, w_source: Counter): Unit = {
+    def connect(ext_mem: ExtMemIO, bank_base: Int, req_size: Int, w_req_size: Int, r_node: TLBundle, r_edge: TLEdgeOut,
+                r_source: Counter, w_node: TLBundle, w_edge: TLEdgeOut, w_source: Counter): Unit = {
       r_node.a.valid := ext_mem.read_req.valid
       r_node.a.bits := r_edge.Get(r_source.value,
         (ext_mem.read_req.bits << req_size.U).asUInt | bank_base.U | outer.spad_base.U,
         req_size.U)._2
       ext_mem.read_req.ready := r_node.a.ready
 
-      val w_shifted_addr = (ext_mem.write_req.bits.addr << req_size.U).asUInt
+      val w_shifted_addr = (ext_mem.write_req.bits.addr << w_req_size.U).asUInt
       val w_mask = (ext_mem.write_req.bits.mask << (w_shifted_addr & (w_edge.manager.beatBytes - 1).U)).asUInt
 
       w_node.a.valid := ext_mem.write_req.valid
       w_node.a.bits := w_edge.Put(w_source.value,
         w_shifted_addr | bank_base.U | outer.spad_base.U,
-        req_size.U, ext_mem.write_req.bits.data, w_mask)._2
+        w_req_size.U, ext_mem.write_req.bits.data, w_mask)._2
       ext_mem.write_req.ready := w_node.a.ready
 
       ext_mem.read_resp.valid := r_node.d.valid
@@ -189,7 +191,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     (outer.spad_read_nodes.out zip outer.spad_write_nodes.out)
       .zipWithIndex.foreach{ case (((r_node, r_edge), (w_node, w_edge)), i) =>
         connect(ext_mem_spad(i), i * outer.mem_depth * outer.mem_width, log2Up(outer.spad_data_len),
-          r_node, r_edge, source_counters(0), w_node, w_edge, source_counters(1))
+          log2Up(outer.write_width), r_node, r_edge, source_counters(0), w_node, w_edge, source_counters(1))
     }
 
 

@@ -3,7 +3,7 @@ package gemmini
 import chisel3._
 import chisel3.util._
 import gemmini.Util.UDValid
-import midas.targetutils.SynthesizePrintf
+import midas.targetutils.{PerfCounter, SynthesizePrintf}
 
 class XactTrackerEntry[U <: Data](maxShift: Int, spadWidth: Int, accWidth: Int,
                                   spadRows: Int, accRows: Int, maxReqBytes: Int, mvin_scale_t_bits: Int,
@@ -99,6 +99,18 @@ class XactTracker[U <: Data](nXacts: Int, maxShift: Int, spadWidth: Int, accWidt
   }
 
   io.counter.connectExternalCounter(CounterExternal.RDMA_TOTAL_LATENCY, total_latency)
+
+  // Read requests in flight (allocated tracker entries, at most max_in_flight_mem_reqs), for FireSim AutoCounter; the
+  // annotations are dropped unless the platform config has WithAutoCounter. Mean in flight = rdma_inflight_sum / cycles,
+  // or / rdma_inflight_busy_cycles over the cycles with any in flight.
+  val inflight = PopCount(entries.map(_.valid))
+  val inflight_max = RegInit(0.U(log2Up(nXacts + 1).W))
+  inflight_max := Mux(inflight > inflight_max, inflight, inflight_max)
+  PerfCounter(inflight, "rdma_inflight_sum", "read DMA requests in flight, summed over cycles")
+  PerfCounter(inflight =/= 0.U, "rdma_inflight_busy_cycles", "cycles with any read DMA request in flight")
+  PerfCounter(inflight >= (nXacts / 2).U, "rdma_inflight_half_cycles", "cycles with at least half the read DMA limit in flight")
+  PerfCounter(!io.alloc.ready, "rdma_inflight_full_cycles", "cycles with the read DMA limit in flight (no new request can issue)")
+  PerfCounter.identity(inflight_max, "rdma_inflight_max", "most read DMA requests in flight at once so far")
 
   if (use_firesim_simulation_counters) {
     val cntr = Counter(500000)
