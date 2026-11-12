@@ -351,6 +351,27 @@ cp bareMetalC/template.c bareMetalC/my_test.c
 
 Then, add `my_test` to the `tests` list at the top of `bareMetalC/Makefile`. Afterwards, running `./build.sh` will install `my_test-baremetal` in `build/bareMetalC`.
 
+## Performance Counters
+
+Gemmini includes a configurable hardware counter file for profiling accelerator activity. The generated software header exposes counter-event IDs from `src/main/scala/gemmini/CounterFile.scala` so tests can select which events to count.
+
+Each ordinary counter increments once per cycle while its selected event signal is high. External counters instead read a value accumulated by another Gemmini module, such as reservation-station occupancy counts or DMA byte/latency totals. The counter access instruction can also take a snapshot so that a sequence of reads observes a consistent set of counter values even if execution is interrupted.
+
+Useful event groups include:
+
+| Counter events | What they count |
+| --- | --- |
+| `MAIN_LD_CYCLES`, `MAIN_ST_CYCLES`, `MAIN_EX_CYCLES` | Cycles where exactly one of the load, store, or execute controllers is busy. |
+| `MAIN_LD_ST_CYCLES`, `MAIN_LD_EX_CYCLES`, `MAIN_ST_EX_CYCLES`, `MAIN_LD_ST_EX_CYCLES` | Cycles where the named controllers are busy at the same time. These are useful for measuring how much load, store, and execute work overlaps. |
+| `LOAD_ACTIVE_CYCLE`, `STORE_ACTIVE_CYCLE`, `EXE_ACTIVE_CYCLE` | Cycles where the corresponding controller is doing useful work. These are usually more specific than the `MAIN_*` occupancy counters. |
+| `LOAD_DMA_WAIT_CYCLE`, `STORE_DMA_WAIT_CYCLE`, `*_TLB_WAIT_CYCLES`, `*_TL_WAIT_CYCLES`, `*_SCRATCHPAD_WAIT_CYCLE` | Back-pressure or wait cycles in DMA, TLB, TileLink, or scratchpad interfaces. |
+| `EXE_PRELOAD_HAZ_CYCLE`, `EXE_OVERLAP_HAZ_CYCLE`, `EXE_CONTROL_Q_BLOCK_CYCLE`, `EXE_FLUSH_CYCLE` | Execute-side hazards, queue blockage, and flush cycles. |
+| `SCRATCHPAD_*_WAIT_CYCLE`, `ACC_*_WAIT_CYCLE` | Cycles where the execute pipeline is waiting for scratchpad or accumulator operands. |
+| `A_GARBAGE_CYCLES`, `B_GARBAGE_CYCLES`, `D_GARBAGE_CYCLES` | Cycles where the mesh input/control logic marks the corresponding operand stream as garbage/invalid for computation. |
+| `IM2COL_*`, `LOOP_MATMUL_ACTIVE_CYCLES`, `TRANSPOSE_PRELOAD_UNROLLER_ACTIVE_CYCLES`, `RESERVATION_STATION_*` | Activity in higher-level unrollers, im2col, and the reservation station. |
+
+For exact definitions, search for `connectEventSignal(CounterEvent.<name>, ...)` in the Scala source. For example, the `MAIN_*` events are wired in `Controller.scala`, load events in `LoadController.scala`, store events in `StoreController.scala`, execute events in `ExecuteController.scala`, DMA events in `DMA.scala`, and reservation-station events in `ReservationStation.scala`.
+
 ## DNN Tests
 
 Example DNNs, such as ResNet50, can be found in `software/gemmini-rocc-tests/imagenet` and `software/gemmini-rocc-tests/mlps`.
