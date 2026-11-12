@@ -50,6 +50,8 @@ object GemminiISA {
   val SPAD_REQUANT = 34.U // rs1 = src[13:0] | dst[27:14] | tiled[28]; rs2 = M[15:0] | N[31:16]
   val VPU_EXEC = 33.U // rs1 = src1[13:0] | src2[27:14] | dst[41:28] | rows[57:42]; rs2 = op[3:0] | bcast[4] | rlen[14:5] | imm[31:16]
   val LOOP_WS_CONFIG_LUTS = 35.U // rs1 = act-in, rs2 = weight codebook DRAM addr (0 = not loop-managed)
+  val LOOP_WS_CONFIG_KMIX = 36.U  // mixed-K loop: rs1 = MXFP8 B DRAM base, rs2 = its row stride (the loop's B = low precision)
+  val LOOP_WS_CONFIG_KMASK = 37.U // mixed-K loop: per-K-block mask, 1 = low precision; rs1 = bits 63:0, rs2 = bits 127:64
 
   
   // rs1[2:0] values
@@ -71,6 +73,7 @@ object GemminiISA {
   val RESET        = 16.U(7.W)
   val COMPUTE_CISC = 17.U(7.W)
 
+  val QUEUE_FREE   = 125.U(7.W)  // rd = free raw_cmd_q entries; answered at once, never enqueued
   val COUNTER_OP   = 126.U(7.W)
 
   //==========================================================================

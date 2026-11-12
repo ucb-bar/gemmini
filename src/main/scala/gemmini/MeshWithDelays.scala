@@ -67,12 +67,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val resp = Valid(new MeshWithDelaysResp(outputType, meshColumns, tileColumns, block_size, tagType.cloneType))
 
     val tags_in_progress = Output(Vec(tagqlen, tagType))
-    val activation_mx_format = Input(UInt(2.W))
-    val weight_mx_format = Input(UInt(2.W))
-    val mx_fp8_altfmt = Input(Bool())
-    val weight_mx_altfmt = Input(Bool())
-    val act_lut_en = Input(Bool())     // per-operand runtime LUT-usage: activation
-    val weight_lut_en = Input(Bool())  // per-operand runtime LUT-usage: weight
   })
 
   // Clock gating of the skew / control chains (clock_gating): the operand, control, id, last and output data chains of
@@ -225,12 +219,6 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   val d_shifter_in = WireInit(Mux(d_is_from_transposer,
     VecInit(transposer_out.flatten.reverse.grouped(tileRows).map(VecInit(_)).toSeq).asTypeOf(D_TYPE), d_buf))
   
-  mesh.io.weight_mx_format := io.weight_mx_format
-  mesh.io.activation_mx_format := io.activation_mx_format
-  mesh.io.mx_fp8_altfmt := io.mx_fp8_altfmt
-  mesh.io.weight_mx_altfmt := io.weight_mx_altfmt
-  mesh.io.act_lut_en := io.act_lut_en
-  mesh.io.weight_lut_en := io.weight_lut_en
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_b := shifted(b_shifter_in, upBanks)
   mesh.io.in_d := shifted(d_shifter_in, upBanks)
@@ -243,6 +231,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
   mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>
     ss.foreach(_.dataflow := ctrlShift(req.bits.pe_control.dataflow, i * (tile_latency + 1)))
     ss.foreach(_.propagate := ctrlShift(in_prop, i * (tile_latency + 1)))
+    ss.foreach(_.mx := ctrlShift(req.bits.pe_control.mx, i * (tile_latency + 1)))
   }
   val result_shift = RegNext(req.bits.pe_control.shift) // TODO will this arrive at the right time if memory isn't pipelined?
   mesh.io.in_control.zipWithIndex.foreach { case (ctrl, i) =>

@@ -34,6 +34,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     val mx_multi_elem = Input(Bool())   // WEIGHT (output-column) throughput
     val mx_multi_elem_act = Input(Bool())   // ACTIVATION (output-row) throughput
     val output_mx_type = Input(UInt(2.W))
+    val acc_row_pair = Input(Bool())   // single x quad on the shared layout: an acc row holds 2 C rows -> 2x DRAM stride
+    val shared_acc = Input(Bool())   // single x single on the shared layout: acc-source stores read quad tiles
   })
 
   // val waiting_for_command :: waiting_for_dma_req_ready :: sending_rows :: Nil = Enum(3)
@@ -100,7 +102,22 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val mvout_rs2 = cmd.bits.cmd.rs2.asTypeOf(new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t))
   val localaddr = mvout_rs2.local_addr
   val cols = mvout_rs2.num_cols
-  val rows = mvout_rs2.num_rows
+  // shared-layout single x quad acc source: num_rows counts C rows (2 per acc row; odd -> last acc row's 2nd row skipped)
+  // shared-layout overrides apply only to acc-source stores (spad-source mvouts keep the live mode)
+  val st_shared = Mux(cmd.bits.from_matmul_fsm, cmd.bits.mx.shared, io.shared_acc)   // loop stores: their own loop's
+  val shared_src = st_shared && localaddr.is_acc_addr
+  // the store's own mode tag: weight quad -> 2 cols/lane, act quad -> 2 rows/lane; act-quad x wei-single stores as
+  // quad x quad over col-tile pairs, single x quad (DIM>=16) over row-tile pairs
+  val qw = MxCmdMode.quad(cmd.bits.mx.wgt)
+  val qa = MxCmdMode.quad(cmd.bits.mx.act)
+  val t_pair = qa && !qw
+  val t_ipair = (block_rows >= 16).B && qw && !qa
+  val multi = qw || t_pair || shared_src
+  val multi_act = qa || t_ipair || shared_src
+  val loop_bound_j = Mux(shared_src, io.loop_bound_j >> 1, io.loop_bound_j)
+  val pair_rows = (t_ipair || st_shared) && localaddr.is_acc_addr
+  val rows = Mux(pair_rows, (mvout_rs2.num_rows +& 1.U) >> 1, mvout_rs2.num_rows)
+  val odd_tail = pair_rows && mvout_rs2.num_rows(0)
   // MX acc source: one wide read = one physical acc row of MxGeom.R entries (block-stepping would re-read it)
   val eff_block_cols = if (use_mx_scaling)
                          Mux(localaddr.is_acc_addr, MxGeom(block_rows).R.U(cols.getWidth.W), block_cols.U(cols.getWidth.W))
@@ -130,11 +147,11 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val mx_stride = if (config.use_mx_scaling) {
     // Gated tiled requant->spad (FP8) carries the intra-tile row in the beat term, so per-row stride is 1.
     Mux(mvout_rs2.reuse_tiled, 1.U,
-      Mux(io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j * 2.U,
+      Mux(io.enable_wide_spad_write && !multi, loop_bound_j * 2.U,
         // act-quad packs 2 output rows per acc row (stride *8); act-single (mode6/7) = 1 output row -> *4.
-        Mux(io.enable_wide_spad_write, io.loop_bound_j * Mux(io.mx_multi_elem_act, 8.U, 4.U),
-          Mux(!io.enable_wide_spad_write && !io.mx_multi_elem, io.loop_bound_j,
-            Mux(!io.enable_wide_spad_write && io.mx_multi_elem, io.loop_bound_j * 2.U,
+        Mux(io.enable_wide_spad_write, loop_bound_j * Mux(multi_act, 8.U, 4.U),
+          Mux(!io.enable_wide_spad_write && !multi, loop_bound_j,
+            Mux(!io.enable_wide_spad_write && multi, loop_bound_j * 2.U,
               1.U
             )
           )
@@ -143,7 +160,8 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   } else {
     1.U
   }
-  val current_vaddr = vaddr + row_counter * stride
+  val row_stride = Mux(pair_rows, stride << 1, stride)
+  val current_vaddr = vaddr + row_counter * row_stride
   // stride bit 31: absolute row step from the loop's store unit (MX), not scaled by the live mx_stride
   val dst_stride_abs = dst_spad_stride(31)
   val dst_row_step = if (config.use_mx_scaling) Mux(dst_stride_abs, dst_spad_stride(30, 0), dst_spad_stride * mx_stride)
@@ -210,12 +228,13 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
     block_counter === blocks - 1.U)
   io.dma.req.bits.chunk_id := mvout_rs2.mx_chunk_id
   io.dma.req.bits.reuse_tiled := mvout_rs2.reuse_tiled
-  io.dma.req.bits.max_j := io.loop_bound_j
+  io.dma.req.bits.max_j := loop_bound_j
   io.dma.req.bits.activation_mx_type := io.activation_mx_type
-  io.dma.req.bits.mx_multi_elem := io.mx_multi_elem
-  io.dma.req.bits.mx_multi_elem_act := io.mx_multi_elem_act
+  io.dma.req.bits.mx_multi_elem := multi
+  io.dma.req.bits.mx_multi_elem_act := multi_act
   io.dma.req.bits.output_mx_type := io.output_mx_type
-  io.dma.req.bits.half_pitch := Mux(dst_is_spad, dst_row_step >> 1, stride >> 1)
+  io.dma.req.bits.skip_second := odd_tail && row_counter === rows - 1.U
+  io.dma.req.bits.half_pitch := Mux(dst_is_spad, dst_row_step >> 1, row_stride >> 1)
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoStore

@@ -4,10 +4,38 @@ package gemmini
 import chisel3._
 import chisel3.util._
 
+// MX operand mode of one tile; it travels with the tile (PE control, mesh tag) so a mode change needs no drain
+class MxMode extends Bundle {
+  val act_fmt = UInt(2.W)
+  val wgt_fmt = UInt(2.W)
+  val act_alt = Bool()
+  val wgt_alt = Bool()
+  val act_quad = Bool()   // a sig4 activation lane holds 2 elements (LUT-deprojected E4M3)
+  val wgt_quad = Bool()   // a sig4 weight lane holds 2 elements
+  val shared = Bool()   // single x single on the shared acc layout (ex write side only)
+}
+
+// per-instruction operand datatype, stamped in program order: {lut, fmt, alt} per operand (lut: codebook enabled)
+class MxCmdMode extends Bundle {
+  val act = UInt(4.W)
+  val wgt = UInt(4.W)
+  val shared = Bool()   // mode8 on the shared (quad) acc layout (loop-managed, DIM>=16)
+  val slot = UInt(2.W)  // mixed-K loop: the K-block's weight codebook set (ring slot)
+}
+object MxCmdMode {
+  def code(fmt: UInt, alt: Bool, lut: Bool): UInt = Cat(lut, fmt(1, 0), alt)
+  def withLut(c: UInt, lut: Bool): UInt = c | Cat(lut, 0.U(3.W))
+  def quad(c: UInt): Bool = c =/= 0.U   // 2 elements/lane: FP6/FP4/E5M2, or any LUT operand
+  def lut(c: UInt): Bool = c(3)
+  def fmt(c: UInt): UInt = c(2, 1)
+  def alt(c: UInt): Bool = c(0)
+}
+
 class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {
   val dataflow = UInt(1.W) // TODO make this an Enum
   val propagate = UInt(1.W) // Which register should be propagated (and which should be accumulated)?
   val shift = UInt(log2Up(accType.getWidth).W) // TODO this isn't correct for Floats
+  val mx = new MxMode
 }
 
 class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFpProductPrecisionList: T, meshFpAccPrecisionList: T) (implicit ev: Arithmetic[T]) extends Module {
@@ -57,13 +85,6 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
     val in_valid = Input(Bool())
     val out_valid = Output(Bool())
 
-    val activation_mx_format = Input(UInt(2.W))
-    val weight_mx_format = Input(UInt(2.W))
-    val mx_fp8_altfmt = Input(Bool())
-    val weight_mx_altfmt = Input(Bool())
-    val act_lut_en = Input(Bool())     // per-operand runtime LUT-usage: activation
-    val weight_lut_en = Input(Bool())  // per-operand runtime LUT-usage: weight
-
     val bad_dataflow = Output(Bool())
   })
 
@@ -93,18 +114,20 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
   io.out_control.dataflow := dataflow
   io.out_control.propagate := prop
   io.out_control.shift := shift
+  io.out_control.mx := io.in_control.mx
   io.out_id := id
   io.out_last := last
   io.out_valid := valid
 
 
   mac_unit.io.in_a := a
-  mac_unit.io.activation_mx_format := io.activation_mx_format
-  mac_unit.io.weight_mx_format :=  io.weight_mx_format
-  mac_unit.io.mx_fp8_altfmt := io.mx_fp8_altfmt
-  mac_unit.io.weight_mx_altfmt := io.weight_mx_altfmt
-  mac_unit.io.act_lut_en := io.act_lut_en
-  mac_unit.io.weight_lut_en := io.weight_lut_en
+  // the mode of the tile passing through this PE (from its control), not a live global
+  mac_unit.io.activation_mx_format := io.in_control.mx.act_fmt
+  mac_unit.io.weight_mx_format :=  io.in_control.mx.wgt_fmt
+  mac_unit.io.mx_fp8_altfmt := io.in_control.mx.act_alt
+  mac_unit.io.weight_mx_altfmt := io.in_control.mx.wgt_alt
+  mac_unit.io.act_lut_en := io.in_control.mx.act_quad
+  mac_unit.io.weight_lut_en := io.in_control.mx.wgt_quad
 
   val last_s = RegEnable(prop, valid)
   val flip = last_s =/= prop

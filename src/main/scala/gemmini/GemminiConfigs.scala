@@ -44,6 +44,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              reservation_station_entries_ld: Int = 8,
                                                                              reservation_station_entries_st: Int = 4,
                                                                              reservation_station_entries_ex: Int = 16,
+                                                                             cmd_queue_entries: Int = 2,  // RoCC command FIFO in front of the loop unrollers / RS
 
                                                                              sp_banks: Int = 4, // TODO support one-bank designs
                                                                              sp_singleported: Boolean = false,
@@ -399,6 +400,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     // VPU_EXEC / SPAD_REQUANT row-address field width (gemmini.vpu.VpuCmd.fieldW): 14, 15 at DIM=8
     header ++= s"#define SPAD_ROW_ADDR_BITS ${gemmini.vpu.VpuCmd.fieldW(log2Up(sp_banks * sp_bank_entries))}\n"
     header ++= s"#define ACC_ROWS ${acc_banks * acc_bank_entries}\n" // TODO add ACC_BANKS as well
+    lut.foreach(l => header ++= s"#define LUT_W_CODEBOOKS ${l.numEntries.head}\n")   // weight codebooks (2 loop halves)
 
     val max_bytes = 64
     header ++= s"#define MAX_BYTES $max_bytes\n"

@@ -31,12 +31,6 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     // OR of every valid register inside the mesh (tile valid chains and output-delay valid stages) and every tile's
     // in_valid / out_valid: the wrapper's enable source. The valid chains themselves are never gated.
     val valid_in_flight = Output(Bool())
-    val weight_mx_format = Input(UInt(2.W))
-    val activation_mx_format = Input(UInt(2.W))
-    val mx_fp8_altfmt = Input(Bool())   // activation sub-format alt (E5M2/E2M3 vs E4M3/E3M2)
-    val weight_mx_altfmt = Input(Bool())   // weight sub-format alt (per-operand)
-    val act_lut_en = Input(Bool())      // per-operand runtime LUT-usage: activation
-    val weight_lut_en = Input(Bool())   // per-operand runtime LUT-usage: weight
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
     val in_b = Input(Vec(meshColumns, Vec(tileColumns, outputType)))
     val in_d = Input(Vec(meshColumns, Vec(tileColumns, weightType))) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
@@ -70,18 +64,6 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     chisel3.withReset(false.B) { Pipe(valid, t, latency).bits }
   }
   
-  for (r <- 0 until meshRows) {
-    for (c <- 0 until meshColumns) {
-      val tile = mesh(r)(c)
-      tile.io.activation_mx_format := io.activation_mx_format
-      tile.io.weight_mx_format := io.weight_mx_format
-      tile.io.mx_fp8_altfmt := io.mx_fp8_altfmt
-      tile.io.weight_mx_altfmt := io.weight_mx_altfmt
-      tile.io.act_lut_en := io.act_lut_en
-      tile.io.weight_lut_en := io.weight_lut_en
-    }
-  }
-
   // Format code -> (exp,sig,bits), altfmt selects the sub-format:
   //   fp8 (0): E4M3(4,4) / E5M2(5,3), 8b;  fp6 (1): E3M2(3,3) / E2M3(2,4), 6b;  fp4 (2): E2M1(2,2), 4b
   def mxExp(fmt: UInt, altfmt: Bool): UInt = Mux(fmt === 2.U, 2.U,
@@ -90,28 +72,26 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     Mux(fmt === 1.U, Mux(altfmt, 4.U, 3.U), Mux(altfmt, 3.U, 4.U)))
   def mxSize(fmt: UInt): UInt = Mux(fmt === 2.U, 4.U, Mux(fmt === 1.U, 6.U, 8.U))
 
-  val typeA = Wire(new MxTypeBundle)
-  typeA.exp := mxExp(io.activation_mx_format, io.mx_fp8_altfmt)
-  typeA.sig := mxSig(io.activation_mx_format, io.mx_fp8_altfmt)
-  val typeA_size = mxSize(io.activation_mx_format)
-
-  val typeW = Wire(new MxTypeBundle)
-  typeW.exp := mxExp(io.weight_mx_format, io.weight_mx_altfmt)
-  typeW.sig := mxSig(io.weight_mx_format, io.weight_mx_altfmt)
-  val typeW_size = mxSize(io.weight_mx_format)
-
-  // Quad build promotes a sig4 operand to a quad mode only when THAT operand's own LUT is enabled.
-  val mode = requiredPEMode(typeA, typeW,
-    if (e4m3QuadThroughput) io.act_lut_en else false.B,
-    if (e4m3QuadThroughput) io.weight_lut_en else false.B,
-    (inputType, weightType) match { case (a: MxFloat, w: MxFloat) => MxFloat.peConfig(a, w).hasQuadSingle; case _ => false })
+  // Lane enables of the edge pipes, decoded per tile from the mode on the control entering that tile (it reaches
+  // the tile's pipe stage together with the data), so tiles of different modes can be in flight.
+  private val hasQuadSingle = (inputType, weightType) match { case (a: MxFloat, w: MxFloat) => MxFloat.peConfig(a, w).hasQuadSingle; case _ => false }
+  def laneMode(m: MxMode) = {
+    val tA = Wire(new MxTypeBundle); tA.exp := mxExp(m.act_fmt, m.act_alt); tA.sig := mxSig(m.act_fmt, m.act_alt)
+    val tW = Wire(new MxTypeBundle); tW.exp := mxExp(m.wgt_fmt, m.wgt_alt); tW.sig := mxSig(m.wgt_fmt, m.wgt_alt)
+    // Quad build promotes a sig4 operand to a quad mode only when that operand's lane holds 2 elements.
+    (requiredPEMode(tA, tW, if (e4m3QuadThroughput) m.act_quad else false.B, if (e4m3QuadThroughput) m.wgt_quad else false.B,
+      hasQuadSingle), mxSize(m.act_fmt), mxSize(m.wgt_fmt))
+  }
+  // control entering tile (r, c): the mesh input for row 0, else the tile above's output
+  def ctrlIn(r: Int, c: Int): MxMode = if (r == 0) io.in_control(c)(0).mx else mesh(r - 1)(c).io.out_control(0).mx
   
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
   for (r <- 0 until meshRows) {
-    mesh(r).foldLeft(io.in_a(r)) {
-      case (in_a, tile) =>
+    mesh(r).zipWithIndex.foldLeft(io.in_a(r)) {
+      case (in_a, (tile, c)) =>
         tile.io.in_a := (if (use_mx_scaling) {
+          val (mode, typeA_size, _) = laneMode(ctrlIn(r, c))
           VecInit(in_a.map(a => VecInit(a.asTypeOf(Vec(inputType.getWidth, Bool())).zipWithIndex.map { case (e, i) =>
             pipe(Mux(mode.actInputs === 1.U, i.U < typeA_size, (i % (a.getWidth / 2)).U < typeA_size), e, tile_latency+1)
           }).asTypeOf(inputType)))
@@ -127,6 +107,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     meshT(c).foldLeft((io.in_b(c), io.in_valid(c), 0)) {
       case ((in_b, valid, r_idx), tile) =>
         tile.io.in_b := (if (use_mx_scaling) {
+          val (mode, _, _) = laneMode(ctrlIn(r_idx, c))
           val resized = in_b.map(_.withWidthOf(meshAccPrecisionList(r_idx)))
           VecInit(resized.map(b => VecInit(b.asTypeOf(Vec(4, UInt((b.getWidth / 4).W))).zipWithIndex.map { case (e, i) =>
             pipe(valid.head && (i.U < mode.numOutputs), e, tile_latency+1)
@@ -140,9 +121,10 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
 
   // Chain tile_out -> tile_propag (pipeline output across each column)
   for (c <- 0 until meshColumns) {
-    meshT(c).foldLeft((io.in_d(c), io.in_valid(c))) {
-      case ((in_propag, valid), tile) =>
+    meshT(c).zipWithIndex.foldLeft((io.in_d(c), io.in_valid(c))) {
+      case ((in_propag, valid), (tile, r)) =>
         tile.io.in_d := (if (use_mx_scaling) {
+          val (mode, _, typeW_size) = laneMode(ctrlIn(r, c))
           VecInit(in_propag.map(w => VecInit(w.asTypeOf(Vec(weightType.getWidth, Bool())).zipWithIndex.map { case (e, i) =>
             pipe(valid.head && Mux(mode.weiInputs === 1.U, i.U < typeW_size, (i % (w.getWidth / 2)).U < typeW_size), e, tile_latency+1)
           }).asTypeOf(weightType)))
@@ -162,6 +144,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
           tile_ctrl.shift := pipe(v, ctrl.shift, tile_latency+1)
           tile_ctrl.dataflow := pipe(v, ctrl.dataflow, tile_latency+1)
           tile_ctrl.propagate := pipe(v, ctrl.propagate, tile_latency+1)
+          tile_ctrl.mx := pipe(v, ctrl.mx, tile_latency+1)
         }
         (tile.io.out_control, tile.io.out_valid)
     }

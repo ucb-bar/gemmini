@@ -40,12 +40,22 @@ class AccumulatorReadIO[T <: Data: Arithmetic, U <: Data](n: Int, fullDataType: 
   val resp = Flipped(Decoupled(new AccumulatorReadResp[T, U](chunk_t, scale_t)))
 }
 
+// MX mode of the compute that produced a write (ex writes: from the mesh tag; others: the live mode)
+class AccWriteMode extends Bundle {
+  val multi = Bool()       // weight quad (2 output cols per lane)
+  val multi_act = Bool()   // activation quad (2 output rows per lane)
+  val dtype = UInt(2.W)    // activation mx format
+  val altfmt = Bool()      // activation sub-format alt
+}
+
 class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends Bundle {
   val addr = UInt(log2Up(n).W)
   val data = t.cloneType
   val acc = Bool()
   val mask = Vec(t.getWidth / 8, Bool()) // TODO Use aligned_to here
   val offset = UInt(log2Up(t.length*t.head.length).W) // TODO(nicolas): not hardcoded
+  val scale_halves = UInt(2.W)   // {wgt, act} scale-mem half of the compute that produced this row
+  val wm = new AccWriteMode
 }
 
 
@@ -198,11 +208,12 @@ class AccumulatorMem[T <: Data, U <: Data](
  
     require(acc_latency >= 2)
   require(!acc_singleported || !use_mx_scaling, "MX scaling requires non-singleported accumulator")
-    val dataType = io.dataType_out
     
     val scaled_data = WireInit(0.U.asTypeOf(t))
     val scalecounter = RegInit(0.U(1.W))
     val pipelined_writes = Reg(Vec(acc_latency, Valid(new AccumulatorWriteReq(n, t))))
+    val pipelined_writes_wm = pipelined_writes(0).bits.wm   // mode of the write being scaled
+    val dataType = pipelined_writes_wm.dtype
     val oldest_pipelined_write = Wire(Valid(new AccumulatorWriteReq(n, t)))
     oldest_pipelined_write := pipelined_writes(acc_latency-1)
 
@@ -218,12 +229,15 @@ class AccumulatorMem[T <: Data, U <: Data](
     val scale_resp = io.scale_rd_resp.get
     scale_req.valid := io.write.fire
     scale_req.bits.scaling_enable := io.write.fire
+    scale_req.bits.halves := io.write.bits.scale_halves
+    scale_req.bits.multi := io.write.bits.wm.multi
+    scale_req.bits.multi_act := io.write.bits.wm.multi_act
     val dim = meshRows * tileRows
     // resp is broadcast to all banks; it is this bank's iff this bank wrote last cycle (one bank writes/cycle)
     when(scale_resp.valid && pipelined_writes(0).valid) {
       // ACT quad, WEI single: two dim/4 windows (row 2r at offset, row 2r+1 at dim/2 + offset); resp lane k = row
       // 2r scales for k < dim/4, row 2r+1 scales for k in [dim/4, dim/2)
-      when(!io.mx_multi_elem && io.mx_multi_elem_act) {
+      when(!pipelined_writes_wm.multi && pipelined_writes_wm.multi_act) {
         val offset = pipelined_writes(0).bits.offset
         for (i <- 0 until dim) {
           val dataElement = pipelined_writes(0).bits.data(i).asUInt
@@ -236,7 +250,7 @@ class AccumulatorMem[T <: Data, U <: Data](
           scaled_data(i) := Mux(in0 || in1, scaled, 0.U).asTypeOf(pipelined_writes(0).bits.data(i))
         }
       // Narrow dim/4 window only for E4M3-single; E4M3-quad and E5M2 use the full-width path below.
-      }.elsewhen(dataType === 0.U && !io.mx_multi_elem && !io.mx_fp8_altfmt) {
+      }.elsewhen(dataType === 0.U && !pipelined_writes_wm.multi && !pipelined_writes_wm.altfmt) {
         for (i <- 0 until dim) {
           val dataElement = Wire(UInt(64.W))
           val offset = pipelined_writes(0).bits.offset
@@ -434,7 +448,8 @@ class AccumulatorMem[T <: Data, U <: Data](
     // QUAD: offset field carries the chunk parity directly. SINGLE: offset field carries the col-tile's LOCAL entry
     // offset (0,2,4,6); the CHUNK is the write address' block-index bit (col-tiles 0-3 -> block N -> chunk0, 4-7 ->
     // block N+1 -> chunk1, folded onto the same physical row).
-    val wr_chunk = Mux(io.mx_multi_elem, wr_par(lgW - 1, 0),
+    val wr_wm = oldest_pipelined_write.bits.wm
+    val wr_chunk = Mux(wr_wm.multi, wr_par(lgW - 1, 0),
       (oldest_pipelined_write.bits.addr >> log2Ceil(meshRows*tileRows).U)(lgW - 1, 0))
     if (widen) {
       mem.io.waddr := physRow(oldest_pipelined_write.bits.addr, wr_chunk)
@@ -444,14 +459,14 @@ class AccumulatorMem[T <: Data, U <: Data](
       // 0,2 vs 1,3 exactly). SINGLE writes ONE col-tile = 2 entries at [local_offset, local_offset+1] within its
       // chunk, so it masks ONLY that pair (bit = chunk*half + local_offset/2); otherwise it clobbers the 3 sibling
       // col-tiles sharing the chunk (root cause of the DIM=8 single failure).
-      mem.io.wdata := Mux(io.mx_multi_elem || io.mx_multi_elem_act, placeWide(wr_data, wr_chunk), placeSingle(wr_data, wr_chunk))
+      mem.io.wdata := Mux(wr_wm.multi || wr_wm.multi_act, placeWide(wr_data, wr_chunk), placeSingle(wr_data, wr_chunk))
       val single_mask_bit = wr_chunk * (t.length / gEnt).U + (wr_par >> log2Ceil(gEnt))
       // quad: mask bit q (gEnt entries) belongs to col-tile ((gEnt*q / half) mod W)
       def quadBit(q: Int) = ((gEnt * q / half) % W).U === wr_chunk
       // act-quad x wei-single: one col-tile of the pair = mask bit (q mod half/gEnt) = local offset / gEnt
       val pair_sub = wr_par >> log2Ceil(gEnt)
-      mem.io.mask  := Mux(io.mx_multi_elem, VecInit((0 until mask_len_wide).map(quadBit)),
-        Mux(io.mx_multi_elem_act, VecInit((0 until mask_len_wide).map(q => quadBit(q) && (q % (half / gEnt)).U === pair_sub)),
+      mem.io.mask  := Mux(wr_wm.multi, VecInit((0 until mask_len_wide).map(quadBit)),
+        Mux(wr_wm.multi_act, VecInit((0 until mask_len_wide).map(q => quadBit(q) && (q % (half / gEnt)).U === pair_sub)),
           VecInit((0 until mask_len_wide).map(q => q.U === single_mask_bit))))
     } else {
       mem.io.waddr := oldest_pipelined_write.bits.addr
@@ -465,7 +480,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       val rd_par = io.write.bits.offset
       // SINGLE: chunk (fold parity) comes from the read address' block bit, not the offset field (= local offset).
       val rd_chunk = (io.write.bits.addr >> log2Ceil(meshRows*tileRows).U)(lgW - 1, 0)
-      mem.io.raddr_full := (if (widen) physRow(io.write.bits.addr, Mux(io.mx_multi_elem, rd_par, rd_chunk)) else io.write.bits.addr)
+      mem.io.raddr_full := (if (widen) physRow(io.write.bits.addr, Mux(io.write.bits.wm.multi, rd_par, rd_chunk)) else io.write.bits.addr)
       mem.io.ren_full := io.write.fire && io.write.bits.acc
       // rdata_full is the SyncMem read output 1 cycle after raddr was set, so extractWide must use the parity of
       // the write that FIRED the read (delayed by the read latency), not the current cycle's offset. Otherwise the
@@ -473,8 +488,8 @@ class AccumulatorMem[T <: Data, U <: Data](
       // reads j0's value for j1 (only bites the last physical row = the last output-row pair).
       // SINGLE: RMW read picks the chunk by the read address' block bit (rd_chunk above); QUAD uses the offset-field
       // parity. Both delayed by RegNext to match the SyncMem read latency.
-      rdata_for_adder := (if (widen) Mux(io.mx_multi_elem, extractWide(mem.io.rdata_full, RegNext(rd_par)),
-                                   Mux(io.mx_multi_elem_act, extractWide(mem.io.rdata_full, RegNext(rd_chunk)),
+      rdata_for_adder := (if (widen) Mux(RegNext(io.write.bits.wm.multi), extractWide(mem.io.rdata_full, RegNext(rd_par)),
+                                   Mux(RegNext(io.write.bits.wm.multi_act), extractWide(mem.io.rdata_full, RegNext(rd_chunk)),
                                                            extractSingle(mem.io.rdata_full, RegNext(rd_chunk))))
                           else mem.io.rdata_full)
 
@@ -701,8 +716,12 @@ class AccumulatorMem[T <: Data, U <: Data](
       !block_read_req
   )
 
+  // same-row accumulates only conflict if their SRAM mask groups overlap (each RMW writes back only its own groups)
+  def wgroups(m: Vec[Bool]): UInt = VecInit(m.grouped(32).map(_.reduce(_ || _)).toSeq).asUInt
+  val disjointOk = use_mx_scaling && meshRows * tileRows >= 16
   io.write.ready := !block_write_req &&
-    !pipelined_writes.map(r => r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc).reduce(_||_)
+    !pipelined_writes.map(r => r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc &&
+      (if (disjointOk) (wgroups(r.bits.mask) & wgroups(io.write.bits.mask)) =/= 0.U else true.B)).reduce(_||_)
 
   when (reset.asBool) {
     pipelined_writes.foreach(_.valid := false.B)

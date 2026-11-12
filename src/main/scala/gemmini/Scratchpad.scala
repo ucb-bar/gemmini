@@ -64,6 +64,7 @@ class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_
   val reuse_tiled = Bool()
   // half the store's row step (DRAM: bytes, spad: rows) = the output row pitch when an act-quad acc row holds 2 rows
   val half_pitch = UInt(coreMaxAddrBits.W)
+  val skip_second = Bool()   // act-quad split: this acc row's second C row is past the end (odd C rows)
 }
 
 class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int, fullRowLen: Int = 16,
@@ -104,7 +105,7 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
       Mux((is_non_fp8_acc_write && io.in.bits.mx_multi_elem) ||
           (!io.in.bits.mx_multi_elem_act && io.in.bits.output_mx_type === 3.U), quadRowLen.U, 16.U), io.in.bits.len)))
   io.out.bits.chunk_id := out_chunk_id
-  io.out.bits.store_en := Mux(is_non_fp8_acc_write, !second_half || !second_half_invalid, io.in.bits.store_en)
+  io.out.bits.store_en := Mux(is_non_fp8_acc_write, !second_half || !(second_half_invalid || io.in.bits.skip_second), io.in.bits.store_en)
   io.out.bits.vaddr   := Mux(is_non_fp8_acc_write && second_half,
     address_second_half,
     io.in.bits.vaddr)
@@ -151,6 +152,9 @@ class ScratchpadReadReq(val n: Int) extends Bundle {
   // deprojection advance its codebook counter exactly when the projected data arrives.
   val read_a = Bool()
   val read_d = Bool()
+  // [1:0] {wgt, act} loop codebook half of the compute that issued the read; [2] deproject this read (QuantLut route);
+  // [3] [2] is valid (ex-issued read; others route by the live formats)
+  val lut_halves = UInt(8.W)
 }
 
 class ScratchpadReadResp(val w: Int) extends Bundle {
@@ -161,6 +165,7 @@ class ScratchpadReadResp(val w: Int) extends Bundle {
   // Read-operand kind, carried through the read pipeline aligned with `data`.
   val read_a = Bool()
   val read_d = Bool()
+  val lut_halves = UInt(8.W)
 }
 
 class ScratchpadReadIO(val n: Int, val w: Int) extends Bundle {
@@ -225,6 +230,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
   val input_mx_format = io.read.req.bits.input_mx_format
   val read_a_tag = io.read.req.bits.read_a
   val read_d_tag = io.read.req.bits.read_d
+  val lut_halves = io.read.req.bits.lut_halves
 
 
   // Make a queue which buffers the result of an SRAM read if it can't immediately be consumed
@@ -241,6 +247,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
     q.io.enq.bits.read_a := RegNext(read_a_tag)
     q.io.enq.bits.read_d := RegNext(read_d_tag)
+    q.io.enq.bits.lut_halves := RegNext(lut_halves)
     io.read.req.ready := q_will_be_empty && !singleport_busy_with_write
   } else if (use_shared_ext_mem) { // use ready-valid interface
     val ext_mem = io.ext_mem.get
@@ -249,7 +256,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     // TODO (richard): the number of entries here should be configurable
     // Carry fromDMA + the read_a/read_d tag through the same latency-tracking queue as the
     // variable-latency shared-mem read, so the operand-kind tag returns aligned with its data.
-    class ReadMeta extends Bundle { val fromDMA = Bool(); val read_a = Bool(); val read_d = Bool() }
+    class ReadMeta extends Bundle { val fromDMA = Bool(); val read_a = Bool(); val read_d = Bool(); val lut_halves = UInt(8.W) }
     val dma_q = Module(new Queue(new ReadMeta, 4, false, true))
 
     // RADIANCE FIX: `q_will_be_empty` only bounds the response queue; reads whose responses are still
@@ -266,6 +273,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     dma_q.io.enq.bits.fromDMA := fromDMA
     dma_q.io.enq.bits.read_a := read_a_tag
     dma_q.io.enq.bits.read_d := read_d_tag
+    dma_q.io.enq.bits.lut_halves := lut_halves
     dma_q.io.deq.ready := q.io.enq.fire
     assert(dma_q.io.enq.fire === ren, "DMA queue does not have enough entries")
     assert(dma_q.io.deq.fire === q.io.enq.fire, "fromDMA should be dequeued only when read resp comes back")
@@ -277,6 +285,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
     q.io.enq.bits.read_a := dma_q.io.deq.bits.read_a
     q.io.enq.bits.read_d := dma_q.io.deq.bits.read_d
+    q.io.enq.bits.lut_halves := dma_q.io.deq.bits.lut_halves
     ext_mem.read_resp.ready := q.io.enq.ready
 
     /* WRITE */
@@ -311,6 +320,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
     q.io.enq.bits.read_a := RegNext(read_a_tag)
     q.io.enq.bits.read_d := RegNext(read_d_tag)
+    q.io.enq.bits.lut_halves := RegNext(lut_halves)
 
     io.read.req.ready := q_will_be_empty && !singleport_busy_with_write && !vpu_ren
 
@@ -429,6 +439,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val k = Input(UInt(16.W))
       val scale_mem_write_w = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
       val scale_mem_write_act = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
+      val scale_wr_layout_w = config.scale_mem.map(_ => Input(Valid(Bool())))   // per-load layout (valid: quad)
+      val scale_wr_layout_act = config.scale_mem.map(_ => Input(Valid(Bool())))
       // TLB ports
       val tlb = Vec(2 + spad_writer.map(_ => 1).getOrElse(0), new FrontendTLBIO)
 
@@ -863,6 +875,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           // Carry the operand-kind tag from the ExecuteController read request.
           bio.read.req.bits.read_a := ex_read_req.bits.read_a
           bio.read.req.bits.read_d := ex_read_req.bits.read_d
+          bio.read.req.bits.lut_halves := ex_read_req.bits.lut_halves
         }.elsewhen (dmawrite) {
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.sp_row()
           bio.read.req.bits.fromDMA := true.B
@@ -870,6 +883,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.read.req.bits.input_mx_format := ex_read_req.bits.input_mx_format
           bio.read.req.bits.read_a := false.B  // DMA reads are not deproj operand reads
           bio.read.req.bits.read_d := false.B
+          bio.read.req.bits.lut_halves := 0.U
           when (bio.read.req.fire) {
             write_dispatch_q.ready := true.B
             write_norm_q.io.enq.valid := true.B
@@ -1203,6 +1217,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           meshRows = meshRows,
           tileRows = tileRows
         ))
+        sm.io.wr_layout_w := io.scale_wr_layout_w.get
+        sm.io.wr_layout_act := io.scale_wr_layout_act.get
         Seq((sm.io.scale_mem_write_w, io.scale_mem_write_w.get), (sm.io.scale_mem_write_act, io.scale_mem_write_act.get)).foreach {
           case (dst, src) =>
             dst.valid := src.valid
@@ -1383,6 +1399,11 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }
         bio.write.valid := false.B
         bio.write.bits.offset := DontCare
+        bio.write.bits.scale_halves := 0.U
+        bio.write.bits.wm.multi := io.mx_multi_elem   // non-ex writes: the live mode
+        bio.write.bits.wm.multi_act := io.mx_multi_elem_act
+        bio.write.bits.wm.dtype := io.act_mx_format
+        bio.write.bits.wm.altfmt := io.mx_fp8_altfmt
 
         // bio.write.bits.acc := MuxCase(zero_writer.io.resp.bits.laddr.accumulate,
         bio.write.bits.acc := MuxCase(zero_writer_pixel_repeater.io.resp.bits.laddr.accumulate,
@@ -1401,6 +1422,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.bits.data := io.acc.write(i).bits.data
           bio.write.bits.mask := io.acc.write(i).bits.mask
           bio.write.bits.offset := io.acc.write(i).bits.offset
+          bio.write.bits.scale_halves := io.acc.write(i).bits.scale_halves
+          bio.write.bits.wm := io.acc.write(i).bits.wm
         }.elsewhen (dmaread && !spad_last && !consecutive_write_block) {
           bio.write.valid := true.B
           // has_acc_mvin = false: this branch is unreachable; skip the spad->acc width converters entirely.

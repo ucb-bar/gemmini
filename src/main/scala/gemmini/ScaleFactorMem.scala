@@ -6,6 +6,9 @@ import chisel3.util._
 
 class ScalingFactorReadReq extends Bundle {
   val scaling_enable = Bool() 
+  val halves = UInt(2.W)   // {wgt, act} half, carried with the write so a config switch needs no drain
+  val multi = Bool()       // the producing compute's weight / activation quad mode (selects the scale layout)
+  val multi_act = Bool()
 }
 
 class ScalingFactorReadResp(numRows: Int, numCols: Int) extends Bundle {  
@@ -21,6 +24,8 @@ class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: 
   val dataType = Input(UInt(2.W))
   val mx_multi_elem = Input(Bool())   // WEIGHT (output-column) throughput: 2 cols/lane iff quad weight
   val mx_multi_elem_act = Input(Bool())   // ACTIVATION (output-row) throughput: 2 rows/lane iff quad act
+  val wr_layout_w = Input(Valid(Bool()))     // scale write layout of the active load (valid: quad); else the live mode
+  val wr_layout_act = Input(Valid(Bool()))
   val mx_fp8_altfmt = Input(Bool())   // code0 sub-format: 1 = E5M2 (4-bit LUT output, nibble scale layout)
   val scaleMemCntl = Input(new ScalingFactorCntl(meshRows*tileRows)) // dummy output to match interface
   val counter_i = Input(UInt(16.W))
@@ -105,30 +110,37 @@ class ScalingFactorMem(
   val numScaleRows = meshRows*tileRows
   val scale_counter = RegInit(0.U(log2Up(numScaleRows).W))
   val scale_counter_d1 = RegNext(scale_counter)
+  // bounds of the reading write's own loop (its halves' slots), not the live config
+  val halves_d1 = RegEnable(io.read_req.bits.halves, read_fire)
+  val bnd_i = io.scaleMemCntl.slots.a(halves_d1(0)).i
+  // mixed-K loop: B scales in the quad layout; an MXFP8 (single) read walks 2x the tiles of the loop's quad bound
+  val kmix_d1 = RegEnable(io.scaleMemCntl.slots.w(io.read_req.bits.halves(1)).kmix && !io.read_req.bits.multi, read_fire)
+  val bnd_j = Mux(kmix_d1, io.scaleMemCntl.slots.w(halves_d1(1)).j << 1, io.scaleMemCntl.slots.w(halves_d1(1)).j)
+  val bnd_k = io.scaleMemCntl.slots.w(halves_d1(1)).k
   when(read_fire_d1) {
-    when((counter_i_runtime === (io.scaleMemCntl.loop_bound_i - 1.U)) && 
+    when((counter_i_runtime === (bnd_i - 1.U)) && 
         (scale_counter === (numScaleRows - 1).U)) {
       counter_i_runtime := 0.U
     }.elsewhen(scale_counter === (numScaleRows - 1).U) {
       counter_i_runtime := counter_i_runtime + 1.U
     }
 
-    when((counter_j_runtime === (io.scaleMemCntl.loop_bound_j - 1.U)) && 
-        (counter_i_runtime === (io.scaleMemCntl.loop_bound_i - 1.U)) && 
+    when((counter_j_runtime === (bnd_j - 1.U)) && 
+        (counter_i_runtime === (bnd_i - 1.U)) && 
         (scale_counter === (numScaleRows - 1).U)) {
       counter_j_runtime := 0.U
-    }.elsewhen((counter_i_runtime === (io.scaleMemCntl.loop_bound_i - 1.U)) && 
+    }.elsewhen((counter_i_runtime === (bnd_i - 1.U)) && 
               (scale_counter === (numScaleRows - 1).U)) {
       counter_j_runtime := counter_j_runtime + 1.U
     }
 
-    when((counter_j_runtime === (io.scaleMemCntl.loop_bound_j - 1.U)) && 
-        (counter_i_runtime === (io.scaleMemCntl.loop_bound_i - 1.U)) && 
-        (counter_k_runtime === (io.scaleMemCntl.loop_bound_k - 1.U)) && 
+    when((counter_j_runtime === (bnd_j - 1.U)) && 
+        (counter_i_runtime === (bnd_i - 1.U)) && 
+        (counter_k_runtime === (bnd_k - 1.U)) && 
         (scale_counter === (numScaleRows - 1).U)) {
       counter_k_runtime := 0.U
-    }.elsewhen((counter_j_runtime === (io.scaleMemCntl.loop_bound_j - 1.U)) && 
-              (counter_i_runtime === (io.scaleMemCntl.loop_bound_i - 1.U)) && 
+    }.elsewhen((counter_j_runtime === (bnd_j - 1.U)) && 
+              (counter_i_runtime === (bnd_i - 1.U)) && 
               (scale_counter === (numScaleRows - 1).U)) {
       counter_k_runtime := counter_k_runtime + 1.U
     }
@@ -147,6 +159,9 @@ class ScalingFactorMem(
   val fp8Mode_wei = !io.mx_multi_elem       // weight single -> 16-wide weight (column) scales
   val fp8Mode_act = !io.mx_multi_elem_act   // act single    -> 16-wide act (row) scales
   val fp8Mode = fp8Mode_act && fp8Mode_wei  // legacy both-single path (E4M3-single symmetric)
+  // write side: the loading command's layout when it gives one (loop loads), else the live mode
+  val fp8Mode_wei_wr = Mux(io.wr_layout_w.valid, !io.wr_layout_w.bits, fp8Mode_wei)
+  val fp8Mode_act_wr = Mux(io.wr_layout_act.valid, !io.wr_layout_act.bits, fp8Mode_act)
 
   val write_addr_w = io.scale_mem_write_w.bits.addr
   val write_weight_counter  = RegInit(0.U((log2Ceil(scaleWords) max 1).W))
@@ -168,19 +183,19 @@ class ScalingFactorMem(
     // 4-byte lines: quad -> word bytes 0-3 / 4-7 to the bank pair, same row; single -> rows r, r+1 of one bank
     val halves = io.scale_mem_write_w.bits.data.asTypeOf(Vec(2, bankDataT))
     when (io.scale_mem_write_w.fire) {
-      when (fp8Mode_wei) {
+      when (fp8Mode_wei_wr) {
         for (b <- 0 until 4) when (bank_idx_w_fp8 === b.U) { banks(b).writePair(write_row_addr_w_fp8, halves(0), halves(1)) }
       }.otherwise {
         for (h <- 0 until 2; b <- 0 until 2) when (bank_idx_w_nonfp8 === h.U) { banks(2*h + b).write(write_row_addr_w_nonfp8, halves(b)) }
       }
     }
-    assert(!(io.scale_mem_write_w.fire && fp8Mode_wei && write_row_addr_w_fp8(0)), "scale word not 8-B aligned")
+    assert(!(io.scale_mem_write_w.fire && fp8Mode_wei_wr && write_row_addr_w_fp8(0)), "scale word not 8-B aligned")
   } else when(write_weight_counter === (scaleWords-1).U && io.scale_mem_write_w.fire){
     write_weight_counter := 0.U
     val write_bytes = Cat((0 until scaleWords).reverse.map(k =>
       if (k == scaleWords-1) io.scale_mem_write_w.bits.data else write_weight_words(k))).asTypeOf(bankDataT)
-    val bank_sel_w = Mux(fp8Mode_wei, bank_idx_w_fp8, Cat(bank_idx_w_nonfp8, bank_idx_w_internal))
-    val write_row_addr_w = Mux(fp8Mode_wei, write_row_addr_w_fp8, write_row_addr_w_nonfp8)
+    val bank_sel_w = Mux(fp8Mode_wei_wr, bank_idx_w_fp8, Cat(bank_idx_w_nonfp8, bank_idx_w_internal))
+    val write_row_addr_w = Mux(fp8Mode_wei_wr, write_row_addr_w_fp8, write_row_addr_w_nonfp8)
     for (b <- 0 until 4) {
       when(bank_sel_w === b.U) {
         banks(b).write(write_row_addr_w, write_bytes)
@@ -209,19 +224,19 @@ class ScalingFactorMem(
   if (halfWordLines) {
     val halves = io.scale_mem_write_act.bits.data.asTypeOf(Vec(2, bankDataT))
     when (io.scale_mem_write_act.fire) {
-      when (fp8Mode_act) {
+      when (fp8Mode_act_wr) {
         for (b <- 0 until 4) when (bank_idx_act_fp8 === b.U) { banks(4 + b).writePair(write_row_addr_act_fp8, halves(0), halves(1)) }
       }.otherwise {
         for (h <- 0 until 2; b <- 0 until 2) when (bank_idx_act_nonfp8 === h.U) { banks(4 + 2*h + b).write(write_row_addr_act_nonfp8, halves(b)) }
       }
     }
-    assert(!(io.scale_mem_write_act.fire && fp8Mode_act && write_row_addr_act_fp8(0)), "scale word not 8-B aligned")
+    assert(!(io.scale_mem_write_act.fire && fp8Mode_act_wr && write_row_addr_act_fp8(0)), "scale word not 8-B aligned")
   } else when(write_act_counter === (scaleWords-1).U && io.scale_mem_write_act.fire) {
       write_act_counter := 0.U
       val write_bytes = Cat((0 until scaleWords).reverse.map(k =>
         if (k == scaleWords-1) io.scale_mem_write_act.bits.data else write_act_words(k))).asTypeOf(bankDataT)
-      val bank_sel_act = Mux(fp8Mode_act, bank_idx_act_fp8, Cat(bank_idx_act_nonfp8, bank_idx_act_internal))
-      val write_row_addr_act = Mux(fp8Mode_act, write_row_addr_act_fp8, write_row_addr_act_nonfp8)
+      val bank_sel_act = Mux(fp8Mode_act_wr, bank_idx_act_fp8, Cat(bank_idx_act_nonfp8, bank_idx_act_internal))
+      val write_row_addr_act = Mux(fp8Mode_act_wr, write_row_addr_act_fp8, write_row_addr_act_nonfp8)
       for (b <- 0 until 4) {
         when(bank_sel_act === b.U) {
           banks(b + 4).write(write_row_addr_act, write_bytes)
@@ -241,14 +256,16 @@ class ScalingFactorMem(
   val row_addr_width = log2Ceil(2*depth_sram)
   val read_row_addr_act = Wire(UInt(row_addr_width.W))
   val read_row_addr_w = Wire(UInt(row_addr_width.W))
-  read_row_addr_act := (io.scaleMemCntl.loop_bound_i) * (counter_k_runtime >> kScaleShift.U) + (counter_i_runtime)
-  read_row_addr_w := (io.scaleMemCntl.loop_bound_j) * (counter_k_runtime >> kScaleShift.U) + (counter_j_runtime)
+  read_row_addr_act := io.scaleMemCntl.slots.a(io.read_req.bits.halves(0)).i * (counter_k_runtime >> kScaleShift.U) + (counter_i_runtime)
+  val kmix_rq = io.scaleMemCntl.slots.w(io.read_req.bits.halves(1)).kmix && !io.read_req.bits.multi
+  read_row_addr_w := io.scaleMemCntl.slots.w(io.read_req.bits.halves(1)).j * (counter_k_runtime >> kScaleShift.U) +
+    Mux(kmix_rq, counter_j_runtime >> 1, counter_j_runtime)
   val read_bank_idx_act = WireDefault(read_row_addr_act(row_addr_width - 1))
   val read_bank_idx_w = WireDefault(read_row_addr_w(row_addr_width - 1))
   val read_row_addr_act_real = WireDefault(read_row_addr_act(row_addr_width - 2, 0))
   val read_row_addr_w_real = WireDefault(read_row_addr_w(row_addr_width - 2, 0))
-  val double_buffer_act_sel = io.scaleMemCntl.scale_mem_read_act_sel.asBool
-  val double_buffer_w_sel = io.scaleMemCntl.scale_mem_read_w_sel.asBool
+  val double_buffer_act_sel = io.read_req.bits.halves(0)
+  val double_buffer_w_sel = io.read_req.bits.halves(1)
 
   dontTouch(read_row_addr_act)
   dontTouch(read_row_addr_w)
@@ -276,23 +293,31 @@ class ScalingFactorMem(
   
   read_fire_real := read_fire && (scale_counter === 0.U)
 
+  // read side: the mode of the requesting write (request cycle) and its registered copy (response cycle)
+  val rq_fp8_wei = !io.read_req.bits.multi
+  val rq_fp8_act = !io.read_req.bits.multi_act
+  val rd_fp8_wei = RegNext(rq_fp8_wei)
+  val rd_fp8_act = RegNext(rq_fp8_act)
+  val rd_fp8 = rd_fp8_wei && rd_fp8_act
+  // mixed-K single read of the quad layout: one bank of the half's pair (tile j's 16 scales), quad row j >> 1
+  val kq_bank = Cat(double_buffer_w_sel, counter_j_runtime(0))
   val read_fire_banks = VecInit(Seq(
-    read_fire_real && (Mux(fp8Mode_wei, (read_bank_idx_w === 0.U) && !double_buffer_w_sel   , !double_buffer_w_sel  )),
-    read_fire_real && (Mux(fp8Mode_wei, (read_bank_idx_w === 1.U) && !double_buffer_w_sel   , !double_buffer_w_sel  )),
-    read_fire_real && (Mux(fp8Mode_wei, (read_bank_idx_w === 0.U) && double_buffer_w_sel    , double_buffer_w_sel  )),
-    read_fire_real && (Mux(fp8Mode_wei, (read_bank_idx_w === 1.U) && double_buffer_w_sel    , double_buffer_w_sel  )),
-    read_fire_real && (Mux(fp8Mode_act, (read_bank_idx_act === 0.U) && !double_buffer_act_sel , !double_buffer_act_sel)),
-    read_fire_real && (Mux(fp8Mode_act, (read_bank_idx_act === 1.U) && !double_buffer_act_sel , !double_buffer_act_sel)),
-    read_fire_real && (Mux(fp8Mode_act, (read_bank_idx_act === 0.U) && double_buffer_act_sel  , double_buffer_act_sel)),
-    read_fire_real && (Mux(fp8Mode_act, (read_bank_idx_act === 1.U) && double_buffer_act_sel  , double_buffer_act_sel)),
+    read_fire_real && Mux(kmix_rq, kq_bank === 0.U, Mux(rq_fp8_wei, (read_bank_idx_w === 0.U) && !double_buffer_w_sel   , !double_buffer_w_sel  )),
+    read_fire_real && Mux(kmix_rq, kq_bank === 1.U, Mux(rq_fp8_wei, (read_bank_idx_w === 1.U) && !double_buffer_w_sel   , !double_buffer_w_sel  )),
+    read_fire_real && Mux(kmix_rq, kq_bank === 2.U, Mux(rq_fp8_wei, (read_bank_idx_w === 0.U) && double_buffer_w_sel    , double_buffer_w_sel  )),
+    read_fire_real && Mux(kmix_rq, kq_bank === 3.U, Mux(rq_fp8_wei, (read_bank_idx_w === 1.U) && double_buffer_w_sel    , double_buffer_w_sel  )),
+    read_fire_real && (Mux(rq_fp8_act, (read_bank_idx_act === 0.U) && !double_buffer_act_sel , !double_buffer_act_sel)),
+    read_fire_real && (Mux(rq_fp8_act, (read_bank_idx_act === 1.U) && !double_buffer_act_sel , !double_buffer_act_sel)),
+    read_fire_real && (Mux(rq_fp8_act, (read_bank_idx_act === 0.U) && double_buffer_act_sel  , double_buffer_act_sel)),
+    read_fire_real && (Mux(rq_fp8_act, (read_bank_idx_act === 1.U) && double_buffer_act_sel  , double_buffer_act_sel)),
   ))
   val read_fire_banks_d1 = RegNext(read_fire_banks)
   val bank_data_0 = VecInit((0 until 4).map { i =>  banks(i).read(read_row_addr_w_real, read_fire_banks(i))})
   val bank_data_1 = VecInit((0 until 4).map { i =>  banks(i+4).read(read_row_addr_act_real, read_fire_banks(i+4))})
   banks.foreach(_.finish())
 
-  // ACT scales: 16-wide (single, 1 bank) iff fp8Mode_act, else 32-wide (quad, 2 banks). Independent of wei.
-  when(fp8Mode_act){
+  // ACT scales: 16-wide (single, 1 bank) iff rd_fp8_act, else 32-wide (quad, 2 banks). Independent of wei.
+  when(rd_fp8_act){
     when(read_fire_banks_d1(4)) {
       for (i <- 0 until meshRows*tileRows) { act_scales(i) := bank_data_1(0)(i) }
     }.elsewhen(read_fire_banks_d1(5)) {
@@ -315,8 +340,8 @@ class ScalingFactorMem(
       }
     }
   }
-  // WEIGHT scales: 16-wide (single, 1 bank) iff fp8Mode_wei, else 32-wide (quad, 2 banks). Independent of act.
-  when(fp8Mode_wei){
+  // WEIGHT scales: 16-wide (single, 1 bank) iff rd_fp8_wei, else 32-wide (quad, 2 banks). Independent of act.
+  when(rd_fp8_wei){
     when(read_fire_banks_d1(0)) {
       for (i <- 0 until meshRows*tileRows) { weight_scales(i) := bank_data_0(0)(i) }
     }.elsewhen(read_fire_banks_d1(1)) {
@@ -371,7 +396,7 @@ class ScalingFactorMem(
 
   when(read_fire_d1) {
     io.read_resp.valid := combined_scales_valid
-    when(fp8Mode){
+    when(rd_fp8){
       when(scale_counter_d1 === 0.U){
         for(i <- 0 until meshRows*tileRows) {
           val single_scale = combined_scales_buffer(scale_counter_d1)(i)
@@ -383,7 +408,7 @@ class ScalingFactorMem(
           io.read_resp.bits.combined_scales(i) := Cat(0.U(27.W), single_scale(8, 0))
         }
       }
-    }.elsewhen(!fp8Mode_act && fp8Mode_wei){
+    }.elsewhen(!rd_fp8_act && rd_fp8_wei){
       // ACT quad, WEI single (mode2/5): act rows 2c, 2c+1 x the tile's dim weight cols -> elements 0..dim/4-1 =
       // row 2c (4 cols each), dim/4..dim/2-1 = row 2c+1
       val d = meshRows*tileRows
@@ -395,14 +420,15 @@ class ScalingFactorMem(
         if (i < d/2) io.read_resp.bits.combined_scales(i) := scale_all(36*i+35, 36*i)
         else       io.read_resp.bits.combined_scales(i) := 0.U
       }
-    }.elsewhen(fp8Mode_act && !fp8Mode_wei){
+    }.elsewhen(rd_fp8_act && !rd_fp8_wei){
       // ACT single, WEI quad (mode6/7): 1 act-row per step (scale_counter direct), 32 wei-cols -> 8
-      // elements of 4 cols (act(r) x 4 wei); no second output row (elems 8..15 = 0).
+      // elements of 4 cols (act(r) x 4 wei); both halves carry it (shared acc layout writes odd rows in the upper half).
       val scale_row = Mux(scale_counter_d1 === 0.U,
         combined_scales_buffer(scale_counter_d1).asUInt, combined_scales_buffer_reg(scale_counter_d1).asUInt)
+      val h = meshRows*tileRows/2
       for (i <- 0 until meshRows*tileRows) {
-        if (i < meshRows*tileRows/2) io.read_resp.bits.combined_scales(i) := scale_row(36*i+35, 36*i)
-        else       io.read_resp.bits.combined_scales(i) := 0.U
+        if (i < h) io.read_resp.bits.combined_scales(i) := scale_row(36*i+35, 36*i)
+        else       io.read_resp.bits.combined_scales(i) := (if (meshRows*tileRows >= 16) scale_row(36*(i-h)+35, 36*(i-h)) else 0.U)
       }
     }.otherwise{
       when(scale_counter_d1 === 0.U){

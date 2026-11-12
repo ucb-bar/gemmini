@@ -125,6 +125,7 @@ class ScalingFactorCntl(max_block: Int) extends Bundle {
   val loop_bound_i = UInt(9.W)
   val loop_bound_j = UInt(9.W)
   val loop_bound_k = UInt(9.W)
+  val slots = new LutSlots   // per-slot bounds: an acc write's scale read uses its own halves' loop
   val scale_mem_counter_reset_flag = Bool()
 }
 

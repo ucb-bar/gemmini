@@ -84,6 +84,8 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val act_lut_half = Input(UInt(1.W))
   val wgt_lut_halved = Input(Bool())   // weight lookups use LUT half wgt_lut_half (loop-managed codebooks)
   val wgt_lut_half = Input(UInt(1.W))
+  val wgt_lut_kblock = Input(Bool())   // weight codebooks: one set per K-block of the loop
+  val lut_slots = Input(new LutSlots)
   val loop_bound_i = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_k = Input(UInt(iterator_bitwidth.W)) // from  controller
@@ -469,6 +471,8 @@ class MxRequantizer[T <: Data](
       lut.io.act_lut_half := io.act_lut_half
       lut.io.wgt_lut_halved := io.wgt_lut_halved
       lut.io.wgt_lut_half := io.wgt_lut_half
+      lut.io.wgt_lut_kblock := io.wgt_lut_kblock
+      lut.io.lut_slots := io.lut_slots
       lut.io.read_a := io.read_a
       lut.io.read_d := io.read_d
       lut.io.mx_fp8_altfmt := altfmt_reg

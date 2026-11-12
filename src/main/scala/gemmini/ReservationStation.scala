@@ -315,7 +315,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48) * c_stride
       // packed MX acc: the low bits of the C address pick a column group within the row group, not a row; range the
       // group's rows (a range that starts mid-group would claim the next group's rows: false WAR on its stores)
-      when (io.mx_packed_acc && dst.bits.start.is_acc_addr) {
+      when (io.mx_packed_acc && !MxCmdMode.quad(io.alloc.bits.mx.wgt) && dst.bits.start.is_acc_addr) {
         dst.bits.start.data := cmd.rs2(31, 0).asTypeOf(local_addr_t).data & (~(block_rows - 1).U(dst.bits.start.data.getWidth.W)).asUInt
       }
       dst.bits.end := dst.bits.start + preload_rows
