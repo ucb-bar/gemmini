@@ -153,8 +153,9 @@ class ScratchpadReadReq(val n: Int) extends Bundle {
   val read_a = Bool()
   val read_d = Bool()
   // [1:0] {wgt, act} loop codebook half of the compute that issued the read; [2] deproject this read (QuantLut route);
-  // [3] [2] is valid (ex-issued read; others route by the live formats)
-  val lut_halves = UInt(8.W)
+  // [3] [2] is valid (ex-issued read; others route by the live formats); [5:4] operand fmt; [7:6] slot;
+  // [9:8] direct-FP6 {direct, alt} (expanded to E4M3 on the direct path)
+  val lut_halves = UInt(10.W)
 }
 
 class ScratchpadReadResp(val w: Int) extends Bundle {
@@ -165,7 +166,7 @@ class ScratchpadReadResp(val w: Int) extends Bundle {
   // Read-operand kind, carried through the read pipeline aligned with `data`.
   val read_a = Bool()
   val read_d = Bool()
-  val lut_halves = UInt(8.W)
+  val lut_halves = UInt(10.W)
 }
 
 class ScratchpadReadIO(val n: Int, val w: Int) extends Bundle {
@@ -256,7 +257,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     // TODO (richard): the number of entries here should be configurable
     // Carry fromDMA + the read_a/read_d tag through the same latency-tracking queue as the
     // variable-latency shared-mem read, so the operand-kind tag returns aligned with its data.
-    class ReadMeta extends Bundle { val fromDMA = Bool(); val read_a = Bool(); val read_d = Bool(); val lut_halves = UInt(8.W) }
+    class ReadMeta extends Bundle { val fromDMA = Bool(); val read_a = Bool(); val read_d = Bool(); val lut_halves = UInt(10.W) }
     val dma_q = Module(new Queue(new ReadMeta, 4, false, true))
 
     // RADIANCE FIX: `q_will_be_empty` only bounds the response queue; reads whose responses are still

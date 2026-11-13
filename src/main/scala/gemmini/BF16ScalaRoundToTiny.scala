@@ -353,6 +353,21 @@ object BF16ToE2M3 {
 // RNE (OCP round='even'), subnormals kept (allow_denorm). Chisel port of the rewritten
 // mx_fp_math.h::bf16_bits_to_fp6_e3m2_code (sibling of BF16ToE2M3): emin=-2, emax=4, max_norm 28,
 // subnormal quantum 2^-4. Replaces the old BF16->E4M2->E4M2ToFp6 double-rounding path.
+// FP6 code (low 6 bits) -> E4M3 byte, exact (every E3M2/E2M3 value is an E4M3 value). alt 1 = E2M3.
+object Fp6ToE4M3 {
+  def apply(c: UInt, alt: Bool): UInt = {
+    val s = c(5)
+    val e32 = c(4, 2); val m32 = c(1, 0)
+    val e3m2 = Mux(e32 =/= 0.U, Cat(e32 +& 4.U, m32, 0.U(1.W)),
+      MuxLookup(m32, 0.U(7.W))(Seq(1.U -> "b0011000".U, 2.U -> "b0100000".U, 3.U -> "b0100100".U)))
+    val e23 = c(4, 3); val m23 = c(2, 0)
+    val e2m3 = Mux(e23 =/= 0.U, Cat(e23 +& 6.U, m23),
+      MuxLookup(m23, 0.U(7.W))(Seq(1.U -> "b0100000".U, 2.U -> "b0101000".U, 3.U -> "b0101100".U,
+        4.U -> "b0110000".U, 5.U -> "b0110010".U, 6.U -> "b0110100".U, 7.U -> "b0110110".U)))
+    Cat(s, Mux(alt, e2m3, e3m2)(6, 0))
+  }
+}
+
 object BF16ToE3M2 {
   def apply(in: UInt): UInt = {
     require(in.getWidth == 16)

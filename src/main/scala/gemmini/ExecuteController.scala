@@ -28,6 +28,10 @@ class ExControllerMxScalingIO(
   val weight_mx_format_out = Output(UInt(2.W))
   val mx_fp8_altfmt_out = Output(Bool())
   val weight_mx_altfmt_out = Output(Bool())   // per-operand weight sub-format alt (act altfmt XOR rs1 bit31)
+  val act_fp6_out = Output(UInt(2.W))   // live {direct, alt} FP6 per operand (formats above read E4M3-single)
+  val wgt_fp6_out = Output(UInt(2.W))
+  val out_fp6_out = Output(UInt(2.W))   // live {direct, alt} FP6 requant output (output_MxFormat reads 0)
+  val out_altfmt_out = Output(Bool())   // output sub-format alt (mx_fp8_altfmt masked off for direct FP6 out)
   val mx_multi_elem = Output(Bool())      // WEIGHT (output-column) throughput: 2 cols/lane iff quad weight.
   val mx_multi_elem_act = Output(Bool())  // ACTIVATION (output-row) throughput: 2 rows/lane iff quad act.
   // Runtime LUT-enable on the requant output path: distinguishes E4M3-quad (4-bit LUT output) from
@@ -64,6 +68,9 @@ class ExControllerMxScalingRegs (scale_mem_write_addr_width: Int) extends Bundle
   val weight_mx_format = UInt(2.W)
   val output_mx_format = UInt(2.W)
   val uselut = Bool()
+  val act_fp6 = UInt(2.W)   // {direct, alt}: direct FP6 operand (formats above then hold E4M3-single)
+  val wgt_fp6 = UInt(2.W)
+  val out_fp6 = UInt(2.W)   // {direct, alt}: direct FP6 requant output (output_mx_format then holds E4M3-single)
   val mx_fp8_altfmt = Bool()
   val weight_mx_altfmt = Bool()
   val enable_mxquant = Bool()
@@ -207,7 +214,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Output-row packing: 2/lane iff the ACTIVATION is quad (output rows come from the activation).
   val mx_multi_elem_act = if (use_mx_scaling)
     (mx_state.get.activation_mx_format =/= 0.U) ||
-    (mx_state.get.activation_mx_format === 0.U && mx_state.get.mx_fp8_altfmt) ||
+    (mx_state.get.activation_mx_format === 0.U && mx_state.get.mx_fp8_altfmt && !mx_state.get.act_fp6(1)) ||
     (e4m3QuadThroughput.B && iss_lut_a)
     else false.B
 
@@ -217,9 +224,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     io.mx.get.weight_mx_format_out := mx_state.get.weight_mx_format
     io.mx.get.mx_fp8_altfmt_out := mx_state.get.mx_fp8_altfmt
     io.mx.get.weight_mx_altfmt_out := mx_state.get.weight_mx_altfmt
+    io.mx.get.act_fp6_out := mx_state.get.act_fp6
+    io.mx.get.wgt_fp6_out := mx_state.get.wgt_fp6
+    io.mx.get.out_fp6_out := mx_state.get.out_fp6
+    io.mx.get.out_altfmt_out := mx_state.get.mx_fp8_altfmt && !mx_state.get.out_fp6(1)
     io.mx.get.mx_multi_elem := mx_multi_elem
     io.mx.get.mx_multi_elem_act := mx_multi_elem_act
-    io.mx.get.lut_en_out := io.lut_en
+    io.mx.get.lut_en_out := io.lut_en && !mx_state.get.out_fp6(1)   // direct FP6 out = 8-bit (E4M3-single) egress
     io.mx.get.enable_MXQuant := mx_state.get.enable_mxquant
     io.mx.get.scale_mem_mvout_base_addr_act := mx_state.get.scale_mem_mvout_base_addr_act
     io.mx.get.quant_lut_update_granularity := mx_state.get.quant_lut_update_granularity
@@ -479,7 +490,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val performing_mul_pre = WireInit(perform_mul_pre && control_state === compute)
   // the preload's command (weight reads): cmd 1 of a fused pair, also in its start cycle
   val pre_tag = Mux(performing_mul_pre, cmd.bits(1).mx, cmd.bits(0).mx)
-  def same_mode(x: MxCmdMode, y: MxCmdMode): Bool = x.act === y.act && x.wgt === y.wgt && x.shared === y.shared
+  def same_mode(x: MxCmdMode, y: MxCmdMode): Bool = x.act === y.act && x.wgt === y.wgt && x.shared === y.shared &&
+    x.act_fp6 === y.act_fp6 && x.wgt_fp6 === y.wgt_fp6
 
   val total_rows = WireInit(block_size.U) // The total number of rows of A, B, and D to feed into the mesh
 
@@ -666,7 +678,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.srams.read(i).req.bits.read_d := read_d
       // {operand fmt (direct-path expansion), valid, deproject, halves}: the read's own mode, not the live one
       // weight reads belong to the preload (cmd 1 of a fused pair): its codebook slot
-      io.srams.read(i).req.bits.lut_halves := Cat(Mux(read_a, 0.U(2.W), pre_tag.slot),
+      io.srams.read(i).req.bits.lut_halves := Cat(Mux(read_a, iss_tag.act_fp6, iss_tag.wgt_fp6),
+        Mux(read_a, 0.U(2.W), pre_tag.slot),
         Mux(read_a, cur_mx.act_fmt, cur_mx.wgt_fmt), 1.U(1.W), Mux(read_a, dp_a, dp_w), cur_halves)
       io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
         Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
@@ -827,13 +840,21 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
                 "a/b transpose requested but the transposer is not built (has_transposer = false)")
 
               if (use_mx_scaling) {
-                mx_state.get.activation_mx_format := config_ex_rs1.activation_mx_format
-                mx_state.get.weight_mx_format := config_ex_rs1.weight_mx_format
-                mx_state.get.output_mx_format := config_ex_rs1.output_mx_format
+                // direct FP6 operands are held as E4M3-single (fmt 0, alt 0); act_fp6/wgt_fp6 keep {direct, alt}
+                val d_a = MxCmdMode.fp6Direct(config_ex_rs1.activation_mx_format, config_ex_rs1.uselut.asBool)
+                val d_w = MxCmdMode.fp6Direct(config_ex_rs1.weight_mx_format, config_ex_rs1.uselut.asBool)
+                val w_alt = (config_ex_rs1.mx_fp8_altfmt ^ config_ex_rs1.weight_altfmt_diff).asBool
+                mx_state.get.activation_mx_format := Mux(d_a, 0.U, config_ex_rs1.activation_mx_format)
+                mx_state.get.weight_mx_format := Mux(d_w, 0.U, config_ex_rs1.weight_mx_format)
+                val d_o = MxCmdMode.fp6Direct(config_ex_rs1.output_mx_format, config_ex_rs1.uselut.asBool)
+                mx_state.get.output_mx_format := Mux(d_o, 0.U, config_ex_rs1.output_mx_format)
                 mx_state.get.uselut := config_ex_rs1.uselut
+                mx_state.get.act_fp6 := Cat(d_a, d_a && config_ex_rs1.mx_fp8_altfmt.asBool)
+                mx_state.get.wgt_fp6 := Cat(d_w, d_w && w_alt)
+                mx_state.get.out_fp6 := Cat(d_o, d_o && config_ex_rs1.mx_fp8_altfmt.asBool)
                 mx_state.get.mx_fp8_altfmt := config_ex_rs1.mx_fp8_altfmt
                 // per-operand weight altfmt: XOR delta on rs1 bit31 (0 -> weight matches activation)
-                mx_state.get.weight_mx_altfmt := config_ex_rs1.mx_fp8_altfmt ^ config_ex_rs1.weight_altfmt_diff
+                mx_state.get.weight_mx_altfmt := w_alt && !d_w
                 when(config_ex_rs1.output_mx_format =/= 3.U) {
                   mx_state.get.enable_mxquant := true.B
                 }.otherwise {

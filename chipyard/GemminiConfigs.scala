@@ -261,6 +261,33 @@ class MxE4M3LutBf16Dim32GemminiBoomBw2IF128Config extends Config(
   new freechips.rocketchip.subsystem.WithEdgeDataBits(128) ++
   new chipyard.config.AbstractConfig)
 
+// The Bw2IF128 memory system above, shared by the format/gating variants below.
+class WithMxBw2Boom extends Config(
+  new boom.v3.common.WithNMediumBooms(1) ++
+  new freechips.rocketchip.subsystem.WithNBanks(2) ++
+  new chipyard.config.WithInclusiveCacheWriteBytes(16) ++
+  new freechips.rocketchip.subsystem.WithNMemoryChannels(2) ++
+  new WithMemPortIdBits(8) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(128) ++
+  new chipyard.config.AbstractConfig)
+
+// C1: E4M3 runtime LUT + FP4 both sides
+class MxE4M3Fp4LutBf16Dim32GemminiBoomBw2IF128Config extends Config(
+  new gemmini.GemminiMxFPE4M3Fp4LutBf16Dim32IF128Config ++ new WithMxBw2Boom)
+// C2: C1 + E3M2 (LUT via uselut=1, direct via uselut=0)
+class MxE4M3Fp4E3M2LutBf16Dim32GemminiBoomBw2IF128Config extends Config(
+  new gemmini.GemminiMxFPE4M3Fp4E3M2LutBf16Dim32IF128Config ++ new WithMxBw2Boom)
+// C3: FP4 + E4M3 single + E3M2 direct, no QuantLut
+class MxE4M3Fp4E3M2NoLutBf16Dim32GemminiBoomBw2IF128Config extends Config(
+  new gemmini.GemminiMxFPE4M3Fp4E3M2NoLutBf16Dim32IF128Config ++ new WithMxBw2Boom)
+// C4: C2 without PE lane/zero gating and mesh clock gating
+class MxE4M3Fp4E3M2LutNoPeMeshGateBf16Dim32GemminiBoomBw2IF128Config extends Config(
+  new gemmini.GemminiMxFPE4M3Fp4E3M2LutNoPeMeshGateBf16Dim32IF128Config ++ new WithMxBw2Boom)
+// C5: C2 without accumulator clock gating
+class MxE4M3Fp4E3M2LutNoAccGateBf16Dim32GemminiBoomBw2IF128Config extends Config(
+  new gemmini.GemminiMxFPE4M3Fp4E3M2LutNoAccGateBf16Dim32IF128Config ++ new WithMxBw2Boom)
+
 // One Gemmini 16x16: E4M3 act x E2M1 wei (+ FP4 sym, E4M3 sym), no LUT, 2 VPUs, full BF16 PE arithmetic; 512-bit sbus, 32 B DRAM port.
 class MxA8W4Bf16Dim16GemminiBoomConfig extends Config(
   new gemmini.GemminiMxFPA8W4Bf16Dim16Config ++

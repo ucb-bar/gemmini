@@ -527,7 +527,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   io.mx := req.mx
   when (req.kmix) {
     io.mx.slot := Mux(lut_k, lut_ord(1, 0), 0.U)
-    when (!lut_k) { io.mx.wgt := 0.U; io.mx.shared := true.B }
+    when (!lut_k) { io.mx.wgt := 0.U; io.mx.wgt_fp6 := 0.U; io.mx.shared := true.B }
   }
 
   when(req.skip) {
@@ -1519,6 +1519,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.shared_acc := sh
         loop_being_configured.mx.shared := sh
         loop_being_configured.mx.slot := 0.U
+        loop_being_configured.mx.act_fp6 := cmd.bits.mx.act_fp6
+        loop_being_configured.mx.wgt_fp6 := cmd.bits.mx.wgt_fp6
         loop_being_configured.lda_started := cmd.bits.cmd.rs2(3)
         loop_being_configured.ldb_started := cmd.bits.cmd.rs2(4)
         loop_being_configured.ldd_started := cmd.bits.cmd.rs2(5)

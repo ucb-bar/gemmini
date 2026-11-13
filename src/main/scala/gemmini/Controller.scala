@@ -312,6 +312,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     req.io.scaleMem_write_act_resident.ready := false.B
     // E4M3-quad requant output (4-bit LUT) vs E4M3-single (8-bit): both output format0/altfmt0, split by lut_en.
     req.io.lut_en := ex_controller.io.mx.get.lut_en_out || sr_lut_active
+    req.io.out_fp6 := ex_controller.io.mx.get.out_fp6_out   // direct FP6 out: FP6 codes on the 8-bit egress
     req.io.linear_scales := false.B
     req.io.linear_gn := 0.U
     req.io.linear_m := 0.U
@@ -925,7 +926,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
           ex_controller.io.mx.get.activation_mx_format_out,
           ex_controller.io.mx.get.weight_mx_format_out)
         val walt = Mux(read_projected(b).resp.bits.read_a,
-          ex_controller.io.mx.get.mx_fp8_altfmt_out,
+          ex_controller.io.mx.get.mx_fp8_altfmt_out && !ex_controller.io.mx.get.act_fp6_out(1),
           ex_controller.io.mx.get.weight_mx_altfmt_out)
         val oplut = Mux(read_projected(b).resp.bits.read_a, mx_lut_a_en, mx_lut_b_en)
         val tag = read_projected(b).resp.bits.lut_halves
@@ -963,7 +964,12 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         // Direct-path expansion, per operand: act uses inputType width + act fmt, weight uses weightType
         // width + weight fmt. E4M3 -> low 8 of the lane; FP4 (dual 4-bit) -> low 4 of each half-lane.
         val proj = read_projected(b).resp
-        val spad_data_vec = proj.bits.data.asTypeOf(Vec(outer.config.meshColumns*outer.config.tileColumns, UInt(8.W)))
+        val ptag = proj.bits.lut_halves
+        // direct FP6 (tagged fmt 0): each byte's low-6 code -> its exact E4M3 byte, then the E4M3-single expansion
+        val fp6 = Mux(ptag(3), ptag(9, 8), Mux(proj.bits.read_a,
+          ex_controller.io.mx.get.act_fp6_out, ex_controller.io.mx.get.wgt_fp6_out))
+        val raw_vec = proj.bits.data.asTypeOf(Vec(outer.config.meshColumns*outer.config.tileColumns, UInt(8.W)))
+        val spad_data_vec = VecInit(raw_vec.map(byte => Mux(fp6(1), Fp6ToE4M3(byte(5, 0), fp6(0)), byte)))
         def expand(laneW: Int, fmt: UInt): UInt = {
           val slotW = laneW / 2
           val out = WireInit(0.U(sp_width.W))
@@ -975,7 +981,6 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
           out
         }
         // ex-issued reads carry their operand fmt (lut_halves[5:4]); others use the live formats
-        val ptag = proj.bits.lut_halves
         val padded_data = Mux(proj.bits.read_a,
           expand(outer.config.inputType.getWidth,  Mux(ptag(3), ptag(5, 4), ex_controller.io.mx.get.activation_mx_format_out)),
           expand(outer.config.weightType.getWidth, Mux(ptag(3), ptag(5, 4), ex_controller.io.mx.get.weight_mx_format_out)))
@@ -1107,12 +1112,14 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   val fm_fmt_w = RegInit(0.U(2.W)); val fm_alt_w = RegInit(false.B); val fm_lut_w = RegInit(false.B)
   val fm_fmt_a_n = WireDefault(fm_fmt_a); val fm_alt_a_n = WireDefault(fm_alt_a); val fm_lut_a_n = WireDefault(fm_lut_a)
   val fm_fmt_w_n = WireDefault(fm_fmt_w); val fm_alt_w_n = WireDefault(fm_alt_w); val fm_lut_w_n = WireDefault(fm_lut_w)
+  val fm_ul = RegInit(false.B); val fm_ul_n = WireDefault(fm_ul)   // config_ex uselut (FP6: LUT vs direct)
   if (outer.config.use_mx_scaling) {
     val fc = io.cmd.bits
     val cx = fc.rs1.asTypeOf(new ConfigExRs1(acc_scale_t_bits))
     when (fc.inst.funct === CONFIG_CMD && fc.rs1(1, 0) === CONFIG_EX && !cx.set_only_strides) {
       fm_fmt_a_n := cx.activation_mx_format; fm_alt_a_n := cx.mx_fp8_altfmt.asBool
       fm_fmt_w_n := cx.weight_mx_format; fm_alt_w_n := (cx.mx_fp8_altfmt ^ cx.weight_altfmt_diff).asBool
+      fm_ul_n := cx.uselut.asBool
     }
     when (fc.inst.funct === MX_LOAD_LUT && !fc.rs2(42) && has_quant_lut.B) {
       when (fc.rs2(33, 32) === 1.U) { fm_lut_a_n := true.B }
@@ -1122,10 +1129,18 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     when (raw_cmd_q.io.enq.fire) {
       fm_fmt_a := fm_fmt_a_n; fm_alt_a := fm_alt_a_n; fm_lut_a := fm_lut_a_n
       fm_fmt_w := fm_fmt_w_n; fm_alt_w := fm_alt_w_n; fm_lut_w := fm_lut_w_n
+      fm_ul := fm_ul_n
     }
   }
-  raw_cmd_q.io.enq.bits.mx.act := MxCmdMode.code(fm_fmt_a_n, fm_alt_a_n, fm_lut_a_n && e4m3QuadThroughput.B)
-  raw_cmd_q.io.enq.bits.mx.wgt := MxCmdMode.code(fm_fmt_w_n, fm_alt_w_n, fm_lut_w_n && e4m3QuadThroughput.B)
+  // direct FP6 rides the E4M3-single path everywhere downstream; only the read expansion sees act_fp6/wgt_fp6
+  val fm_d_a = outer.config.use_mx_scaling.B && MxCmdMode.fp6Direct(fm_fmt_a_n, fm_ul_n)
+  val fm_d_w = outer.config.use_mx_scaling.B && MxCmdMode.fp6Direct(fm_fmt_w_n, fm_ul_n)
+  raw_cmd_q.io.enq.bits.mx.act := Mux(fm_d_a, 0.U,
+    MxCmdMode.code(fm_fmt_a_n, fm_alt_a_n, fm_lut_a_n && e4m3QuadThroughput.B))
+  raw_cmd_q.io.enq.bits.mx.wgt := Mux(fm_d_w, 0.U,
+    MxCmdMode.code(fm_fmt_w_n, fm_alt_w_n, fm_lut_w_n && e4m3QuadThroughput.B))
+  raw_cmd_q.io.enq.bits.mx.act_fp6 := Cat(fm_d_a, fm_d_a && fm_alt_a_n)
+  raw_cmd_q.io.enq.bits.mx.wgt_fp6 := Cat(fm_d_w, fm_d_w && fm_alt_w_n)
   raw_cmd_q.io.enq.bits.mx.shared := false.B
   raw_cmd_q.io.enq.bits.mx.slot := 0.U
 
@@ -1202,7 +1217,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     spad.module.io.j := loop_matmul.io.j
     spad.module.io.k := loop_matmul.io.k
     spad.module.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
-    spad.module.io.mx_fp8_altfmt := ex_controller.io.mx.get.mx_fp8_altfmt_out
+    spad.module.io.mx_fp8_altfmt := ex_controller.io.mx.get.out_altfmt_out   // output sub-format (direct FP6 masked)
     spad.module.io.mx_lut_en := ex_controller.io.mx.get.lut_en_out
   } else {
     // Non-MX build: ex_controller.io.mx and mx_requantizer are absent, so drive
@@ -1430,6 +1445,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         rq.mx_data_out.ready := Mux(out_sr, u.io.rq_out.ready, acc.mx_data_out.ready)
         acc.mx_data_out.valid := rq.mx_data_out.valid && !out_sr
       } .elsewhen (u.io.active) {
+        mx_requantizer.get.io.out_fp6 := 0.U   // SPAD_REQUANT picks its own output format
         rq.mx_data_in.valid := u.io.rq_in.valid
         rq.mx_data_in.bits := DontCare
         rq.mx_data_in.bits.full_mx_data_in := u.io.rq_in.bits.asTypeOf(rq.mx_data_in.bits.full_mx_data_in)

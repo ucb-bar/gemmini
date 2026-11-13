@@ -21,6 +21,8 @@ class MxCmdMode extends Bundle {
   val wgt = UInt(4.W)
   val shared = Bool()   // mode8 on the shared (quad) acc layout (loop-managed, DIM>=16)
   val slot = UInt(2.W)  // mixed-K loop: the K-block's weight codebook set (ring slot)
+  val act_fp6 = UInt(2.W)  // {direct, alt}: direct (no-LUT) FP6, issued as E4M3-single; alt 1 = E2M3
+  val wgt_fp6 = UInt(2.W)
 }
 object MxCmdMode {
   def code(fmt: UInt, alt: Bool, lut: Bool): UInt = Cat(lut, fmt(1, 0), alt)
@@ -29,6 +31,8 @@ object MxCmdMode {
   def lut(c: UInt): Bool = c(3)
   def fmt(c: UInt): UInt = c(2, 1)
   def alt(c: UInt): Bool = c(0)
+  // direct FP6 (fmt 1 with uselut = 0): 1 code/byte on the E4M3-single path
+  def fp6Direct(fmt: UInt, uselut: Bool): Bool = fmt === 1.U && !uselut
 }
 
 class PEControl[T <: Data : Arithmetic](accType: T) extends Bundle {

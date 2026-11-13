@@ -98,6 +98,8 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val scaleMem_write_act_resident = Decoupled(new ScalingFactorWriteReq(scaleMemActWriteAddrWidth, 64))
   // Splits E4M3-quad (4-bit LUT index) from E4M3-single (8-bit code): both are format0/altfmt0.
   val lut_en = Input(Bool())
+  // direct FP6 output {direct, alt}: the egress is E4M3-single (format 0), but elements round to FP6 codes
+  val out_fp6 = Input(UInt(2.W))
   // SPAD_REQUANT: scales filed in arrival order (byte k = block k, M x GN row-major), not by the matmul walk
   val linear_scales = Input(Bool())
   val linear_gn = Input(UInt(16.W))
@@ -181,6 +183,8 @@ class MxRequantizer[T <: Data](
   // lut_en is quasi-static; latch it alongside format_reg/altfmt_reg.
   val lut_en_reg = RegInit(false.B)
   lut_en_reg := io.lut_en
+  val out_fp6_reg = RegInit(0.U(2.W))   // quasi-static like lut_en
+  out_fp6_reg := io.out_fp6
 
   io.scaleMem_write.valid := false.B
   io.scaleMem_write.bits := DontCare
@@ -442,11 +446,13 @@ class MxRequantizer[T <: Data](
     val brt = Module(new BF16ScaleRoundToTiny(outputnumLanes = mxBlockSize, e5m2Lut = e5m2Lut))
     brt.io.in_bf16       := VecInit(elems)
     brt.io.scale_e8m0    := neg_e8m0_clamped
-    brt.io.dataType      := format_reg
-    brt.io.mx_fp8_altfmt := altfmt_reg
+    brt.io.dataType      := Mux(out_fp6_reg(1), MxFloatFormat.FP6, format_reg)
+    brt.io.mx_fp8_altfmt := Mux(out_fp6_reg(1), out_fp6_reg(0), altfmt_reg)
     brt.io.block_has_nan := bhn
     brt.io.block_has_inf := bhi
-    for (k <- 0 until mxBlockSize) { quantized_blocks(blk*mxBlockSize + k) := brt.io.out(k) }
+    // direct FP6: code in [5:0], [7:6] = 0 (a poisoned 0x7F byte -> 0x3F; the block NaN rides the E8M0 scale)
+    for (k <- 0 until mxBlockSize) { quantized_blocks(blk*mxBlockSize + k) :=
+      Mux(out_fp6_reg(1), brt.io.out(k)(5, 0).pad(8), brt.io.out(k)) }
   }
   quantized_buffer := RegNext(quantized_blocks)
 
