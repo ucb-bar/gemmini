@@ -365,6 +365,7 @@ class LoopMatmulExecuteReq(val block_size: Int, val coreMaxAddrBits: Int, val it
   val shared = Bool()   // single x single on the shared (act-quad) acc layout (LOOP_WS rs2[11])
   val lut_kb = Bool()   // weight codebooks hold one set per K-block of the loop (LOOP_WS rs2[12])
   val kmix = Bool()     // mixed-K loop: per K-block LUT/low-precision (kmask 1) or MXFP8 on the shared layout
+  val kmix_fp6 = UInt(2.W)   // mixed-K loop: {direct, alt} FP6 of the plain (kmask 0) K-blocks' weights
   val kmask = UInt(128.W)
   val mx = new MxCmdMode   // the loop's (low-precision) mode
 }
@@ -527,7 +528,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   io.mx := req.mx
   when (req.kmix) {
     io.mx.slot := Mux(lut_k, lut_ord(1, 0), 0.U)
-    when (!lut_k) { io.mx.wgt := 0.U; io.mx.wgt_fp6 := 0.U; io.mx.shared := true.B }
+    when (!lut_k) { io.mx.wgt := 0.U; io.mx.wgt_fp6 := req.kmix_fp6; io.mx.shared := true.B }   // plain: E4M3s or direct FP6
   }
 
   when(req.skip) {
@@ -1151,6 +1152,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val narrow_act = Bool()
   val lut_kb = Bool()   // LOOP_WS rs2[12]: weight codebooks hold one set per K-block of the loop
   val kmix = Bool()     // LOOP_WS_CONFIG_KMIX seen: mixed-K loop (per-K-block low precision / MXFP8 by kmask)
+  val kmix_fp6 = UInt(2.W)   // KMIX rs2[63:62]: plain K-blocks are direct FP6 {direct, alt} (0: E4M3)
   val kmask = UInt(128.W)
   val b_alt_addr = UInt(coreMaxAddrBits.W)   // MXFP8 B of a mixed-K loop
   val b_alt_stride = UInt(coreMaxAddrBits.W)
@@ -1212,6 +1214,7 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
     shared_acc := false.B
     lut_kb := false.B
     kmix := false.B
+    kmix_fp6 := 0.U
     kmask := 0.U
     //is_resadd := false.B
   }
@@ -1485,6 +1488,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.kmix := true.B
         loop_being_configured.b_alt_addr := cmd.bits.cmd.rs1
         loop_being_configured.b_alt_stride := cmd.bits.cmd.rs2
+        loop_being_configured.kmix_fp6 := cmd.bits.cmd.rs2(63, 62)   // above any row stride
       }
 
       is (LOOP_WS_CONFIG_KMASK) {
@@ -1814,6 +1818,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ex.io.req.bits.shared := loop_requesting_ex.shared_acc
   ex.io.req.bits.lut_kb := loop_requesting_ex.lut_kb
   ex.io.req.bits.kmix := loop_requesting_ex.kmix
+  ex.io.req.bits.kmix_fp6 := loop_requesting_ex.kmix_fp6
   ex.io.req.bits.kmask := loop_requesting_ex.kmask
   ex.io.req.bits.mx := loop_requesting_ex.mx
   ex.io.req.bits.skip := is_resadd

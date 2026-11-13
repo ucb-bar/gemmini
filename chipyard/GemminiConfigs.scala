@@ -288,6 +288,20 @@ class MxE4M3Fp4E3M2LutNoPeMeshGateBf16Dim32GemminiBoomBw2IF128Config extends Con
 class MxE4M3Fp4E3M2LutNoAccGateBf16Dim32GemminiBoomBw2IF128Config extends Config(
   new gemmini.GemminiMxFPE4M3Fp4E3M2LutNoAccGateBf16Dim32IF128Config ++ new WithMxBw2Boom)
 
+// Synthesis / power / FireSim set: C2 Gemmini (FP4 + E4M3 runtime LUT + E3M2 LUT or direct, BF16 PE, 2 VPUs) on the Bw2 memory system.
+class MxPwrBaseDim16GemminiBoomBw2Config extends Config(   // base, 16x16
+  new gemmini.GemminiMxFPPwrBaseDim16Config ++ new WithMxBw2Boom)
+class MxPwrBaseDim32GemminiBoomBw2Config extends Config(   // base, 32x32
+  new gemmini.GemminiMxFPPwrBaseDim32Config ++ new WithMxBw2Boom)
+class MxPwrNoLaneGateDim16GemminiBoomBw2Config extends Config(   // no PE lane gating, 16x16
+  new gemmini.GemminiMxFPPwrNoLaneGateDim16Config ++ new WithMxBw2Boom)
+class MxPwrNoLaneGateDim32GemminiBoomBw2Config extends Config(   // no PE lane gating, 32x32
+  new gemmini.GemminiMxFPPwrNoLaneGateDim32Config ++ new WithMxBw2Boom)
+class MxPwrAcc1Dim16GemminiBoomBw2Config extends Config(   // no accumulator double buffer (acc_banks = 1), 16x16
+  new gemmini.GemminiMxFPPwrAcc1Dim16Config ++ new WithMxBw2Boom)
+class MxPwrAcc1Dim32GemminiBoomBw2Config extends Config(   // no accumulator double buffer (acc_banks = 1), 32x32
+  new gemmini.GemminiMxFPPwrAcc1Dim32Config ++ new WithMxBw2Boom)
+
 // One Gemmini 16x16: E4M3 act x E2M1 wei (+ FP4 sym, E4M3 sym), no LUT, 2 VPUs, full BF16 PE arithmetic; 512-bit sbus, 32 B DRAM port.
 class MxA8W4Bf16Dim16GemminiBoomConfig extends Config(
   new gemmini.GemminiMxFPA8W4Bf16Dim16Config ++
