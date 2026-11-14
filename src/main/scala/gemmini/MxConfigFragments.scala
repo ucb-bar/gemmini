@@ -53,6 +53,8 @@ case class GemminiLUTConfig(
   // (or let the Controller derive it from the operand MxConfig via restrictedTo) so a single-format build,
   // e.g. E4M3-only, elaborates only its own finder.
   finderFormats: Option[Seq[LutProjFormat]] = None,
+  // Some(g): codebook granularity G fixed at elaboration (weight lanes hard-wired to their codebook); None = runtime G
+  fixedG: Option[Int] = None,
 ) {
   def actCodeW = if (actCodeWidth > 0) actCodeWidth else rdataWidth
   def weiCodeW = if (weiCodeWidth > 0) weiCodeWidth else rdataWidth

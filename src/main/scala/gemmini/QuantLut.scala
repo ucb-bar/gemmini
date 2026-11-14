@@ -79,7 +79,9 @@ class QuantLut(
   val lutCache_act_in  = RegInit(VecInit(Seq.fill(2*lutConfig(1)._1)(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))))
   // weight codebooks = lutConfig(0) (the lut0 / weight write port); read as rows of wRowLen consecutive codebooks
   val nW      = lutConfig(0)._1
-  val wRowLen = math.min(depLanes, nW)
+  require(lutConfig.fixedG.forall(g => g >= 0 && g <= log2Lanes), "fixedG must be in [0, log2(depLanes)]")
+  val lutG    = lutConfig.fixedG.map(_.U).getOrElse(io.quant_lut_update_granularity)
+  val wRowLen = math.min(lutConfig.fixedG.map(depLanes >> _).getOrElse(depLanes), nW)
   val nWRows  = nW / wRowLen
   val lutCache_weight  = RegInit(VecInit(Seq.fill(nW)(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))))
   // act_out: the projection codebooks are not stored as raw codes but as the derived nearest-finder tables
@@ -167,7 +169,7 @@ class QuantLut(
   }
 
   when(io.quant_fp6.valid) {
-    proj_table := lutCache_act_out(Mux(io.act_out_row.valid, io.act_out_row.bits, counter_act_out) >> io.quant_lut_update_granularity)
+    proj_table := lutCache_act_out(Mux(io.act_out_row.valid, io.act_out_row.bits, counter_act_out) >> lutG)
     for (i <- 0 until outputnumLanes) {
       proj_in(i) := io.quant_fp6.bits(i)
       projectedIndices(i) := proj_nearest(i)
@@ -189,16 +191,88 @@ class QuantLut(
   
   val used_lut_act_0 = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
   val used_lut_act_1 = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
-  val counter_act = RegInit(0.U(log2Ceil(16).W))
-
-  dontTouch(counter_act)
   dontTouch(used_lut_act_0)
   dontTouch(used_lut_act_1)
 
-  for (i <- 0 until sp_banks) {
-    // Each bank has its own deprojected_bits
-    val deprojected_bits = WireDefault(VecInit(Seq.fill(depLanes)(0.U(rdataWidth.W))))
+  // One act and one weight decoder shared by all banks: the ex controller reads at most one A row (read_a) and one
+  // preload row (read_d) per cycle
+  val projResp = io.spad_projected_data.map(_.resp)
+  val aHits = VecInit(projResp.map(r => r.valid && r.bits.read_a))
+  val dHits = VecInit(projResp.map(r => r.valid && r.bits.read_d))
+  val aHit = aHits.asUInt.orR
+  val dHit = dHits.asUInt.orR
+  assert(PopCount(aHits) <= 1.U && PopCount(dHits) <= 1.U, "QuantLut: >1 deproj read of one operand per cycle")
+  assert(!(projResp.map(r => r.valid && r.bits.read_a && r.bits.read_d).reduce(_ || _)), "QuantLut: read_a && read_d")
+  val aResp = Mux1H(aHits, projResp.map(_.bits))
+  val dResp = Mux1H(dHits, projResp.map(_.bits))
+  lutConfig.fixedG.foreach(g => assert(!(aHit || dHit || io.quant_fp6.valid) || io.quant_lut_update_granularity === g.U,
+    "QuantLut: G differs from the build's fixedG"))
 
+  val act_bits = WireDefault(VecInit(Seq.fill(depLanes)(0.U(rdataWidth.W))))
+  when(aHit) {
+    val sa = io.lut_slots.a(aResp.lut_halves(0))
+    when(counter_i === ((sa.i << log2LuDim.U) - 1.U)) {
+      counter_i := 0.U
+    }.otherwise {
+      counter_i := counter_i + 1.U
+    }
+    val act_local_0 = (counter_i << 1.U) >> lutG
+    val act_local_1 = ((counter_i << 1.U) + 1.U) >> lutG
+    def act_idx(l: UInt): UInt = Mux(sa.halved, Cat(aResp.lut_halves(0), l(log2Ceil(halfEntries) - 1, 0)), l)
+    assert(!sa.halved || act_local_1 < halfEntries.U, "QuantLut: loop-managed act-in block needs > half the codebooks")
+    used_lut_act_0 := lutCache_act_in(act_idx(act_local_0))
+    used_lut_act_1 := lutCache_act_in(act_idx(act_local_1))
+    for (k <- 0 until luDim) { // act data layout is 2 interleaved 4-bit codes per k (kNa1,kNa0), total 2*luDim lanes
+      act_bits(2*k)     := used_lut_act_0(aResp.data(2*k*4 + 3, 2*k*4))
+      act_bits(2*k + 1) := used_lut_act_1(aResp.data(2*k*4 + 7, 2*k*4 + 4))
+    }
+  }
+
+  val wei_bits = WireDefault(VecInit(Seq.fill(depLanes)(0.U(rdataWidth.W))))
+  when(dHit) {
+    val sw = io.lut_slots.w(dResp.lut_halves(1))
+    // count only deprojected weight rows (a mixed-K loop's MXFP8 K-blocks bypass the LUT)
+    val wtag = dResp.lut_halves
+    when(wtag(2) || !wtag(3)) {
+      when(counter_j === ((sw.j << log2LuDim.U) - 1.U)) {
+        counter_j := 0.U
+        counter_k := Mux(!sw.kblock || counter_k === sw.k - 1.U, 0.U, counter_k + 1.U)
+      }.otherwise {
+        counter_j := counter_j + 1.U
+      }
+    }
+    // kblock codebooks: K-block kb of the loop uses the set at kb * (codebooks per K-block = (J << lanes) >> G)
+    // mixed-K loop: the K-block's codebook set = its slot (read tag [7:6])
+    val cb_per_kb = (sw.j << log2Lanes.U) >> lutG
+    val kb_off = Mux(sw.kmix, wtag(7, 6) * cb_per_kb,
+      Mux(sw.kblock, (counter_k >> log2Ceil(kTilesPerKb)) * cb_per_kb, 0.U))
+    // a row's lanes read one aligned window of codebooks (lane k: wbase + (k >> G)): select the row, then the lane
+    val wbase = kb_off + (((counter_j >> log2LuDim.U) << log2Lanes.U) >> lutG)
+    assert(!sw.halved || wbase + ((depLanes - 1).U >> lutG) < halfEntriesW.U,
+      "QuantLut: loop-managed weight block needs > half the codebooks")
+    val ibase = Mux(sw.halved, Cat(wtag(1), wbase(log2Ceil(halfEntriesW) - 1, 0)), wbase)
+    val wrow  = ibase >> log2Ceil(wRowLen)
+    val wrows = VecInit((0 until nWRows).map(r => VecInit((0 until wRowLen).map(c => lutCache_weight(r * wRowLen + c)))))
+    val rowW  = Mux(wrow < nWRows.U, wrows(wrow(math.max(log2Ceil(nWRows), 1) - 1, 0)),
+                    0.U.asTypeOf(wrows(0)))   // past the written codebooks: zero, as an unwritten entry
+    if (lutConfig.fixedG.isDefined && wRowLen > 1)
+      assert(ibase(log2Ceil(wRowLen) - 1, 0) === 0.U, "QuantLut: fixedG weight window not row-aligned")
+    for (k <- 0 until depLanes) {
+      val used_lut_w = lutConfig.fixedG match {
+        case Some(g) => rowW(k >> g)   // the row is exactly one tile's window: lane k is wired to its codebook
+        case None =>
+          val col = (ibase + (k.U >> lutG))(math.max(log2Ceil(wRowLen), 1) - 1, 0)
+          if (wRowLen == 1) rowW(0) else rowW(col)
+      }
+      wei_bits(k) := used_lut_w(dResp.data((k+1)*4-1, k*4))
+    }
+  }
+
+  // Pack per operand: activation codes at actCodeW, weight codes at weiCodeW (each sliced from the rdataWidth entry)
+  val act_packed = Cat((0 until depLanes).reverse.map(k => act_bits(k)(actCodeW - 1, 0)))
+  val wei_packed = Cat((0 until depLanes).reverse.map(k => wei_bits(k)(weiCodeW - 1, 0)))
+
+  for (i <- 0 until sp_banks) {
     // Initialize unused spad_projected_data outputs (QuantLut doesn't send requests)
     io.spad_projected_data(i).req.valid := false.B
     io.spad_projected_data(i).req.bits := DontCare
@@ -213,86 +287,13 @@ class QuantLut(
     io.spad_deprojected_data(i).resp.bits.read_a := false.B
     io.spad_deprojected_data(i).resp.bits.read_d := false.B
     io.spad_deprojected_data(i).resp.bits.lut_halves := 0.U
-    val lut_idx = (counter_i << 1.U) >> io.quant_lut_update_granularity
-    val lut_idx_wire = WireDefault(lut_idx)
-    val lut_idx_1 = ((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity
-    val lut_idx_wire_1 = WireDefault(lut_idx)
-    dontTouch(lut_idx_wire)
-    dontTouch(lut_idx_wire_1)
-    
-    
-    when(io.spad_projected_data(i).resp.valid) {
-      // Gate the deproj on the per-response operand tag (aligned with the read data), not a fixed latency,
-      // so it fires exactly when the projected data arrives.
-      val sa = io.lut_slots.a(io.spad_projected_data(i).resp.bits.lut_halves(0))
-      val sw = io.lut_slots.w(io.spad_projected_data(i).resp.bits.lut_halves(1))
-      when(io.spad_projected_data(i).resp.bits.read_a) {
-        when(counter_i === ((sa.i << log2LuDim.U) - 1.U)){
-          counter_i := 0.U
-        }.otherwise{
-          counter_i := counter_i + 1.U
-        } 
-        // Route by the runtime read_a tag, so the activation operand may live in any scratchpad bank.
-        val act_local_0 = (counter_i << 1.U) >> io.quant_lut_update_granularity
-        val act_local_1 = ((counter_i << 1.U) + 1.U) >> io.quant_lut_update_granularity
-        def act_idx(l: UInt): UInt = Mux(sa.halved, Cat(io.spad_projected_data(i).resp.bits.lut_halves(0), l(log2Ceil(halfEntries) - 1, 0)), l)
-        assert(!sa.halved || act_local_1 < halfEntries.U, "QuantLut: loop-managed act-in block needs > half the codebooks")
-        used_lut_act_0 := lutCache_act_in(act_idx(act_local_0))
-        used_lut_act_1 := lutCache_act_in(act_idx(act_local_1))
-        for (k <- 0 until luDim) { //act data layout is 2 interleaved 4-bit codes per k (kNa1,kNa0), total 2*luDim lanes
-          val chunk_4bit_0 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 3, 2*k*4)
-          val chunk_4bit_1 = io.spad_projected_data(i).resp.bits.data(2*k*4 + 7, 2*k*4 + 4)
-          val deprojected_bit_0 = used_lut_act_0(chunk_4bit_0)
-          val deprojected_bit_1 = used_lut_act_1(chunk_4bit_1)
-          deprojected_bits(2*k) := deprojected_bit_0
-          deprojected_bits(2*k + 1) := deprojected_bit_1
-        }
-      }
-      when(io.spad_projected_data(i).resp.bits.read_d) {
-       // count only deprojected weight rows (a mixed-K loop's MXFP8 K-blocks bypass the LUT)
-       val wtag = io.spad_projected_data(i).resp.bits.lut_halves
-       when (wtag(2) || !wtag(3)) {
-        when(counter_j === ((sw.j << log2LuDim.U) - 1.U)){
-          counter_j := 0.U
-          counter_k := Mux(!sw.kblock || counter_k === sw.k - 1.U, 0.U, counter_k + 1.U)
-        }.otherwise{
-          counter_j := counter_j + 1.U
-        }
-       }
-        // Route by the runtime read_d tag, so weights may live in any scratchpad bank.
-        // kblock codebooks: K-block kb of the loop uses the set at kb * (codebooks per K-block = (J << lanes) >> G)
-        // mixed-K loop: the K-block's codebook set = its slot (read tag [7:6])
-        val cb_per_kb = (sw.j << log2Lanes.U) >> io.quant_lut_update_granularity
-        val kb_off = Mux(sw.kmix, wtag(7, 6) * cb_per_kb,
-          Mux(sw.kblock, (counter_k >> log2Ceil(kTilesPerKb)) * cb_per_kb, 0.U))
-        def wgt_local(k: Int): UInt = kb_off + ((((counter_j >> log2LuDim.U) << log2Lanes.U) + k.U) >> io.quant_lut_update_granularity)
-        assert(!sw.halved || wgt_local(depLanes - 1) < halfEntriesW.U, "QuantLut: loop-managed weight block needs > half the codebooks")
-        // A row's lanes read one aligned window of codebooks (wgt_local(k) = wbase + (k >> G)): select its row once
-        // per bank, then each lane picks within the row -- a wRowLen:1 lane mux whatever the capacity
-        val wbase = kb_off + (((counter_j >> log2LuDim.U) << log2Lanes.U) >> io.quant_lut_update_granularity)
-        val ibase = Mux(sw.halved, Cat(io.spad_projected_data(i).resp.bits.lut_halves(1), wbase(log2Ceil(halfEntriesW) - 1, 0)), wbase)
-        val wrow  = ibase >> log2Ceil(wRowLen)
-        val wrows = VecInit((0 until nWRows).map(r => VecInit((0 until wRowLen).map(c => lutCache_weight(r * wRowLen + c)))))
-        val rowW  = Mux(wrow < nWRows.U, wrows(wrow(math.max(log2Ceil(nWRows), 1) - 1, 0)),
-                        0.U.asTypeOf(wrows(0)))   // past the written codebooks: zero, as an unwritten entry
-        for (k <- 0 until depLanes) {
-          val col = (ibase + (k.U >> io.quant_lut_update_granularity))(math.max(log2Ceil(wRowLen), 1) - 1, 0)
-          val used_lut_w = if (wRowLen == 1) rowW(0) else rowW(col)
-          val chunk_4bit = io.spad_projected_data(i).resp.bits.data((k+1)*4-1, k*4)
-          deprojected_bits(k) := used_lut_w(chunk_4bit)
-
-        }
-      }
-      // Pack per operand: activation codes at actCodeW, weight codes at weiCodeW (each sliced from the
-      // rdataWidth-wide codebook entry). Equal widths -> identical to the old uniform Cat.
-      val act_packed = Cat((0 until depLanes).reverse.map(k => deprojected_bits(k)(actCodeW - 1, 0)))
-      val wei_packed = Cat((0 until depLanes).reverse.map(k => deprojected_bits(k)(weiCodeW - 1, 0)))
-      io.spad_deprojected_data(i).resp.bits.data := Mux(io.spad_projected_data(i).resp.bits.read_a,
-        act_packed, wei_packed)
+    val r = projResp(i)
+    when(r.valid) {
+      io.spad_deprojected_data(i).resp.bits.data := Mux(r.bits.read_a, act_packed, Mux(r.bits.read_d, wei_packed, 0.U))
       io.spad_deprojected_data(i).resp.valid := true.B
-      io.spad_deprojected_data(i).resp.bits.fromDMA := io.spad_projected_data(i).resp.bits.fromDMA
-      io.spad_deprojected_data(i).resp.bits.weight_mx_format := io.spad_projected_data(i).resp.bits.weight_mx_format
-      io.spad_deprojected_data(i).resp.bits.input_mx_format := io.spad_projected_data(i).resp.bits.input_mx_format
+      io.spad_deprojected_data(i).resp.bits.fromDMA := r.bits.fromDMA
+      io.spad_deprojected_data(i).resp.bits.weight_mx_format := r.bits.weight_mx_format
+      io.spad_deprojected_data(i).resp.bits.input_mx_format := r.bits.input_mx_format
     }
   }
 }

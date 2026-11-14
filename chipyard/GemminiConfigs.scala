@@ -301,6 +301,10 @@ class MxPwrAcc1Dim16GemminiBoomBw2Config extends Config(   // no accumulator dou
   new gemmini.GemminiMxFPPwrAcc1Dim16Config ++ new WithMxBw2Boom)
 class MxPwrAcc1Dim32GemminiBoomBw2Config extends Config(   // no accumulator double buffer (acc_banks = 1), 32x32
   new gemmini.GemminiMxFPPwrAcc1Dim32Config ++ new WithMxBw2Boom)
+class MxPwrFixG1Dim16GemminiBoomBw2Config extends Config(   // base with LUT G fixed at 1, 16x16
+  new gemmini.GemminiMxFPPwrFixG1Dim16Config ++ new WithMxBw2Boom)
+class MxPwrFixG1Dim32GemminiBoomBw2Config extends Config(   // base with LUT G fixed at 1, 32x32
+  new gemmini.GemminiMxFPPwrFixG1Dim32Config ++ new WithMxBw2Boom)
 
 // One Gemmini 16x16: E4M3 act x E2M1 wei (+ FP4 sym, E4M3 sym), no LUT, 2 VPUs, full BF16 PE arithmetic; 512-bit sbus, 32 B DRAM port.
 class MxA8W4Bf16Dim16GemminiBoomConfig extends Config(

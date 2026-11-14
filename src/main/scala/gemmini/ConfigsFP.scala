@@ -284,9 +284,10 @@ object GemminiMxFPConfigs {
   val e4m3s: Lane = (4, 4, 1)
 
   // wCodebooks: weight codebooks, 2 loop halves (32 per half -> 64 output columns per LUT loop at G = 1)
-  def lut8(proj: LutProjFormat, act: Int = 0, wei: Int = 0, wCodebooks: Int = 64): Option[GemminiLUTConfig] =
+  def lut8(proj: LutProjFormat, act: Int = 0, wei: Int = 0, wCodebooks: Int = 64,
+           fixedG: Option[Int] = None): Option[GemminiLUTConfig] =
     Some(GemminiLUTConfig(Seq(128, 128, 128), Seq(wCodebooks, 64, 64), rdataWidth = 8, raddrWidth = 4, projFormat = proj,
-      actCodeWidth = act, weiCodeWidth = wei))
+      actCodeWidth = act, weiCodeWidth = wei, fixedG = fixedG))
   def lut6(proj: LutProjFormat): Option[GemminiLUTConfig] =
     Some(GemminiLUTConfig(Seq(96, 96, 96), Seq(64, 64, 64), rdataWidth = 6, raddrWidth = 4, projFormat = proj))
 
@@ -492,7 +493,7 @@ object GemminiMxFPConfigs {
     modesOverride = Some(List(mxgen.MxPEParams.mode6, mxgen.MxPEParams.mode8, mxgen.MxPEParams.mode13)),
     inActBusWidth = 8, inWeiBusWidth = 16, expAdderWidths = Seq(4, 4, 4, 4))
   private def e4m3LutBf16(c: MxCfg, hdr: String): MxCfg =
-    bf16Arith(vpu(lanes(c, e4m3s, e4m3, Some(e4m3sE4M3Mx))).copy(lut = lut8(LutFP8E4M3, wCodebooks = 256), acc_banks = 2,
+    bf16Arith(vpu(lanes(c, e4m3s, e4m3, Some(e4m3sE4M3Mx))).copy(lut = lut8(LutFP8E4M3, wCodebooks = 128), acc_banks = 2,
       max_in_flight_mem_reqs = 64, headerFileName = hdr))
   val e4m3LutBf16Dim16MxFPConfig = e4m3LutBf16(standaloneMxFPConfig, "gemmini_params_e4m3_lut_bf16_dim16.h")
   val e4m3LutBf16Dim32MxFPConfig = e4m3LutBf16(dim32MxFPConfig, "gemmini_params_e4m3_lut_bf16_dim32.h")
@@ -519,16 +520,16 @@ object GemminiMxFPConfigs {
   private def lutBf16Dim32IF128(act: Lane, wei: Lane, cfg: MxConfig, lut: Option[GemminiLUTConfig], hdr: String): MxCfg =
     bf16Arith(vpu(lanes(dim32MxFPConfig, act, wei, Some(cfg)))).copy(lut = lut, acc_banks = 2,
       max_in_flight_mem_reqs = 128, headerFileName = hdr)
-  private val lutE4M3W256 = lut8(LutFP8E4M3, wCodebooks = 256)
+  private val lutE4M3W = lut8(LutFP8E4M3, wCodebooks = 128)   // 64 weight codebooks per loop half
   val e4m3Fp4LutBf16Dim32IF128MxFPConfig =
-    lutBf16Dim32IF128(e4m3, e4m3, e4m3Fp4Mx, lutE4M3W256, "gemmini_params_e4m3_fp4_lut_bf16_dim32.h")
+    lutBf16Dim32IF128(e4m3, e4m3, e4m3Fp4Mx, lutE4M3W, "gemmini_params_e4m3_fp4_lut_bf16_dim32.h")
   val e4m3Fp4E3M2LutBf16Dim32IF128MxFPConfig =
-    lutBf16Dim32IF128(e4m3, e4m3, e4m3Fp4E3M2Mx, lutE4M3W256, "gemmini_params_e4m3_fp4_e3m2_lut_bf16_dim32.h")
+    lutBf16Dim32IF128(e4m3, e4m3, e4m3Fp4E3M2Mx, lutE4M3W, "gemmini_params_e4m3_fp4_e3m2_lut_bf16_dim32.h")
   val e4m3Fp4E3M2NoLutBf16Dim32IF128MxFPConfig =
     lutBf16Dim32IF128(e4m3s, e4m3s, e4m3sFp4NoLutMx, None, "gemmini_params_e4m3_fp4_e3m2_nolut_bf16_dim32.h")
   // C4 / C5: C2 with gating off -- PE lane/zero + mesh clock gating, or accumulator clock gating
   val e4m3Fp4E3M2LutNoPeMeshGateBf16Dim32IF128MxFPConfig =
-    lutBf16Dim32IF128(e4m3, e4m3, e4m3Fp4E3M2Mx.copy(laneGating = false, zeroGating = false), lutE4M3W256,
+    lutBf16Dim32IF128(e4m3, e4m3, e4m3Fp4E3M2Mx.copy(laneGating = false, zeroGating = false), lutE4M3W,
       "gemmini_params_e4m3_fp4_e3m2_lut_nopemeshgate_bf16_dim32.h").copy(mesh_clock_gating = false)
   val e4m3Fp4E3M2LutNoAccGateBf16Dim32IF128MxFPConfig = e4m3Fp4E3M2LutBf16Dim32IF128MxFPConfig.copy(
     acc_clock_gating = false, headerFileName = "gemmini_params_e4m3_fp4_e3m2_lut_noaccgate_bf16_dim32.h")
@@ -537,18 +538,22 @@ object GemminiMxFPConfigs {
   // and 32, plus two ablations: no PE lane gating (laneGating = false; zero gating and clock gating stay on) and no
   // accumulator double buffer (acc_banks = 1, same capacity: compute and the C drain share one bank).
   private def pwrBase(dim: Int): MxCfg = bf16Arith(vpu(lanes(if (dim == 32) dim32MxFPConfig else standaloneMxFPConfig,
-    e4m3, e4m3, Some(e4m3Fp4E3M2Mx)))).copy(lut = lutE4M3W256, acc_banks = 2, max_in_flight_mem_reqs = 128,
+    e4m3, e4m3, Some(e4m3Fp4E3M2Mx)))).copy(lut = lutE4M3W, acc_banks = 2, max_in_flight_mem_reqs = 128,
     headerFileName = s"gemmini_params_pwr_base_dim$dim.h")
   private def pwrNoLaneGate(dim: Int): MxCfg = bf16Arith(vpu(lanes(if (dim == 32) dim32MxFPConfig else standaloneMxFPConfig,
-    e4m3, e4m3, Some(e4m3Fp4E3M2Mx.copy(laneGating = false))))).copy(lut = lutE4M3W256, acc_banks = 2,
+    e4m3, e4m3, Some(e4m3Fp4E3M2Mx.copy(laneGating = false))))).copy(lut = lutE4M3W, acc_banks = 2,
     max_in_flight_mem_reqs = 128, headerFileName = s"gemmini_params_pwr_nolanegate_dim$dim.h")
   private def pwrAcc1(dim: Int): MxCfg = pwrBase(dim).copy(acc_banks = 1, headerFileName = s"gemmini_params_pwr_acc1_dim$dim.h")
+  private def pwrFixG1(dim: Int): MxCfg = pwrBase(dim).copy(lut = lut8(LutFP8E4M3, wCodebooks = 128, fixedG = Some(1)),
+    headerFileName = s"gemmini_params_pwr_fixg1_dim$dim.h")   // base with G fixed at 1
   val pwrBaseDim16MxFPConfig = pwrBase(16)
   val pwrBaseDim32MxFPConfig = pwrBase(32)
   val pwrNoLaneGateDim16MxFPConfig = pwrNoLaneGate(16)
   val pwrNoLaneGateDim32MxFPConfig = pwrNoLaneGate(32)
   val pwrAcc1Dim16MxFPConfig = pwrAcc1(16)
   val pwrAcc1Dim32MxFPConfig = pwrAcc1(32)
+  val pwrFixG1Dim16MxFPConfig = pwrFixG1(16)
+  val pwrFixG1Dim32MxFPConfig = pwrFixG1(32)
   // Same build, no LUT: E4M3 single act x E2M1 wei (A8W4, mode6) + FP4 sym (mode0) + E4M3 single sym (mode8).
   val a8w4Bf16Dim16MxFPConfig = bf16Arith(vpu(sym(standaloneMxFPConfig, e4m3s, a8w4Mx)).copy(
     lut = None, acc_banks = 2, headerFileName = "gemmini_params_a8w4_bf16_dim16.h"))
@@ -654,6 +659,8 @@ class GemminiMxFPPwrNoLaneGateDim16Config extends WithMxFPGemmini(GemminiMxFPCon
 class GemminiMxFPPwrNoLaneGateDim32Config extends WithMxFPGemmini(GemminiMxFPConfigs.pwrNoLaneGateDim32MxFPConfig)
 class GemminiMxFPPwrAcc1Dim16Config extends WithMxFPGemmini(GemminiMxFPConfigs.pwrAcc1Dim16MxFPConfig)
 class GemminiMxFPPwrAcc1Dim32Config extends WithMxFPGemmini(GemminiMxFPConfigs.pwrAcc1Dim32MxFPConfig)
+class GemminiMxFPPwrFixG1Dim16Config extends WithMxFPGemmini(GemminiMxFPConfigs.pwrFixG1Dim16MxFPConfig)
+class GemminiMxFPPwrFixG1Dim32Config extends WithMxFPGemmini(GemminiMxFPConfigs.pwrFixG1Dim32MxFPConfig)
 class GemminiMxFPA8W4Bf16Dim16Config extends WithMxFPGemmini(GemminiMxFPConfigs.a8w4Bf16Dim16MxFPConfig)
 class GemminiMxFPTestConfig extends WithMxFPGemmini(GemminiMxFPConfigs.testMxFPConfig)
 class GemminiRequantizerLutMxFPTestConfig extends WithMxFPGemmini(GemminiMxFPConfigs.testRequantizerLutMxFPConfig)
