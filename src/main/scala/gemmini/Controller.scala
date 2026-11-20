@@ -286,7 +286,8 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
       tileColumns = outer.config.tileColumns,
       accType = outer.config.accType,
       weightTypeProjected = outer.config.weightTypeProjected,
-      config = q  
+      config = q,
+      flexScales = outer.config.mx_flex_scales
     ))
   }
 
@@ -598,6 +599,13 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
   // Assembles num_luts*96b into the LUT buffer, then fires the selected requantizer lut port once.
   // sel: 0 = B/weight -> lut0, 1 = A/act-in -> lut1, 2 = C/act-out -> lut2 (Spike polarity).
   val lut_loader_busy = WireDefault(false.B)
+
+  // mx_flex_scales: block-scale formats set by MX_SCALE_FMT; reset = E8M0 everywhere
+  val mx_scale_fmt = Option.when(outer.config.mx_flex_scales)(RegInit(0.U.asTypeOf(new MxScaleFmtCfg)))
+  mx_scale_fmt.foreach { r =>
+    spad.module.io.scale_fmt.get := r
+    mx_requantizer.foreach(_.flex_io.get := r)
+  }
 
   // Runtime LUT-usage flag: MX_LOAD_LUT sets it, MX_LUT_DISABLE clears it, default off.
   val mx_lut_en = RegInit(false.B)
@@ -966,7 +974,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
         val proj = read_projected(b).resp
         val ptag = proj.bits.lut_halves
         // direct FP6 (tagged fmt 0): each byte's low-6 code -> its exact E4M3 byte, then the E4M3-single expansion
-        val fp6 = Mux(ptag(3), ptag(9, 8), Mux(proj.bits.read_a,
+        val fp6 = Mux(ptag(3), ptag(11, 10), Mux(proj.bits.read_a,
           ex_controller.io.mx.get.act_fp6_out, ex_controller.io.mx.get.wgt_fp6_out))
         val raw_vec = proj.bits.data.asTypeOf(Vec(outer.config.meshColumns*outer.config.tileColumns, UInt(8.W)))
         val spad_data_vec = VecInit(raw_vec.map(byte => Mux(fp6(1), Fp6ToE4M3(byte(5, 0), fp6(0)), byte)))
@@ -1167,7 +1175,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t), new ComputeRs(mvin_rows_bits, mvin_cols_bits, local_addr_t),
     new MvoutSpadRs1(32, local_addr_t), new MvoutRs2(mvout_rows_bits, mvout_cols_bits, local_addr_t),
     vec_bypass = has_vpu || spad_requant_en, ld_bypass = use_mx_scaling, use_mx_scaling = use_mx_scaling,
-    lut_quad = e4m3QuadThroughput) }
+    lut_quad = e4m3QuadThroughput, defer_cfg_ex = loop_defer_config_ex && use_mx_scaling) }
   
   if (use_mx_scaling) {
     loop_matmul.io.activation_mx_format := ex_controller.io.mx.get.activation_mx_format_out
@@ -1175,6 +1183,9 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     loop_matmul.io.mx_multi_elem_act := ex_controller.io.mx.get.mx_multi_elem_act
     loop_matmul.io.weight_mx_format := ex_controller.io.mx.get.weight_mx_format_out
     loop_matmul.io.output_mx_format := ex_controller.io.mx.get.output_MxFormat
+    // 8-bit requant codes (E4M3-single / direct FP6) vs 4-bit (FP4, LUT index): what a paired acc row stores as
+    loop_matmul.io.out_byte_codes := ex_controller.io.mx.get.output_MxFormat === 0.U &&
+      !ex_controller.io.mx.get.lut_en_out && !ex_controller.io.mx.get.out_altfmt_out
 
     ex_controller.io.mx.get.scale_landed := scale_loader_landed
     ex_controller.io.mx.get.scale_ready  := scale_loader_ready
@@ -1186,18 +1197,20 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     mx_requantizer.get.io.loop_bound_i := ex_controller.io.mx.get.scaleMemCntl.loop_bound_i
     mx_requantizer.get.io.loop_bound_j := ex_controller.io.mx.get.scaleMemCntl.loop_bound_j
     mx_requantizer.get.io.loop_bound_k := ex_controller.io.mx.get.scaleMemCntl.loop_bound_k
-    mx_requantizer.get.io.pair := ex_controller.io.mx.get.mx_multi_elem_act && !ex_controller.io.mx.get.mx_multi_elem
+    // single weight: loop_bound_j counts DIM-col tiles (act-quad pairs and, on the universal layout, single x single)
+    mx_requantizer.get.io.pair := !ex_controller.io.mx.get.mx_multi_elem
+    // single act: rows arrive in pairs (2r, 2r+1 per acc row) over DIM-row tiles
+    mx_requantizer.get.io.rows_single_act := !ex_controller.io.mx.get.mx_multi_elem_act
 
     // act-quad x wei-single stores as quad x quad over col-tile pairs
     val st_pair = ex_controller.io.mx.get.mx_multi_elem_act && !ex_controller.io.mx.get.mx_multi_elem
     // single x single with shared_acc: stored as quad tiles over 2x2 tile groups (both pairings)
-    val st_shared = (meshRows * tileRows >= 16).B && ex_controller.io.mx.get.shared_acc &&
-      !ex_controller.io.mx.get.mx_multi_elem && !ex_controller.io.mx.get.mx_multi_elem_act
+    val st_shared = !ex_controller.io.mx.get.mx_multi_elem && !ex_controller.io.mx.get.mx_multi_elem_act
     store_controller.io.loop_bound_j := Mux(st_pair, ex_controller.io.mx.get.loop_bounds.j >> 1, ex_controller.io.mx.get.loop_bounds.j)
     store_controller.io.activation_mx_type := ex_controller.io.mx.get.activation_mx_format_out
     store_controller.io.mx_multi_elem := ex_controller.io.mx.get.mx_multi_elem || st_pair
-    // single x quad reads the shared (act-quad) acc layout at DIM>=16
-    val st_ipair = (meshRows * tileRows >= 16).B && ex_controller.io.mx.get.mx_multi_elem && !ex_controller.io.mx.get.mx_multi_elem_act
+    // single x quad reads the shared (act-quad) acc layout
+    val st_ipair = ex_controller.io.mx.get.mx_multi_elem && !ex_controller.io.mx.get.mx_multi_elem_act
     store_controller.io.mx_multi_elem_act := ex_controller.io.mx.get.mx_multi_elem_act || st_ipair
     store_controller.io.acc_row_pair := st_ipair
     store_controller.io.shared_acc := st_shared
@@ -1230,6 +1243,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     loop_matmul.io.mx_multi_elem_act := false.B
     loop_matmul.io.weight_mx_format := 0.U
     loop_matmul.io.output_mx_format := 0.U
+    loop_matmul.io.out_byte_codes := false.B
 
     store_controller.io.loop_bound_j := 0.U
     store_controller.io.activation_mx_type := 0.U
@@ -1700,6 +1714,7 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
     val is_mx_load_scales = risc_funct === MX_LOAD_SCALES
     val is_mx_load_lut = risc_funct === MX_LOAD_LUT
     val is_mx_lut_disable = risc_funct === MX_LUT_DISABLE
+    val is_mx_scale_fmt = risc_funct === MX_SCALE_FMT
 
     /*
     val is_load = (funct === LOAD_CMD) || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
@@ -1725,6 +1740,17 @@ class GemminiModule[T <: Data: Arithmetic, U <: Data, V <: Data]
 
     .elsewhen (is_clock_gate_en) {
       unrolled_cmd.ready := true.B
+    }
+
+    .elsewhen (is_mx_scale_fmt) {
+      // takes effect at once, not in program order with queued work: gemmini_fence() before it
+      unrolled_cmd.ready := true.B
+      mx_scale_fmt.foreach { r => when (unrolled_cmd.valid) {
+        val rs1 = unrolled_cmd.bits.cmd.rs1
+        val rs2 = unrolled_cmd.bits.cmd.rs2
+        r.a_fmt := rs1(2, 0); r.w_fmt := rs1(5, 3); r.out_fmt := rs1(8, 6)
+        r.a_base := rs2(7, 0).asSInt; r.w_base := rs2(15, 8).asSInt; r.out_base := rs2(23, 16).asSInt
+      } }
     }
 
     .elsewhen (is_mx_lut_disable) {

@@ -89,7 +89,8 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val loop_bound_i = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_j = Input(UInt(iterator_bitwidth.W)) // from  controller
   val loop_bound_k = Input(UInt(iterator_bitwidth.W)) // from  controller
-  val pair = Input(Bool())   // act-quad x wei-single: loop_bound_j counts DIM-col tiles, not 2*DIM quad tiles
+  val pair = Input(Bool())   // single weight: loop_bound_j counts DIM-col tiles, not 2*DIM quad tiles
+  val rows_single_act = Input(Bool())   // single act: rows 2r, 2r+1 share an acc row, loop_bound_i counts DIM-row tiles
   val scale_mem_counter_reset_flag = Input(Bool())
   // When set, the coalescer also flushes act block-scales transposed to [GN][M] onto
   // scaleMem_write_act_resident (64b/beat); otherwise that port is idle.
@@ -134,7 +135,8 @@ class MxRequantizer[T <: Data](
   iterator_bitwidth: Int,
   meshColumns: Int, tileColumns: Int,
   accType: T, weightTypeProjected: T,
-  config: GemminiRequantizerConfig
+  config: GemminiRequantizerConfig,
+  flexScales: Boolean = false
 )(implicit ev: Arithmetic[T]) extends Module {
   
   import ev._
@@ -169,6 +171,7 @@ class MxRequantizer[T <: Data](
     geom.lanesPerBeat
   ))
   dontTouch(io)
+  val flex_io = Option.when(flexScales)(IO(Input(new MxScaleFmtCfg)))   // output (next-layer A) scale format
   val scale_mem_mvout_base_addr_act = io.scale_mem_mvout_base_addr_act
 
   val scales_per_write = scaleMem_data_width / 8
@@ -440,12 +443,33 @@ class MxRequantizer[T <: Data](
       scale_exponent := 0.S
       scale_e8m0 := 127.U
     }
-    scale_e8m0_vec(blk) := scale_e8m0
-    neg_e8m0_vec(blk)   := neg_e8m0_clamped
+    // mx_flex_scales: s = amax / pmax encoded in out_fmt; elements are divided by s's mantissa here and by its
+    // power of two in brt. LUT outputs keep E8M0.
+    val flex_code = WireDefault(scale_e8m0)
+    val flex_neg = WireDefault(neg_e8m0_clamped)
+    val flex_ms = WireDefault(0.U(MxScaleFmt.mantW.W))
+    flex_io.foreach { f =>
+      val effFmt = Mux(out_fp6_reg(1), MxFloatFormat.FP6, format_reg)
+      val effAlt = Mux(out_fp6_reg(1), out_fp6_reg(0), altfmt_reg)
+      val pSig = Mux(effFmt === MxFloatFormat.FP4, 12.U, Mux(effFmt === MxFloatFormat.FP6 && effAlt, 15.U, 14.U))
+      val pLog = Mux(effFmt === MxFloatFormat.FP4, 2.U, Mux(effFmt === MxFloatFormat.FP6, Mux(effAlt, 2.U, 4.U),
+        Mux(effAlt, 15.U, 8.U)))
+      val tiny = max_biased_exp < EPS_BIASED_EXP
+      val (code, es, ms) = MxScaleFmt.encode(Mux(tiny, EPS_BIASED_EXP, max_biased_exp),
+        Mux(tiny, 0.U, block_max(6, 0)), pSig, pLog, f.out_fmt, f.out_base)
+      when (should_compute && f.out_fmt =/= 0.U && !out_is_lut4) {
+        flex_code := Mux(block_nonfinite, 255.U, code)
+        val neg = 127.S -& es
+        flex_neg := Mux(neg < 0.S, 0.U, Mux(neg > 254.S, 254.U, neg.asUInt(7, 0)))
+        flex_ms := ms
+      }
+    }
+    scale_e8m0_vec(blk) := flex_code
+    neg_e8m0_vec(blk)   := flex_neg
 
     val brt = Module(new BF16ScaleRoundToTiny(outputnumLanes = mxBlockSize, e5m2Lut = e5m2Lut))
-    brt.io.in_bf16       := VecInit(elems)
-    brt.io.scale_e8m0    := neg_e8m0_clamped
+    brt.io.in_bf16       := (if (flexScales) VecInit(elems.map(e => MxScaleFmt.divBf16(e, flex_ms))) else VecInit(elems))
+    brt.io.scale_e8m0    := flex_neg
     brt.io.dataType      := Mux(out_fp6_reg(1), MxFloatFormat.FP6, format_reg)
     brt.io.mx_fp8_altfmt := Mux(out_fp6_reg(1), out_fp6_reg(0), altfmt_reg)
     brt.io.block_has_nan := bhn
@@ -520,11 +544,13 @@ class MxRequantizer[T <: Data](
   //   nibble: sb=block(b),    bib=row-half,    m=32*g+16*bib+row, b=sb   (2 rows/beat)
   val ROWS_PER_HALF = meshColumns * tileColumns
   val isNibble      = out_is_fp4 || out_is_lut4
+  // paired-row walk (rows 2r, 2r+1 per acc row, ascending m per row tile): 4-bit outputs and every single-act input
+  val pw            = isNibble || io.rows_single_act
   // nibble GN = blocks per output row = N/32, N = loop_bound_j * 2*DIM (quad tile width; DIM for pairs)
   val nibbleGN      = ((io.loop_bound_j * Mux(io.pair, geom.dim.U, (2 * geom.dim).U)) >> log2Ceil(geom.mxBlock)).asUInt
   val GN            = Mux(io.linear_scales, io.linear_gn,
-                        Mux(isNibble, nibbleGN, (io.loop_bound_j >> log2Ceil(tilesPerMxBlock)).asUInt))
-  val tiles_I       = io.loop_bound_i
+                        Mux(pw, nibbleGN, (io.loop_bound_j >> log2Ceil(tilesPerMxBlock)).asUInt))
+  val tiles_I       = Mux(io.rows_single_act, (io.loop_bound_i +& 1.U) >> 1, io.loop_bound_i)
   val num_super     = (GN + 1.U) >> 1
   val gn_odd        = GN(0)
   val sbPerJg       = 2.U
@@ -536,14 +562,15 @@ class MxRequantizer[T <: Data](
   val ag_jg  = RegInit(0.U(9.W))
   val ag_bib = RegInit(0.U(1.W))
   val ag_row = RegInit(0.U(log2Ceil(ROWS_PER_HALF).W))
-  val blocks_in_sb = Mux(isNibble, 2.U,
+  val blocks_in_sb = Mux(pw, 2.U,
                        Mux((ag_sb === (num_super - 1.U)) && gn_odd, 1.U, 2.U))
   // Super-block arrivals = GN blocks / numOutBlocks blocks-per-arrival. At DIM16/32 GN==loop_bound_j*numOutBlocks
   // so this equals loop_bound_j (unchanged); at DIM=8 (tile<block) loop_bound_j overcounts -> use GN/numOutBlocks.
-  val sb_count = Mux(isNibble, (GN / numOutBlocks.U), num_super)
-  val super_block = Mux(isNibble, ag_sb, ag_jg * sbPerJg + ag_sb)
-  val cur_b    = Mux(isNibble, ag_sb * numOutBlocks.U, (super_block << 1).asUInt + ag_bib)
-  val cur_m    = Mux(isNibble, ag_g * (2*ROWS_PER_HALF).U + ag_bib * ROWS_PER_HALF.U + ag_row,
+  // beats per row = ceil(GN / blocks per beat): an odd GN at DIM32 (N = 96) has a half-full last beat
+  val sb_count = Mux(pw, ((GN +& (numOutBlocks - 1).U) / numOutBlocks.U), num_super)
+  val super_block = Mux(pw, ag_sb, ag_jg * sbPerJg + ag_sb)
+  val cur_b    = Mux(pw, ag_sb * numOutBlocks.U, (super_block << 1).asUInt + ag_bib)
+  val cur_m    = Mux(pw, ag_g * (2*ROWS_PER_HALF).U + ag_bib * ROWS_PER_HALF.U + ag_row,
                                ag_g * ROWS_PER_HALF.U + ag_row)
 
   // SPAD_REQUANT walk: block-beat outer, row inner (m ascending; FP4 / LUT row pairs are consecutive rows)
@@ -558,7 +585,7 @@ class MxRequantizer[T <: Data](
   when(should_compute && !io.linear_scales) {
     when(ag_row === (ROWS_PER_HALF - 1).U) {
       ag_row := 0.U
-      when (isNibble) {
+      when (pw) {
         when(ag_bib =/= (blocks_in_sb - 1.U)) {
           ag_bib := ag_bib + 1.U
         } .otherwise {
@@ -607,7 +634,7 @@ class MxRequantizer[T <: Data](
   val nStreams = 4
   require(isPow2(sW) && sW >= 8 && numOutBlocks <= nStreams)
   val M_rows   = Mux(io.linear_scales, io.linear_m,
-                   tiles_I * Mux(isNibble, (2*ROWS_PER_HALF).U, ROWS_PER_HALF.U))
+                   tiles_I * Mux(pw, (2*ROWS_PER_HALF).U, ROWS_PER_HALF.U))
   val sc_m     = Mux(io.linear_scales, lin_m, cur_m)
   val sc_b0    = Mux(io.linear_scales, lin_b, cur_b)
   val sc_fire  = should_compute

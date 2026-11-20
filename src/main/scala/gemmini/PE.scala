@@ -20,7 +20,7 @@ class MxCmdMode extends Bundle {
   val act = UInt(4.W)
   val wgt = UInt(4.W)
   val shared = Bool()   // mode8 on the shared (quad) acc layout (loop-managed, DIM>=16)
-  val slot = UInt(2.W)  // mixed-K loop: the K-block's weight codebook set (ring slot)
+  val slot = UInt(4.W)  // mixed-K loop: the K-block's weight codebook set (up to 16 LUT K-blocks)
   val act_fp6 = UInt(2.W)  // {direct, alt}: direct (no-LUT) FP6, issued as E4M3-single; alt 1 = E2M3
   val wgt_fp6 = UInt(2.W)
 }

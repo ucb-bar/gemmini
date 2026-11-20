@@ -55,12 +55,14 @@ class AccumulatorWriteReq[T <: Data: Arithmetic](n: Int, t: Vec[Vec[T]]) extends
   val mask = Vec(t.getWidth / 8, Bool()) // TODO Use aligned_to here
   val offset = UInt(log2Up(t.length*t.head.length).W) // TODO(nicolas): not hardcoded
   val scale_halves = UInt(2.W)   // {wgt, act} scale-mem half of the compute that produced this row
+  val scale_pos = new MxScalePos   // its tile and output row (scale address)
   val wm = new AccWriteMode
 }
 
 
 class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]], scale_t: U, chunk_t: Vec[Vec[T]],
-  acc_sub_banks: Int, use_shared_ext_mem: Boolean, use_mx_scaling: Boolean, meshRows: Int, tileRows: Int
+  acc_sub_banks: Int, use_shared_ext_mem: Boolean, use_mx_scaling: Boolean, meshRows: Int, tileRows: Int,
+  flexScales: Boolean = false
 ) extends Bundle {
   val read = Flipped(new AccumulatorReadIO(n, t, scale_t, chunk_t))
   val write = Flipped(Decoupled(new AccumulatorWriteReq(n, t)))
@@ -80,7 +82,7 @@ class AccumulatorMemIO [T <: Data: Arithmetic, U <: Data](n: Int, t: Vec[Vec[T]]
   // Shared ScalingFactorMem (one per Scratchpad): this bank's read on write fire, and the broadcast response.
   val scale_rd_req = if (use_mx_scaling) Some(Output(Valid(new ScalingFactorReadReq))) else None
   val scale_rd_resp = if (use_mx_scaling) {
-    Some(Input(Valid(new ScalingFactorReadResp(2*meshRows*tileRows, 2*meshRows*tileRows))))
+    Some(Input(Valid(new ScalingFactorReadResp(2*meshRows*tileRows, 2*meshRows*tileRows, flexScales))))
   } else None
 }
 
@@ -129,6 +131,7 @@ class AccumulatorMem[T <: Data, U <: Data](
   meshRows: Int,
   tileRows: Int,
   clock_gating: Boolean = true,
+  flexScales: Boolean = false,
 )
   (implicit ev: Arithmetic[T]) extends Module {
   // TODO Do writes in this module work with matrices of size 2? If we try to read from an address right after writing
@@ -147,7 +150,8 @@ class AccumulatorMem[T <: Data, U <: Data](
                 else Vec(t.length, t.head.cloneType)
 
   // TODO unify this with TwoPortSyncMemIO
-  val io = IO(new AccumulatorMemIO(n, t, scale_t, chunk_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows))
+  val io = IO(new AccumulatorMemIO(n, t, scale_t, chunk_t, acc_sub_banks, use_shared_ext_mem, use_mx_scaling, meshRows, tileRows,
+    flexScales))
 
 
   def applyE9M0Scale[T <: Data](
@@ -195,6 +199,12 @@ class AccumulatorMem[T <: Data, U <: Data](
     outUInt.asTypeOf(value)
   }   
   
+  // scale lane: E9M0 exponent, plus the (act, weight) mantissas when mx_flex_scales is on
+  def applyLane(v: UInt, e9: UInt, m12: Option[UInt]): UInt = m12 match {
+    case Some(m) => MxScaleFmt.applyBf16(v, e9, m(11, 6), m(5, 0), x => applyE9M0Scale(x, e9, 8, 7))
+    case None => applyE9M0Scale(v, e9, 8, 7)
+  }
+
   def applyMxScaling(
     data: Vec[Vec[T]], 
     scales: Vec[Vec[UInt]]
@@ -230,6 +240,7 @@ class AccumulatorMem[T <: Data, U <: Data](
     scale_req.valid := io.write.fire
     scale_req.bits.scaling_enable := io.write.fire
     scale_req.bits.halves := io.write.bits.scale_halves
+    scale_req.bits.pos := io.write.bits.scale_pos
     scale_req.bits.multi := io.write.bits.wm.multi
     scale_req.bits.multi_act := io.write.bits.wm.multi_act
     val dim = meshRows * tileRows
@@ -246,7 +257,7 @@ class AccumulatorMem[T <: Data, U <: Data](
           val k = Mux(in1, i.U - offset - (dim / 4).U, i.U - offset)
           val scale = scale_resp.bits.combined_scales(k)
           val scaled = VecInit(dataElement.asTypeOf(Vec(4, UInt(16.W))).zipWithIndex.map { case (e, j) =>
-            applyE9M0Scale(e, scale(j*9 + 8, j*9), 8, 7) }).asUInt
+            applyLane(e, scale(j*9 + 8, j*9), scale_resp.bits.mant.map(m => m(k)(j*12 + 11, j*12))) }).asUInt
           scaled_data(i) := Mux(in0 || in1, scaled, 0.U).asTypeOf(pipelined_writes(0).bits.data(i))
         }
       // Narrow dim/4 window only for E4M3-single; E4M3-quad and E5M2 use the full-width path below.
@@ -260,8 +271,9 @@ class AccumulatorMem[T <: Data, U <: Data](
           when(i.U >= offset && i.U < (offset +& (dim / 4).U)) {
             scaled_result:= VecInit(dataElement.asTypeOf(Vec(4, UInt(16.W))).zipWithIndex.map {
               case (e, j) =>
-              val scale = scale_resp.bits.combined_scales((i.U - offset)*4.U +& j.U)(8, 0)
-              applyE9M0Scale(e, scale, 8, 7) }).asUInt
+              val idx = (i.U - offset)*4.U +& j.U
+              val scale = scale_resp.bits.combined_scales(idx)(8, 0)
+              applyLane(e, scale, scale_resp.bits.mant.map(m => m(idx)(11, 0))) }).asUInt
           }
           scaled_data(i) := scaled_result.asTypeOf(pipelined_writes(0).bits.data(i))
         }
@@ -272,10 +284,10 @@ class AccumulatorMem[T <: Data, U <: Data](
           dataElement := pipelined_writes(0).bits.data(i).asUInt
           val scale = scale_resp.bits.combined_scales(i)
           for (j <- 0 until 4) {
-            scaled_chunks(j) := applyE9M0Scale(
+            scaled_chunks(j) := applyLane(
               dataElement(j*16 + 15, j*16),
               scale(j*9 + 8, j*9),
-              8, 7)
+              scale_resp.bits.mant.map(m => m(i)(j*12 + 11, j*12)))
           }
           scaled_data(i) := Cat(scaled_chunks.reverse).asTypeOf(pipelined_writes(0).bits.data(i))
         }
@@ -412,24 +424,6 @@ class AccumulatorMem[T <: Data, U <: Data](
       e
     }
 
-    // SINGLE throughput (mx_multi_elem=false): a write carries one output row of a 4-col-tile group (t.length entries,
-    // offset-packed by fmt0_data), contiguous, so the whole group goes to slot p = the group index mod W (entries
-    // [p*t.length, (p+1)*t.length)), folded onto one physical row by foldW. DIM=8: 2 slots (the 2 blocks); DIM=4: 4.
-    def placeSingle(src: Vec[Vec[T]], parity: UInt): Vec[Vec[T]] = {
-      val w = WireInit(0.U.asTypeOf(t_wide))
-      for (p <- 0 until W) when (parity(lgW - 1, 0) === p.U) {
-        for (k <- 0 until t.length) { w(p*t.length + k) := src(k) }
-      }
-      w
-    }
-    def extractSingle(src: Vec[Vec[T]], parity: UInt): Vec[Vec[T]] = {
-      val e = WireInit(0.U.asTypeOf(t))
-      for (p <- 0 until W) when (parity(lgW - 1, 0) === p.U) {
-        for (k <- 0 until t.length) { e(k) := src(p*t.length + k) }
-      }
-      e
-    }
-
     // Col-tiles j/j+1 (the two 16-col halves of a 32-col block) differ by EXACTLY block_size in the acc write
     // address (same intra-tile row, tile bases block_size apart). Parity comes from EC in the offset field
     // (the tile-base index bit, constant across a tile's rows). Fold = subtract block_size for the odd tile so
@@ -459,15 +453,27 @@ class AccumulatorMem[T <: Data, U <: Data](
       // 0,2 vs 1,3 exactly). SINGLE writes ONE col-tile = 2 entries at [local_offset, local_offset+1] within its
       // chunk, so it masks ONLY that pair (bit = chunk*half + local_offset/2); otherwise it clobbers the 3 sibling
       // col-tiles sharing the chunk (root cause of the DIM=8 single failure).
-      mem.io.wdata := Mux(wr_wm.multi || wr_wm.multi_act, placeWide(wr_data, wr_chunk), placeSingle(wr_data, wr_chunk))
-      val single_mask_bit = wr_chunk * (t.length / gEnt).U + (wr_par >> log2Ceil(gEnt))
+      // universal layout: every write is a 2-row block slice (single act: one row half, masked below)
+      mem.io.wdata := placeWide(wr_data, wr_chunk)
       // quad: mask bit q (gEnt entries) belongs to col-tile ((gEnt*q / half) mod W)
       def quadBit(q: Int) = ((gEnt * q / half) % W).U === wr_chunk
       // act-quad x wei-single: one col-tile of the pair = mask bit (q mod half/gEnt) = local offset / gEnt
       val pair_sub = wr_par >> log2Ceil(gEnt)
-      mem.io.mask  := Mux(wr_wm.multi, VecInit((0 until mask_len_wide).map(quadBit)),
+      // single act x quad wgt (rows 2r / 2r+1 share the row): only the half the execute mask enables (rowR = t's low
+      // half -> wide entries < W*half, rowR+1 = high half), so the partner row is not overwritten
+      val wr_mask = oldest_pipelined_write.bits.mask
+      val lo_on = wr_mask(0)
+      val hi_on = wr_mask(half * (wr_mask.length / t.length))
+      def pairBit(q: Int) = quadBit(q) && (if (gEnt * q >= W * half) hi_on else lo_on)
+      // wide entry e0 = gEnt*q holds t entry (e0 mod half) of rowR (e0 < W*half) or half + that of rowR+1
+      def placedOn(q: Int) = { val e0 = gEnt * q
+        val tk = if (e0 < W * half) e0 % half else half + (e0 - W * half) % half
+        wr_mask(tk * (wr_mask.length / t.length)) }
+      mem.io.mask  := Mux(wr_wm.multi, VecInit((0 until mask_len_wide).map(q =>
+          Mux(wr_wm.multi_act, quadBit(q), pairBit(q)))),
         Mux(wr_wm.multi_act, VecInit((0 until mask_len_wide).map(q => quadBit(q) && (q % (half / gEnt)).U === pair_sub)),
-          VecInit((0 until mask_len_wide).map(q => q.U === single_mask_bit))))
+          // single x single: the one gEnt-entry window the execute mask enables, at its placed position
+          VecInit((0 until mask_len_wide).map(q => quadBit(q) && placedOn(q)))))
     } else {
       mem.io.waddr := oldest_pipelined_write.bits.addr
       mem.io.wdata := wr_data
@@ -489,8 +495,7 @@ class AccumulatorMem[T <: Data, U <: Data](
       // SINGLE: RMW read picks the chunk by the read address' block bit (rd_chunk above); QUAD uses the offset-field
       // parity. Both delayed by RegNext to match the SyncMem read latency.
       rdata_for_adder := (if (widen) Mux(RegNext(io.write.bits.wm.multi), extractWide(mem.io.rdata_full, RegNext(rd_par)),
-                                   Mux(RegNext(io.write.bits.wm.multi_act), extractWide(mem.io.rdata_full, RegNext(rd_chunk)),
-                                                           extractSingle(mem.io.rdata_full, RegNext(rd_chunk))))
+                                   extractWide(mem.io.rdata_full, RegNext(rd_chunk)))
                           else mem.io.rdata_full)
 
       // half-width read: address = {row, bank_sel}. numChunks=2 sub-banks = the 2 blocks (rowR/rowR+1);
@@ -717,8 +722,11 @@ class AccumulatorMem[T <: Data, U <: Data](
   )
 
   // same-row accumulates only conflict if their SRAM mask groups overlap (each RMW writes back only its own groups)
-  def wgroups(m: Vec[Bool]): UInt = VecInit(m.grouped(32).map(_.reduce(_ || _)).toSeq).asUInt
-  val disjointOk = use_mx_scaling && meshRows * tileRows >= 16
+  // compared at the SRAM mask granularity: 32 B, or the DIM<16 fold's DIM/4 entries (16 B at DIM8, 8 B at DIM4)
+  val grpBytes = if (use_mx_scaling && meshRows * tileRows < 16) 8 * ((meshRows * tileRows / 4) max 1) else 32
+  def wgroups(m: Vec[Bool]): UInt = VecInit(m.grouped(grpBytes).map(_.reduce(_ || _)).toSeq).asUInt
+  // DIM<16: the fold masks each write to its own window too (rows 2r / 2r+1 share a row)
+  val disjointOk = use_mx_scaling
   io.write.ready := !block_write_req &&
     !pipelined_writes.map(r => r.valid && r.bits.addr === io.write.bits.addr && io.write.bits.acc &&
       (if (disjointOk) (wgroups(r.bits.mask) & wgroups(io.write.bits.mask)) =/= 0.U else true.B)).reduce(_||_)

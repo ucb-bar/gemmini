@@ -107,11 +107,11 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val st_shared = Mux(cmd.bits.from_matmul_fsm, cmd.bits.mx.shared, io.shared_acc)   // loop stores: their own loop's
   val shared_src = st_shared && localaddr.is_acc_addr
   // the store's own mode tag: weight quad -> 2 cols/lane, act quad -> 2 rows/lane; act-quad x wei-single stores as
-  // quad x quad over col-tile pairs, single x quad (DIM>=16) over row-tile pairs
+  // quad x quad over col-tile pairs, single x quad over row-tile pairs
   val qw = MxCmdMode.quad(cmd.bits.mx.wgt)
   val qa = MxCmdMode.quad(cmd.bits.mx.act)
   val t_pair = qa && !qw
-  val t_ipair = (block_rows >= 16).B && qw && !qa
+  val t_ipair = qw && !qa
   val multi = qw || t_pair || shared_src
   val multi_act = qa || t_ipair || shared_src
   val loop_bound_j = Mux(shared_src, io.loop_bound_j >> 1, io.loop_bound_j)

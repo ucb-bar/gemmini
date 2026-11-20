@@ -80,6 +80,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              tlb_size: Int = 4,
                                                                              use_tlb_register_filter: Boolean = true,
                                                                              max_in_flight_mem_reqs: Int = 16,
+                                                                             // LoopMatmul parks a config_ex that would wait for running loops, so the next loop's loads overlap
+                                                                             loop_defer_config_ex: Boolean = false,
 
                                                                              ex_read_from_spad: Boolean = true,
                                                                              ex_read_from_acc: Boolean = true,
@@ -128,6 +130,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              requantizer: Option[GemminiRequantizerConfig] = None,
                                                                              lut: Option[GemminiLUTConfig] = None,
                                                                              use_mx_scaling: Boolean = true,
+                                                                             mx_flex_scales: Boolean = false,   // runtime eXmY block-scale formats (MX_SCALE_FMT)
                                                                              testConfig: Boolean = false,
                                                                              headerFileName: String = "gemmini_params.h"
                                                        ) {
@@ -238,6 +241,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   require(DIM >= 2, "the systolic array must have DIM of at least 2")
   require(scaleSize % DIM == 0, "mx block size needs to be multiple of DIM")
   lazy val mxGeom = MxGeom(DIM, scaleSize)
+  // MX acc row = 2 C rows x 2R cols: at least one 32-wide MX block per C row at every DIM (DIM < 16 adds writes)
+  if (use_mx_scaling) require(2 * mxGeom.R >= scaleSize,
+    s"MX acc rows must hold >= $scaleSize cols per C row, got ${2 * mxGeom.R} at DIM $DIM")
   val spad_requant_en = has_spad_requant && use_mx_scaling && requantizer.isDefined
   if (use_mx_scaling && requantizer.isDefined) {
     require(Seq(4, 8, 16, 32).contains(DIM) && scaleSize == 32, s"MX supports DIM 4/8/16/32 with block 32, got DIM $DIM block $scaleSize")
@@ -401,6 +407,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     header ++= s"#define SPAD_ROW_ADDR_BITS ${gemmini.vpu.VpuCmd.fieldW(log2Up(sp_banks * sp_bank_entries))}\n"
     header ++= s"#define ACC_ROWS ${acc_banks * acc_bank_entries}\n" // TODO add ACC_BANKS as well
     lut.foreach(l => header ++= s"#define LUT_W_CODEBOOKS ${l.numEntries.head}\n")   // weight codebooks (2 loop halves)
+    if (mx_flex_scales) header ++= "#define MX_FLEX_SCALES\n"
 
     val max_bytes = 64
     header ++= s"#define MAX_BYTES $max_bytes\n"

@@ -23,10 +23,14 @@ class LoopMatmulLdAReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val addr_start = UInt(log2Up(max_addr).W)
   val loop_id = UInt(log2Up(concurrent_loops).W)
   val is_resadd = Bool()
+  val akmix = Bool()        // mixed-K loop, act side: plain (kmask 0) K-blocks load A from alt_addr
+  val kmask = UInt(128.W)
+  val alt_addr = UInt(coreMaxAddrBits.W)
+  val act_quad = Bool()     // the loop's A is quad (2 rows per byte): plain K-blocks load 2x the row tiles
 }
 
 class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, input_w: Int,
-                    max_block_len: Int, concurrent_loops: Int, mvin_rs2_t: MvinRs2)
+                    max_block_len: Int, concurrent_loops: Int, mvin_rs2_t: MvinRs2, tilesPerMxBlock: Int = 1)
                    (implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new LoopMatmulLdAReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, concurrent_loops)))
@@ -49,22 +53,30 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
   val i = Reg(UInt(iterator_bitwidth.W))
   val k = Reg(UInt(iterator_bitwidth.W))
 
+  // mixed-K (act): K-block k is the loop's A (kmask 1) or plain E4M3-single A from alt_addr (2x the row tiles when the
+  // loop's A is quad); every K-block reserves the larger footprint (same row stride max_k, so addresses stay regular)
+  val plain_k = req.akmix && !req.kmask(k >> log2Ceil(tilesPerMxBlock))
+  val mi = Mux(plain_k && req.act_quad, req.max_i << 1, req.max_i)
+
   val row_iterator = Mux(req.transpose, k, i)
   val col_iterator = Mux(req.transpose, i, k)
 
-  val max_row_iterator = Mux(req.transpose, req.max_k, req.max_i)
-  val max_col_iterator = Mux(req.transpose, req.max_i, req.max_k)
+  val max_row_iterator = Mux(req.transpose, req.max_k, mi)
+  val max_col_iterator = Mux(req.transpose, mi, req.max_k)
 
   val row_pad = Mux(req.transpose, req.pad_k, req.pad_i)
   val col_pad = Mux(req.transpose, req.pad_i, req.pad_k)
 
   val max_col_dim = Mux(req.transpose, req.max_i, req.max_k)
-  val max_blocks = Mux(max_col_dim <= max_block_len.U, max_col_dim, max_block_len.U)
+  // a mixed-K mvin stays inside one MX K-block (its two sources differ)
+  val max_blocks_k = if (tilesPerMxBlock < max_block_len) Mux(req.akmix, tilesPerMxBlock.U, max_block_len.U)
+    else max_block_len.U
+  val max_blocks = Mux(max_col_dim <= max_blocks_k, max_col_dim, max_blocks_k)
 
   val sp_addr_start = req.addr_start
 
   val dram_offset = (row_iterator * req.dram_stride + col_iterator) * block_size.U * (input_w/8).U
-  val dram_addr = req.dram_addr + LoopMatmul.castDramOffset(dram_offset)
+  val dram_addr = Mux(plain_k, req.alt_addr, req.dram_addr) + LoopMatmul.castDramOffset(dram_offset)
   val sp_addr = sp_addr_start + (row_iterator * max_col_iterator + col_iterator) * block_size.U
   val blocks = Mux(col_iterator + max_blocks <= max_col_iterator, max_blocks, max_col_iterator-col_iterator)
   val cols = (blocks * block_size.U) - Mux(col_iterator + blocks >= max_col_iterator, col_pad, 0.U)
@@ -102,7 +114,7 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     val i_blocks = Mux(req.transpose, max_blocks, 1.U)
     val k_blocks = Mux(req.transpose, 1.U, max_blocks)
 
-    val next_i = floorAdd(i, i_blocks, req.max_i)
+    val next_i = floorAdd(i, i_blocks, mi)
     val next_k = floorAdd(k, k_blocks, req.max_k, next_i === 0.U)
 
     i := next_i
@@ -119,6 +131,9 @@ class LoopMatmulLdA(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
     i := 0.U
     k := 0.U
   }
+
+  assert(!(state =/= idle && req.akmix && (req.transpose || req.pad_i =/= 0.U)),
+    "mixed-K act loop: A transpose / row padding unsupported")
 }
 
 // LdB
@@ -138,6 +153,7 @@ class LoopMatmulLdBReq(val block_size: Int, val coreMaxAddrBits: Int, val iterat
   val kmask = UInt(128.W)
   val alt_addr = UInt(coreMaxAddrBits.W)
   val alt_stride = UInt(coreMaxAddrBits.W)
+  val wgt_quad = Bool()   // the loop's B is quad: MXFP8 K-blocks span 2x its tiles
 }
 
 class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, input_w: Int,
@@ -172,8 +188,8 @@ class LoopMatmulLdB(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: In
 
   // mixed-K: an MXFP8 K-block spans 2x the (quad) tiles; every K-block reserves that footprint (uniform layout)
   val fp8_k = req.kmix && !req.kmask(k >> log2Ceil(MxGeom(block_size).T))
-  val mj = Mux(fp8_k, req.max_j << 1, req.max_j)
-  val sp_cols = Mux(req.kmix, req.max_j << 1, req.max_j)
+  val mj = Mux(fp8_k && req.wgt_quad, req.max_j << 1, req.max_j)
+  val sp_cols = Mux(req.kmix && req.wgt_quad, req.max_j << 1, req.max_j)
   val max_row_iterator = Mux(req.transpose, req.max_j, req.max_k)
   val max_col_iterator = Mux(req.transpose, req.max_k, mj)
 
@@ -367,6 +383,8 @@ class LoopMatmulExecuteReq(val block_size: Int, val coreMaxAddrBits: Int, val it
   val kmix = Bool()     // mixed-K loop: per K-block LUT/low-precision (kmask 1) or MXFP8 on the shared layout
   val kmix_fp6 = UInt(2.W)   // mixed-K loop: {direct, alt} FP6 of the plain (kmask 0) K-blocks' weights
   val kmask = UInt(128.W)
+  val akmix = Bool()    // mixed-K loop, act side: plain K-blocks take E4M3-single A (alt base, 2x row tiles if quad)
+  val akmix_fp6 = UInt(2.W)   // {direct, alt} FP6 of the plain K-blocks' activations
   val mx = new MxCmdMode   // the loop's (low-precision) mode
 }
 
@@ -413,9 +431,14 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val j = Reg(UInt(iterator_bitwidth.W))
   val i = Reg(UInt(iterator_bitwidth.W))
   val kb_of = (x: UInt) => x >> log2Ceil(MxGeom(block_size).T)
-  val lut_k = !req.kmix || req.kmask(kb_of(k))
-  val mj = Mux(lut_k, req.max_j, req.max_j << 1)
-  val b_sp_cols = Mux(req.kmix, req.max_j << 1, req.max_j)
+  val mixed = req.kmix || req.akmix
+  val lut_k = !mixed || req.kmask(kb_of(k))
+  // plain K-block operands: B (kmix) / A (akmix) are E4M3-single; a quad loop operand doubles that side's tiles
+  val wq_k = req.narrow_type && !(req.kmix && !lut_k)
+  val aq_k = req.narrow_act && !(req.akmix && !lut_k)
+  val mj = Mux(req.narrow_type && !wq_k, req.max_j << 1, req.max_j)
+  val mi = Mux(req.narrow_act && !aq_k, req.max_i << 1, req.max_i)
+  val b_sp_cols = Mux(req.kmix && req.narrow_type, req.max_j << 1, req.max_j)
   val b_addr_start = req.b_addr_end - req.max_k * b_sp_cols * block_size.U
   val lut_ord = Reg(UInt(8.W))   // low-precision K-blocks before this one (codebook set / ring slot)
 
@@ -435,25 +458,26 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   // act-quad x wei-single: col-tiles j, j+1 share one quad acc row (j odd at lane offset DIM/4); odd max_j: last half full
   val pair_max_j = (req.max_j + 1.U) >> 1
   // single x quad (shared acc layout): row-tiles 2q, 2q+1 fill the two halves of quad tile q's acc rows
-  val c_addr_quad = if (block_size >= 16) Mux(req.narrow_act, c_addr_start + (i * req.max_j + j) * block_size.U,
+  val c_addr_quad = Mux(req.narrow_act, c_addr_start + (i * req.max_j + j) * block_size.U,
     c_addr_start + ((i >> 1) * req.max_j + j) * block_size.U + i(0) * (block_size / 2).U)
-    else c_addr_start + (i * req.max_j + j) * block_size.U
   // single x single, shared layout: tile (i, j) is quadrant (i(0), j(0)) of quad tile (i>>1, j>>1)
   val c_addr_shared = c_addr_start + ((i >> 1) * ((req.max_j + 1.U) >> 1) + (j >> 1)) * block_size.U +
     i(0) * (block_size / 2).U + j(0) * (block_size / 4).U
-  // mixed-K MXFP8 K-block: shared layout with 2*max_j tiles (quad tile j>>1 of the loop's max_j)
-  val c_addr_kmix8 = c_addr_start + ((i >> 1) * req.max_j + (j >> 1)) * block_size.U + i(0) * (block_size / 2).U +
-    j(0) * (block_size / 4).U
-  val c_addr = Mux(req.kmix && !lut_k, c_addr_kmix8, Mux(req.shared, c_addr_shared, Mux(req.narrow_type, c_addr_quad,
+  // mixed-K loop (every K-block, DIM>=16): the shared layout. Quad tile (I, J) at (I*QJ + J)*bs; a single row tile
+  // is half I = i>>1 (+bs/2 if odd), a single col tile quarter J = j>>1 (+bs/4 if odd). QJ = quad cols of the C block.
+  val qj = Mux(req.narrow_type, req.max_j, pair_max_j)
+  val c_addr_mix = c_addr_start + (Mux(aq_k, i, i >> 1) * qj + Mux(wq_k, j, j >> 1)) * block_size.U +
+    Mux(aq_k, 0.U, i(0) * (block_size / 2).U) + Mux(wq_k, 0.U, j(0) * (block_size / 4).U)
+  val c_addr = Mux(mixed, c_addr_mix, Mux(req.shared, c_addr_shared, Mux(req.narrow_type, c_addr_quad,
     Mux(req.narrow_act, c_addr_start + (i * pair_max_j + (j >> 1)) * block_size.U + j(0) * (block_size / 4).U,
       c_addr_start + (i * ceil_max_j4 + j) * (block_size / 4).U))))
 
   val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
-  val a_rows = block_ij - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)       
+  val a_rows = block_ij - Mux(i === mi - 1.U, req.pad_i, 0.U)       
   val b_cols = block_ij - Mux(j === mj - 1.U, req.pad_j, 0.U)       
   val b_rows = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)   
   val c_cols = block_ij - Mux(j === mj - 1.U, req.pad_j, 0.U)       
-  val c_rows = block_ij - Mux(i === req.max_i - 1.U, req.pad_i, 0.U)      
+  val c_rows = block_ij - Mux(i === mi - 1.U, req.pad_i, 0.U)      
 
 
   val pre_cmd = Wire(new RoCCCommand)
@@ -475,8 +499,9 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
 
   pre_cmd_rs2.local_addr := cast_to_acc_addr(pre_cmd_rs2.local_addr, c_addr, accumulate = req.accumulate || k =/= 0.U, read_full = false.B)
 
-  pre_cmd.rs1 := pre_cmd_rs1.asUInt
-  pre_cmd.rs2 := pre_cmd_rs2.asUInt
+  // the tile's scale position rides the preload (MxScalePos): ScaleFactorMem addresses its scales from it
+  pre_cmd.rs1 := MxScalePos.stamp(pre_cmd_rs1.asUInt, MxScalePos.K_LO, k)
+  pre_cmd.rs2 := MxScalePos.stamp(MxScalePos.stamp(pre_cmd_rs2.asUInt, MxScalePos.I_LO, i), MxScalePos.J_LO, j)
 
   val comp_cmd = Wire(new RoCCCommand())
   comp_cmd := DontCare
@@ -517,8 +542,9 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   // rs2: [15:0] G, [17] managed, [18] don't wait for the act half, [19] shared layout, [20]/[21] act-in / weight LUT
   // half = slot, [22] per-K-block weight codebooks
   // [23] mixed-K loop (QuantLut codebook set by slot; scale reads of MXFP8 K-blocks from the quad layout)
-  cfg_cmd.rs2 := Cat(req.kmix, req.lut_kb, req.lut_cfg_w, req.lut_cfg, req.shared || req.kmix, req.scale_a_reuse, 1.U(1.W),
-    0.U(1.W), req.lut_gran)
+  // [24] mixed-K act: act scale reads of plain K-blocks from the loop's quad act layout
+  cfg_cmd.rs2 := Cat(req.akmix && req.narrow_act, req.kmix && req.narrow_type, req.lut_kb, req.lut_cfg_w, req.lut_cfg,
+    req.shared || mixed, req.scale_a_reuse, 1.U(1.W), 0.U(1.W), req.lut_gran)
 
   io.cmd.valid := state =/= idle && !io.rob_overloaded && (state === cfg || ld_ahead) && !req.skip
   io.cmd.bits := Mux(state === cfg, cfg_cmd, Mux(state === pre, pre_cmd, comp_cmd))
@@ -527,9 +553,10 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   // per K-block mode: low precision = the loop's tag (+ its codebook set), MXFP8 = E4M3 weight on the shared layout
   io.mx := req.mx
   when (req.kmix) {
-    io.mx.slot := Mux(lut_k, lut_ord(1, 0), 0.U)
+    io.mx.slot := Mux(lut_k, lut_ord(3, 0), 0.U)
     when (!lut_k) { io.mx.wgt := 0.U; io.mx.wgt_fp6 := req.kmix_fp6; io.mx.shared := true.B }   // plain: E4M3s or direct FP6
   }
+  when (req.akmix && !lut_k) { io.mx.act := 0.U; io.mx.act_fp6 := req.akmix_fp6; io.mx.shared := true.B }
 
   when(req.skip) {
     state := idle
@@ -539,7 +566,7 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
     }.elsewhen (state === pre) {
       state := comp
     }.otherwise {
-      val next_i = floorAdd(i, 1.U, req.max_i)
+      val next_i = floorAdd(i, 1.U, mi)
       val next_j = floorAdd(j, 1.U, mj, next_i === 0.U)
       val next_k = floorAdd(k, 1.U, req.max_k, next_j === 0.U && next_i === 0.U)
 
@@ -887,6 +914,7 @@ class LoopMatmulStCSpadReq(val block_size: Int, val iterator_bitwidth: Int, val 
   val dst_overlaps_operands = Bool()
   // FP8 gated tiled requant->spad store: output deposited block-tiled (operand-A layout) for in-place reuse.
   val reuse_tiled = Bool()
+  val byte_codes = Bool()   // 8-bit output codes (E4M3-single / direct FP6): paired acc rows hold 2 separate C rows
 }
 
 class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int,
@@ -950,14 +978,19 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   val j = Reg(UInt(iterator_bitwidth.W))
   val i = Reg(UInt(iterator_bitwidth.W))
   val chunk_id = RegInit(0.U(GemminiISA.MX_CHUNK_ID_BITS.W))
+  // tiled 8-bit codes over paired rows (acc row r = C rows 2r, 2r+1): the operand-A tile layout puts C rows [0, DIM)
+  // of a pair tile in row tile 2g and [DIM, 2*DIM) in 2g+1 -> one mvout per half (DIM/2 acc rows each)
+  val tsplit = req.reuse_tiled && req.byte_codes && req.mx_multi_elem_act
+  val half = RegInit(0.U(1.W))
 
   val acc_addr_start = req.src_addr
 
   val dst_offset = MuxCase(
     // FP4/FP6 requant: flat = i*N + 2*j; gated tiled = i*N + 32*j (j-term x16 -> tiled operand layout).
+    // 8-bit codes over paired rows (act quad / shared layout): a row tile is 2*DIM separate C rows -> 2x i-stride
     Mux(req.reuse_tiled,
-      (i * quad_nd) * block_size.U + j * (block_size * 2).U,
-      (i * quad_nd) * block_size.U + j * 2.U), Seq(
+      ((i * quad_nd) * block_size.U << tsplit) + half * quad_nd * block_size.U + j * (block_size * 2).U,
+      ((i * quad_nd) * block_size.U << (req.byte_codes && req.mx_multi_elem_act)) + j * 2.U), Seq(
     // single fmt3: a j-group (4 tiles x DIM bf16 cols = 8*DIM B) is 8 spad rows at every DIM; full_c keeps block_size/2.
     (req.full_c || (req.output_mx_format === 3.U && !req.mx_multi_elem)) -> ((i * req.max_j) * block_size.U * 2.U + j*Mux(req.full_c, (block_size/2).U, 8.U)),
     (!req.mx_multi_elem && (req.output_mx_format === 0.U)) ->
@@ -979,7 +1012,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     req.dst_addr + dst_offset)
 
   val acc_addr_offset = (i * MxStoreIter.accGroups(geom, !req.mx_multi_elem, iter_max_j) + j) * block_size.U
-  val src_addr = acc_addr_start + acc_addr_offset
+  val src_addr = acc_addr_start + acc_addr_offset + half * (block_size / 2).U
   val blocks = Mux(j + max_blocks <= iter_max_j, max_blocks, iter_max_j-j)
   val cols = Mux(!req.mx_multi_elem, {
     // this chunk's own tiles (DIM/4 acc entries each)
@@ -989,7 +1022,11 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     // DIM=8 widen: one read covers the wide row = 2 col-tiles = accBlockSize (16) cols, mimicking DIM=16.
     blocks * accBlockSize.U - Mux(j + blocks >= iter_max_j, req.pad_j +& pair_pad, 0.U)
   })
-  val rows = Mux(req.ipair, (2 * block_size).U, block_size.U) - Mux(i === iter_max_i-1.U, req.pad_i, 0.U)
+  val rows_full = Mux(req.ipair, (2 * block_size).U, block_size.U) - Mux(i === iter_max_i-1.U, req.pad_i, 0.U)
+  // tsplit: half 0 = the first DIM C rows, half 1 = the rest (none -> skipped)
+  val rows = Mux(tsplit, Mux(half === 0.U, Mux(rows_full > block_size.U, block_size.U, rows_full),
+    Mux(rows_full > block_size.U, rows_full - block_size.U, 0.U)), rows_full)
+  val skip_half = tsplit && rows === 0.U
 
   val mvout_cmd = Wire(new RoCCCommand)
   mvout_cmd := DontCare
@@ -1003,10 +1040,10 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   // replace while this loop's last stores are still queued. Non-MX builds read a flagged stride as the old 1.
   val st_j = req.max_j
   val st_wide = req.output_mx_format === 3.U
-  val st_row_step = Mux(req.reuse_tiled, 1.U,
+  val st_row_step = Mux(req.reuse_tiled, Mux(tsplit, 2.U, 1.U),
     Mux(st_wide && !req.mx_multi_elem, st_j * 2.U,   // single row pitch: N*2/DIM (BF16), N/DIM (FP8); odd max_j at DIM32
       Mux(st_wide, quad_nd * Mux(req.mx_multi_elem_act, 4.U, 2.U),
-        Mux(!req.mx_multi_elem, st_j, quad_nd))))
+        Mux(!req.mx_multi_elem, st_j, quad_nd << (req.byte_codes && req.mx_multi_elem_act)))))
   mvout_cmd_rs1.stride := (BigInt(1) << 31).U | st_row_step.pad(31)
   mvout_cmd.rs1 := mvout_cmd_rs1.asUInt
 
@@ -1057,15 +1094,18 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
   }
   dontTouch(ex_ahead)
 
-  io.cmd.valid := state =/= idle && !io.rob_overloaded && ex_ahead
+  io.cmd.valid := state =/= idle && !io.rob_overloaded && ex_ahead && !skip_half
   io.cmd.bits := mvout_cmd
   io.loop_id := req.loop_id
 
-  when (io.cmd.fire && state === st) {
-    when (!req.mx_multi_elem && chunk_id < (MxStoreIter.chunks(geom, j, req.max_j) - 1.U)) {
+  when ((io.cmd.fire || (skip_half && ex_ahead)) && state === st) {
+    when (tsplit && half === 0.U) {
+      half := 1.U
+    }.elsewhen (!req.mx_multi_elem && chunk_id < (MxStoreIter.chunks(geom, j, req.max_j) - 1.U)) {
       chunk_id := chunk_id + 1.U
     }.otherwise {
       chunk_id := 0.U
+      half := 0.U
       val next_i = floorAdd(i, 1.U, iter_max_i)
       // DIM<16 widen: step j by W (j+1..j+W-1 fold onto the same physical row). Both quad and single.
       val next_j = floorAdd(j, Mux(fold, geom.W.U, max_blocks), iter_max_j, next_i === 0.U)
@@ -1085,6 +1125,7 @@ class LoopMatmulStCSpad(block_size: Int, iterator_bitwidth: Int, max_addr: Int, 
     j := 0.U
     i := 0.U
     chunk_id := 0.U
+    half := 0.U
   }
 }
 
@@ -1156,6 +1197,9 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
   val kmask = UInt(128.W)
   val b_alt_addr = UInt(coreMaxAddrBits.W)   // MXFP8 B of a mixed-K loop
   val b_alt_stride = UInt(coreMaxAddrBits.W)
+  val akmix = Bool()    // LOOP_WS_CONFIG_KMIX_A seen: plain (kmask 0) K-blocks take E4M3-single A from a_alt_addr
+  val akmix_fp6 = UInt(2.W)   // KMIX_A rs2[63:62]: the plain K-blocks' A is direct FP6 {direct, alt} (0: E4M3)
+  val a_alt_addr = UInt(coreMaxAddrBits.W)
   val nlut = UInt(8.W)  // its low-precision K-blocks (codebook sets loaded)
   val shared_acc = Bool()   // LOOP_WS rs2[11]: single x single on the shared acc layout (DIM>=16, managed)
   val mx = new MxCmdMode   // the loop's mode; every command it generates carries it
@@ -1215,6 +1259,8 @@ class LoopMatmulState(val iterator_bitwidth: Int, val coreMaxAddrBits: Int, val 
     lut_kb := false.B
     kmix := false.B
     kmix_fp6 := 0.U
+    akmix := false.B
+    akmix_fp6 := 0.U
     kmask := 0.U
     //is_resadd := false.B
   }
@@ -1224,7 +1270,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
                  max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
                  mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
                  compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2,
-                 vec_bypass: Boolean = false, ld_bypass: Boolean = false, use_mx_scaling: Boolean = true, lut_quad: Boolean = false)
+                 vec_bypass: Boolean = false, ld_bypass: Boolean = false, use_mx_scaling: Boolean = true, lut_quad: Boolean = false,
+                 defer_cfg_ex: Boolean = false)
                 (implicit p: Parameters) extends Module {
   val iterator_bitwidth = 16
   val tilesPerMxBlock = MxGeom(block_size).T
@@ -1251,6 +1298,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     val activation_mx_format = Input(UInt(2.W))
     val weight_mx_format = Input(UInt(2.W))
     val output_mx_format = Input(UInt(2.W))
+    val out_byte_codes = Input(Bool())   // requant output is 8-bit codes (E4M3-single / direct FP6), not 4-bit
     val mx_multi_elem = Input(Bool())   // throughput: 2 elements/lane (datatype-independent)
     val mx_multi_elem_act = Input(Bool())   // ACTIVATION (output-row) throughput
     val vec_space = Input(Bool())   // RS vector queue can take one more VPU_EXEC
@@ -1277,7 +1325,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
 
   val max_all_addr = if(max_addr > max_acc_addr) max_addr else max_acc_addr 
   // Create inner modules
-  val ldA = Module(new LoopMatmulLdA(block_size, coreMaxAddrBits, iterator_bitwidth, max_all_addr, input_w, max_block_len, concurrent_loops, mvin_rs2_t))
+  val ldA = Module(new LoopMatmulLdA(block_size, coreMaxAddrBits, iterator_bitwidth, max_all_addr, input_w, max_block_len, concurrent_loops, mvin_rs2_t,
+    tilesPerMxBlock))
   val ldB = Module(new LoopMatmulLdB(block_size, coreMaxAddrBits, iterator_bitwidth, max_all_addr, input_w, max_block_len, concurrent_loops, mvin_rs2_t))
   val ldD = Module(new LoopMatmulLdD(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, max_block_len, max_block_len_acc, concurrent_loops, mvin_rs2_t))
   val ex = Module(new LoopMatmulExecute(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t))
@@ -1294,7 +1343,14 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   io.i := loop_being_configured.max_i
   io.j := loop_being_configured.max_j
   io.k := loop_being_configured.max_k
-  io.busy := cmd.valid || loop_configured
+  // defer_cfg_ex: a config_ex that would wait for running loops is parked here; the commands behind it (the next loop
+  // and its loads) proceed. It is emitted after the last compute of the loops configured before it (pend_old) and
+  // before the first compute of any loop configured after it.
+  val pend_cfg = RegInit(false.B)
+  val pend_bits = Reg(chiselTypeOf(cmd.bits))
+  val pend_old = RegInit(VecInit(Seq.fill(concurrent_loops)(false.B)))
+  for (i <- 0 until concurrent_loops) when (!loops(i).configured) { pend_old(i) := false.B }
+  io.busy := cmd.valid || loop_configured || pend_cfg
 
   io.completed := 0.U.asTypeOf(io.completed.cloneType)
 
@@ -1350,7 +1406,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     (cmd.bits.cmd.inst.funct >= LOOP_WS_CONFIG_SPAD_AB && cmd.bits.cmd.inst.funct <= LOOP_WS_CONFIG_SPAD_C) ||
     cmd.bits.cmd.inst.funct === LOOP_WS_CONFIG_SCALES || cmd.bits.cmd.inst.funct === LOOP_WS_CONFIG_SCALE_STRIDES ||
     cmd.bits.cmd.inst.funct === LOOP_WS_CONFIG_LUTS || cmd.bits.cmd.inst.funct === LOOP_WS_CONFIG_KMIX ||
-    cmd.bits.cmd.inst.funct === LOOP_WS_CONFIG_KMASK
+    cmd.bits.cmd.inst.funct === LOOP_WS_CONFIG_KMASK || cmd.bits.cmd.inst.funct === LOOP_WS_CONFIG_KMIX_A
   val is_loop_cmd = is_loop_run_cmd || is_loop_config_cmd
 
   io.out.bits.cmd := Mux(loop_configured, unrolled_cmd.bits, cmd.bits.cmd)
@@ -1389,7 +1445,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   def st_ex_ji(l: LoopMatmulState): (UInt, UInt) = {
     val pair = l.narrow_act && !l.narrow_type
     // single x quad: stores see row-tile pairs as quad tiles (pair q done once ex_i > 2q+1)
-    val ipair = (block_size >= 16).B && l.narrow_type && !l.narrow_act
+    val ipair = l.narrow_type && !l.narrow_act
     // single x single, shared layout: both pairings (2x2 tiles per quad tile)
     val sh = l.shared_acc
     (Mux(pair || sh, ex.io.j >> 1, ex.io.j),
@@ -1408,8 +1464,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC_spad.io.ex_j := sts_ex_j
   stC_spad.io.ex_i := sts_ex_i
   // mixed-K loop: tile progress mixes quad / MXFP8 units, so its stores wait for all of its ex commands
-  when (st_run.kmix) { stC.io.ex_k := 0.U; stC.io.ex_j := 0.U; stC.io.ex_i := 0.U }
-  when (loops(stC_spad.io.loop_id).kmix) { stC_spad.io.ex_k := 0.U; stC_spad.io.ex_j := 0.U; stC_spad.io.ex_i := 0.U }
+  when (st_run.kmix || st_run.akmix) { stC.io.ex_k := 0.U; stC.io.ex_j := 0.U; stC.io.ex_i := 0.U }
+  when (loops(stC_spad.io.loop_id).kmix || loops(stC_spad.io.loop_id).akmix) { stC_spad.io.ex_k := 0.U; stC_spad.io.ex_j := 0.U; stC_spad.io.ex_i := 0.U }
 
   // when loop matmul is used as resadd unroller
   // skip ex
@@ -1491,6 +1547,12 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.kmix_fp6 := cmd.bits.cmd.rs2(63, 62)   // above any row stride
       }
 
+      is (LOOP_WS_CONFIG_KMIX_A) {
+        loop_being_configured.akmix := true.B
+        loop_being_configured.a_alt_addr := cmd.bits.cmd.rs1
+        loop_being_configured.akmix_fp6 := cmd.bits.cmd.rs2(63, 62)
+      }
+
       is (LOOP_WS_CONFIG_KMASK) {
         loop_being_configured.kmask := Cat(cmd.bits.cmd.rs2, cmd.bits.cmd.rs1)
       }
@@ -1519,7 +1581,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
         loop_being_configured.narrow_act := na
         loop_being_configured.lut_kb := cmd.bits.cmd.rs2(12)
         loop_being_configured.nlut := PopCount(loop_being_configured.kmask)
-        val sh = (use_mx_scaling && block_size >= 16).B && cmd.bits.cmd.rs2(11) && !nw && !na
+        // universal layout: every MX single x single loop writes the shared (2 x 32) acc layout (rs2[11] ignored)
+        val sh = use_mx_scaling.B && !nw && !na
         loop_being_configured.shared_acc := sh
         loop_being_configured.mx.shared := sh
         loop_being_configured.mx.slot := 0.U
@@ -1568,11 +1631,11 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val half_rows = (max_addr / concurrent_loops).U
   def a_rows(l: LoopMatmulState): (UInt, UInt) = {
     val s = Mux(l.spad_only || l.a_ex_spad_id === 0.U, l.a_addr_start, (l.a_ex_spad_id - 1.U) * half_rows)
-    (s, s +& l.max_i * l.max_k * block_size.U)
+    (s, s +& (l.max_i << (l.akmix && l.narrow_act)) * l.max_k * block_size.U)
   }
   def b_rows(l: LoopMatmulState): (UInt, UInt) = {
     val e = Mux(l.spad_only || l.b_ex_spad_id === 0.U, l.b_addr_end, l.b_ex_spad_id * half_rows)
-    val n = l.max_k * (l.max_j << l.kmix) * block_size.U
+    val n = l.max_k * (l.max_j << (l.kmix && l.narrow_type)) * block_size.U
     (Mux(e > n, e - n, 0.U), e)
   }
   def rows_overlap(x: (UInt, UInt), y: (UInt, UInt)): Bool = x._1 < y._2 && y._1 < x._2
@@ -1611,7 +1674,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     def hits(l: LoopMatmulState): Bool = l.configured && (ranges.map { case (v, r) =>
       v && (rows_overlap(r, a_rows(l)) || rows_overlap(r, b_rows(l)) || (l.spad_only && rows_overlap(r, c_rows(l))))
     }.reduce(_ || _) || (is_sr && sc.resident && l.reads_act0 && !l.ex_completed))
-    val vec_pass = vec_bypass.B && cmd.valid && loop_configured && (is_vpu || is_sr) && io.vec_space && !loops.map(hits).reduce(_ || _)
+    val vec_pass = vec_bypass.B && cmd.valid && loop_configured && (is_vpu || is_sr) && io.vec_space && !loops.map(hits).reduce(_ || _) &&
+      !pend_cfg
     // The next matmul's scale config and gated scale load may pass loops that have issued every load and ex command
     // (only stores left) when the output is BF16 and every such loop moves the accumulator base by half: the next
     // loop then accumulates into the other half while these stores drain. The RS orders the config after the loops'
@@ -1622,7 +1686,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     val is_scale_cmd = f === CONFIG_SCALE_MEM || (f === MX_LOAD_SCALES && r2(54))
     // a CONFIG_SCALE_MEM also needs a free RS ex slot, or it would itself wait at the head of the unrolled queue
     val cfg_pass = cmd.valid && loop_configured && is_scale_cmd && only_stores_left && io.output_mx_format === 3.U &&
-      (f =/= CONFIG_SCALE_MEM || ex_utilization < max_exs.U)
+      (f =/= CONFIG_SCALE_MEM || ex_utilization < max_exs.U) && !pend_cfg
     // A raw mvin (or the config_ld that sets its block stride) may pass loops that have issued all their own loads
     // when its destination rows miss every configured loop's A, B and C rows: the next block's K/V loads then enter
     // while the previous loop's stores drain. The RS orders it against the loop's queued commands by row range.
@@ -1646,7 +1710,12 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     val exs_issued = loops.map(l => !l.configured || l.ex_completed).reduce(_ && _)
     val sts_issued = loops.map(l => !l.configured || l.st_completed).reduce(_ && _)
     val cfgx_pass = cmd.valid && loop_configured &&
-      ((is_cfg_ex && exs_issued && ex_utilization < max_exs.U) || (is_cfg_st && sts_issued && st_utilization < max_sts.U))
+      ((is_cfg_ex && !pend_cfg && exs_issued && ex_utilization < max_exs.U) ||
+       (is_cfg_st && sts_issued && st_utilization < max_sts.U))
+    val pend_emit = defer_cfg_ex.B && pend_cfg && ex.io.idle && ex_utilization < max_exs.U &&
+      (0 until concurrent_loops).map(i => !pend_old(i) || loops(i).ex_completed).reduce(_ && _)
+    val pend_latch = defer_cfg_ex.B && cmd.valid && loop_configured && is_cfg_ex && !pend_cfg && !cfgx_pass
+    // while a config_ex is parked, only loads, config_ld and config_st pass ahead of it
     when (vec_pass || cfg_pass || ld_pass || cfgx_pass) {
       io.out.valid := true.B
       io.out.bits.cmd := cmd.bits.cmd
@@ -1665,6 +1734,28 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     when (cfgx_pass) { io.out.bits.from_matmul_fsm := true.B }
     when (cfgx_pass && is_cfg_ex && io.out.fire) { ex_utilization := ex_utilization +& 1.U -& io.ex_completed }
     when (cfgx_pass && is_cfg_st && io.out.fire) { st_utilization := st_utilization +& 1.U -& io.st_completed }
+    if (defer_cfg_ex) {
+      when (pend_latch) {
+        pend_cfg := true.B
+        pend_bits := cmd.bits
+        for (i <- 0 until concurrent_loops) pend_old(i) := loops(i).configured
+        cmd.ready := true.B
+      }
+      when (pend_cfg && !loop_configured && !is_loop_cmd) { cmd.ready := false.B; io.out.valid := false.B }
+      when (pend_emit) {
+        io.out.valid := true.B
+        io.out.bits.cmd := pend_bits.cmd
+        io.out.bits.from_matmul_fsm := true.B
+        io.out.bits.from_conv_fsm := pend_bits.from_conv_fsm
+        io.out.bits.mx := pend_bits.mx
+        cmd.ready := false.B
+        arb.io.out.ready := false.B
+      }
+      when (pend_emit && io.out.fire) {
+        pend_cfg := false.B
+        ex_utilization := ex_utilization +& 1.U -& io.ex_completed
+      }
+    }
   }
 
   val loop_requesting_ldA_id = Mux(head_loop.lda_started, tail_loop_id, head_loop_id)
@@ -1679,6 +1770,10 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ldA.io.req.bits.addr_start := Mux(loop_requesting_ldA.a_ex_spad_id === 0.U, loop_requesting_ldA.a_addr_start, (loop_requesting_ldA.a_ex_spad_id - 1.U) * (max_addr / concurrent_loops).U)
   ldA.io.req.bits.loop_id := loop_requesting_ldA_id
   ldA.io.req.bits.is_resadd := is_resadd
+  ldA.io.req.bits.akmix := loop_requesting_ldA.akmix
+  ldA.io.req.bits.kmask := loop_requesting_ldA.kmask
+  ldA.io.req.bits.alt_addr := loop_requesting_ldA.a_alt_addr
+  ldA.io.req.bits.act_quad := loop_requesting_ldA.narrow_act
 
   ldA.io.req.valid := !loop_requesting_ldA.lda_started && loop_requesting_ldA.configured &&
     !(loop_requesting_ldA.a_dram_addr =/= 0.U && ld_blocked(loop_requesting_ldA_id, a_rows(loop_requesting_ldA)))
@@ -1704,6 +1799,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ldB.io.req.bits.kmask := loop_requesting_ldB.kmask
   ldB.io.req.bits.alt_addr := loop_requesting_ldB.b_alt_addr
   ldB.io.req.bits.alt_stride := loop_requesting_ldB.b_alt_stride
+  ldB.io.req.bits.wgt_quad := loop_requesting_ldB.narrow_type
 
   ldB.io.req.valid := !loop_requesting_ldB.ldb_started && loop_requesting_ldB.configured &&
     !(loop_requesting_ldB.b_dram_addr =/= 0.U && ld_blocked(loop_requesting_ldB_id, b_rows(loop_requesting_ldB)))
@@ -1774,13 +1870,17 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   val loop_requesting_ldl_id = Mux(head_loop.ldl_done, tail_loop_id, head_loop_id)
   val ldl_loop = loops(loop_requesting_ldl_id)
   val ldl_need_a = ldl_loop.a_lut_addr =/= 0.U && !ldl_loop.ldl_a_issued
-  val ldl_need_b = ldl_loop.b_lut_addr =/= 0.U
+  // a mixed-K loop with no low-precision K-block loads no codebooks and must not wait on a weight-LUT half
+  def wlut(l: LoopMatmulState) = l.b_lut_addr =/= 0.U && !(l.kmix && l.nlut === 0.U)
+  val ldl_need_b = wlut(ldl_loop)
   val ldl_is_b = !ldl_need_a
   val ldl_rows = (ldl_loop.max_i * block_size.U) << ldl_loop.narrow_act
   // kblock codebooks: one set per K-block of the loop, contiguous in DRAM (loop column chunk = full N)
-  val ldl_cols = ((ldl_loop.max_j * block_size.U) << ldl_loop.narrow_type) *
+  // at least one codebook per K-block: a chunk narrower than 2^G columns still uses one
+  val ldl_cb_kb = ((ldl_loop.max_j * block_size.U) << ldl_loop.narrow_type) >> io.lut_granularity(4, 0)
+  val ldl_cols = Mux(ldl_cb_kb === 0.U, 1.U, ldl_cb_kb) *
     Mux(ldl_loop.kmix, ldl_loop.nlut, Mux(ldl_loop.lut_kb, ldl_loop.max_k / tilesPerMxBlock.U, 1.U))
-  val ldl_num  = Mux(ldl_is_b, ldl_cols, ldl_rows) >> io.lut_granularity(4, 0)
+  val ldl_num  = Mux(ldl_is_b, ldl_cols, ldl_rows >> io.lut_granularity(4, 0))
   val ldl_fmt  = MxCmdMode.fmt(Mux(ldl_is_b, ldl_loop.mx.wgt, ldl_loop.mx.act))
   val ldl_ebits = Mux(ldl_fmt === 1.U, 6.U(6.W), 8.U(6.W))   // FP6 codebooks 6 b, FP8 8 b
   val ldl_go = ldl_loop.configured && !ldl_loop.ldl_done
@@ -1820,23 +1920,32 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   ex.io.req.bits.kmix := loop_requesting_ex.kmix
   ex.io.req.bits.kmix_fp6 := loop_requesting_ex.kmix_fp6
   ex.io.req.bits.kmask := loop_requesting_ex.kmask
+  ex.io.req.bits.akmix := loop_requesting_ex.akmix
+  ex.io.req.bits.akmix_fp6 := loop_requesting_ex.akmix_fp6
   ex.io.req.bits.mx := loop_requesting_ex.mx
   ex.io.req.bits.skip := is_resadd
   ex.io.req.bits.scale_cfg := loop_requesting_ex.a_scale_addr =/= 0.U
   ex.io.req.bits.scale_a_reuse := loop_requesting_ex.lds_a_reuse
   ex.io.req.bits.lut_cfg := loop_requesting_ex.a_lut_addr =/= 0.U
-  ex.io.req.bits.lut_cfg_w := loop_requesting_ex.b_lut_addr =/= 0.U
+  ex.io.req.bits.lut_cfg_w := wlut(loop_requesting_ex)
   ex.io.req.bits.lut_gran := io.lut_granularity
+  assert(!(loop_requesting_ex.configured && (loop_requesting_ex.kmix || loop_requesting_ex.akmix) &&
+           (block_size < 16).B), "mixed-K loops need DIM >= 16 (shared acc layout)")
+  assert(!(loop_requesting_ex.configured && loop_requesting_ex.akmix && loop_requesting_ex.a_scale_addr === 0.U),
+    "mixed-K act loop needs loop-managed scales")
+  assert(!(loop_requesting_ex.configured && loop_requesting_ex.kmix && loop_requesting_ex.nlut > 16.U),
+    "mixed-K loop: at most 16 low-precision K-blocks (4-bit codebook slot)")
   assert(!(loop_requesting_ex.configured && (loop_requesting_ex.a_lut_addr =/= 0.U || loop_requesting_ex.b_lut_addr =/= 0.U) &&
            loop_requesting_ex.a_scale_addr === 0.U),
     "LOOP_WS_CONFIG_LUTS needs loop-managed scales (LOOP_WS_CONFIG_SCALES): the in-stream config carries the LUT half")
-  assert(!(loop_requesting_ex.configured && loop_requesting_ex.shared_acc &&
-           (loop_requesting_ex.a_scale_addr === 0.U || loop_requesting_ex.spad_only)),
-    "shared acc layout needs loop-managed scales and a DRAM C store")
 
   ex.io.req.valid := !loop_requesting_ex.ex_started && loop_requesting_ex.lds_done && loop_requesting_ex.ldl_done &&
     loop_requesting_ex.lda_started &&
     loop_requesting_ex.ldb_started && loop_requesting_ex.ldd_started && loop_requesting_ex.configured 
+  // a loop configured after a parked config_ex starts its computes only once the config is emitted; its D loads too
+  // (acc writes from the DMA take the live mode), while its A/B, scale and codebook loads run ahead (own mode tags)
+  when (pend_cfg && !pend_old(loop_requesting_ex_id)) { ex.io.req.valid := false.B }
+  when (pend_cfg && !pend_old(ldD.io.loop_id)) { arb.io.in(4).valid := false.B; ldD.io.cmd.ready := false.B }
 
   when (ex.io.req.fire) {
     loop_requesting_ex.running := true.B
@@ -1876,7 +1985,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.max_j := loop_requesting_st.max_j
   // single x quad: row-tile pairs as quad tiles; an odd pair count leaves the last pair's upper half empty
   val st_shared = loop_requesting_st.shared_acc
-  val st_ipair_r = ((block_size >= 16).B && loop_requesting_st.narrow_type && !loop_requesting_st.narrow_act) || st_shared
+  val st_ipair_r = (loop_requesting_st.narrow_type && !loop_requesting_st.narrow_act) || st_shared
   val st_pair_r = (loop_requesting_st.narrow_act && !loop_requesting_st.narrow_type) || st_shared
   val st_max_i = Mux(st_ipair_r, (loop_requesting_st.max_i +& 1.U) >> 1, loop_requesting_st.max_i)
   val st_pad_i = Mux(st_ipair_r, loop_requesting_st.pad_i +& Mux(loop_requesting_st.max_i(0), block_size.U, 0.U),
@@ -1916,6 +2025,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC_spad.io.req.bits.ipair := st_ipair_r
   stC_spad.io.req.bits.mx_multi_elem_act := loop_requesting_st.narrow_act || st_ipair_r
   stC_spad.io.req.bits.reuse_tiled := loop_requesting_st.reuse_tiled
+  stC_spad.io.req.bits.byte_codes := io.out_byte_codes
 
   // WAR overlap: with all A/B operand and C output spad regions known, test whether C overlaps A or B
   // (operand bases mirror the execute spad_id remap). A = max_i*max_k tiles, B = max_k*max_j tiles,
@@ -2021,12 +2131,13 @@ object LoopMatmul {
             max_addr: Int, max_acc_addr: Int, input_w: Int, acc_w: Int, dma_max_bytes: Int,
             mvin_rs2_t: MvinRs2, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
             compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, mvout_spad_rs1_t: MvoutSpadRs1, mvout_rs2_t: MvoutRs2,
-            vec_bypass: Boolean = false, ld_bypass: Boolean = false, use_mx_scaling: Boolean = true, lut_quad: Boolean = false)
+            vec_bypass: Boolean = false, ld_bypass: Boolean = false, use_mx_scaling: Boolean = true, lut_quad: Boolean = false,
+            defer_cfg_ex: Boolean = false)
            (implicit p: Parameters): (DecoupledIO[GemminiCmd], Bool, Vec[Bool], LoopMatmul) = {
     val mod = Module(new LoopMatmul(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
       mvin_rs2_t, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t, mvout_spad_rs1_t, mvout_rs2_t, vec_bypass, ld_bypass,
-      use_mx_scaling, lut_quad))
+      use_mx_scaling, lut_quad, defer_cfg_ex))
     mod.io.in <> in
     mod.io.ld_completed := ld_completed
     mod.io.st_completed := st_completed

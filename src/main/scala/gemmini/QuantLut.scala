@@ -10,7 +10,7 @@ import scala.math.{pow}
 
 // per scale-mem slot (half) QuantLut state from CONFIG_SCALE_MEM; a read response picks its slot by its halves tag,
 // so a config for the next loop never changes the bounds/flags of older reads still in flight
-class LutSlotA extends Bundle { val i = UInt(9.W); val halved = Bool() }
+class LutSlotA extends Bundle { val i = UInt(9.W); val halved = Bool(); val kmix = Bool() }   // kmix: single reads of a quad act layout
 class LutSlotW extends Bundle { val j = UInt(9.W); val k = UInt(9.W); val halved = Bool(); val kblock = Bool(); val kmix = Bool() }
 class LutSlots extends Bundle { val a = Vec(2, new LutSlotA); val w = Vec(2, new LutSlotW) }
 
@@ -243,8 +243,9 @@ class QuantLut(
     }
     // kblock codebooks: K-block kb of the loop uses the set at kb * (codebooks per K-block = (J << lanes) >> G)
     // mixed-K loop: the K-block's codebook set = its slot (read tag [7:6])
-    val cb_per_kb = (sw.j << log2Lanes.U) >> lutG
-    val kb_off = Mux(sw.kmix, wtag(7, 6) * cb_per_kb,
+    val cb_kb = (sw.j << log2Lanes.U) >> lutG
+    val cb_per_kb = Mux(cb_kb === 0.U, 1.U, cb_kb)   // a chunk narrower than 2^G columns still has one set
+    val kb_off = Mux(sw.kmix, wtag(9, 6) * cb_per_kb,
       Mux(sw.kblock, (counter_k >> log2Ceil(kTilesPerKb)) * cb_per_kb, 0.U))
     // a row's lanes read one aligned window of codebooks (lane k: wbase + (k >> G)): select the row, then the lane
     val wbase = kb_off + (((counter_j >> log2LuDim.U) << log2Lanes.U) >> lutG)

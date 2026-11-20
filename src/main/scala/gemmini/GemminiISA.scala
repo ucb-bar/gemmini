@@ -52,6 +52,9 @@ object GemminiISA {
   val LOOP_WS_CONFIG_LUTS = 35.U // rs1 = act-in, rs2 = weight codebook DRAM addr (0 = not loop-managed)
   val LOOP_WS_CONFIG_KMIX = 36.U  // mixed-K loop: rs1 = MXFP8 B DRAM base, rs2 = its row stride (the loop's B = low precision)
   val LOOP_WS_CONFIG_KMASK = 37.U // mixed-K loop: per-K-block mask, 1 = low precision; rs1 = bits 63:0, rs2 = bits 127:64
+  val MX_SCALE_FMT = 38.U // mx_flex_scales: rs1 = a_fmt[2:0] | w_fmt[5:3] | out_fmt[8:6]; rs2 = a_base[7:0] | w_base[15:8] | out_base[23:16]
+  val LOOP_WS_CONFIG_KMIX_A = 39.U // mixed-K loop, activation side: rs1 = A DRAM base of the plain (kmask 0) K-blocks
+                                   // (E4M3-single, the loop's A stride); rs2[63:62] = their direct FP6 {direct, alt}
 
   
   // rs1[2:0] values

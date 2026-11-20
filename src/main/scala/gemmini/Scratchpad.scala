@@ -73,6 +73,7 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(new ScratchpadMemWriteRequest(local_addr_t, acc_t_bits, scale_t_bits)))
     val out = Decoupled(new ScratchpadMemWriteRequest(local_addr_t, acc_t_bits, scale_t_bits))
+    val byte_codes = Input(Bool())   // 8-bit requant codes: rows 2r, 2r+1 of an acc row are separate spad rows
   })
 
   val second_half = RegInit(false.B)
@@ -82,7 +83,7 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
   val is_non_fp8_acc_write = is_acc_write && io.in.bits.mx_multi_elem_act
   // act-quad stores always arrive as quad (act-quad x wei-single is stored as col-tile pairs). BF16: the second row at
   // the store's own half pitch; 4-bit outputs pack rows 2r, 2r+1 into one byte row -> same address
-  val address_second_half = Mux(io.in.bits.output_mx_type === 3.U, io.in.bits.vaddr + io.in.bits.half_pitch,
+  val address_second_half = Mux(io.in.bits.output_mx_type === 3.U || io.byte_codes, io.in.bits.vaddr + io.in.bits.half_pitch,
     io.in.bits.vaddr)
   // a row shorter than the mesh width (fullRowLen 4-B units) has no second row
   val second_half_invalid = io.in.bits.len < fullRowLen.U
@@ -155,7 +156,7 @@ class ScratchpadReadReq(val n: Int) extends Bundle {
   // [1:0] {wgt, act} loop codebook half of the compute that issued the read; [2] deproject this read (QuantLut route);
   // [3] [2] is valid (ex-issued read; others route by the live formats); [5:4] operand fmt; [7:6] slot;
   // [9:8] direct-FP6 {direct, alt} (expanded to E4M3 on the direct path)
-  val lut_halves = UInt(10.W)
+  val lut_halves = UInt(12.W)
 }
 
 class ScratchpadReadResp(val w: Int) extends Bundle {
@@ -166,7 +167,7 @@ class ScratchpadReadResp(val w: Int) extends Bundle {
   // Read-operand kind, carried through the read pipeline aligned with `data`.
   val read_a = Bool()
   val read_d = Bool()
-  val lut_halves = UInt(10.W)
+  val lut_halves = UInt(12.W)
 }
 
 class ScratchpadReadIO(val n: Int, val w: Int) extends Bundle {
@@ -257,7 +258,7 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     // TODO (richard): the number of entries here should be configurable
     // Carry fromDMA + the read_a/read_d tag through the same latency-tracking queue as the
     // variable-latency shared-mem read, so the operand-kind tag returns aligned with its data.
-    class ReadMeta extends Bundle { val fromDMA = Bool(); val read_a = Bool(); val read_d = Bool(); val lut_halves = UInt(10.W) }
+    class ReadMeta extends Bundle { val fromDMA = Bool(); val read_a = Bool(); val read_d = Bool(); val lut_halves = UInt(12.W) }
     val dma_q = Module(new Queue(new ReadMeta, 4, false, true))
 
     // RADIANCE FIX: `q_will_be_empty` only bounds the response queue; reads whose responses are still
@@ -441,6 +442,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val scale_mem_write_w = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
       val scale_mem_write_act = config.scale_mem.map(sm => Flipped(Decoupled(new ScalingFactorWriteReq(sm))))
       val scale_wr_layout_w = config.scale_mem.map(_ => Input(Valid(Bool())))   // per-load layout (valid: quad)
+      val scale_fmt = Option.when(config.mx_flex_scales)(Input(new MxScaleFmtCfg))   // MX_SCALE_FMT registers
       val scale_wr_layout_act = config.scale_mem.map(_ => Input(Valid(Bool())))
       // TLB ports
       val tlb = Vec(2 + spad_writer.map(_ => 1).getOrElse(0), new FrontendTLBIO)
@@ -480,6 +482,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val write_req_expander = Module(new WriteReqExpander(local_addr_t, accType.getWidth, acc_scale_t_bits,
         config.mxGeom.dim min 16, config.mxGeom.R, config.mxGeom.chunkEntries, config.mxGeom.partialChunks))
       write_req_expander.io.in <> io.dma.write.req
+      write_req_expander.io.byte_codes := (if (config.use_mx_scaling)
+        io.dma.write.req.bits.output_mx_type === 0.U && !io.mx_lut_en && !io.mx_fp8_altfmt else false.B)
       Queue(write_req_expander.io.out)
     } else {
       val single_write = Wire(Decoupled(new ScratchpadMemWriteRequest(local_addr_t, accType.getWidth, acc_scale_t_bits)))
@@ -1089,9 +1093,14 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           val len_last  = ((write_issue_q.io.deq.bits.len << 2) >> log2Ceil(block_cols)).asUInt - 1.U
           val single_w  = !write_issue_q.io.deq.bits.mx_multi_elem && !write_issue_q.io.deq.bits.mx_multi_elem_act
           // act-quad x wei-single half-full last pair: BF16 row shorter than the quad row
-          val half_pair = requant_bf16 && write_issue_q.io.deq.bits.mx_multi_elem && write_issue_q.io.deq.bits.mx_multi_elem_act &&
-                          write_issue_q.io.deq.bits.len < config.mxGeom.R.U
-          val last_beat = if (config.mxGeom.partialChunks) Mux(single_w || half_pair, len_last, full_last)
+          // (also 8-bit codes on paired rows: its 2nd beat would land on the next row's first columns)
+          val byte_codes_w = io.output_mx_format === 0.U && !io.mx_fp8_altfmt && !io.mx_lut_en
+          val half_pair = (requant_bf16 || byte_codes_w) && write_issue_q.io.deq.bits.mx_multi_elem &&
+                          write_issue_q.io.deq.bits.mx_multi_elem_act && write_issue_q.io.deq.bits.len < config.mxGeom.R.U
+          // a half-full pair's len counts BF16-width units (2 cols / 4 B): 8-bit codes need half the beats
+          val pair_last = Mux(requant_bf16, len_last,
+            ((write_issue_q.io.deq.bits.len << 1) >> log2Ceil(block_cols)).asUInt - 1.U)
+          val last_beat = if (config.mxGeom.partialChunks) Mux(single_w, len_last, Mux(half_pair, pair_last, full_last))
                           else full_last
           // reuse_tiled (8-bit E4M3): beat b lands b K-tile heights below instead of flat.
           val tiled_beat = write_issue_q.io.deq.bits.reuse_tiled && (io.output_mx_format === 0.U) && !io.mx_fp8_altfmt && !io.mx_lut_en
@@ -1199,6 +1208,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         meshRows,
         tileRows,
         config.acc_clock_gating,
+        config.mx_flex_scales,
       )) }
       val bank_ios = VecInit(banks.map(_.io))
 
@@ -1216,8 +1226,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           numBanks = conf.numBanks,
           testConfig = config.testConfig,
           meshRows = meshRows,
-          tileRows = tileRows
+          tileRows = tileRows,
+          flexScales = config.mx_flex_scales
         ))
+        sm.flex_io.foreach(_ := io.scale_fmt.get)
         sm.io.wr_layout_w := io.scale_wr_layout_w.get
         sm.io.wr_layout_act := io.scale_wr_layout_act.get
         Seq((sm.io.scale_mem_write_w, io.scale_mem_write_w.get), (sm.io.scale_mem_write_act, io.scale_mem_write_act.get)).foreach {
@@ -1401,6 +1413,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.write.valid := false.B
         bio.write.bits.offset := DontCare
         bio.write.bits.scale_halves := 0.U
+        bio.write.bits.scale_pos := 0.U.asTypeOf(new MxScalePos)
         bio.write.bits.wm.multi := io.mx_multi_elem   // non-ex writes: the live mode
         bio.write.bits.wm.multi_act := io.mx_multi_elem_act
         bio.write.bits.wm.dtype := io.act_mx_format
@@ -1424,6 +1437,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.bits.mask := io.acc.write(i).bits.mask
           bio.write.bits.offset := io.acc.write(i).bits.offset
           bio.write.bits.scale_halves := io.acc.write(i).bits.scale_halves
+          bio.write.bits.scale_pos := io.acc.write(i).bits.scale_pos
           bio.write.bits.wm := io.acc.write(i).bits.wm
         }.elsewhen (dmaread && !spad_last && !consecutive_write_block) {
           bio.write.valid := true.B

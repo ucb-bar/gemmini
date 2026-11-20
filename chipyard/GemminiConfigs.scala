@@ -261,6 +261,18 @@ class MxE4M3LutBf16Dim32GemminiBoomBw2IF128Config extends Config(
   new freechips.rocketchip.subsystem.WithEdgeDataBits(128) ++
   new chipyard.config.AbstractConfig)
 
+// Same as above with one Rocket core instead of BOOM and LUT G fixed at 1 (FPGA area).
+class MxE4M3LutBf16FixG1Dim32GemminiRocketBw2IF128Config extends Config(
+  new gemmini.GemminiMxFPE4M3LutBf16FixG1Dim32IF128Config ++
+  new freechips.rocketchip.rocket.WithNHugeCores(1) ++
+  new freechips.rocketchip.subsystem.WithNBanks(2) ++
+  new chipyard.config.WithInclusiveCacheWriteBytes(16) ++
+  new freechips.rocketchip.subsystem.WithNMemoryChannels(2) ++
+  new WithMemPortIdBits(8) ++
+  new chipyard.config.WithSystemBusWidth(512) ++
+  new freechips.rocketchip.subsystem.WithEdgeDataBits(128) ++
+  new chipyard.config.AbstractConfig)
+
 // The Bw2IF128 memory system above, shared by the format/gating variants below.
 class WithMxBw2Boom extends Config(
   new boom.v3.common.WithNMediumBooms(1) ++
@@ -301,6 +313,12 @@ class MxPwrAcc1Dim16GemminiBoomBw2Config extends Config(   // no accumulator dou
   new gemmini.GemminiMxFPPwrAcc1Dim16Config ++ new WithMxBw2Boom)
 class MxPwrAcc1Dim32GemminiBoomBw2Config extends Config(   // no accumulator double buffer (acc_banks = 1), 32x32
   new gemmini.GemminiMxFPPwrAcc1Dim32Config ++ new WithMxBw2Boom)
+class MxPwrDeferDim16GemminiBoomBw2Config extends Config(   // base with deferred config_ex, 16x16
+  new gemmini.GemminiMxFPPwrDeferDim16Config ++ new WithMxBw2Boom)
+class MxPwrDeferDim32GemminiBoomBw2Config extends Config(   // base with deferred config_ex, 32x32
+  new gemmini.GemminiMxFPPwrDeferDim32Config ++ new WithMxBw2Boom)
+class MxPwrDeferFlexDim16GemminiBoomBw2Config extends Config(   // defer 16x16 + runtime eXmY block-scale formats
+  new gemmini.GemminiMxFPPwrDeferFlexDim16Config ++ new WithMxBw2Boom)
 class MxPwrFixG1Dim16GemminiBoomBw2Config extends Config(   // base with LUT G fixed at 1, 16x16
   new gemmini.GemminiMxFPPwrFixG1Dim16Config ++ new WithMxBw2Boom)
 class MxPwrFixG1Dim32GemminiBoomBw2Config extends Config(   // base with LUT G fixed at 1, 32x32
