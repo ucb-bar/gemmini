@@ -215,7 +215,12 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   // TODO wire only to *_buf here, instead of io.*.bits
   val a_shifter_in = WireInit(Mux(a_is_from_transposer, transposer_out.asTypeOf(A_TYPE), a_buf))
-  val b_shifter_in = WireInit(Mux(b_is_from_transposer, transposer_out.asTypeOf(B_TYPE), b_buf))
+  // non-MX: widen each transposed inputType lane to B_TYPE's outputType (a raw asTypeOf would scramble the lanes)
+  val transposer_out_b = if (use_mx_scaling) transposer_out.asTypeOf(B_TYPE) else {
+    val ev = implicitly[Arithmetic[T]]; import ev._
+    VecInit(transposer_out.map(r => VecInit(r.map(_.withWidthOf(outputType))))).asTypeOf(B_TYPE)
+  }
+  val b_shifter_in = WireInit(Mux(b_is_from_transposer, transposer_out_b, b_buf))
   val d_shifter_in = WireInit(Mux(d_is_from_transposer,
     VecInit(transposer_out.flatten.reverse.grouped(tileRows).map(VecInit(_)).toSeq).asTypeOf(D_TYPE), d_buf))
   

@@ -51,7 +51,8 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
 
   // mesh(r)(c) => Tile at row r, column c
   val mesh: Seq[Seq[Tile[T]]] = Seq.tabulate(meshRows, meshColumns) { (r, c) =>
-    Module(new Tile(inputType, weightType, meshAccPrecisionList(r), accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns, meshProdPrecisionList(r), meshAccPrecisionList(r)))
+    Module(new Tile(inputType, weightType, if (use_mx_scaling) meshAccPrecisionList(r) else outputType, accType, df, tree_reduction, max_simultaneous_matmuls, tileRows, tileColumns, meshProdPrecisionList(r), meshAccPrecisionList(r),
+      wide_prop = !use_mx_scaling))
     }
   val meshT = mesh.transpose
   

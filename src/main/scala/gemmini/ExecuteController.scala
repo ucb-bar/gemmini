@@ -1279,7 +1279,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   when (cntl_valid && cntl.perform_single_preload) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, dataA.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns, accType)))
+    // non-MX: dataB lanes are spatialArrayOutputType; reinterpreting them as accType scrambles the lanes
+    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns,
+      if (use_mx_scaling) accType else spatialArrayOutputType)))
   }
 
   when (cntl_valid && cntl.perform_single_mul) {
@@ -1314,7 +1316,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   
   val write_to_acc = w_address_sp.is_acc_addr
   val write_to_acc_wire = WireDefault(write_to_acc)
-  val w_bank = Mux(write_to_acc, w_address.acc_bank(), w_address_sp.sp_bank())
+  // non-MX: the full C address (acc C addresses need not be DIM-aligned, e.g. LoopConv), as upstream
+  val w_bank = Mux(write_to_acc, (if (use_mx_scaling) w_address else w_address_sp).acc_bank(), w_address_sp.sp_bank())
   // single x quad (shared acc layout, DIM>=16): output rows 2r, 2r+1 share acc row r (row halves)
   // write side: the mode of the compute being written (mesh tag), not the live config
   val o_mx = mesh.io.resp.bits.tag.mx
@@ -1330,8 +1333,9 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     (output_counter >> 1) * c_addr_stride
   val lane_off = Mux(shared8, Mux(offset(log2Ceil(block_size) - 2), (block_size / 4).U, 0.U) +&
     Mux(output_counter(0), (block_size / 2).U, 0.U), offset)
-  val w_row = Mux(write_to_acc, Mux(acc_row_pair, w_address_pair.acc_row(),
+  val w_row = if (use_mx_scaling) Mux(write_to_acc, Mux(acc_row_pair, w_address_pair.acc_row(),
     Mux(shared8, w_address_shared.acc_row(), w_address.acc_row())), w_address_sp.sp_row())
+    else Mux(write_to_acc, w_address_sp.acc_row(), w_address_sp.sp_row())
   val w_row_wire = WireDefault(w_row)
   val is_garbage_addr =address.is_garbage()
 

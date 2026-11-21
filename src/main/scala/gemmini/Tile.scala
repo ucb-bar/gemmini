@@ -13,18 +13,20 @@ import Util._
   * @param rows Number of PEs on each row
   * @param columns Number of PEs on each column
   */
-class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, tree_reduction: Boolean, max_simultaneous_matmuls: Int, val rows: Int, val columns: Int, meshFpProductPrecision: T, meshFpAccPrecision: T)(implicit ev: Arithmetic[T]) extends Module {
+class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, tree_reduction: Boolean, max_simultaneous_matmuls: Int, val rows: Int, val columns: Int, meshFpProductPrecision: T, meshFpAccPrecision: T, wide_prop: Boolean = false)(implicit ev: Arithmetic[T]) extends Module {
+  // non-MX: the in_d/out_c chain carries OS results and D preloads at outputType width (upstream)
+  private val propType = if (wide_prop) outputType else weightType
   val io = IO(new Bundle {
     val in_a        = Input(Vec(rows, inputType))
     val in_b        = Input(Vec(columns, outputType)) // This is the output of the tile next to it
-    val in_d        = Input(Vec(columns, weightType))
+    val in_d        = Input(Vec(columns, propType))
 
     val in_control  = Input(Vec(columns, new PEControl(accType)))
     val in_id       = Input(Vec(columns, UInt(log2Up(max_simultaneous_matmuls).W)))
     val in_last  = Input(Vec(columns, Bool()))
 
     val out_a       = Output(Vec(rows, inputType))
-    val out_c       = Output(Vec(columns, weightType))
+    val out_c       = Output(Vec(columns, propType))
     val out_b       = Output(Vec(columns, outputType))
 
     val out_control = Output(Vec(columns, new PEControl(accType)))
@@ -39,7 +41,7 @@ class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df
 
   import ev._
 
-  val tile = Seq.fill(rows, columns)(Module(new PE(inputType, weightType, outputType, accType, df, max_simultaneous_matmuls, meshFpProductPrecision, meshFpAccPrecision)))
+  val tile = Seq.fill(rows, columns)(Module(new PE(inputType, weightType, outputType, accType, df, max_simultaneous_matmuls, meshFpProductPrecision, meshFpAccPrecision, wide_prop)))
   val tileT = tile.transpose
 
   // TODO: abstract hori/vert broadcast, all these connections look the same

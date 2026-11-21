@@ -65,14 +65,15 @@ class MacUnit[T <: Data](inputType: T, weightType: T, cType: T, dType: T, meshFp
   * A PE implementing a MAC operation. Configured as fully combinational when integrated into a Mesh.
   * @param width Data width of operands
   */
-class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, max_simultaneous_matmuls: Int, meshFpProductPrecision: T, meshFpAccPrecision: T)
+class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, max_simultaneous_matmuls: Int, meshFpProductPrecision: T, meshFpAccPrecision: T,
+                    wide_prop: Boolean = false)
                    (implicit ev: Arithmetic[T]) extends Module { // Debugging variables
   import ev._
 
   val io = IO(new Bundle {
     val in_a = Input(inputType)
     val in_b = Input(outputType)
-    val in_d = Input(weightType)
+    val in_d = Input(if (wide_prop) outputType else weightType)   // non-MX: upstream's outputType
     val out_a = Output(inputType)
     val out_b = Output(outputType)
     val out_c = Output(outputType)

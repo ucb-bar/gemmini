@@ -390,7 +390,7 @@ class LoopMatmulExecuteReq(val block_size: Int, val coreMaxAddrBits: Int, val it
 
 class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth: Int, max_addr: Int, max_acc_addr: Int, concurrent_loops: Int,
                         preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
-                        compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs)
+                        compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs, use_mx_scaling: Boolean = true)
                        (implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
     val req = Flipped(Decoupled(new LoopMatmulExecuteReq(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops)))
@@ -468,9 +468,11 @@ class LoopMatmulExecute(block_size: Int, coreMaxAddrBits: Int, iterator_bitwidth
   val qj = Mux(req.narrow_type, req.max_j, pair_max_j)
   val c_addr_mix = c_addr_start + (Mux(aq_k, i, i >> 1) * qj + Mux(wq_k, j, j >> 1)) * block_size.U +
     Mux(aq_k, 0.U, i(0) * (block_size / 2).U) + Mux(wq_k, 0.U, j(0) * (block_size / 4).U)
-  val c_addr = Mux(mixed, c_addr_mix, Mux(req.shared, c_addr_shared, Mux(req.narrow_type, c_addr_quad,
+  val c_addr_mx = Mux(mixed, c_addr_mix, Mux(req.shared, c_addr_shared, Mux(req.narrow_type, c_addr_quad,
     Mux(req.narrow_act, c_addr_start + (i * pair_max_j + (j >> 1)) * block_size.U + j(0) * (block_size / 4).U,
       c_addr_start + (i * ceil_max_j4 + j) * (block_size / 4).U))))
+  // non-MX: upstream's one DIM x DIM acc tile per (i, j)
+  val c_addr = if (use_mx_scaling) c_addr_mx else c_addr_start + (i * req.max_j + j) * block_size.U
 
   val a_cols = block_size.U - Mux(k === req.max_k - 1.U, req.pad_k, 0.U)
   val a_rows = block_ij - Mux(i === mi - 1.U, req.pad_i, 0.U)       
@@ -1329,7 +1331,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
     tilesPerMxBlock))
   val ldB = Module(new LoopMatmulLdB(block_size, coreMaxAddrBits, iterator_bitwidth, max_all_addr, input_w, max_block_len, concurrent_loops, mvin_rs2_t))
   val ldD = Module(new LoopMatmulLdD(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, max_block_len, max_block_len_acc, concurrent_loops, mvin_rs2_t))
-  val ex = Module(new LoopMatmulExecute(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t))
+  val ex = Module(new LoopMatmulExecute(block_size, coreMaxAddrBits, iterator_bitwidth, max_addr, max_acc_addr, concurrent_loops, preload_rs1_t, preload_rs2_t, compute_rs1_t, compute_rs2_t,
+    use_mx_scaling))
   // max_block_len 1 (as stC_spad): an MX mvout covers one 4-tile j-group; wider would skip groups.
   val stC = Module(new LoopMatmulStC(block_size, coreMaxAddrBits, iterator_bitwidth, max_acc_addr, input_w, acc_w, 1, concurrent_loops, tilesPerMxBlock, mvout_rs2_t,
     use_mx_scaling))
@@ -2002,7 +2005,8 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC.io.req.bits.is_resadd := is_resadd
   stC.io.req.bits.output_mx_format := io.output_mx_format
   stC.io.req.bits.activation_mx_format := io.activation_mx_format
-  stC.io.req.bits.mx_multi_elem := loop_requesting_st.narrow_type || st_pair_r
+  // non-MX: plain tiles (not the FP8 4-tile j-groups)
+  stC.io.req.bits.mx_multi_elem := (!use_mx_scaling).B || loop_requesting_st.narrow_type || st_pair_r
   stC.io.req.bits.pair := st_pair_r
   stC.io.req.bits.ipair := st_ipair_r
   stC.io.req.bits.mx_multi_elem_act := loop_requesting_st.narrow_act || st_ipair_r
@@ -2020,7 +2024,7 @@ class LoopMatmul(block_size: Int, coreMaxAddrBits: Int, reservation_station_size
   stC_spad.io.req.bits.is_resadd := is_resadd
   stC_spad.io.req.bits.output_mx_format := io.output_mx_format
   stC_spad.io.req.bits.activation_mx_format := io.activation_mx_format
-  stC_spad.io.req.bits.mx_multi_elem := loop_requesting_st.narrow_type || st_pair_r
+  stC_spad.io.req.bits.mx_multi_elem := (!use_mx_scaling).B || loop_requesting_st.narrow_type || st_pair_r
   stC_spad.io.req.bits.pair := st_pair_r
   stC_spad.io.req.bits.ipair := st_ipair_r
   stC_spad.io.req.bits.mx_multi_elem_act := loop_requesting_st.narrow_act || st_ipair_r
