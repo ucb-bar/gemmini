@@ -348,7 +348,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
           // if st writes, raw/waw for ex a/b <- st a
           new_entry.opa.bits.overlaps(e.bits.opa.bits) || new_entry.opb.bits.overlaps(e.bits.opa.bits) ||
           // additionally if ex writes, war for ex a <- st b
-            (new_entry.opa_is_dst && new_entry.opa.bits.overlaps(e.bits.opb.bits))
+            (new_entry.opa_is_dst && e.bits.opb.valid && new_entry.opa.bits.overlaps(e.bits.opb.bits))
         ,
           // if st only reads, only check ex writes, war for ex a <- st a
           new_entry.opa_is_dst && new_entry.opa.bits.overlaps(e.bits.opa.bits)
@@ -523,13 +523,11 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }
   }
 
-  // Explicitly mark "opb" in all ld/st queues entries as being invalid.
-  // This helps us to reduce the total reservation table area
-  Seq(entries_ld, entries_st).foreach { entries_type =>
-    entries_type.foreach { e =>
-      e.bits.opb.valid := false.B
-      e.bits.opb.bits := DontCare
-    }
+  // Explicitly mark "opb" in all ld queue entries as being invalid.
+  // Store queue entries keep "opb" for STORE_SPAD_CMD source WAR dependency tracking.
+  entries_ld.foreach { e =>
+    e.bits.opb.valid := false.B
+    e.bits.opb.bits := DontCare
   }
 
   // val utilization = PopCount(entries.map(e => e.valid))
