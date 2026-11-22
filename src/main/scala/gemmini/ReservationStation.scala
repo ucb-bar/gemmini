@@ -168,6 +168,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   val a_stride = RegInit(0.U(a_stride_bits.W))
   val c_stride = RegInit(0.U(c_stride_bits.W))
   val a_transpose = RegInit(false.B)
+  val b_transpose = RegInit(false.B)
+  val current_dataflow = RegInit(if (dataflow == Dataflow.WS) Dataflow.WS.id.U else Dataflow.OS.id.U)
   val ld_block_strides = RegInit(0.U.asTypeOf(Vec(load_states, UInt(block_stride_bits.W))))
   val st_block_stride = block_rows.U
   val pooling_is_enabled = RegInit(false.B)
@@ -221,8 +223,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     op1.valid := funct === PRELOAD_CMD || funct_is_compute
     op1.bits.start := cmd.rs1.asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
-      // TODO check b_transpose here iff WS mode is enabled
-      val preload_rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48)
+      val rows = cmd.rs1(48 + log2Up(block_rows + 1) - 1, 48)
+      val cols = cmd.rs1(32 + log2Up(block_cols + 1) - 1, 32)
+      val preload_rows = Mux(current_dataflow === Dataflow.WS.id.U && b_transpose, cols, rows)
       op1.bits.end := op1.bits.start + preload_rows
       op1.bits.wraps_around := op1.bits.start.add_with_overflow(preload_rows)._2
     }.otherwise {
@@ -236,7 +239,9 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     op2.valid := funct_is_compute || funct === STORE_CMD || funct === STORE_SPAD_CMD
     op2.bits.start := cmd.rs2.asTypeOf(local_addr_t)
     when (funct_is_compute) {
-      val compute_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
+      val rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48)
+      val cols = cmd.rs2(32 + log2Up(block_cols + 1) - 1, 32)
+      val compute_rows = Mux(current_dataflow === Dataflow.OS.id.U && b_transpose, cols, rows)
       op2.bits.end := op2.bits.start + compute_rows
       op2.bits.wraps_around := op2.bits.start.add_with_overflow(compute_rows)._2
     }.elsewhen (pooling_is_enabled) {
@@ -413,6 +418,10 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
         val set_only_strides = new_entry.cmd.cmd.rs1(7) // TODO magic numbers
         when (!set_only_strides) {
           a_transpose := new_entry.cmd.cmd.rs1(8) // TODO magic numbers
+          b_transpose := new_entry.cmd.cmd.rs1(9) // TODO magic numbers
+          if (dataflow == Dataflow.BOTH) {
+            current_dataflow := new_entry.cmd.cmd.rs1(2)
+          }
         }
       }.elsewhen(new_entry.is_config && new_entry.q === ldqu) {
         val id = new_entry.cmd.cmd.rs1(4,3) // TODO magic numbers
