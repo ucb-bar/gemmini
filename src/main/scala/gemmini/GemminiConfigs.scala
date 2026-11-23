@@ -484,6 +484,14 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     // and assume the MX datapath. See bareMetalC/Makefile.
     if (use_mx_scaling) {
       header ++= s"#define HAS_MX_SCALING\n\n"
+      def precs(ps: Seq[T]): String = ps.map {
+        case p: MxFloat => s"{${p.expWidth},${p.sigWidth - 1}}"
+        case p: Float => s"{${p.expWidth},${p.sigWidth - 1}}"
+        case p => throw new IllegalArgumentException(s"mesh precision $p is not a float")
+      }.mkString("{", ",", "}")
+      header ++= "// Per mesh row {exp bits, frac bits} of the product and accumulator; the MX goldens are generated from these.\n"
+      header ++= s"#define MESH_PROD_PRECISION ${precs(meshProdPrecision)}\n"
+      header ++= s"#define MESH_ACC_PRECISION ${precs(meshAccPrecision)}\n\n"
     }
 
     header ++= s"#define row_align(blocks) __attribute__((aligned(blocks*DIM*sizeof(elem_t))))\n"
