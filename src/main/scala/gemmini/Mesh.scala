@@ -22,7 +22,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
                                    val meshRows: Int, val meshColumns: Int,
                                    meshProdPrecisionList : Seq[T],
                                    meshAccPrecisionList : Seq[T],
-                                   use_mx_scaling: Boolean = true,
+                                   use_mx_scaling: Boolean = false,
                                    e4m3QuadThroughput: Boolean = false) extends Module {
 
   val io = IO(new Bundle {
@@ -32,13 +32,13 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     // in_valid / out_valid: the wrapper's enable source. The valid chains themselves are never gated.
     val valid_in_flight = Output(Bool())
     val in_a = Input(Vec(meshRows, Vec(tileRows, inputType)))
-    val in_b = Input(Vec(meshColumns, Vec(tileColumns, outputType)))
+    val in_b = Input(Vec(meshColumns, Vec(tileColumns, if (use_mx_scaling) outputType else weightType)))
     val in_d = Input(Vec(meshColumns, Vec(tileColumns, weightType))) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
     val in_control = Input(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
     val in_id = Input(Vec(meshColumns, Vec(tileColumns, UInt(log2Up(max_simultaneous_matmuls).W)))) // The unique id of this particular matmul
     val in_last = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
     val out_b = Output(Vec(meshColumns, Vec(tileColumns, outputType)))
-    val out_c = Output(Vec(meshColumns, Vec(tileColumns, if (df == Dataflow.BOTH || df == Dataflow.OS) outputType else weightType)))
+    val out_c = Output(Vec(meshColumns, Vec(tileColumns, if (!use_mx_scaling || df == Dataflow.BOTH || df == Dataflow.OS) outputType else weightType)))
     val in_valid = Input(Vec(meshColumns, Vec(tileColumns, Bool())))
     val out_valid = Output(Vec(meshColumns, Vec(tileColumns, Bool())))
     val out_control = Output(Vec(meshColumns, Vec(tileColumns, new PEControl(accType))))
@@ -55,7 +55,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
       wide_prop = !use_mx_scaling))
     }
   val meshT = mesh.transpose
-  
+
   val validStages = scala.collection.mutable.ArrayBuffer[Bool]()
   def shiftValid(x: Vec[Bool], n: Int): Vec[Bool] =
     (0 until n).foldLeft(x) { (prev, _) => val r = Reg(chiselTypeOf(prev)); r := prev; validStages ++= r; r }
@@ -64,7 +64,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
     // signals in the Mesh, so over here, we make it clear that the reset signal will never be asserted
     chisel3.withReset(false.B) { Pipe(valid, t, latency).bits }
   }
-  
+
   // Format code -> (exp,sig,bits), altfmt selects the sub-format:
   //   fp8 (0): E4M3(4,4) / E5M2(5,3), 8b;  fp6 (1): E3M2(3,3) / E2M3(2,4), 6b;  fp4 (2): E2M1(2,2), 4b
   def mxExp(fmt: UInt, altfmt: Bool): UInt = Mux(fmt === 2.U, 2.U,
@@ -85,7 +85,7 @@ class Mesh[T <: Data : Arithmetic](inputType: T, weightType: T, outputType: T, a
   }
   // control entering tile (r, c): the mesh input for row 0, else the tile above's output
   def ctrlIn(r: Int, c: Int): MxMode = if (r == 0) io.in_control(c)(0).mx else mesh(r - 1)(c).io.out_control(0).mx
-  
+
   // Chain tile_a_out -> tile_a_in (pipeline a across each row)
   // TODO clock-gate A signals with in_garbage
   for (r <- 0 until meshRows) {

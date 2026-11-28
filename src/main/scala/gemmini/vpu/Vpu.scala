@@ -3,13 +3,8 @@ package gemmini.vpu
 import chisel3._
 import chisel3.util._
 
-// VPU: BF16 vector engine on the Gemmini scratchpad. One lane row = one scratchpad row (lanes x BF16).
-// A command streams `rows` scratchpad rows: dst[i] = op(src1[i], src2[i or i/rlen] | imm), or, for the row
-// reductions, reduces each logical row of `rlen` scratchpad rows to one row (value in every lane) at dst[g].
-// Build options. The base VPU has the plain op set; fused ops are opt-in per instance (their codes are illegal otherwise).
-//   expSub: EXPSUB = exp(src1 - src2) in one pass (softmax's subtract and exp)
-//   expSum: EXPSUM = EXPSUB that also writes each logical row's sum to a second destination (adds a pipeline stage and
-//           a one-cycle issue bubble per logical row for the extra write)
+// VPU: BF16 vector engine on the scratchpad, one lane row per spad row. dst[i] = op(src1[i], src2[i or i/rlen] | imm),
+// or a reduction of each rlen-row logical row. Opt-in fused ops: expSub (exp(src1 - src2)), expSum (+ row sums).
 case class VpuParams(units: Int = 1, lanes: Int = 8, expSub: Boolean = false, expSum: Boolean = false)
 
 object VpuOp {
@@ -41,8 +36,7 @@ class VpuCmd(val addrW: Int) extends Bundle {
 object VpuCmd {
   // row-address field width of VPU_EXEC / SPAD_REQUANT: 14, or the spad's row-address width when wider (DIM=8: 15)
   def fieldW(addrW: Int): Int = math.max(14, addrW)
-  // VPU_EXEC: rs1 = src1[F-1:0] | src2[2F-1:F] | dst[3F-1:2F] | rows[3F+15:3F]  (F = fieldW: 14 -> [13:0] .. [57:42])
-  //           rs2 = op[3:0] | bcast[4] | rlen[14:5] | imm[31:16]
+  // VPU_EXEC: rs1 = src1 | src2 | dst | rows[3F+15:3F] (F = fieldW); rs2 = op[3:0] | bcast[4] | rlen[14:5] | imm[31:16]
   def decode(rs1: UInt, rs2: UInt, addrW: Int): VpuCmd = {
     val c = Wire(new VpuCmd(addrW))
     val f = fieldW(addrW)
@@ -51,19 +45,16 @@ object VpuCmd {
     c.op := rs2(3, 0); c.bcast := rs2(4); c.rlen := rs2(14, 5); c.imm := rs2(31, 16)
     c
   }
-  // exact row footprints (for ordering): a reduction writes rows/rlen rows; a broadcast src2 is read ceil(rows/rlen)
-  // rows; everything else spans rows (rlen 0 is the counter's 1024)
-  private def groups(c: VpuCmd, roundUp: Boolean): UInt = {
+  // (dst, src2, dst2) row footprints: reductions rows/rlen, broadcast src2 ceil(rows/rlen), else rows (rlen 0 = 1024)
+  def footprints(c: VpuCmd): (UInt, UInt, UInt) = {
     val rl = Mux(c.rlen === 0.U, 1024.U, c.rlen)
-    (if (roundUp) c.rows +& rl - 1.U else c.rows +& 0.U) / rl
+    val floor = (c.rows +& 0.U) / rl
+    val ceil  = (c.rows +& rl - 1.U) / rl
+    (Mux(VpuOp.isReduction(c.op), floor, c.rows), Mux(c.bcast, ceil, c.rows), floor)
   }
-  def dstRows(c: VpuCmd): UInt = Mux(VpuOp.isReduction(c.op), groups(c, false), c.rows)
-  def src2Rows(c: VpuCmd): UInt = Mux(c.bcast, groups(c, true), c.rows)
-  def dst2Rows(c: VpuCmd): UInt = groups(c, false)   // EXPSUM: one sum row per logical row
 }
 
-// Fixed-latency scratchpad port: read data is valid exactly one cycle after rd(i).valid, never stalled;
-// writes are always accepted. Addresses are full scratchpad row addresses.
+// fixed-latency spad port: read data one cycle after rd(i).valid; writes always accepted
 class VpuWrite(val addrW: Int, val rowW: Int) extends Bundle {
   val addr = UInt(addrW.W)
   val data = UInt(rowW.W)
@@ -189,11 +180,9 @@ class Vpu(addrW: Int = 14, bankRowBits: Int = 12, p: VpuParams = VpuParams()) ex
   // ---------------- stage B: exp / rcp finish, max accumulate ----------------
   val outB = VecInit((0 until lanes).map { l =>
     val m = s2_mid(l)
-    MuxLookup(op, m(15, 0))(Seq(
-      EXP.U -> VpuMath.expStageB(m),
-      RCP.U -> VpuMath.rcp(m(15, 0)),
-      RSQRT.U -> VpuMath.rcp(m(15, 0))) ++
-      expSubOps.map(o => o.U -> VpuMath.expStageB(m)))
+    val e = VpuMath.expStageB(m)
+    val r = VpuMath.rcp(m(15, 0))
+    MuxLookup(op, m(15, 0))(Seq(EXP.U -> e, RCP.U -> r, RSQRT.U -> r) ++ expSubOps.map(o => o.U -> e))
   })
   val accMax = Reg(UInt(16.W))
   val accSum = Reg(UInt(33.W))

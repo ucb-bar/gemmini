@@ -22,9 +22,6 @@ class ScratchpadMemReadRequest[U <: Data](local_addr_t: LocalAddr, scale_t_bits:
   val pixel_repeats = UInt(8.W) // TODO magic numbers
   val cmd_id = UInt(8.W) // TODO don't use a magic number here
   val status = new MStatus
-
-  val input_mx_format = UInt(2.W)
-  val weight_mx_format = UInt(2.W)
 }
 
 class ScratchpadMemWriteRequest(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: Int)
@@ -78,11 +75,9 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
 
   val second_half = RegInit(false.B)
   val is_acc_write = io.in.bits.laddr.is_acc_addr && !io.in.bits.laddr.is_garbage()
-  // Split the acc write into 2 output ROWS (row0 elems 0-7, row1 elems 8-15) only when the ACTIVATION is
-  // quad (2 rows/lane). For a single-act / quad-wei dual tile (mode6/7) there is 1 output row -> no split.
+  // split the acc write into 2 output rows only when the activation is quad (mode6/7 dual tiles have 1 row)
   val is_non_fp8_acc_write = is_acc_write && io.in.bits.mx_multi_elem_act
-  // act-quad stores always arrive as quad (act-quad x wei-single is stored as col-tile pairs). BF16: the second row at
-  // the store's own half pitch; 4-bit outputs pack rows 2r, 2r+1 into one byte row -> same address
+  // act-quad stores arrive as quad; BF16: 2nd row at the half pitch, 4-bit outputs pack rows 2r, 2r+1 (same address)
   val address_second_half = Mux(io.in.bits.output_mx_type === 3.U || io.byte_codes, io.in.bits.vaddr + io.in.bits.half_pitch,
     io.in.bits.vaddr)
   // a row shorter than the mesh width (fullRowLen 4-B units) has no second row
@@ -92,10 +87,8 @@ class WriteReqExpander(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bits: I
 
   io.out.valid := io.in.valid
   io.out.bits := io.in.bits
-  // Acc (and garbage, which is acc-tagged) keep 16; spad-source requests keep the real row length (DIM32 = 32).
-  // A quad x quad acc write carries one whole output row (quadRowLen 4-B units: 16 at DIM8/16, 32 = 128 B at DIM32);
-  // so does an E4M3-single BF16 chunk (2*DIM cols).
-  // single-weight partial chunk (DIM32 only): the store's own length (4-B units: BF16 2/entry, FP8 1/entry)
+  // acc/garbage keep 16; spad-source requests keep the real row length. Quad x quad and E4M3-single BF16 chunks carry
+  // one output row (quadRowLen); a DIM32 single-weight partial chunk uses the store's own length
   val partial_chunk = partialChunks.B && is_acc_write && !io.in.bits.mx_multi_elem && !io.in.bits.mx_multi_elem_act &&
     io.in.bits.len < chunkEntries.U
   // act-quad x wei-single, odd col-tile count (DIM32 only): the last pair is half full -> the store's own length
@@ -147,23 +140,16 @@ class ScratchpadWriteMemIO(local_addr_t: LocalAddr, acc_t_bits: Int, scale_t_bit
 class ScratchpadReadReq(val n: Int) extends Bundle {
   val addr = UInt(log2Ceil(n).W)
   val fromDMA = Bool()
-  val weight_mx_format = UInt(2.W)
-  val input_mx_format = UInt(2.W)
-  // Read-operand kind carried with the request so it returns aligned with the read data, letting FP6
-  // deprojection advance its codebook counter exactly when the projected data arrives.
+  // read-operand kind travels with the request so FP6 deprojection advances with the data
   val read_a = Bool()
   val read_d = Bool()
-  // [1:0] {wgt, act} loop codebook half of the compute that issued the read; [2] deproject this read (QuantLut route);
-  // [3] [2] is valid (ex-issued read; others route by the live formats); [5:4] operand fmt; [7:6] slot;
-  // [9:8] direct-FP6 {direct, alt} (expanded to E4M3 on the direct path)
+  // [1:0] {wgt, act} codebook half, [2] deproject, [3] [2] valid (ex-issued), [5:4] fmt, [7:6] slot, [9:8] direct FP6
   val lut_halves = UInt(12.W)
 }
 
 class ScratchpadReadResp(val w: Int) extends Bundle {
   val data = UInt(w.W)
   val fromDMA = Bool()
-  val weight_mx_format = UInt(2.W)
-  val input_mx_format = UInt(2.W)
   // Read-operand kind, carried through the read pipeline aligned with `data`.
   val read_a = Bool()
   val read_d = Bool()
@@ -228,8 +214,6 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
 
   val ren = io.read.req.fire
   val fromDMA = io.read.req.bits.fromDMA
-  val weight_mx_format = io.read.req.bits.weight_mx_format
-  val input_mx_format = io.read.req.bits.input_mx_format
   val read_a_tag = io.read.req.bits.read_a
   val read_d_tag = io.read.req.bits.read_d
   val lut_halves = io.read.req.bits.lut_halves
@@ -245,8 +229,6 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.valid := RegNext(ren)
     q.io.enq.bits.data := 0.U
     q.io.enq.bits.fromDMA := RegNext(fromDMA)
-    q.io.enq.bits.weight_mx_format := RegNext(weight_mx_format)
-    q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
     q.io.enq.bits.read_a := RegNext(read_a_tag)
     q.io.enq.bits.read_d := RegNext(read_d_tag)
     q.io.enq.bits.lut_halves := RegNext(lut_halves)
@@ -256,17 +238,11 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
 
     /* READ */
     // TODO (richard): the number of entries here should be configurable
-    // Carry fromDMA + the read_a/read_d tag through the same latency-tracking queue as the
-    // variable-latency shared-mem read, so the operand-kind tag returns aligned with its data.
+    // fromDMA and the read_a/read_d tag ride the latency-tracking queue so they stay aligned with the data
     class ReadMeta extends Bundle { val fromDMA = Bool(); val read_a = Bool(); val read_d = Bool(); val lut_halves = UInt(12.W) }
     val dma_q = Module(new Queue(new ReadMeta, 4, false, true))
 
-    // RADIANCE FIX: `q_will_be_empty` only bounds the response queue; reads whose responses are still
-    // travelling through the shared memory are bounded by nothing, and once the SMEM read path stopped
-    // deasserting a.ready while a response was pending (sharedmem backup-register fixes) more than
-    // four reads could be outstanding, overflowing dma_q -- measured in RTL sim as
-    // "DMA queue does not have enough entries" (in silicon the fromDMA tag of a response would be
-    // lost and the response misrouted).  Back-pressure the request on dma_q having room.  0 FF.
+    // Hold reads while dma_q is full: more than 4 outstanding reads would overflow it and misroute responses.
     ext_mem.read_req.valid := q_will_be_empty && io.read.req.valid && dma_q.io.enq.ready
     ext_mem.read_req.bits := io.read.req.bits.addr
     io.read.req.ready := q_will_be_empty && ext_mem.read_req.ready && dma_q.io.enq.ready
@@ -283,14 +259,13 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.valid := ext_mem.read_resp.valid
     q.io.enq.bits.data := ext_mem.read_resp.bits
     q.io.enq.bits.fromDMA := dma_q.io.deq.bits.fromDMA
-    q.io.enq.bits.weight_mx_format := RegNext(weight_mx_format)
-    q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
     q.io.enq.bits.read_a := dma_q.io.deq.bits.read_a
     q.io.enq.bits.read_d := dma_q.io.deq.bits.read_d
     q.io.enq.bits.lut_halves := dma_q.io.deq.bits.lut_halves
     ext_mem.read_resp.ready := q.io.enq.ready
 
     /* WRITE */
+    // registered both ways to cut the comb path to shared memory; 2 entries keep full throughput
     val wq = Module(new Queue(ext_mem.write_req.bits.cloneType, 2))
     ext_mem.write_req <> wq.io.deq
 
@@ -318,8 +293,6 @@ class ScratchpadBank(n: Int, w: Int, aligned_to: Int, single_ported: Boolean, us
     q.io.enq.valid := RegNext(ren)
     q.io.enq.bits.data := rdata
     q.io.enq.bits.fromDMA := RegNext(fromDMA)
-    q.io.enq.bits.weight_mx_format := RegNext(weight_mx_format)
-    q.io.enq.bits.input_mx_format := RegNext(input_mx_format)
     q.io.enq.bits.read_a := RegNext(read_a_tag)
     q.io.enq.bits.read_d := RegNext(read_d_tag)
     q.io.enq.bits.lut_halves := RegNext(lut_halves)
@@ -349,8 +322,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val dataBits = dma_buswidth
   val block_rows = meshRows * tileRows
   val block_cols = meshColumns * tileColumns
-  val spad_w = (inputTypeProjected.getWidth *  block_cols)
-  val spad_w_deprojected = (inputType.getWidth *  block_cols)
+  val spad_w = (inputStorageType.getWidth *  block_cols)
   val acc_w = (accType.getWidth * block_cols)
 
   val id_node = TLIdentityNode()
@@ -360,8 +332,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     sp_banks * sp_bank_entries, acc_banks * acc_bank_entries, block_rows, use_tlb_register_filter,
     use_firesim_simulation_counters))
   val fp8_chunk_bits = 8 * accType.getWidth
-  // MX acc read chunk = half a (widened) acc row = one quad output row; the writer holds it whole and drains it as
-  // maxBytes Puts (DIM16/DIM8: 512 b = fp8_chunk_bits; DIM32 quad: 1024 b = a 128-B BF16 row -> two 64-B Puts)
+  // MX acc read chunk = one quad output row, drained as maxBytes Puts (DIM32 quad: one 128-B BF16 row = two 64-B Puts)
   val acc_chunk_w = {
     val cols = MxGeom(block_cols).W * meshColumns
     (accType.getWidth * cols * tileColumns) / (if (cols * tileColumns < 16) 1 else 2)
@@ -369,10 +340,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
   val writer_data_width = if (use_mx_scaling) { if (acc_read_full_width) fp8_chunk_bits max acc_chunk_w else 2*spad_w }
                           else                { if (acc_read_full_width) acc_w           else spad_w   }
   val writer = LazyModule(new StreamWriter(max_in_flight_mem_reqs, dataBits, maxBytes,
-    writer_data_width, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
+    writer_data_width, aligned_to, inputStorageType, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters))
   val spad_writer = Option.when(config.use_tl_ext_mem)(LazyModule(new StreamWriter(max_in_flight_mem_reqs, spad_writer_dma_width, max_spad_writer_bytes,
-    writer_data_width, aligned_to, inputTypeProjected, block_cols, use_tlb_register_filter,
+    writer_data_width, aligned_to, inputStorageType, block_cols, use_tlb_register_filter,
     use_firesim_simulation_counters)))
 
   // TODO make a cross-bar vs two separate ports a config option
@@ -385,11 +356,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
   lazy val module = new Impl
   class Impl extends LazyModuleImp(this) with HasCoreParameters {
-    // acc_row_t = the mesh-side write width (unchanged). accCols = the widened acc SRAM row (2*meshColumns at
-    // DIM=8), which the read side (chunk_t/read_resp) delivers to the requant as one wide row = 2 blocks.
+    // acc_row_t = mesh-side write width; accCols = widened acc row (2*meshColumns at DIM=8), read as 2 blocks
     val acc_row_t = Vec(meshColumns, Vec(tileColumns, accType))
     val accCols = if (use_mx_scaling) MxGeom(meshColumns*tileColumns).R else meshColumns
-    val spad_row_t = if (use_mx_scaling) Vec(config.mxGeom.lanesPerBeat/tileColumns, Vec(tileColumns, weightTypeProjected))
+    val spad_row_t = if (use_mx_scaling) Vec(config.mxGeom.lanesPerBeat/tileColumns, Vec(tileColumns, weightStorageType))
                      else Vec(meshColumns, Vec(tileColumns, inputType))
     val numChunks = MxGeom.accChunks(use_mx_scaling, accCols*tileColumns)
     val chunk_t = if (use_mx_scaling) Vec((accCols*tileColumns)/numChunks, Vec(tileColumns, accType))
@@ -409,7 +379,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       }
 
       // Accumulator ports
-      val acc_scale_t_size = 1
       val acc = new Bundle {
         val read_req = Flipped(Vec(acc_banks, Decoupled(new AccumulatorReadReq(
           acc_bank_entries, accType, acc_scale_t.asInstanceOf[V]
@@ -420,7 +389,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           if (config.use_mx_scaling) Vec((accCols*tileColumns)/numChunks, Vec(tileColumns, accType)) else Vec(meshColumns, Vec(tileColumns, accType))
         )))
         val write = Flipped(Vec(acc_banks, Decoupled(new AccumulatorWriteReq(
-          acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))
+          acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType)), config.use_mx_scaling
         ))))
       }
 
@@ -456,11 +425,10 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         rDataType = spad_row_t,
         chunk_t = chunk_t
       )
-      val weight_mx_format = Input(UInt(2.W))
       val act_mx_format = Input(UInt(2.W))
       val output_mx_format = Input(UInt(2.W))
       val mx_fp8_altfmt = Input(Bool())
-      val mx_lut_en = Input(Bool())   // E4M3-quad requant output (4-bit LUT) vs E4M3-single (8-bit): format0/altfmt0 split by lut_en
+      val mx_lut_en = Input(Bool())   // format0/altfmt0 output: 4-bit LUT (E4M3-quad) vs 8-bit (E4M3-single)
       val mx_multi_elem = Input(Bool())   // WEIGHT (output-column) throughput: 2 cols/lane iff quad weight
       val mx_multi_elem_act = Input(Bool())   // ACTIVATION (output-row) throughput: 2 rows/lane iff quad act
       val enable_MXQuant = Input(Bool()) //determines if mxrequantizer gets used
@@ -472,8 +440,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       val vpu_pending_banks = Output(UInt(sp_banks.W))
       // SPAD_REQUANT code rows: lowest write priority, backpressured
       val sr_write = Option.when(spad_requant_en)(Flipped(Decoupled(new SpadRowWrite(log2Ceil(sp_banks * sp_bank_entries), spad_w))))
-      // has_loop_retire_counter: store data still on its way out (write queues, DRAM / SMEM writes awaiting their acks,
-      // requant / store rows not yet written to a bank); loads are not counted
+      // has_loop_retire_counter: store data still on its way out (queues, unacked writes, unwritten rows); loads not counted
       val store_drain_busy = Option.when(has_loop_retire_counter)(Output(Bool()))
     })
 
@@ -524,7 +491,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     when (write_norm_q.io.deq.bits.laddr.is_garbage() || !write_norm_q.io.deq.bits.laddr.is_acc_addr) {
       write_scale_q.io.enq <> write_norm_q.io.deq
     }
-   
+
     // Non-acc or garbage can immediately fire between scale_q and issue_q
     when (write_scale_q.io.deq.bits.laddr.is_garbage() || !write_scale_q.io.deq.bits.laddr.is_acc_addr) {
       write_issue_q.io.enq <> write_scale_q.io.deq
@@ -541,23 +508,22 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       has_nonlinear_activations,
       has_normalizations, config.use_mx_scaling
     ))
-    // DIM=8 widen: acc_w uses block_cols (=meshColumns, un-widened) so acc_w/numChunks would be half a chunk
-    // (256b) and truncate the 512b chunk -> base the write width on accCols (the widened row). Byte-identical for
-    // DIM16/32 (accCols==meshColumns there); DIM8 gets the full chunk width so the bf16 store walks all 8 beats.
+    // write width from accCols (the widened row), so DIM=8 BF16 stores walk all 8 beats; same as acc_w at DIM16/32
     val acc_write_w = if (use_mx_scaling) acc_chunk_w else acc_w
     val requant_fp8_beats = (config.requantizer.map(_ => config.mxGeom.lanesPerBeat * 8).getOrElse(2*spad_w) / spad_w) max 1
     // spad rows per acc row on the non-subbyte acc -> spad store path (non-MX: the scaled row is exactly one spad row)
     val acc_spad_beats = if (use_mx_scaling) requant_fp8_beats else 1
     val writeData = Wire(Valid(UInt((spad_w max acc_write_w).W)))
-    writeData.valid := write_issue_q.io.deq.bits.laddr.is_garbage() || (acc_scale_unit.io.out.bits.is_garbage)
+    // FP4/FP6 first beat of a pair: dequeue its store entry without writing
+    val out_garbage = acc_scale_unit.io.out.valid && acc_scale_unit.io.out.bits.fromDMA && acc_scale_unit.io.out.bits.is_garbage
+    writeData.valid := write_issue_q.io.deq.bits.laddr.is_garbage()
     writeData.bits := DontCare
     val fullAccWriteData = Wire(UInt(acc_write_w.W))
     fullAccWriteData := DontCare
 
-    // Write the requant FP8 output (256b = 2 bank rows) into the internal scratchpad banks via a
-    // bio.write source; the 2-beat bank write asserts requant_spad_consume on its 2nd beat.
-    // Non-MX builds reuse the same bank-write path for STORE_SPAD: one acc row, scaled to inputType, = one spad row.
-    val requant_to_spad = if (ex_write_to_spad) {
+    // requant FP8 output -> spad banks via a bio.write source (2-beat write, consume on beat 2); non-MX STORE_SPAD
+    // uses the same path, one acc row per spad row
+    val requant_to_spad = if (ex_write_to_spad && !config.use_tl_ext_mem) {
       write_issue_q.io.deq.valid && write_issue_q.io.deq.bits.dest.asBool &&
         write_issue_q.io.deq.bits.laddr.is_acc_addr && !write_issue_q.io.deq.bits.laddr.is_garbage()
     } else false.B
@@ -575,25 +541,18 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         write_issue_q.io.deq.bits.laddr.is_acc_addr &&
         write_issue_q.io.deq.bits.laddr.read_full_acc_row
     }
-    // E5M2 (code0/altfmt1) and E4M3-quad (code0/altfmt0 + lut_en) emit 4-bit LUT indices; only
-    // E4M3-single (code0/altfmt0/!lut_en) is the wide 8-bit output. out_code0_4bit groups the two nibble outputs.
-    val out_e5m2_4bit      = (io.output_mx_format === 0.U) && io.mx_fp8_altfmt
-    val out_e4m3_quad_4bit = (io.output_mx_format === 0.U) && !io.mx_fp8_altfmt && io.mx_lut_en
-    val out_code0_4bit     = out_e5m2_4bit || out_e4m3_quad_4bit
-    val writeData_is_fp8 = !write_issue_q.io.deq.bits.laddr.is_garbage() && (io.output_mx_format === 0.U) && !io.mx_fp8_altfmt && !io.mx_lut_en
-    val writeData_is_fp4orfp6 = !write_issue_q.io.deq.bits.laddr.is_garbage() && (io.output_mx_format === 2.U || io.output_mx_format === 1.U || out_code0_4bit)
     val writeData_is_all_zeros = write_issue_q.io.deq.bits.laddr.is_garbage()
 
-    writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && !write_issue_q.io.deq.bits.dest.asBool && (!acc_scale_unit.io.out.bits.is_garbage)
+    writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && !write_issue_q.io.deq.bits.dest.asBool && !out_garbage
     writer.module.io.req.bits.vaddr := write_issue_q.io.deq.bits.vaddr
     writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
     writer.module.io.req.bits.len := (if (use_mx_scaling) {
       // Spad-source (bf16 drain or requant codes): exactly len spad elements, no overrun.
       Mux(!write_issue_q.io.deq.bits.laddr.is_acc_addr,
-        write_issue_q.io.deq.bits.len * (inputTypeProjected.getWidth / 8).U,
+        write_issue_q.io.deq.bits.len * (inputStorageType.getWidth / 8).U,
           Mux( writeData_is_full_width,
             write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U,
-            write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U))
+            write_issue_q.io.deq.bits.len * (weightStorageType.getWidth / 4).U))
     } else {
       Mux(writeData_is_full_width,
         write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U,
@@ -607,20 +566,20 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     writer.module.io.req.bits.block := write_issue_q.io.deq.bits.block
     writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
     writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
-    writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en && (!acc_scale_unit.io.out.bits.is_garbage)
+    writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en && !out_garbage
 
     write_issue_q.io.deq.ready := Mux(requant_to_spad,
       requant_spad_consume,
       writer.module.io.req.ready && spad_writer.map(_.module.io.req.ready).getOrElse(true.B)) && writeData.valid
 
-    val vaddr_offset = (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.weightTypeProjected.getWidth / 8).U).asUInt
+    val vaddr_offset = (write_issue_q.io.deq.bits.vaddr.asUInt << log2Ceil(config.DIM * config.weightStorageType.getWidth / 8).U).asUInt
     spad_writer.foreach { spad_writer =>
-      spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool && (!acc_scale_unit.io.out.bits.is_garbage)
+      spad_writer.module.io.req.valid := write_issue_q.io.deq.valid && writeData.valid && write_issue_q.io.deq.bits.dest.asBool && !out_garbage
       spad_writer.module.io.req.bits.vaddr := config.tl_ext_mem_base.U | vaddr_offset
       spad_writer.module.io.req.bits.physical := write_issue_q.io.deq.bits.dest
       spad_writer.module.io.req.bits.len := (if (use_mx_scaling) {
         Mux(writeData_is_full_width,
-          write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U, write_issue_q.io.deq.bits.len * (weightTypeProjected.getWidth / 4).U)
+          write_issue_q.io.deq.bits.len * (accType.getWidth / 16).U, write_issue_q.io.deq.bits.len * (weightStorageType.getWidth / 4).U)
       } else {
         Mux(writeData_is_full_width,
           write_issue_q.io.deq.bits.len * (accType.getWidth / 8).U, write_issue_q.io.deq.bits.len * (inputType.getWidth / 8).U)
@@ -632,7 +591,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       spad_writer.module.io.req.bits.block := write_issue_q.io.deq.bits.block
       spad_writer.module.io.req.bits.status := write_issue_q.io.deq.bits.status
       spad_writer.module.io.req.bits.pool_en := write_issue_q.io.deq.bits.pool_en
-      spad_writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en && (!acc_scale_unit.io.out.bits.is_garbage)
+      spad_writer.module.io.req.bits.store_en := write_issue_q.io.deq.bits.store_en && !out_garbage
     }
 
     io.dma.write.resp.valid := false.B
@@ -656,16 +615,16 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     zero_writer.io.req.bits.block_stride := io.dma.read.req.bits.block_stride
     zero_writer.io.req.bits.tag := io.dma.read.req.bits
 
-    val zero_writer_pixel_repeater = Module(new PixelRepeater(weightTypeProjected, local_addr_t, block_cols, aligned_to, new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), passthrough = !has_first_layer_optimizations))
+    val zero_writer_pixel_repeater = Module(new PixelRepeater(weightStorageType, local_addr_t, block_cols, aligned_to, new ScratchpadMemReadRequest(local_addr_t, mvin_scale_t_bits), passthrough = !has_first_layer_optimizations))
     zero_writer_pixel_repeater.io.req.valid := zero_writer.io.resp.valid
-    zero_writer_pixel_repeater.io.req.bits.in := 0.U.asTypeOf(Vec(block_cols, weightTypeProjected))
+    zero_writer_pixel_repeater.io.req.bits.in := 0.U.asTypeOf(Vec(block_cols, weightStorageType))
     zero_writer_pixel_repeater.io.req.bits.laddr := zero_writer.io.resp.bits.laddr
     zero_writer_pixel_repeater.io.req.bits.len := zero_writer.io.resp.bits.tag.cols
     zero_writer_pixel_repeater.io.req.bits.pixel_repeats := zero_writer.io.resp.bits.tag.pixel_repeats
     zero_writer_pixel_repeater.io.req.bits.last := zero_writer.io.resp.bits.last
     zero_writer_pixel_repeater.io.req.bits.tag := zero_writer.io.resp.bits.tag
     zero_writer_pixel_repeater.io.req.bits.mask := {
-      val n = weightTypeProjected.getWidth/ 8
+      val n = weightStorageType.getWidth/ 8
       val mask = zero_writer.io.resp.bits.mask
       val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
       expanded
@@ -762,7 +721,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
 
     val zero_writer_bytes_read = Mux(zero_writer_pixel_repeater.io.resp.bits.laddr.is_acc_addr,
       zero_writer_pixel_repeater.io.resp.bits.tag.cols * (accType.getWidth / 8).U,
-      zero_writer_pixel_repeater.io.resp.bits.tag.cols * (weightTypeProjected.getWidth / 8).U)
+      zero_writer_pixel_repeater.io.resp.bits.tag.cols * (weightStorageType.getWidth / 8).U)
 
     // For DMA read responses, mvin_scale gets first priority, then mvin_scale_acc, and then zero_writer
     io.dma.read.resp.valid := mvin_scale_finished || mvin_scale_acc_finished || zero_writer_finished
@@ -805,11 +764,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       )) }
       val bank_ios = VecInit(banks.map(_.io))
 
-      // VPUs: reads take the bank's SRAM read port (fixed 1-cycle latency); the RS runs two VPU commands at once only
-      // when they read disjoint banks, so each bank's VPU read port serves at most one VPU a cycle (asserted). Writes
-      // go through a small queue per VPU and win their bank over every other writer; two VPUs writing one bank in a
-      // cycle take turns (the other's queue holds it), and a VPU stops issuing reads before its queue can overflow.
-      // Ordering against other spad traffic is the RS's (row ranges / read banks).
+      // VPUs: reads use the bank's SRAM read port (the RS keeps concurrent VPU reads on disjoint banks); writes go
+      // through a per-VPU queue and win their bank; ordering vs other spad traffic is the RS's
       val vpu_wr_bank = WireDefault(VecInit(Seq.fill(sp_banks)(false.B)))
       val vpu_wr_row = WireDefault(VecInit(Seq.fill(sp_banks)(0.U(log2Ceil(sp_bank_entries).W))))
       val vpu_wr_data = WireDefault(VecInit(Seq.fill(sp_banks)(0.U(spad_w.W))))
@@ -875,8 +831,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         when (exread) {
           bio.read.req.bits.addr := ex_read_req.bits.addr
           bio.read.req.bits.fromDMA := false.B
-          bio.read.req.bits.weight_mx_format := ex_read_req.bits.weight_mx_format
-          bio.read.req.bits.input_mx_format := ex_read_req.bits.input_mx_format
           // Carry the operand-kind tag from the ExecuteController read request.
           bio.read.req.bits.read_a := ex_read_req.bits.read_a
           bio.read.req.bits.read_d := ex_read_req.bits.read_d
@@ -884,8 +838,6 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         }.elsewhen (dmawrite) {
           bio.read.req.bits.addr := write_dispatch_q.bits.laddr.sp_row()
           bio.read.req.bits.fromDMA := true.B
-          bio.read.req.bits.weight_mx_format := ex_read_req.bits.weight_mx_format  // Default FP8 for DMA
-          bio.read.req.bits.input_mx_format := ex_read_req.bits.input_mx_format
           bio.read.req.bits.read_a := false.B  // DMA reads are not deproj operand reads
           bio.read.req.bits.read_d := false.B
           bio.read.req.bits.lut_halves := 0.U
@@ -917,7 +869,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         dma_read_pipe.io.deq.ready := writer.module.io.req.ready &&
           spad_writer.map(_.module.io.req.ready).getOrElse(true.B) &&
           (!write_issue_q.io.deq.bits.laddr.is_acc_addr && write_issue_q.io.deq.bits.laddr.sp_bank() === i.U && // I believe we don't need to check that write_issue_q is valid here, because if the SRAM's resp is valid, then that means that the write_issue_q's deq should also be valid
-            write_issue_q.io.deq.valid) && !write_issue_q.io.deq.bits.laddr.is_garbage() 
+            write_issue_q.io.deq.valid) && !write_issue_q.io.deq.bits.laddr.is_garbage()
         when (dma_read_pipe.io.deq.fire) {
           writeData.valid := true.B
           writeData.bits := dma_read_pipe.io.deq.bits.data
@@ -926,11 +878,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         io.srams.read(i).resp <> ex_read_pipe.io.deq
       }
 
-      // Requant output -> consecutive bank rows. Two write slots let a fresh beat0 and a draining beat
-      // co-issue to different banks (DIM16/32, requant_fp8_beats=2). DIM=8 (numOutputLanes=32 ->
-      // requant_fp8_beats=4) instead holds acc_scale out and walks all 4 beats over slot0.
-      // beat counter for the requantwrite path; must hold last_beat = max(bf16 beats, requant_fp8_beats)-1.
-      // DIM=8 widen bf16 has acc_write_w/spad_w=8 beats (last_beat=7) -> needs 3 bits; DIM16/32 = 2 bits (unchanged).
+      // requant output -> consecutive bank rows; two write slots co-issue to different banks (DIM16/32), DIM=8 walks
+      // 4 beats over slot0. Beat counter covers max(bf16 beats, requant_fp8_beats) - 1
       val requant_half = RegInit(0.U(log2Ceil((acc_write_w/spad_w) max requant_fp8_beats).W))
       val requant_dst  = WireInit(0.U.asTypeOf(local_addr_t))
       requant_dst.data := write_issue_q.io.deq.bits.vaddr
@@ -946,11 +895,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // Subbyte bank-write slot
       val sbw0_valid = WireDefault(false.B); val sbw0_bank = WireDefault(requant_dst_bank)
       val sbw0_addr  = WireDefault(requant_dst_row); val sbw0_data = WireDefault(0.U(spad_w.W))
-      // SUBBYTE (fp8 code) store: the requant output FREE-RUNS (a fresh 256-bit row every ~2-3 cycles) but the
-      // serial N-beat drain (N banks-rows in one bank) needs ~N cycles, so a single latch drops rows produced mid-
-      // drain. Buffer each valid row (codes + dst) in a Queue; the store drains from the stable Queue head. When the
-      // Queue fills, enq.ready=false backpressures acc_scale out.ready -> the requant Pipeline -> the acc read, so
-      // the requant stalls instead of dropping. (Generalizes DIM16's 2-beat latch to N beats WITH buffering.)
+      // subbyte store: the requant output free-runs faster than the N-beat drain, so rows queue here; a full queue
+      // backpressures the requantizer and the acc read
       val nbeats = requant_fp8_beats
       val sb_tiled = write_issue_q.io.deq.bits.reuse_tiled   // all subbyte formats: beat b lands b tile-rows (16) below
       // Depth gives headroom for the read->enqueue pipeline in flight when the read throttle trips (below).
@@ -961,9 +907,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val bank  = UInt(requant_dst_bank.getWidth.W)
         val tiled = Bool()
       }, requant_q_depth))
-      // One store command (write_issue_q vaddr) covers multiple requant rows (2 at DIM=8: the base spans
-      // 2*nbeats spad rows). Give each row within a command its own dst = base + row_idx*nbeats, so consecutive
-      // rows don't overwrite the base. row_idx resets when the command base changes.
+      // rows within one store command get dst = base + row_idx*nbeats; row_idx resets on a new base
       val enq_cmd_base = RegInit(0.U(requant_dst_row.getWidth.W))
       val enq_row_idx  = RegInit(0.U(8.W))
       val is_new_cmd   = requant_dst_row =/= enq_cmd_base
@@ -977,8 +921,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       requant_q.io.enq.bits.row   := requant_dst_row + this_row_idx * nbeats.U
       requant_q.io.enq.bits.bank  := requant_dst_bank
       requant_q.io.enq.bits.tiled := sb_tiled
-      // consume acc_scale out (and advance write_issue_q) only when the row is buffered; if the Queue is full this
-      // is false -> backpressure. Garbage cycles consume via requant_garbage below.
+      // consume acc_scale out only once the row is queued (backpressure); garbage consumes via requant_garbage
       when (requant_subbyte && requant_valid_fire) { requant_spad_consume := requant_q.io.enq.ready }
       // Throttle the acc read while the Queue lacks headroom for the read->enqueue pipeline in flight.
       requant_read_stall := requant_to_spad && requant_subbyte && (requant_q.io.count >= (requant_q_depth/2).U)
@@ -1003,10 +946,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val dec = requant_q.io.deq.fire && requant_q.io.deq.bits.bank === i.U
         c := c + inc.asUInt - dec.asUInt
       }
-      // + the destination bank of every scratchpad store whose data is still between its acc read and its spad
-      // write: an acc-source store retires at its acc read (io.dma.write.resp), before the rows land. Counted from
-      // entering write_norm_q to leaving write_issue_q (a requant/BF16 store leaves only after its last bank beat).
-      // A DRAM store (dest 0) never lands in the scratchpad.
+      // + the destination bank of every spad store between its acc read and its last bank write (write_norm_q in to
+      // write_issue_q out); DRAM stores never land in the scratchpad
       def store_bank_oh(r: ScratchpadMemWriteRequest): UInt = {
         val la = WireInit(0.U.asTypeOf(local_addr_t))
         la.data := r.vaddr
@@ -1051,10 +992,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           !((mvin_scale_pixel_repeater.io.resp.valid && mvin_scale_pixel_repeater.io.resp.bits.last) || (mvin_scale_acc_out.valid && mvin_scale_acc_out.bits.last)) &&
           bio.write.ready
 
-        // Source directly from acc_scale_unit.io.out (registered), not writeData, to avoid a comb cycle
-        // through requant_spad_consume. Data written verbatim, keeping the mesh-input interleaved format.
-        // BF16 (non-requant) and non-subbyte fp8 drain here (acc_scale out is held, so the direct requant_half
-        // walk is safe). Subbyte fp8 codes use the latched drain above (sbw0) because the requant output free-runs.
+        // source acc_scale_unit.io.out (registered) to avoid a comb loop through requant_spad_consume; BF16 and
+        // non-subbyte FP8 drain here, subbyte codes use the queued drain above
         val requantwrite = requant_to_spad && !requant_subbyte && acc_scale_unit.io.out.valid &&
           acc_scale_unit.io.out.bits.fromDMA && !acc_scale_unit.io.out.bits.is_garbage &&
           (requant_dst_bank === i.U) && bio.write.ready
@@ -1092,8 +1031,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           // DIM32 single-weight: beats = the expander's len (4-B units) in DIM-byte spad rows (half for a partial chunk)
           val len_last  = ((write_issue_q.io.deq.bits.len << 2) >> log2Ceil(block_cols)).asUInt - 1.U
           val single_w  = !write_issue_q.io.deq.bits.mx_multi_elem && !write_issue_q.io.deq.bits.mx_multi_elem_act
-          // act-quad x wei-single half-full last pair: BF16 row shorter than the quad row
-          // (also 8-bit codes on paired rows: its 2nd beat would land on the next row's first columns)
+          // act-quad x wei-single half-full last pair (and paired-row 8-bit codes): row shorter than the quad row
           val byte_codes_w = io.output_mx_format === 0.U && !io.mx_fp8_altfmt && !io.mx_lut_en
           val half_pair = (requant_bf16 || byte_codes_w) && write_issue_q.io.deq.bits.mx_multi_elem &&
                           write_issue_q.io.deq.bits.mx_multi_elem_act && write_issue_q.io.deq.bits.len < config.mxGeom.R.U
@@ -1125,8 +1063,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.mask := DontCare
         }
       }
-      // Garbage cycle: consume the garbage out (+dequeue). Subbyte consume is asserted per-path above
-      // (beat0 for the 2-beat latch; last beat for the DIM=8 held walk).
+      // garbage cycle: consume and dequeue (subbyte consume is asserted per path above)
       when (requant_garbage) { requant_spad_consume := true.B }
       banks
     }
@@ -1148,38 +1085,35 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
     acc_norm_unit_in.bits.cmd := write_norm_q.io.deq.bits.laddr.norm_cmd
     acc_norm_unit_in.bits.acc_read_resp := DontCare
 
-   
+
 
     acc_scale_unit.io.mx_req_io <> io.mx_req_io
-   
+
     val acc_waiting_to_be_scaled = write_scale_q.io.deq.valid &&
       !write_scale_q.io.deq.bits.laddr.is_garbage() &&
       write_scale_q.io.deq.bits.laddr.is_acc_addr &&
       write_issue_q.io.enq.ready
-    
+
     acc_scale_unit.io.output_mx_format :=  io.output_mx_format
     acc_scale_unit.io.mx_fp8_altfmt := io.mx_fp8_altfmt
     acc_norm_unit_out.ready := acc_scale_unit.io.in.ready && acc_waiting_to_be_scaled
     acc_scale_unit.io.in.valid := acc_norm_unit_out.valid && acc_waiting_to_be_scaled
     acc_scale_unit.io.in.bits  := acc_norm_unit_out.bits
-    
+
     when (acc_scale_unit.io.in.fire) {
       write_issue_q.io.enq <> write_scale_q.io.deq
     }
 
     acc_scale_unit.io.out.ready := false.B
-    
+
     val dma_resp_ready =
       Mux(requant_to_spad,
         requant_spad_consume,
         writer.module.io.req.ready && spad_writer.map(_.module.io.req.ready).getOrElse(true.B)) &&
         write_issue_q.io.deq.bits.laddr.is_acc_addr &&
         !write_issue_q.io.deq.bits.laddr.is_garbage()
-    val dma_read_resp_wire = WireDefault(dma_resp_ready)
-    dontTouch(dma_read_resp_wire)
     when (acc_scale_unit.io.out.bits.fromDMA && dma_resp_ready) {
-      // Send the acc-scale result into the DMA. For requant_to_spad, dma_resp_ready = the bank
-      // write's 2nd-beat consume, so out is consumed only once both bank rows are written.
+      // acc-scale result -> DMA; for requant_to_spad, consumed on the bank write's 2nd beat
       acc_scale_unit.io.out.ready := true.B
       writeData.valid := acc_scale_unit.io.out.valid
       writeData.bits  := acc_scale_unit.io.out.bits.data.asUInt
@@ -1216,8 +1150,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
       // Getting the output of the bank that's about to be issued to the writer
       val bank_issued_io = bank_ios(write_issue_q.io.deq.bits.laddr.acc_bank())
 
-      // ONE ScalingFactorMem shared by all acc banks: its i/j/k counters advance on a write to any bank, so
-      // scale reads follow global compute order across banks (one bank writes per cycle).
+      // one ScalingFactorMem for all acc banks: counters follow global compute order
       val shared_scale_mem = config.scale_mem.filter(_ => config.use_mx_scaling).map { conf =>
         val sm = Module(new ScalingFactorMem(
           depth = conf.depth,
@@ -1236,7 +1169,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           case (dst, src) =>
             dst.valid := src.valid
             dst.bits  := src.bits
-            dst.bits.addr := src.bits.addr(12, 0)   // keep the old per-bank port's 13-bit address
+            dst.bits.addr := src.bits.addr(12, 0)   // per-bank port takes a 13-bit address
             src.ready := dst.ready
         }
         sm.io.dataType := io.act_mx_format
@@ -1264,13 +1197,9 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.scale_rd_resp.get.valid := sm.io.read_resp.valid
           bio.scale_rd_resp.get.bits  := sm.io.read_resp.bits
         }
-        bio.dataType_out := io.act_mx_format
         bio.mx_multi_elem := io.mx_multi_elem
         bio.mx_multi_elem_act := io.mx_multi_elem_act
         bio.mx_fp8_altfmt := io.mx_fp8_altfmt
-
-        bio.read.req.bits.activation_mx_format := io.act_mx_format
-        bio.read.req.bits.weight_mx_format := io.weight_mx_format
 
         if (use_shared_ext_mem) {
           io.ext_mem.get.acc(i) <> bio.ext_mem.get
@@ -1288,11 +1217,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         val dmawrite = write_dispatch_q.valid && write_norm_q.io.enq.ready &&
           !write_dispatch_q.bits.laddr.is_garbage() &&
           write_dispatch_q.bits.laddr.is_acc_addr && write_dispatch_q.bits.laddr.acc_bank() === i.U &&
-          // Subbyte requant: throttle the acc read to the drain rate. The requant pipeline is fixed-latency
-          // (cannot stall mid-flight), and at DIM=8 the 4-beat serial drain is slower than the 2-cycle
-          // produce rate, so an un-throttled read overflows requant_q and drops correct outputs. Hold reads
-          // (StoreController stalls at a physrow boundary) while the Queue lacks headroom for the in-flight
-          // pipeline. No-op at DIM>=16 where the drain keeps up and the Queue stays shallow.
+          // subbyte requant: throttle the acc read to the drain rate (the pipeline cannot stall; matters at DIM=8)
           !requant_read_stall
 
         bio.read.req.valid := exread || dmawrite
@@ -1327,8 +1252,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
             write_norm_q.io.enq.valid := true.B
             write_norm_q.io.enq.bits := write_dispatch_q.bits
             write_dispatch_q.ready := true.B
-            // FP8: StC fires one command per chunk, so every command gets a resp.
-            // FP4/FP6: WRE fires two sub-commands per mvout; resp fires only on the last.
+            // FP8: one resp per StC chunk command; FP4/FP6: two sub-commands per mvout, resp on the last
             when (!write_dispatch_q.bits.mx_multi_elem_act || write_dispatch_q.bits.chunk_id === (numChunks - 1).U) {
               io.dma.write.resp.valid := true.B
             }
@@ -1413,7 +1337,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
         bio.write.valid := false.B
         bio.write.bits.offset := DontCare
         bio.write.bits.scale_halves := 0.U
-        bio.write.bits.scale_pos := 0.U.asTypeOf(new MxScalePos)
+        bio.write.bits.scale_pos.foreach(_ := 0.U.asTypeOf(new MxScalePos))
+        bio.write.bits.scale_en.foreach(_ := false.B)
         bio.write.bits.wm.multi := io.mx_multi_elem   // non-ex writes: the live mode
         bio.write.bits.wm.multi_act := io.mx_multi_elem_act
         bio.write.bits.wm.dtype := io.act_mx_format
@@ -1437,7 +1362,8 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.bits.mask := io.acc.write(i).bits.mask
           bio.write.bits.offset := io.acc.write(i).bits.offset
           bio.write.bits.scale_halves := io.acc.write(i).bits.scale_halves
-          bio.write.bits.scale_pos := io.acc.write(i).bits.scale_pos
+          (bio.write.bits.scale_pos zip io.acc.write(i).bits.scale_pos).foreach { case (o, p) => o := p }
+          (bio.write.bits.scale_en zip io.acc.write(i).bits.scale_en).foreach { case (o, p) => o := p }
           bio.write.bits.wm := io.acc.write(i).bits.wm
         }.elsewhen (dmaread && !spad_last && !consecutive_write_block) {
           bio.write.valid := true.B
@@ -1449,7 +1375,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.bits.mask :=
             Mux(from_mvin_scale,
               {
-                val n = accType.getWidth / weightTypeProjected.getWidth
+                val n = accType.getWidth / weightStorageType.getWidth
                 // val mask = mvin_scale_out.bits.tag.mask take ((spad_w / (aligned_to * 8)) max 1)
                 val mask = mvin_scale_pixel_repeater.io.resp.bits.mask take ((spad_w / (aligned_to * 8)) max 1)
                 val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
@@ -1466,7 +1392,7 @@ class Scratchpad[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig[T, 
           bio.write.valid := true.B
           bio.write.bits.data := 0.U.asTypeOf(acc_row_t)
           bio.write.bits.mask := {
-            val n = accType.getWidth / weightTypeProjected.getWidth
+            val n = accType.getWidth / weightStorageType.getWidth
             val mask = zero_writer_pixel_repeater.io.resp.bits.mask
             val expanded = VecInit(mask.flatMap(e => Seq.fill(n)(e)))
             expanded

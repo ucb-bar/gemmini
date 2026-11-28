@@ -16,7 +16,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
+    val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries, config.use_mx_scaling)))
 
     val dma = new ScratchpadWriteMemIO(local_addr_t, accType.getWidth, acc_scale_t_bits)
 
@@ -28,7 +28,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
 
     val enable_wide_spad_write = Input(Bool())
 
-    val loop_bound_j = Input(UInt(8.W))
+    val loop_bound_j = Input(UInt(9.W))
 
     val activation_mx_type = Input(UInt(2.W))
     val mx_multi_elem = Input(Bool())   // WEIGHT (output-column) throughput
@@ -51,7 +51,7 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val block_rows = meshRows * tileRows
   val block_stride = block_rows.U
   val block_cols = meshColumns * tileColumns
-  val max_blocks = (dma_maxbytes / (block_cols * weightTypeProjected.getWidth / 8)) max 1
+  val max_blocks = (dma_maxbytes / (block_cols * weightStorageType.getWidth / 8)) max 1
 
   val activation = RegInit(0.U(Activation.bitwidth.W)) // TODO magic number
   val igelu_qb = RegInit(0.U.asTypeOf(accType))
@@ -104,12 +104,12 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val cols = mvout_rs2.num_cols
   // shared-layout single x quad acc source: num_rows counts C rows (2 per acc row; odd -> last acc row's 2nd row skipped)
   // shared-layout overrides apply only to acc-source stores (spad-source mvouts keep the live mode)
-  val st_shared = Mux(cmd.bits.from_matmul_fsm, cmd.bits.mx.shared, io.shared_acc)   // loop stores: their own loop's
+  val st_shared = Mux(cmd.bits.from_matmul_fsm, cmd.bits.mxMode.shared, io.shared_acc)   // loop stores: their own loop's
   val shared_src = st_shared && localaddr.is_acc_addr
   // the store's own mode tag: weight quad -> 2 cols/lane, act quad -> 2 rows/lane; act-quad x wei-single stores as
   // quad x quad over col-tile pairs, single x quad over row-tile pairs
-  val qw = MxCmdMode.quad(cmd.bits.mx.wgt)
-  val qa = MxCmdMode.quad(cmd.bits.mx.act)
+  val qw = MxCmdMode.quad(cmd.bits.mxMode.wgt)
+  val qa = MxCmdMode.quad(cmd.bits.mxMode.act)
   val t_pair = qa && !qw
   val t_ipair = qw && !qa
   val multi = qw || t_pair || shared_src
@@ -139,6 +139,18 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
   val config_ocols = config_mvout_rs1.ocols
   val config_upad = config_mvout_rs1.upad
   val config_lpad = config_mvout_rs1.lpad
+
+  val config_norm_rs1 = cmd.bits.cmd.rs1.asTypeOf(new ConfigNormRs1(accType.getWidth min 32))
+  val config_norm_rs2 = cmd.bits.cmd.rs2.asTypeOf(new ConfigNormRs2(accType.getWidth min 32))
+  val config_stats_id = config_norm_rs1.norm_stats_id
+  val config_activation_msb = config_norm_rs1.act_msb
+  val config_set_stats_id_only = config_norm_rs1.set_stats_id_only
+  val config_iexp_q_const_type = config_norm_rs1.q_const_type
+  val config_iexp_q_const = config_norm_rs1.q_const
+  val config_igelu_qb = config_norm_rs2.qb
+  val config_igelu_qc = config_norm_rs2.qc
+
+  assert(config_norm_rs1.cmd_type === config_mvout_rs1.cmd_type)
 
   val mstatus = cmd.bits.cmd.status
 
@@ -307,6 +319,17 @@ class StoreController[T <: Data : Arithmetic, U <: Data, V <: Data](config: Gemm
           cmd.ready := true.B
         }
         .elsewhen(config.has_normalizations.B && DoConfigNorm) {
+          when (!config_set_stats_id_only.asBool) {
+            igelu_qb := config_igelu_qb.asTypeOf(igelu_qb)
+            igelu_qc := config_igelu_qc.asTypeOf(igelu_qc)
+            when(config_iexp_q_const_type === 0.U) {
+              iexp_qln2 := config_iexp_q_const.asTypeOf(iexp_qln2)
+            }.elsewhen(config_iexp_q_const_type === 1.U) {
+              iexp_qln2_inv := config_iexp_q_const.asTypeOf(iexp_qln2_inv)
+            }
+            activation := Cat(config_activation_msb, activation(1, 0)) // TODO: magic number
+          }
+          norm_stats_id := config_stats_id
           cmd.ready := true.B
         }
         .elsewhen(DoStore && cmd_tracker.io.alloc.fire()) {

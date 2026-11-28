@@ -42,7 +42,6 @@ object GemminiISA {
   // MX (microscaling) DMA data-movement ISA — parity with the Spike model
   // (software/libgemmini/README.md funct table). Physical-only (bare-metal) addressing.
   val MX_LOAD_SCALES = 27.U     // rs1[39:0] DRAM addr, rs1[63:40] pitch; rs2[31:0] bytes/row, [32] sel, [45:33] dest, [53:46] rows, [54] gated
-  val MX_READ_SMEM   = 28.U     // drain outputs from spad/smem to DRAM
   val MX_LOAD_LUT    = 29.U     // DMA-load FP6 LUTs
   val MX_LUT_DISABLE = 30.U     // clear runtime LUT-usage flag (MX_LOAD_LUT sets it; default off)
   val LOOP_WS_CONFIG_SCALES = 31.U        // loop-integrated MX scales: rs1 = A-scale DRAM base, rs2 = B-scale base
@@ -56,7 +55,7 @@ object GemminiISA {
   val LOOP_WS_CONFIG_KMIX_A = 39.U // mixed-K loop, activation side: rs1 = A DRAM base of the plain (kmask 0) K-blocks
                                    // (E4M3-single, the loop's A stride); rs2[63:62] = their direct FP6 {direct, alt}
 
-  
+
   // rs1[2:0] values
   val CONFIG_EX = 0.U
   val CONFIG_LOAD = 1.U
@@ -83,26 +82,6 @@ object GemminiISA {
   // dataflow configuration
   //==========================================================================
   val GARBAGE_ADDR      = "hffffffff".U(32.W)
-  
-  val CONFIG_SCALE_MEM_RS1_ADDR_WIDTH = 33
-  val CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH = 16
-  val CONFIG_SCALE_MEM_READ_ACT_RS1_ADDR_WIDTH = 1
-  val CONFIG_SCALE_MEM_READ_W_RS1_ADDR_WIDTH = 1
-  val CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH = 9
-  val CONFIG_SCALE_MEM_SPACER_WIDTH = 64 - 2 - CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH*3 - CONFIG_SCALE_MEM_RS1_ADDR_WIDTH - CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH - CONFIG_SCALE_MEM_READ_W_RS1_ADDR_WIDTH - CONFIG_SCALE_MEM_READ_ACT_RS1_ADDR_WIDTH
-
-  class ConfigMxQuantRs1 extends Bundle {
-    val _spacer0 = UInt(CONFIG_SCALE_MEM_SPACER_WIDTH.W)
-    val mem_direction = UInt(1.W) // 0 for mvin, 1 for mvout
-    val scale_mem_read_act_sel = UInt(1.W) 
-    val scale_mem_read_w_sel = UInt(1.W) 
-    val scale_mem_counter_reset_flag = UInt(1.W) 
-    val loop_bound_i = UInt(CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH.W)
-    val loop_bound_j = UInt(CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH.W)
-    val loop_bound_k = UInt(CONFIG_SCALE_MEM_LOOP_BOUND_WIDTH.W)
-    val quant_lut_update_granularity = UInt(CONFIG_QUANT_UPDATE_RS1_ADDR_WIDTH.W)
-    val mem_address = UInt(CONFIG_SCALE_MEM_RS1_ADDR_WIDTH.W)
-  }
 
   val MVIN_RS2_ADDR_WIDTH = 32
   val MVIN_RS2_COLS_WIDTH = 16
@@ -241,8 +220,8 @@ object GemminiISA {
   val CONFIG_EX_RS1_A_TRANSPOSE_WIDTH = 1
   val CONFIG_EX_RS1_B_TRANSPOSE_WIDTH = 1
   val CONFIG_EX_RS1_INPUT_MX_FORMAT_WIDTH = 2
-  val CONFIG_EX_RS1_WEIGHT_MX_FORMAT_WIDTH = 2  
-  val CONFIG_EX_RS1_OUTPUT_MX_FORMAT_WIDTH = 2  
+  val CONFIG_EX_RS1_WEIGHT_MX_FORMAT_WIDTH = 2
+  val CONFIG_EX_RS1_OUTPUT_MX_FORMAT_WIDTH = 2
   val CONFIG_EX_RS1_A_STRIDE_WIDTH = 16
   val CONFIG_EX_RS1_ACC_SCALE_WIDTH = 32
 

@@ -1172,7 +1172,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
                 config_ex_rs1_t: ConfigExRs1, preload_rs1_t: PreloadRs, preload_rs2_t: PreloadRs,
                 compute_rs1_t: ComputeRs, compute_rs2_t: ComputeRs,
                 has_training_convs: Boolean, has_max_pool: Boolean, has_first_layer_optimizations: Boolean,
-                has_dw_convs: Boolean)
+                has_dw_convs: Boolean, has_mx: Boolean)
   (implicit p: Parameters) extends Module {
   val large_iterator_bitwidth = 16
   val small_iterator_bitwidth = 16 // 8
@@ -1182,8 +1182,8 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   val max_block_len_acc = (dma_max_bytes / (block_size * (acc_w / 8))) max 1
 
   val io = IO(new Bundle {
-    val in = Flipped(Decoupled(new GemminiCmd(reservation_station_size)))
-    val out = Decoupled(new GemminiCmd(reservation_station_size))
+    val in = Flipped(Decoupled(new GemminiCmd(reservation_station_size, has_mx)))
+    val out = Decoupled(new GemminiCmd(reservation_station_size, has_mx))
     val ld_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val st_completed = Input(UInt(log2Up(reservation_station_size+1).W))
     val ex_completed = Input(UInt(log2Up(reservation_station_size+1).W))
@@ -1248,7 +1248,7 @@ class LoopConv (block_size: Int, coreMaxAddrBits: Int, reservation_station_size:
   io.out.bits.rob_id := DontCare
   io.out.bits.from_matmul_fsm := Mux(loop_configured, false.B, cmd.bits.from_matmul_fsm)
   io.out.bits.from_conv_fsm := Mux(loop_configured, true.B, cmd.bits.from_conv_fsm)
-  io.out.bits.mx := cmd.bits.mx
+  (io.out.bits.mx zip cmd.bits.mx).foreach { case (o, i) => o := i }
   io.out.valid := Mux(loop_configured, unrolled_cmd.valid, cmd.valid && !is_loop_config_cmd && !is_loop_run_cmd)
 
   cmd.ready := Mux(is_loop_cmd, !loop_being_configured.configured, !loop_configured && io.out.ready)
@@ -1543,7 +1543,8 @@ object LoopConv {
     val mod = Module(new LoopConv(block_size, coreMaxAddrBits, rob_size, max_lds, max_exs, max_sts,
       max_addr, max_acc_addr, input_w, acc_w, dma_max_bytes,
       config_mvin_rs1_t, mvin_rs2_t, config_mvout_rs2_t, mvout_rs2_t, config_ex_rs1_t, preload_rs1_t, preload_rs2_t,
-      compute_rs1_t, compute_rs2_t, has_training_convs, has_max_pool, has_first_layer_optimizations, has_dw_convs))
+      compute_rs1_t, compute_rs2_t, has_training_convs, has_max_pool, has_first_layer_optimizations, has_dw_convs,
+      in.bits.mx.isDefined))
 
     mod.io.in <> in
     mod.io.ld_completed := ld_completed

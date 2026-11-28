@@ -14,9 +14,7 @@ case class GemminiScalingFactorMemConfig(
 ) {
   def depth: Int = (sizeInBytes / (subbankLineSizeInBytes) / numBanks).toInt
   def bankWidthBytes = subbankLineSizeInBytes * subbanksPerBank
-  def bankWidthBits = bankWidthBytes * 8
   def addrBits = log2Ceil(sizeInBytes)
-  def lineOffsetBits = log2Ceil(bankWidthBytes) 
 }
 
 // Lane count / output geometry come from MxGeom (DIM); BF16 in from the acc or SPAD_REQUANT only.
@@ -28,8 +26,7 @@ case class GemminiRequantizerConfig(
   pipelineLatency: Int = 2,
 )
 
-// Source floating-point format that the LUT projects into 4-bit indices.
-// Fixed at elaboration; defaults to FP6 so existing configs are unchanged.
+// Source format the LUT projects into 4-bit indices (elaboration-time, default FP6).
 sealed trait LutProjFormat
 case object LutFP6E3M2 extends LutProjFormat
 case object LutFP6E2M3 extends LutProjFormat
@@ -43,15 +40,10 @@ case class GemminiLUTConfig(
   raddrWidth: Int = 4,
   lutUpdateRegularityWidth: Int = 16,
   projFormat: LutProjFormat = LutFP6E3M2,
-  // Deprojected code width per operand for the mesh feed (0 = rdataWidth). For asymmetric builds whose
-  // two operands deproject to different widths (e.g. E5M2 act 8b x E3M2 wei 6b), set these so the
-  // deproject packs each operand at its own width. Storage stays rdataWidth-wide.
+  // per-operand deprojected code width for the mesh feed (0 = rdataWidth), for asymmetric builds
   actCodeWidth: Int = 0,
   weiCodeWidth: Int = 0,
-  // Nearest-finder formats the act_out projection must support at runtime. None -> the historical set implied
-  // by projFormat (LutFP8E4M3 = every format, LutFP8E5M2 = E5M2 + E3M2, FP6 formats = themselves). Set it
-  // (or let the Controller derive it from the operand MxConfig via restrictedTo) so a single-format build,
-  // e.g. E4M3-only, elaborates only its own finder.
+  // finder formats act_out must support (None: implied by projFormat); restricting it elaborates fewer finders
   finderFormats: Option[Seq[LutProjFormat]] = None,
   // Some(g): codebook granularity G fixed at elaboration (weight lanes hard-wired to their codebook); None = runtime G
   fixedG: Option[Int] = None,
@@ -87,8 +79,7 @@ case class GemminiLUTConfig(
   require(!isFp8Proj || rdataWidth == 8,
     "FP8 LUT projection requires rdataWidth == 8")
 
-  // Each LUT holds 16 entries (2^raddrWidth) of rdataWidth bits, so every write
-  // word must be exactly 16 * rdataWidth wide (96 for FP6, 128 for FP8).
+  // each LUT write word = 16 entries * rdataWidth (96 for FP6, 128 for FP8)
   require(numBits.forall(_ == 16 * rdataWidth),
     s"GemminiLUTConfig.numBits must each equal 16 * rdataWidth (= ${16 * rdataWidth}); got $numBits")
 
@@ -96,11 +87,9 @@ case class GemminiLUTConfig(
     (numEntries(table), numBits(table))
   }
 
-  def numTables = numBits.length
 }
 
-// A scale Put with a byte mask: the requantizer's [GN][M] scale stream writes a block column's unaligned end word
-// partially (the next column's stream writes the rest).
+// scale Put with a byte mask, for a block column's unaligned end word
 class ScalingFactorPutReq(addrWidth: Int, dataWidth: Int) extends ScalingFactorWriteReq(addrWidth, dataWidth) {
   val mask = UInt((dataWidth / 8).W)
 }
@@ -116,12 +105,6 @@ class ScalingFactorWriteReq(addrWidth: Int, dataWidth: Int) extends Bundle {
 
 
 class ScalingFactorCntl(max_block: Int) extends Bundle {
-  val counter_a = UInt(log2Up(max_block).W)
-  val counter_b = UInt(log2Up(max_block).W)
-  val fire_a = Bool()
-  val fire_b = Bool()
-  val baseAddress_act = UInt(32.W)
-  val baseAddress_w = UInt(32.W)
   val scale_mem_read_w_sel = UInt(1.W)
   val scale_mem_read_act_sel = UInt(1.W)
   val loop_bound_i = UInt(9.W)

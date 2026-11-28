@@ -29,10 +29,6 @@ case class MxFloat(expWidth: Int, sigWidth: Int, count: Int, isRecoded: Boolean 
 }
 
 object MxFloat {
-  // Operand descriptor carrying an explicit PE MxConfig (single-format / custom builds).
-  def withConfig(expWidth: Int, sigWidth: Int, count: Int, cfg: MxConfig): MxFloat =
-    MxFloat(expWidth, sigWidth, count, false, false, Some(cfg))
-
   // The PE build for an (act, wei) operand pair: the explicit config if present, else inferred from widths.
   def peConfig(act: MxFloat, wei: MxFloat): MxConfig = act.meshConfig.orElse(wei.meshConfig).getOrElse {
     if (act.expWidth >= 5 || wei.expWidth >= 5) MxConfig.mxGemminiE5M2
@@ -87,17 +83,11 @@ object MxFType {
   val S = new FType(8, 24)
   val D = new FType(11, 53)
   val BF16 = new FType(8, 8)
-  val E5M3 = new FType(5, 4)
-  val E4M4 = new FType(5, 4)
   val E4M3 = new FType(4, 4)
-  val E4M2 = new FType(4, 3)
   val E5M2 = new FType(5, 3)
-  val E2M1 = new FType(2, 2)
   val E3M1 = new FType(3, 2)
   val E2M3 = new FType(2, 4)
   val E3M2 = new FType(3, 3)
-  val E3M3 = new FType(3, 4)
-  val E8M7 = new FType(8, 8)
   val all = List(H, S, D)
 }
 
@@ -658,13 +648,15 @@ object Arithmetic {
         result
       }
 
-      // * and mac are unused for MxFloat (mac_mx is the MX datapath); these are pass-through stubs.
-      override def *(t: MxFloat): MxFloat = self
+      private def unsupported(op: String) = throw new UnsupportedOperationException(s"MxFloat: $op is not implemented (use mac_mx)")
 
-      override def mac(m1: MxFloat, m2: MxFloat): MxFloat = self
+      override def *(t: MxFloat): MxFloat = unsupported("*")
+
+      override def mac(m1: MxFloat, m2: MxFloat): MxFloat = unsupported("mac")
 
       override def +(t: MxFloat): MxFloat = {
         require(self.count == t.count)
+        require(!self.isRecoded && !t.isRecoded, "MxFloat + supports standard-format operands only")
         val sigA = self.sigWidth
         val expA = self.expWidth
         val sigB = t.sigWidth
@@ -673,15 +665,15 @@ object Arithmetic {
         val sig = sigA.max(sigB)
         val exp = expA.max(expB)
 
-        val sum = Wire(MxFloat(sig, exp, self.count))
+        val sum = Wire(MxFloat(exp, sig, self.count))
 
         val result = self.bits.asTypeOf(Vec(self.count, UInt((expA + sigA).W))).zipWithIndex.map { case (elem, i) =>
           val t_elem = t.bits.asTypeOf(Vec(t.count, UInt((expB + sigB).W)))(i)
 
-          val rec_elem = if (self.isRecoded) elem else recFNFromFN(expA, sigA, elem)
-          val rec_t = if (t.isRecoded) t_elem else recFNFromFN(expB, sigB, t_elem)
+          val rec_elem = recFNFromFN(expA, sigA, elem)
+          val rec_t = recFNFromFN(expB, sigB, t_elem)
 
-          // resize 
+          // resize
           val self_resizer = Module(new RecFNToRecFN(expA, sigA, exp, sig))
           self_resizer.io.in := rec_elem
           self_resizer.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
@@ -706,22 +698,24 @@ object Arithmetic {
           val muladder = Module(new MulAddRecFN(exp, sig))
           muladder.io.op := 0.U
           muladder.io.roundingMode := consts.round_near_even // consts.round_near_maxMag
-          muladder.io.detectTininess := consts.tininess_afterRounding 
+          muladder.io.detectTininess := consts.tininess_afterRounding
           muladder.io.a := t_rec_resized
           muladder.io.b := one_rec
           muladder.io.c := self_rec_resized
 
-          (if (self.isRecoded) muladder.io.out else fNFromRecFN(exp, sig, muladder.io.out))
-          
+          fNFromRecFN(exp, sig, muladder.io.out)
+
         }
         sum := VecInit(result).asTypeOf(sum)
         sum
       }
 
-      override def -(t: MxFloat): MxFloat = self
+      override def -(t: MxFloat): MxFloat = unsupported("-")
 
+      // PE OS-path shift; MX runs WS only, so it passes through
       override def >>(u: UInt): MxFloat = self
 
+      // DMA max-pool always elaborates this; pooling is unsupported for MxFloat
       override def >(t: MxFloat): Bool = false.B
 
       override def withWidthOf(t: MxFloat): MxFloat = {
@@ -749,6 +743,7 @@ object Arithmetic {
         }
       }
 
+      // PE OS path and AccumulatorScale elaborate this; MX values need no clipping
       override def clippedToWidthOf(t: MxFloat): MxFloat = self
 
       // Packed elements (count x (exp+sig[+1 recoded]) bits, sign = MSB of each): zero every negative one.
@@ -763,9 +758,9 @@ object Arithmetic {
       }
 
       override def zero: MxFloat = 0.U.asTypeOf(self)
-      override def identity: MxFloat = self
-      override def minimum: MxFloat = self
-      
+      override def identity: MxFloat = unsupported("identity")
+      override def minimum: MxFloat = unsupported("minimum")
+
     }
 
   }

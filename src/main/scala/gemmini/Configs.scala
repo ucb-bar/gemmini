@@ -23,10 +23,10 @@ object GemminiConfigs {
     inputType = SInt(8.W),
     weightType = SInt(8.W),
     accType = SInt(32.W),
-    
-    inputTypeProjected = SInt(8.W),
-    weightTypeProjected = SInt(8.W),
-    accTypeProjected = SInt(32.W),
+
+    inputStorageType = SInt(8.W),
+    weightStorageType = SInt(8.W),
+    accStorageType = SInt(32.W),
 
     spatialArrayInputType = SInt(8.W),
     spatialArrayWeightType = SInt(8.W),
@@ -37,21 +37,19 @@ object GemminiConfigs {
     tileColumns = 1,
     meshRows = 16,
     meshColumns = 16,
+
     // Spatial array PE options
     dataflow = Dataflow.BOTH,
-    
+
     // Scratchpad and accumulator
-    sp_capacity = CapacityInKilobytes(128),
-    acc_capacity = CapacityInKilobytes(32),
+    sp_capacity = CapacityInKilobytes(256),
+    acc_capacity = CapacityInKilobytes(64),
 
     sp_banks = 4,
     acc_banks = 2,
 
     sp_singleported = true,
     acc_singleported = false,
-
-    // MX scaling is the default; this is a non-MX (integer) config
-    use_mx_scaling = false,
 
     // DNN options
     has_training_convs = true,
@@ -176,9 +174,9 @@ object GemminiConfigs {
     inputType = DummySInt(8),
     weightType = DummySInt(8),
     accType = DummySInt(32),
-    inputTypeProjected = DummySInt(8),
-    weightTypeProjected = DummySInt(8),
-    accTypeProjected = DummySInt(32),
+    inputStorageType = DummySInt(8),
+    weightStorageType = DummySInt(8),
+    accStorageType = DummySInt(32),
     spatialArrayInputType = DummySInt(8),
     spatialArrayWeightType = DummySInt(8),
     spatialArrayOutputType = DummySInt(20),
@@ -206,7 +204,6 @@ object GemminiConfigs {
     dma_maxbytes = defaultConfig.dma_maxbytes,
     dma_buswidth = defaultConfig.dma_buswidth,
     tlb_size = defaultConfig.tlb_size,
-    use_mx_scaling = defaultConfig.use_mx_scaling,
 
     mvin_scale_args = Some(ScaleArguments(
       (t: DummySInt, f: Float) => t.dontCare,

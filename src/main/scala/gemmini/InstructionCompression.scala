@@ -45,13 +45,13 @@ class InstCompressor(implicit p: Parameters) extends Module {
   }
 }
 
-class InstDecompressor(rob_entries: Int)(implicit p: Parameters) extends Module {
+class InstDecompressor(rob_entries: Int, has_mx: Boolean)(implicit p: Parameters) extends Module {
   val io = IO(new Bundle {
-    val in = Flipped(Decoupled(new GemminiCmd(rob_entries)))
-    val out = Decoupled(new GemminiCmd(rob_entries))
+    val in = Flipped(Decoupled(new GemminiCmd(rob_entries, has_mx)))
+    val out = Decoupled(new GemminiCmd(rob_entries, has_mx))
   })
 
-  val buf = Reg(UDValid(new GemminiCmd(rob_entries)))
+  val buf = Reg(UDValid(new GemminiCmd(rob_entries, has_mx)))
   val cmd = buf.bits.cmd
 
   val is_compute = cmd.inst.funct === COMPUTE_AND_FLIP_CMD || cmd.inst.funct === COMPUTE_AND_STAY_CMD
@@ -94,7 +94,7 @@ object InstCompressor {
 
 object InstDecompressor {
   def apply(enq: ReadyValidIO[GemminiCmd], rob_entries: Int)(implicit p: Parameters) = {
-    val id = Module(new InstDecompressor(rob_entries))
+    val id = Module(new InstDecompressor(rob_entries, enq.bits.mx.isDefined))
     id.io.in <> enq
     id.io.out
   }

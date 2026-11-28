@@ -16,7 +16,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   import config._
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
+    val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries, config.use_mx_scaling)))
 
     val dma = new ScratchpadReadMemIO(local_addr_t, mvin_scale_t_bits)
 
@@ -87,7 +87,7 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
     val rob_id = UInt(log2Up(reservation_station_entries).W)
   }
 
-  val maxBytesInRowRequest = config.dma_maxbytes max (block_cols * config.weightTypeProjected.getWidth / 8) max
+  val maxBytesInRowRequest = config.dma_maxbytes max (block_cols * config.weightStorageType.getWidth / 8) max
     (block_cols * config.accType.getWidth / 8)
   val maxBytesInMatRequest = block_rows * maxBytesInRowRequest
 
@@ -109,14 +109,12 @@ class LoadController[T <: Data, U <: Data, V <: Data](config: GemminiArrayConfig
   io.dma.req.bits.all_zeros := all_zeros
   io.dma.req.bits.status := mstatus
   io.dma.req.bits.pixel_repeats := pixel_repeat
-  io.dma.req.bits.input_mx_format := DontCare
-  io.dma.req.bits.weight_mx_format := DontCare
 
   // Command tracker IO
   cmd_tracker.io.alloc.valid := control_state === waiting_for_command && cmd.valid && DoLoad
   cmd_tracker.io.alloc.bits.bytes_to_read :=
     Mux(io.dma.req.bits.has_acc_bitwidth, cols * actual_rows_read * config.accType.getWidth.U,
-      cols * actual_rows_read * config.weightTypeProjected.getWidth.U) >> 3 // >> 3 (= / 8) to satisfy Verilator's linter
+      cols * actual_rows_read * config.weightStorageType.getWidth.U) >> 3 // >> 3 (= / 8) to satisfy Verilator's linter
   cmd_tracker.io.alloc.bits.tag.rob_id := cmd.bits.rob_id.bits
   cmd_tracker.io.request_returned.valid := io.dma.resp.fire // TODO use a bundle connect
   cmd_tracker.io.request_returned.bits.cmd_id := io.dma.resp.bits.cmd_id // TODO use a bundle connect

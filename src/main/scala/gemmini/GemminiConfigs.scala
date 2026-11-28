@@ -20,9 +20,9 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              inputType: T,
                                                                              weightType: T,
                                                                              accType: T,
-                                                                             weightTypeProjected: T,
-                                                                             inputTypeProjected: T,
-                                                                             accTypeProjected: T,
+                                                                             weightStorageType: T,
+                                                                             inputStorageType: T,
+                                                                             accStorageType: T,
                                                                              spatialArrayInputType: T,
                                                                              spatialArrayWeightType: T,
                                                                              spatialArrayOutputType: T,
@@ -31,7 +31,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              // Empty => default to accType for every mesh row (see meshProdPrecision / meshAccPrecision)
                                                                              meshProdPrecisionList : Seq[T] = Seq(),
                                                                              meshAccPrecisionList : Seq[T] = Seq(),
-                                                             
+
                                                                              tileRows: Int = 1,
                                                                              tileColumns: Int = 1,
                                                                              meshRows: Int = 16,
@@ -58,7 +58,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              acc_latency: Int = 2,
 
                                                                              scaleSize: Int = 32,
-                                                                             
+
                                                                              dma_maxbytes: Int = 64, // TODO get this from cacheblockbytes
                                                                              dma_buswidth: Int = 128, // TODO get this from SystemBusKey
                                                                              spad_writer_dma_width: Int = 512,
@@ -129,7 +129,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
                                                                              scale_mem: Option[GemminiScalingFactorMemConfig] = None,
                                                                              requantizer: Option[GemminiRequantizerConfig] = None,
                                                                              lut: Option[GemminiLUTConfig] = None,
-                                                                             use_mx_scaling: Boolean = true,
+                                                                             use_mx_scaling: Boolean = false,
                                                                              mx_flex_scales: Boolean = false,   // runtime eXmY block-scale formats (MX_SCALE_FMT)
                                                                              testConfig: Boolean = false,
                                                                              headerFileName: String = "gemmini_params.h"
@@ -137,7 +137,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   // Deprojected operand-row width: sized to the wider of the two operands so an asymmetric build whose
   // activation (inputType) is wider than its weight still fits (symmetric/weight-wide builds unchanged).
   val sp_width = meshColumns * tileColumns * (weightType.getWidth max inputType.getWidth)
-  val sp_width_projected = meshColumns * tileColumns * weightTypeProjected.getWidth
+  val sp_width_projected = meshColumns * tileColumns * weightStorageType.getWidth
   val sp_bank_entries = sp_capacity match {
     case CapacityInKilobytes(kb) => kb * 1024 * 8 / (sp_banks * sp_width_projected)
     case CapacityInMatrices(ms) => ms * meshRows * tileRows / sp_banks
@@ -204,15 +204,14 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   }
   assert(acc_scale_latency > 0)
 
-  // Size the col fields for the narrowest element the DMA moves. LoopMatmul issues up to
-  // dma_maxbytes / (block * inputTypeProjected bytes) blocks per mvin, so an MX build whose mesh lane
-  // (weightType, e.g. 16b E4M3) is wider than its 8b projected code must still fit dma_maxbytes cols --
-  // otherwise a 4-block (64-col) mvin wraps to 0.
-  private val min_elem_bytes = (Seq(weightType, inputTypeProjected, weightTypeProjected).map(_.getWidth).min / 8) max 1
+  // MX: cols sized for the 8-bit code the DMA moves (narrower than the mesh lane); rows up to a 2*DIM quad tile
+  private val min_elem_bytes = if (use_mx_scaling) (Seq(weightType, inputStorageType, weightStorageType).map(_.getWidth).min / 8) max 1
+                               else inputType.getWidth / 8
+  private val max_rows = (if (use_mx_scaling) 2 else 1) * meshRows * tileRows
   val mvin_cols_bits = log2Up(((dma_maxbytes / min_elem_bytes) max (meshColumns * tileColumns)) + 1)
-  val mvin_rows_bits = log2Up(2*meshRows * tileRows + 1)
+  val mvin_rows_bits = log2Up(max_rows + 1)
   val mvout_cols_bits = log2Up(((dma_maxbytes / min_elem_bytes) max (meshColumns * tileColumns)) + 1)
-  val mvout_rows_bits = log2Up(2*meshRows * tileRows + 1)
+  val mvout_rows_bits = log2Up(max_rows + 1)
 
   val load_states = 3
   val block_stride_bits = 16 min (log2Up(acc_banks * acc_bank_entries) max log2Up(sp_banks * sp_bank_entries))
@@ -239,7 +238,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val LOG2_DIM        = log2Up(DIM)
   val LOG2_DIM_COUNT  = log2Up(DIM + 1)
   require(DIM >= 2, "the systolic array must have DIM of at least 2")
-  require(scaleSize % DIM == 0, "mx block size needs to be multiple of DIM")
+  require(!use_mx_scaling || scaleSize % DIM == 0, "mx block size needs to be multiple of DIM")
   lazy val mxGeom = MxGeom(DIM, scaleSize)
   // MX acc row = 2 C rows x 2R cols: at least one 32-wide MX block per C row at every DIM (DIM < 16 adds writes)
   if (use_mx_scaling) require(2 * mxGeom.R >= scaleSize,
@@ -268,7 +267,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val cisc_dim = (meshRows * tileRows) / 2
 
   val ITYPE_BITS       = inputType.getWidth
-  val ITYPE_BYTES      = (inputTypeProjected.getWidth+cisc_dim-1) / cisc_dim
+  val ITYPE_BYTES      = (inputStorageType.getWidth+cisc_dim-1) / cisc_dim
   val LOG2_ITYPE_BYTES = if(ITYPE_BYTES <= 1) 0 else log2Up(ITYPE_BYTES)
 
   val OTYPE_BITS       = accType.getWidth
@@ -294,7 +293,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   val LOG2_TILE_IDX               = log2Up(TILE_IDX)
 
   //--------------------------------------------------------------------------
-  val I_TILE_BYTE_WIDTH = DIM * ((inputTypeProjected.getWidth+cisc_dim-1) / cisc_dim)
+  val I_TILE_BYTE_WIDTH = DIM * ((inputStorageType.getWidth+cisc_dim-1) / cisc_dim)
   val O_TILE_BYTE_WIDTH = DIM * ((accType.getWidth+cisc_dim-1) / cisc_dim)
   val I_TILE_BYTE_WIDTH_LOG2 = log2Up(I_TILE_BYTE_WIDTH)
   val O_TILE_BYTE_WIDTH_LOG2 = log2Up(O_TILE_BYTE_WIDTH)
@@ -330,8 +329,11 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
   require(meshColumns * tileColumns == meshRows * tileRows, "the systolic array must be square") // TODO remove this requirement
   require(meshColumns * tileColumns >= 2, "the systolic array must have a dimension of at least 2") // TODO remove this requirement
   require(isPow2(meshColumns * tileColumns), "the systolic array's dimensions must be powers of 2") // TODO remove this requirement
+  require(use_mx_scaling || inputType.getWidth == weightType.getWidth)
+  require(use_mx_scaling || (inputStorageType.getWidth == inputType.getWidth && weightStorageType.getWidth == weightType.getWidth &&
+    accStorageType.getWidth == accType.getWidth), "storage types must equal the base types without MX")
   require(acc_bank_entries % (meshRows * tileRows) == 0, "the number of rows in an accumulator bank must be a multiple of the dimensions of the systolic array")
-  require(!mvin_scale_shared || (mvin_scale_shared && mvin_scale_args.isDefined && mvin_scale_acc_args.isEmpty && inputTypeProjected.getWidth == accType.getWidth)) // TODO is there a better way to check whether inputType and accType are the same?
+  require(!mvin_scale_shared || (mvin_scale_shared && mvin_scale_args.isDefined && mvin_scale_acc_args.isEmpty && inputStorageType.getWidth == accType.getWidth)) // TODO is there a better way to check whether inputType and accType are the same?
   require((mvin_scale_args.isEmpty || mvin_scale_acc_args.isEmpty) || (mvin_scale_t.getWidth == mvin_scale_acc_t.getWidth), "currently, the mvin scale types for both the srams and the accumulator must have the same width") // TODO remove this requirement
 
   def generateHeader(guard: String = "GEMMINI_PARAMS_H"): String = {
@@ -412,8 +414,8 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
     val max_bytes = 64
     header ++= s"#define MAX_BYTES $max_bytes\n"
 
-    if (tileColumns*meshColumns*weightTypeProjected.getWidth/8 <= max_bytes) {
-      header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${weightTypeProjected.getWidth/8}))\n"
+    if (tileColumns*meshColumns*weightStorageType.getWidth/8 <= max_bytes) {
+      header ++= s"#define MAX_BLOCK_LEN (MAX_BYTES/(DIM*${weightStorageType.getWidth/8}))\n"
     } else {
       header ++= s"#define MAX_BLOCK_LEN 1\n"
     }
@@ -426,7 +428,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
 
     // Datatype of the systolic array
     val limits = limitsOfDataType(weightType)
-    header ++= s"typedef ${c_type(inputTypeProjected)} elem_t;\n"
+    header ++= s"typedef ${c_type(inputStorageType)} elem_t;\n"
     if (inputType.isInstanceOf[MxFloat] || inputType.isInstanceOf[Float] && !((inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (8, 24) || (inputType.asInstanceOf[Float].expWidth, inputType.asInstanceOf[Float].sigWidth) == (11, 53)))
     {
       header ++= "#define ELEM_T_IS_LOWPREC_FLOAT\n"
@@ -445,7 +447,7 @@ case class GemminiArrayConfig[T <: Data : Arithmetic, U <: Data, V <: Data](
       header ++= s"#define ELEM_T_SIG_BITS ${inputType.asInstanceOf[MxFloat].sigWidth}\n"
       header ++= s"#define ACC_T_EXP_BITS ${accType.asInstanceOf[MxFloat].expWidth}\n"
       header ++= s"#define ACC_T_SIG_BITS ${accType.asInstanceOf[MxFloat].sigWidth}\n"
-      header ++= s"typedef ${c_type(UInt(inputTypeProjected.getWidth.W))} elem_t_bits;\n"
+      header ++= s"typedef ${c_type(UInt(inputStorageType.getWidth.W))} elem_t_bits;\n"
       header ++= s"typedef ${c_type(UInt(accType.getWidth.W))} acc_t_bits;\n\n"
     }
 

@@ -4,9 +4,8 @@ import chisel3._
 import chisel3.util._
 import hardfloat._
 
-// Per-lane BF16 math for the VPU (call inside a Module). Add/sub/mul/round use chipyard hardfloat (RNE).
-// exp, rcp and sqrt follow the atlas-npu lane boxes (Exp/ExLUT, Rcp/RcpLUT, Sqrt/SqrtLUT, same tables), with
-// two fixes: exp(x <= -128) = 0 (atlas' fixed-point input wraps there) and rcp underflow -> 0 (atlas wraps to Inf).
+// Per-lane BF16 VPU math. Add/sub/mul via hardfloat (RNE); exp/rcp/sqrt use the atlas-npu tables, except
+// exp(x <= -128) = 0 and rcp underflow -> 0
 object VpuMath {
   val EXP = 8
   val SIG = 8
@@ -86,11 +85,8 @@ object VpuMath {
       (isInf || bfExp >= 255.S) -> "h7f80".U(16.W)))            // sign ignored (sqrt|x|), as atlas
   }
 
-  def rsqrt(x: UInt): UInt = rcp(sqrt(x))
 
-  // ---- exp, split in two pipeline stages (atlas Exp, isBase2 = 0) ----
-  // Stage A: special cases + fixed-point range reduction x*log2(e) = k + r. Packs
-  // {early(1), earlyRes(16), k(10, signed), r(12)} = 39 bits.
+  // ---- exp in two stages; stage A packs {early, earlyRes(16), k(10, signed), r(12)} (39 bits) ----
   val expMidW = 39
   def expStageA(x: UInt): UInt = {
     val raw = rawFloatFromFN(EXP, SIG, x)

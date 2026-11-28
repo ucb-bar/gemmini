@@ -14,7 +14,7 @@ import Util._
   * @param columns Number of PEs on each column
   */
 class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: Dataflow.Value, tree_reduction: Boolean, max_simultaneous_matmuls: Int, val rows: Int, val columns: Int, meshFpProductPrecision: T, meshFpAccPrecision: T, wide_prop: Boolean = false)(implicit ev: Arithmetic[T]) extends Module {
-  // non-MX: the in_d/out_c chain carries OS results and D preloads at outputType width (upstream)
+  // non-MX: the in_d/out_c chain carries OS results and D preloads at outputType width
   private val propType = if (wide_prop) outputType else weightType
   val io = IO(new Bundle {
     val in_a        = Input(Vec(rows, inputType))
@@ -35,7 +35,7 @@ class Tile[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df
 
     val in_valid = Input(Vec(columns, Bool()))
     val out_valid = Output(Vec(columns, Bool()))
-    
+
     val bad_dataflow = Output(Bool())
   })
 

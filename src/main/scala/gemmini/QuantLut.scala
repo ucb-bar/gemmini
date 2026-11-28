@@ -8,8 +8,7 @@ import org.chipsalliance.cde.config.Parameters
 import scala.math.{pow}
 
 
-// per scale-mem slot (half) QuantLut state from CONFIG_SCALE_MEM; a read response picks its slot by its halves tag,
-// so a config for the next loop never changes the bounds/flags of older reads still in flight
+// per-slot QuantLut state from CONFIG_SCALE_MEM; a read picks its slot by its halves tag
 class LutSlotA extends Bundle { val i = UInt(9.W); val halved = Bool(); val kmix = Bool() }   // kmix: single reads of a quad act layout
 class LutSlotW extends Bundle { val j = UInt(9.W); val k = UInt(9.W); val halved = Bool(); val kblock = Bool(); val kmix = Bool() }
 class LutSlots extends Bundle { val a = Vec(2, new LutSlotA); val w = Vec(2, new LutSlotW) }
@@ -62,21 +61,18 @@ class QuantLut(
   val io = IO(new QuantLutIO(lutConfig, outputnumLanes, sp_bank_entries, sp_banks, sp_width, sp_width_projected, iterator_bitwidth))
   val rdataWidth = lutConfig.rdataWidth
   val raddrWidth = lutConfig.raddrWidth
-  // Per-operand deprojected code widths (default rdataWidth). Storage is rdataWidth-wide; the deproject
-  // packs each operand's codes at its own width so asymmetric builds (act/wei different widths) align.
+  // per-operand deprojected code widths (default rdataWidth), so asymmetric builds align
   val actCodeW = lutConfig.actCodeW
   val weiCodeW = lutConfig.weiCodeW
 
-  // Deproject width = operand nibbles (sp_width_projected/4 = 2*meshColumns), decoupled from the requant
-  // output width outputnumLanes (they differ at DIM=8 numChunks=1: 16 vs 32).
+  // deproject width = operand nibbles (sp_width_projected/4), independent of outputnumLanes
   val depLanes  = sp_width_projected / 4
   val luDim     = depLanes / 2
   val log2LuDim = log2Ceil(luDim)
   val log2Lanes = log2Ceil(depLanes)
 
-  // Single-buffer LUT caches (no double buffering)
-  // All caches as Vec of Regs to support dynamic hardware indexing
-  val lutCache_act_in  = RegInit(VecInit(Seq.fill(2*lutConfig(1)._1)(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))))
+  // single-buffered LUT caches, Vec of Regs for dynamic indexing
+  val lutCache_act_in  = RegInit(VecInit(Seq.fill(lutConfig(1)._1)(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))))
   // weight codebooks = lutConfig(0) (the lut0 / weight write port); read as rows of wRowLen consecutive codebooks
   val nW      = lutConfig(0)._1
   require(lutConfig.fixedG.forall(g => g >= 0 && g <= log2Lanes), "fixedG must be in [0, log2(depLanes)]")
@@ -84,20 +80,17 @@ class QuantLut(
   val wRowLen = math.min(lutConfig.fixedG.map(depLanes >> _).getOrElse(depLanes), nW)
   val nWRows  = nW / wRowLen
   val lutCache_weight  = RegInit(VecInit(Seq.fill(nW)(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))))
-  // act_out: the projection codebooks are not stored as raw codes but as the derived nearest-finder tables
-  // (sorted-order permutation + per-format decision thresholds), computed once per table at load time by the
-  // NearestFinderTableEngine and shared by every output lane. Only the finder formats the operands need are
-  // elaborated (lutConfig.resolvedFinderFormats).
+  // act_out codebooks are stored as nearest-finder tables (permutation + thresholds) built at load time;
+  // only lutConfig.resolvedFinderFormats are elaborated
   val finderFormats = lutConfig.resolvedFinderFormats
   val finderEngine  = Module(new NearestFinderTableEngine(finderFormats, rdataWidth, log2Ceil(lutConfig(2)._1)))
   val finderTable_t = new NearestFinderTable(finderEngine.nSlots, finderEngine.thrW)
-  val lutCache_act_out = RegInit(VecInit(Seq.fill(2*lutConfig(2)._1)(0.U.asTypeOf(finderTable_t))))
+  val lutCache_act_out = RegInit(VecInit(Seq.fill(lutConfig(2)._1)(0.U.asTypeOf(finderTable_t))))
   // 16 b: counter_j counts a loop's weight rows up to (J << log2LuDim) - 1 = 127 at NC 256; 6 b wrapped at 64
   val counter_i = RegInit(0.U(16.W))
   val counter_j = RegInit(0.U(16.W))
   val counter_k = RegInit(0.U(16.W))   // k-tile of the weight rows within the loop (kblock codebooks)
   val kTilesPerKb = math.max(32 / luDim, 1)   // k-tiles per 32-channel MX K-block
-  val out_counter_i = RegInit(0.U(16.W))
   // act_in write: all codebooks, or (half mode, loop-managed) only one half, from the bundle's first half
   val halfEntries = lutConfig(1)._1 / 2   // act-in codebooks = lutConfig(1) (the lut1 / act-in write port)
   when(io.lut_write_act_in.fire) {
@@ -130,20 +123,22 @@ class QuantLut(
   }
   io.lut_write_weight.ready := true.B
 
-  // act_out write: the write bundle carries all tables at once; feed them one per cycle through the finder
-  // engine (bits stay stable until the handshake, which happens on the last table) and store the derived
-  // tables as they come out `latency` cycles later.
+  // act_out write: one table per cycle through the finder engine; ready once the last table lands
   val act_out_tables = lutConfig(2)._1
   val act_out_wr_idx = RegInit(0.U(log2Ceil(act_out_tables).W))
   val act_out_last   = act_out_wr_idx === (act_out_tables - 1).U
-  io.lut_write_act_out.ready := act_out_last
-  finderEngine.io.in.valid      := io.lut_write_act_out.valid
+  val act_out_fed    = RegInit(false.B)
+  val act_out_landed = finderEngine.io.out.valid && finderEngine.io.out.bits.tag === (act_out_tables - 1).U
+  io.lut_write_act_out.ready := act_out_landed
+  finderEngine.io.in.valid      := io.lut_write_act_out.valid && !act_out_fed
   finderEngine.io.in.bits.codes := io.lut_write_act_out.bits.data(act_out_wr_idx).asTypeOf(Vec(16, UInt(rdataWidth.W)))
   finderEngine.io.in.bits.is6   := io.lut_write_act_out.bits.entry_bits === 6.U
   finderEngine.io.in.bits.tag   := act_out_wr_idx
-  when(io.lut_write_act_out.valid) {
+  when(finderEngine.io.in.valid) {
     act_out_wr_idx := Mux(act_out_last, 0.U, act_out_wr_idx + 1.U)
+    act_out_fed    := act_out_last
   }
+  when(act_out_landed) { act_out_fed := false.B }
   when(finderEngine.io.out.valid) {
     lutCache_act_out(finderEngine.io.out.bits.tag) := finderEngine.io.out.bits.table
   }
@@ -151,10 +146,8 @@ class QuantLut(
   val projectedIndices = WireDefault(VecInit(Seq.fill(outputnumLanes)(0.U(raddrWidth.W))))
   val projectedDataValid = WireDefault(false.B)
   val counter_act_out = RegInit(0.U(16.W))
-  // Projection nearest-finders (act_out): one shared derived table (sorted permutation + thresholds) per
-  // codebook, a key compare + popcount + permutation lookup per lane. The threshold set within a code-width
-  // class is selected by mx_fp8_altfmt (0 = E4M3 / E3M2, 1 = E5M2 / E2M3); the class (8- or 6-bit codes) is
-  // the one the codebook was loaded with.
+  // act_out finders: shared table per codebook, per lane a key compare + popcount + permutation lookup;
+  // mx_fp8_altfmt picks the threshold set (0 = E4M3 / E3M2, 1 = E5M2 / E2M3)
   val proj_in      = WireDefault(VecInit(Seq.fill(outputnumLanes)(0.U(rdataWidth.W))))
   val proj_table   = WireDefault(0.U.asTypeOf(finderTable_t))
   val proj_nearest = Wire(Vec(outputnumLanes, UInt(raddrWidth.W)))
@@ -169,7 +162,9 @@ class QuantLut(
   }
 
   when(io.quant_fp6.valid) {
-    proj_table := lutCache_act_out(Mux(io.act_out_row.valid, io.act_out_row.bits, counter_act_out) >> lutG)
+    val act_out_idx = Mux(io.act_out_row.valid, io.act_out_row.bits, counter_act_out) >> lutG
+    assert(act_out_idx < act_out_tables.U, "QuantLut: act-out codebook index exceeds the cache")
+    proj_table := lutCache_act_out(act_out_idx)
     for (i <- 0 until outputnumLanes) {
       proj_in(i) := io.quant_fp6.bits(i)
       projectedIndices(i) := proj_nearest(i)
@@ -188,14 +183,11 @@ class QuantLut(
 
   io.projected_data.valid := projectedDataValid
   io.projected_data.bits := projectedIndices
-  
+
   val used_lut_act_0 = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
   val used_lut_act_1 = WireDefault(VecInit(Seq.fill(16)(0.U(rdataWidth.W))))
-  dontTouch(used_lut_act_0)
-  dontTouch(used_lut_act_1)
 
-  // One act and one weight decoder shared by all banks: the ex controller reads at most one A row (read_a) and one
-  // preload row (read_d) per cycle
+  // one act and one weight decoder shared by all banks (at most one read_a and one read_d per cycle)
   val projResp = io.spad_projected_data.map(_.resp)
   val aHits = VecInit(projResp.map(r => r.valid && r.bits.read_a))
   val dHits = VecInit(projResp.map(r => r.valid && r.bits.read_d))
@@ -220,6 +212,7 @@ class QuantLut(
     val act_local_1 = ((counter_i << 1.U) + 1.U) >> lutG
     def act_idx(l: UInt): UInt = Mux(sa.halved, Cat(aResp.lut_halves(0), l(log2Ceil(halfEntries) - 1, 0)), l)
     assert(!sa.halved || act_local_1 < halfEntries.U, "QuantLut: loop-managed act-in block needs > half the codebooks")
+    assert(sa.halved || act_local_1 < lutConfig(1)._1.U, "QuantLut: act-in codebook index exceeds the cache")
     used_lut_act_0 := lutCache_act_in(act_idx(act_local_0))
     used_lut_act_1 := lutCache_act_in(act_idx(act_local_1))
     for (k <- 0 until luDim) { // act data layout is 2 interleaved 4-bit codes per k (kNa1,kNa0), total 2*luDim lanes
@@ -241,8 +234,7 @@ class QuantLut(
         counter_j := counter_j + 1.U
       }
     }
-    // kblock codebooks: K-block kb of the loop uses the set at kb * (codebooks per K-block = (J << lanes) >> G)
-    // mixed-K loop: the K-block's codebook set = its slot (read tag [7:6])
+    // kblock: K-block kb uses set kb * ((J << lanes) >> G); mixed-K: set = slot (read tag [7:6])
     val cb_kb = (sw.j << log2Lanes.U) >> lutG
     val cb_per_kb = Mux(cb_kb === 0.U, 1.U, cb_kb)   // a chunk narrower than 2^G columns still has one set
     val kb_off = Mux(sw.kmix, wtag(9, 6) * cb_per_kb,
@@ -282,8 +274,6 @@ class QuantLut(
     io.spad_deprojected_data(i).resp.valid := false.B
     io.spad_deprojected_data(i).resp.bits.data := 0.U
     io.spad_deprojected_data(i).resp.bits.fromDMA := false.B
-    io.spad_deprojected_data(i).resp.bits.weight_mx_format := 1.U
-    io.spad_deprojected_data(i).resp.bits.input_mx_format := 1.U
     // read_a/read_d are input-side tags only; not meaningful on the deprojected output (mesh ignores them)
     io.spad_deprojected_data(i).resp.bits.read_a := false.B
     io.spad_deprojected_data(i).resp.bits.read_d := false.B
@@ -293,8 +283,6 @@ class QuantLut(
       io.spad_deprojected_data(i).resp.bits.data := Mux(r.bits.read_a, act_packed, Mux(r.bits.read_d, wei_packed, 0.U))
       io.spad_deprojected_data(i).resp.valid := true.B
       io.spad_deprojected_data(i).resp.bits.fromDMA := r.bits.fromDMA
-      io.spad_deprojected_data(i).resp.bits.weight_mx_format := r.bits.weight_mx_format
-      io.spad_deprojected_data(i).resp.bits.input_mx_format := r.bits.input_mx_format
     }
   }
 }

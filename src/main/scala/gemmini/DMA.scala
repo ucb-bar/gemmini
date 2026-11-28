@@ -161,7 +161,7 @@ class StreamReaderCore[T <: Data, U <: Data, V <: Data](config: GemminiArrayConf
     val vaddr = req.vaddr
 
     val bytesRequested = Reg(UInt(log2Ceil(spadWidthBytes max accWidthBytes max maxBytes).W)) // TODO this only needs to count up to (dataBytes/aligned_to), right?
-    val bytesLeft = Mux(req.has_acc_bitwidth, req.len * (config.accType.getWidth / 8).U, req.len * (config.weightTypeProjected.getWidth / 8).U) - bytesRequested
+    val bytesLeft = Mux(req.has_acc_bitwidth, req.len * (config.accType.getWidth / 8).U, req.len * (config.weightStorageType.getWidth / 8).U) - bytesRequested
 
     val state_machine_ready_for_req = WireInit(state === s_idle)
     io.req.ready := state_machine_ready_for_req
@@ -510,7 +510,6 @@ class StreamWriter[T <: Data: Arithmetic](nXacts: Int, beatBits: Int, maxBytes: 
     }
 
     val untranslated_a = Wire(Decoupled(new TLBundleAWithInfo))
-    val trace_tl_a_fire = WireDefault(untranslated_a.fire); dontTouch(trace_tl_a_fire)
     xactBusy_fire := untranslated_a.fire && state === s_writing_new_block
     untranslated_a.valid := (state === s_writing_new_block || state === s_writing_beats) && !xactBusy.andR
     untranslated_a.bits.tl_a := Mux(write_full, putFull, putPartial)

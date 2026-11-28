@@ -5,22 +5,13 @@ import chisel3.util._
 
 // Nearest-codebook-entry search for the QuantLut act_out projection.
 //
-// The old finders (one FP8NearestFinder per lane) converted all 16 codebook entries to fixed point,
-// subtracted, took |diff| and min-reduced, in every lane, every cycle. Here the per-table work is done
-// once, when the codebook is loaded, and shared by every lane:
-//   1. sort the 16 entries by value (stable: equal values keep their original index order),
-//   2. for each adjacent pair compute the decision threshold as a *code-space key*: the smallest
-//      monotonic key whose value is on the upper side of the pair's midpoint (ties resolved exactly as
-//      the old reduce did: the lowest original index wins),
-//   3. a lane then only compares its 8-bit key against the 15 thresholds (a thermometer), counts the
-//      passes and maps the sorted position back to the original index through the stored permutation.
-// Result: bit-identical indices to the old min-reduce for every finite input, ~15 small comparators per
-// lane instead of 16 wide subtract/abs units plus a 15-level min tree.
-//
-// Value model: a w-bit sign-magnitude code (s | exp | mant) is treated as a finite number for every
-// exponent field, in units of the smallest subnormal (as the old finders did). Codes that the OCP formats
-// reserve for inf/NaN (E4M3 0x7F, E5M2 exp=31) therefore sort as the largest magnitudes; the old E5M2
-// finder wrapped those (and the old E3M2 finder truncated its top binade), so only such codes differ.
+// Per-table work is done once at codebook load and shared by every lane:
+//   1. sort the 16 entries by value (stable),
+//   2. per adjacent pair, the decision threshold as a code-space key (ties: lowest original index wins),
+//   3. a lane compares its key against the 15 thresholds, counts the passes, and maps the sorted position
+//      back to the original index through the stored permutation.
+// Codes are treated as finite for every exponent field (units of the smallest subnormal), so OCP inf/NaN
+// codes (E4M3 0x7F, E5M2 exp=31) sort as the largest magnitudes.
 
 /** Elaboration-time description of a code format used by the nearest finders. */
 case class NfFormat(expW: Int, mantW: Int) {
@@ -135,7 +126,7 @@ object NearestFinder {
     for (i <- 0 until 15) {
       out.s(i)        := vals(i) +& vals(i + 1)
       out.dup(i)      := dup(i)
-      out.tieUpper(i) := perm(i + 1) < firstOrig(i)   // on an exact tie the old reduce kept the lowest original index
+      out.tieUpper(i) := perm(i + 1) < firstOrig(i)   // exact tie: lowest original index wins
     }
     out
   }
@@ -273,43 +264,4 @@ class NearestFinderTableEngine(formats: Seq[LutProjFormat], codeW: Int, tagW: In
 
 object NearestFinderTableEngine {
   val latency = 4
-}
-
-// ---------------------------------------------------------------------------------------------------------
-// Single-table combinational finders with the historical interfaces (used by the unit tests and as a
-// reference for the lane math). QuantLut no longer instantiates them.
-// ---------------------------------------------------------------------------------------------------------
-
-/** FP8 nearest finder: altfmt = false -> E4M3, true -> E5M2. */
-class FP8NearestFinder(altfmt: Boolean) extends RawModule {
-  val io = IO(new Bundle {
-    val in         = Input(UInt(8.W))
-    val in_lut     = Input(Vec(16, UInt(8.W)))
-    val nearestIdx = Output(UInt(4.W))
-  })
-  val f = if (altfmt) NfFormat.E5M2 else NfFormat.E4M3
-  val (sorted, perm) = NearestFinder.sort(io.in_lut, 8)
-  io.nearestIdx := NearestFinder.lane(NearestFinder.key(io.in, 8), NearestFinder.thresholds(sorted, perm, f), perm)
-}
-
-/** FP6 E3M2 nearest finder (sign[5] | exp3[4:2] | man2[1:0]). */
-class FP6E3M2NearestFinder extends RawModule {
-  val io = IO(new Bundle {
-    val in_fp6     = Input(UInt(6.W))
-    val in_lut     = Input(Vec(16, UInt(6.W)))
-    val nearestIdx = Output(UInt(4.W))
-  })
-  val (sorted, perm) = NearestFinder.sort(io.in_lut, 6)
-  io.nearestIdx := NearestFinder.lane(NearestFinder.key(io.in_fp6, 6), NearestFinder.thresholds(sorted, perm, NfFormat.E3M2), perm)
-}
-
-/** FP6 E2M3 nearest finder (sign[5] | exp2[4:3] | man3[2:0]). */
-class FP6E2M3NearestFinder extends RawModule {
-  val io = IO(new Bundle {
-    val in_fp6     = Input(UInt(6.W))
-    val in_lut     = Input(Vec(16, UInt(6.W)))
-    val nearestIdx = Output(UInt(4.W))
-  })
-  val (sorted, perm) = NearestFinder.sort(io.in_lut, 6)
-  io.nearestIdx := NearestFinder.lane(NearestFinder.key(io.in_fp6, 6), NearestFinder.thresholds(sorted, perm, NfFormat.E2M3), perm)
 }

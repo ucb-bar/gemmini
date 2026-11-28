@@ -34,12 +34,10 @@ class ExControllerMxScalingIO(
   val out_altfmt_out = Output(Bool())   // output sub-format alt (mx_fp8_altfmt masked off for direct FP6 out)
   val mx_multi_elem = Output(Bool())      // WEIGHT (output-column) throughput: 2 cols/lane iff quad weight.
   val mx_multi_elem_act = Output(Bool())  // ACTIVATION (output-row) throughput: 2 rows/lane iff quad act.
-  // Runtime LUT-enable on the requant output path: distinguishes E4M3-quad (4-bit LUT output) from
-  // E4M3-single (8-bit code); both are output format0/altfmt0, split only by lut_en.
+  // requant output lut_en: E4M3-quad (4-bit LUT) vs E4M3-single (8-bit), both format0/altfmt0
   val lut_en_out = Output(Bool())
   val enable_MXQuant = Output(Bool())
-  // When set, the requantizer also writes its output activation block-scales into the on-chip
-  // act-scale window (transposed) so the next matmul reads them in place -- no DRAM/SW reload.
+  // requantizer also writes output act scales into the act-scale window (transposed) for the next matmul
   val scale_resident = Output(Bool())
   // Scale-loader "landed" flags, index sel*2 + half (sel 0 = act, 1 = wgt; half = dest bit 12).
   val scale_landed = Input(Vec(4, Bool()))
@@ -47,11 +45,9 @@ class ExControllerMxScalingIO(
   val scale_ready = Input(Vec(4, Bool()))
   // CONFIG_SCALE_MEM executed: bits = Cat(rs2[17] managed, wgt half, act half); drives the halves' release.
   val scale_cfg = Output(Valid(UInt(3.W)))
-  // Loop-managed codebook halves, index = Cat(weight, half): LOADED by a gated LUT load and landed -> a rs2[20]
-  // (act-in) / rs2[21] (weight) config may take them.
+  // codebook halves (Cat(weight, half)) LOADED and landed: an rs2[20] / rs2[21] config may take them
   val lut_ready = Input(Vec(4, Bool()))
-  // CONFIG_SCALE_MEM executed: bits = Cat(rs2[21] wgt halved, rs2[20] act halved, wgt half, act half); drives the
-  // LUT halves' release.
+  // CONFIG_SCALE_MEM executed: Cat(wgt halved, act halved, wgt half, act half); releases the LUT halves
   val lut_cfg = Output(Valid(UInt(4.W)))
   val act_lut_halved = Output(Bool())   // act-in lookups use LUT half act_lut_half ({half, local})
   val act_lut_half = Output(UInt(1.W))
@@ -75,14 +71,11 @@ class ExControllerMxScalingRegs (scale_mem_write_addr_width: Int) extends Bundle
   val weight_mx_altfmt = Bool()
   val enable_mxquant = Bool()
 
-  val scale_mem_mvin_base_addr_act = UInt(32.W)
-  val scale_mem_mvin_base_addr_w = UInt(32.W)
   val scale_mem_mvout_base_addr_act = UInt(scale_mem_write_addr_width.W)
   val quant_lut_update_granularity = UInt(16.W)
   val scale_mem_read_act_sel = UInt(1.W)
   val scale_mem_read_w_sel = UInt(1.W)
-  val scale_mem_counter_reset_flag = UInt(1.W)
-  val scale_resident = Bool()   // MX_SCALE_RESIDENT (rs1 bit 62 of CONFIG_SCALE_MEM)
+  val scale_resident = Bool()   // MX_SCALE_RESIDENT (rs1 bit 63 of CONFIG_SCALE_MEM)
   val act_lut_halved = Bool()   // rs2[20]: act-in codebooks in LUT half act_lut_half (loop-managed)
   val act_lut_half = UInt(1.W)
   val wgt_lut_halved = Bool()   // rs2[21]: weight codebooks in LUT half wgt_lut_half (loop-managed)
@@ -106,7 +99,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val numChunks = MxGeom.accChunks(config.use_mx_scaling, accCols*tileColumns)
 
   val io = IO(new Bundle {
-    val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries)))
+    val cmd = Flipped(Decoupled(new GemminiCmd(reservation_station_entries, config.use_mx_scaling)))
 
     val im2col = new Bundle {
       val req = Decoupled(new Im2ColReadReq(config))
@@ -130,7 +123,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       ))))
 
       // val write = Vec(acc_banks, new AccumulatorWriteIO(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType))))
-      val write = Vec(acc_banks, Decoupled(new AccumulatorWriteReq(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType)))))
+      val write = Vec(acc_banks, Decoupled(new AccumulatorWriteReq(acc_bank_entries, Vec(meshColumns, Vec(tileColumns, accType)), use_mx_scaling)))
     }
 
     val completed = Valid(UInt(log2Up(reservation_station_entries).W))
@@ -157,7 +150,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val cols = UInt(log2Up(2*block_size + 1).W)
     val halves = UInt(2.W)   // {wgt, act} scale / codebook half of this compute
     val mx = new MxMode      // MX mode of this compute (write side: packing, masks, scale layout)
-    val pos = new MxScalePos // its tile (i, j, k): the scale address of every row it writes
+    val pos = Option.when(use_mx_scaling)(new MxScalePos) // its tile (i, j, k): the scale address of every row it writes
 
     override def make_this_garbage(dummy: Int = 0): Unit = {
       rob_id.valid := false.B
@@ -189,7 +182,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val DoConfig = functs(0) === CONFIG_CMD
   val DoComputes = functs.map(f => f === COMPUTE_AND_FLIP_CMD || f === COMPUTE_AND_STAY_CMD)
   val DoPreloads = functs.map(_ === PRELOAD_CMD)
-  
+
   val preload_cmd_place = Mux(DoPreloads(0), 0.U, 1.U)
   // val a_address_place = Mux(current_dataflow === Dataflow.WS.id.U, 0.U, Mux(preload_cmd_place === 0.U, 1.U, 2.U))
 
@@ -201,8 +194,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     case _ => false
   }
   val e4m3QuadThroughput = isE4M3Lane(spatialArrayInputType) || isE4M3Lane(spatialArrayWeightType)
-  // Output-column packing: 2/lane iff the WEIGHT is quad (output cols come from the weight). Downstream
-  // column/stride/chunk layout keys off this. Same as the old act-based derivation for symmetric configs.
+  // output columns 2/lane iff the weight is quad; downstream column/stride/chunk layout keys off this
   val lut_slots = RegInit(0.U.asTypeOf(new LutSlots))   // QuantLut state per scale-mem slot
   // live LUT enables (only for consumers not yet on the per-command tag)
   val iss_lut_a = if (use_mx_scaling) mx_state.get.act_lut_halved || io.act_lut_en else io.act_lut_en
@@ -333,7 +325,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Dependency stuff
   io.completed.valid := false.B
   io.completed.bits := DontCare
-  
+
   // val pending_completed_rob_id = Reg(UDValid(UInt(log2Up(rob_entries).W)))
   val pending_completed_rob_ids = Reg(Vec(2, UDValid(UInt(log2Up(reservation_station_entries).W))))
 
@@ -397,7 +389,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
 
   // MX mode of the issuing command (its own tag); it rides with each compute (PE control, mesh tag, acc write)
-  val iss_tag = cmd.bits(0).mx
+  val iss_tag = cmd.bits(0).mxMode
   val cur_mx = WireInit(0.U.asTypeOf(new MxMode))
   if (use_mx_scaling) {
     cur_mx.act_fmt := MxCmdMode.fmt(iss_tag.act)
@@ -441,8 +433,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // "C" stride variables
   val c_addr_stride = Reg(UInt(16.W)) // TODO magic numbers
 
-  // a config_ex that changes only operand datatypes (act/wgt fmt, alt, uselut) with BF16 out before and after: every
-  // in-flight compute/read carries its own mode, so it needs no drain
+  // datatype-only config_ex (BF16 out before and after) needs no drain: in-flight work carries its own mode
   val cfg_dtype_only = (if (use_mx_scaling) {
     val c1 = rs1s(0).asTypeOf(new ConfigExRs1(acc_scale_t_bits))
     val c2 = rs2s(0).asTypeOf(new ConfigExRs2)
@@ -490,7 +481,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val performing_single_mul = WireInit(perform_single_mul && control_state === compute)
   val performing_mul_pre = WireInit(perform_mul_pre && control_state === compute)
   // the preload's command (weight reads): cmd 1 of a fused pair, also in its start cycle
-  val pre_tag = Mux(performing_mul_pre, cmd.bits(1).mx, cmd.bits(0).mx)
+  val pre_tag = Mux(performing_mul_pre, cmd.bits(1).mxMode, cmd.bits(0).mxMode)
   def same_mode(x: MxCmdMode, y: MxCmdMode): Bool = x.act === y.act && x.wgt === y.wgt && x.shared === y.shared &&
     x.act_fp6 === y.act_fp6 && x.wgt_fp6 === y.wgt_fp6
 
@@ -541,7 +532,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val a_ready = WireInit(true.B)
   val b_ready = WireInit(true.B)
   val d_ready = WireInit(true.B)
-  
+
   case class Operand(addr: LocalAddr, is_garbage: Bool, start_inputting: Bool, counter: UInt, started: Bool, can_be_im2colled: Boolean, priority: Int) {
     val done = counter === 0.U && started
   }
@@ -575,19 +566,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val firing = start_inputting_a || start_inputting_b || start_inputting_d
 
   if (use_mx_scaling) {
-    io.mx.get.scaleMemCntl.scale_mem_counter_reset_flag := (mx_state.get.scale_mem_counter_reset_flag === 1.U) && (RegNext(functs(0)) === CONFIG_SCALE_MEM)
-    io.mx.get.scaleMemCntl.counter_a := a_fire_counter
-    io.mx.get.scaleMemCntl.counter_b := b_fire_counter
-    io.mx.get.scaleMemCntl.fire_a := a_fire
-    io.mx.get.scaleMemCntl.fire_b := b_fire
+    io.mx.get.scaleMemCntl.scale_mem_counter_reset_flag := RegNext(io.mx.get.scale_cfg.valid && rs1s(0)(62))
     io.mx.get.scaleMemCntl.scale_mem_read_act_sel := mx_state.get.scale_mem_read_act_sel
     io.mx.get.scaleMemCntl.scale_mem_read_w_sel := mx_state.get.scale_mem_read_w_sel
     io.mx.get.scaleMemCntl.loop_bound_i := mx_state.get.loop_bound_i
     io.mx.get.scaleMemCntl.loop_bound_j := mx_state.get.loop_bound_j
     io.mx.get.scaleMemCntl.loop_bound_k := mx_state.get.loop_bound_k
     io.mx.get.scaleMemCntl.slots := lut_slots
-    io.mx.get.scaleMemCntl.baseAddress_act := mx_state.get.scale_mem_mvin_base_addr_act
-    io.mx.get.scaleMemCntl.baseAddress_w := mx_state.get.scale_mem_mvin_base_addr_w
     io.mx.get.scale_cfg.valid := false.B
     io.mx.get.scale_cfg.bits  := Cat(rs2s(0)(17), rs1s(0)(61), rs1s(0)(60))
     io.mx.get.lut_cfg.valid := false.B
@@ -673,28 +658,16 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     if (ex_read_from_spad) {
       io.srams.read(i).req.valid := (read_a || read_b || read_d) && cntl_ready
       io.srams.read(i).req.bits.fromDMA := false.B
-      // Tag the read with its operand kind so QuantLut can gate deprojection on a signal that
-      // returns aligned with the projected data, instead of a fixed-latency delayed read_a.
+      // tag the read with its operand kind so QuantLut gates deprojection on data-aligned signals
       io.srams.read(i).req.bits.read_a := read_a
       io.srams.read(i).req.bits.read_d := read_d
-      // {operand fmt (direct-path expansion), valid, deproject, halves}: the read's own mode, not the live one
-      // weight reads belong to the preload (cmd 1 of a fused pair): its codebook slot
+      // the read's own {fmt, valid, deproject, halves}; weight reads use the preload's codebook slot
       io.srams.read(i).req.bits.lut_halves := Cat(Mux(read_a, iss_tag.act_fp6, iss_tag.wgt_fp6),
         Mux(read_a, 0.U(4.W), pre_tag.slot),
         Mux(read_a, cur_mx.act_fmt, cur_mx.wgt_fmt), 1.U(1.W), Mux(read_a, dp_a, dp_w), cur_halves)
       io.srams.read(i).req.bits.addr := MuxCase(a_address_rs1.sp_row() + a_fire_counter,
         Seq(read_b -> (b_address_rs2.sp_row() + b_fire_counter),
           read_d -> (d_address_rs1.sp_row() + block_size.U - 1.U - d_fire_counter_mulpre)))
-      
-      if (use_mx_scaling) {
-        io.srams.read(i).req.bits.input_mx_format := mx_state.get.activation_mx_format
-        io.srams.read(i).req.bits.weight_mx_format := mx_state.get.weight_mx_format
-      } else {
-        // Non-MX build: these format tags are passthrough metadata that nothing
-        // consumes, so default them to FP8 (0) to keep the bundle initialized.
-        io.srams.read(i).req.bits.input_mx_format := 0.U
-        io.srams.read(i).req.bits.weight_mx_format := 0.U
-      }
 
       // TODO this just overrides the previous line. Should we erase the previous line?
       when(im2col_en === false.B) {
@@ -706,8 +679,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.srams.read(i).req.valid := false.B
       io.srams.read(i).req.bits.fromDMA := false.B
       io.srams.read(i).req.bits.addr := DontCare
-      io.srams.read(i).req.bits.input_mx_format := DontCare
-      io.srams.read(i).req.bits.weight_mx_format := DontCare
       io.srams.read(i).req.bits.read_a := false.B
       io.srams.read(i).req.bits.read_d := false.B
       io.srams.read(i).req.bits.lut_halves := 0.U
@@ -728,7 +699,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val read_a_from_acc = a_valid && a_read_from_acc && dataABankAcc === i.U && start_inputting_a && !multiply_garbage && a_row_is_not_all_zeros && !(im2col_wire&&im2col_en)
     val read_b_from_acc = b_valid && b_read_from_acc && dataBBankAcc === i.U && start_inputting_b && !accumulate_zeros && b_row_is_not_all_zeros //&& !im2col_wire
     val read_d_from_acc = d_valid && d_read_from_acc && dataDBankAcc === i.U && start_inputting_d && !preload_zeros && d_row_is_not_all_zeros //&& !im2col_wire
-    
+
     Seq((read_a_from_acc, a_ready), (read_b_from_acc, b_ready), (read_d_from_acc, d_ready)).foreach { case (rd, r) =>
       when(rd && !io.acc.read_req(i).ready) {
         r := false.B
@@ -736,12 +707,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     }
 
     if (ex_read_from_acc) {
-      if (use_mx_scaling) {
-        io.acc.read_req(i).bits.weight_mx_format := mx_state.get.weight_mx_format
-        io.acc.read_req(i).bits.activation_mx_format := mx_state.get.activation_mx_format
-      } else {
-        io.acc.read_req(i).bits.weight_mx_format := DontCare
-        io.acc.read_req(i).bits.activation_mx_format := DontCare
+      if (!use_mx_scaling) {
         io.acc.read_req(i).bits.chunk_id := DontCare
       }
       io.acc.read_req(i).valid := read_a_from_acc || read_b_from_acc || read_d_from_acc
@@ -774,8 +740,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.read_req(i).bits.act := DontCare
       io.acc.read_req(i).bits.fromDMA := false.B
       io.acc.read_req(i).bits.addr := DontCare
-      io.acc.read_req(i).bits.activation_mx_format := DontCare
-      io.acc.read_req(i).bits.weight_mx_format := DontCare
       io.acc.read_req(i).bits.chunk_id := DontCare
     }
 
@@ -887,14 +851,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
           cmd.pop := 1.U
         }
-        
-        .elsewhen(functs(0) === CONFIG_SCALE_MEM && Mux(halves_only, !mesh_completing, !matmul_in_progress) &&
+
+        .elsewhen(use_mx_scaling.B && functs(0) === CONFIG_SCALE_MEM && Mux(halves_only, !mesh_completing, !matmul_in_progress) &&
                     !pending_completed_rob_ids.map(_.valid).reduce(_ || _) &&
                     // rs2[16]: wait until this config's act/wgt scale halves have landed (loop-issued loads)
                     (if (use_mx_scaling) (!rs2s(0)(16) ||
                       (io.mx.get.scale_landed(rs1s(0)(60)) && io.mx.get.scale_landed(Cat(1.U(1.W), rs1s(0)(61))))) &&
-                     // rs2[17]: loop-managed -- its gated loads must have started (LOADED) and landed;
-                     // rs2[18]: act scales reused in place (no act load issued)
+                     // rs2[17] managed: gated loads LOADED and landed; rs2[18]: act scales reused in place
                      (!rs2s(0)(17) ||
                       ((rs2s(0)(18) || io.mx.get.scale_ready(rs1s(0)(60))) &&
                        io.mx.get.scale_ready(Cat(1.U(1.W), rs1s(0)(61))))) &&
@@ -902,9 +865,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
                      (!rs2s(0)(20) || io.mx.get.lut_ready(Cat(0.U(1.W), rs1s(0)(60)))) &&
                      (!rs2s(0)(21) || io.mx.get.lut_ready(Cat(1.U(1.W), rs1s(0)(61))))
                      else true.B)) {
-            // Latch the CONFIG_SCALE_MEM registers, gated on a valid queue head via the enclosing
-            // when. rs1 layout: dram 0-32, tiles_I 33-41, tiles_J 42-50, tiles_K 51-59,
-            // scale_act_sel 60, scale_wgt_sel 61, scale_mem_counter_reset 62, MX_SCALE_RESIDENT 63.
+            // CONFIG_SCALE_MEM rs1: dram 0-32, I 33-41, J 42-50, K 51-59, act_sel 60, wgt_sel 61, reset 62, resident 63
             if (use_mx_scaling) {
               mx_state.get.loop_bound_i := rs1s(0)(41,33)
               lut_slots.a(rs1s(0)(60)).i := rs1s(0)(41,33)
@@ -920,7 +881,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
               mx_state.get.scale_mem_mvout_base_addr_act := rs1s(0)(32,0)
               mx_state.get.scale_mem_read_act_sel := rs1s(0)(60)
               mx_state.get.scale_mem_read_w_sel := rs1s(0)(61)
-              mx_state.get.scale_mem_counter_reset_flag := rs1s(0)(62)
               mx_state.get.scale_resident := rs1s(0)(63)
               mx_state.get.quant_lut_update_granularity := rs2s(0)(15,0)
               mx_state.get.act_lut_halved := rs2s(0)(20)
@@ -953,7 +913,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
         }
 
         // Overlap compute and preload
-        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && same_mode(cmd.bits(1).mx, cmd.bits(0).mx) &&
+        .elsewhen(DoComputes(0) && cmd.valid(1) && DoPreloads(1) && same_mode(cmd.bits(1).mxMode, cmd.bits(0).mxMode) &&
           (!third_instruction_needed || (cmd.valid(2) && !raw_hazard_mulpre)))
         {
           perform_mul_pre := true.B
@@ -1104,7 +1064,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     val first = Bool()
     val halves = UInt(2.W)   // {wgt, act} half live when this row's reads were issued
     val mx = new MxMode      // MX mode live when this row's reads were issued
-    val pos = new MxScalePos // the preload's tile (LoopMatmul stamp)
+    val pos = Option.when(use_mx_scaling)(new MxScalePos) // the preload's tile (LoopMatmul stamp)
   }
 
   mesh_cntl_signals_q.io.enq.valid := computing
@@ -1159,10 +1119,12 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   mesh_cntl_signals_q.io.enq.bits.c_addr := c_address_rs2
   require(!use_mx_scaling || block_size <= 32, "MxScalePos preload bits assume C rows/cols < 128 (DIM <= 32)")
-  mesh_cntl_signals_q.io.enq.bits.pos.i := rs2s(preload_cmd_place)(MxScalePos.I_LO + 8, MxScalePos.I_LO)
-  mesh_cntl_signals_q.io.enq.bits.pos.j := rs2s(preload_cmd_place)(MxScalePos.J_LO + 8, MxScalePos.J_LO)
-  mesh_cntl_signals_q.io.enq.bits.pos.k := rs1s(preload_cmd_place)(MxScalePos.K_LO + 8, MxScalePos.K_LO)
-  mesh_cntl_signals_q.io.enq.bits.pos.row := 0.U
+  mesh_cntl_signals_q.io.enq.bits.pos.foreach { p =>
+    p.i := rs2s(preload_cmd_place)(MxScalePos.I_LO + 8, MxScalePos.I_LO)
+    p.j := rs2s(preload_cmd_place)(MxScalePos.J_LO + 8, MxScalePos.J_LO)
+    p.k := rs1s(preload_cmd_place)(MxScalePos.K_LO + 8, MxScalePos.K_LO)
+    p.row := 0.U
+  }
   mesh_cntl_signals_q.io.enq.bits.c_rows := c_rows
   mesh_cntl_signals_q.io.enq.bits.c_cols := c_cols
 
@@ -1199,7 +1161,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     cntl.accumulate_zeros -> false.B,
     cntl.b_read_from_acc -> accReadValid(cntl.b_bank_acc)
   ))
-  
+
   val dataD_valid = cntl.d_garbage || cntl.d_unpadded_cols === 0.U || MuxCase(readValid(cntl.d_bank), Seq(
    cntl.preload_zeros -> false.B,
    cntl.d_read_from_acc -> accReadValid(cntl.d_bank_acc)
@@ -1219,7 +1181,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val dataB = if (use_mx_scaling) {
     VecInit(dataB_unpadded.asTypeOf(Vec(block_size, accType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, accType.zero)}.map(d => d.asTypeOf(accType).withWidthOf(spatialArrayOutputType)))
   } else {
-    VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayOutputType)))
+    VecInit(dataB_unpadded.asTypeOf(Vec(block_size, inputType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.b_unpadded_cols, d, inputType.zero)}.map(d => d.asTypeOf(inputType).withWidthOf(spatialArrayWeightType)))
   }
   val dataD = VecInit(dataD_unpadded.asTypeOf(Vec(block_size, weightType)).zipWithIndex.map { case (d, i) => Mux(i.U < cntl.d_unpadded_cols, d, weightType.zero)}.map(d => d.asTypeOf(weightType).withWidthOf(spatialArrayWeightType)))
 
@@ -1264,14 +1226,14 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
     mesh.io.d.valid := cntl.d_fire && dataD_valid
 
     mesh.io.a.bits := dataA.asTypeOf(Vec(meshRows, Vec(tileRows, spatialArrayInputType)))
-    mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, spatialArrayOutputType)))
+    mesh.io.b.bits := dataB.asTypeOf(Vec(meshColumns, Vec(tileColumns, if (use_mx_scaling) spatialArrayOutputType else spatialArrayWeightType)))
     mesh.io.d.bits := dataD.asTypeOf(Vec(meshColumns, Vec(tileColumns, spatialArrayWeightType)))
 
     mesh.io.req.valid := mesh_cntl_signals_q.io.deq.fire && (cntl.a_fire || cntl.b_fire || cntl.d_fire)
 
     mesh.io.req.bits.tag.addr := cntl.c_addr
     mesh.io.req.bits.tag.halves := cntl.halves
-    mesh.io.req.bits.tag.pos := cntl.pos
+    (mesh.io.req.bits.tag.pos zip cntl.pos).foreach { case (o, i) => o := i }
     mesh.io.req.bits.tag.mx := cntl.mx
 
     mesh.io.req.bits.total_rows := cntl.total_rows
@@ -1279,14 +1241,13 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
   when (cntl_valid && cntl.perform_single_preload) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, dataA.asUInt, 0.U).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    // non-MX: dataB lanes are spatialArrayOutputType; reinterpreting them as accType scrambles the lanes
     mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, dataB.asUInt, 0.U).asTypeOf(Vec(meshColumns, Vec(tileColumns,
-      if (use_mx_scaling) accType else spatialArrayOutputType)))
+      if (use_mx_scaling) accType else inputType)))
   }
 
   when (cntl_valid && cntl.perform_single_mul) {
     mesh.io.a.bits := Mux(a_should_be_fed_into_transposer, 0.U, dataA.asUInt).asTypeOf(Vec(meshRows, Vec(tileRows, inputType)))
-    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshColumns, Vec(tileColumns, spatialArrayOutputType)))
+    mesh.io.b.bits := Mux(b_should_be_fed_into_transposer, 0.U, dataB.asUInt).asTypeOf(Vec(meshColumns, Vec(tileColumns, if (use_mx_scaling) spatialArrayOutputType else inputType)))
     mesh.io.req.bits.tag.addr.make_this_garbage()
   }
 
@@ -1301,25 +1262,18 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val address_no_offset = Cat(address.asUInt >> log2Ceil(block_size).U,
   0.U(log2Ceil(block_size).W)).asTypeOf(address)
   val offset = address.asUInt % block_size.U
-  
+
   val w_address = Mux(current_dataflow === Dataflow.WS.id.U, address_no_offset + output_counter * c_addr_stride,
    address_no_offset + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
 
-  val w_total_output_rows_wire = WireDefault(w_total_output_rows)
-  val address_no_offset_wire = WireDefault(address_no_offset)
-  val output_counter_wire = WireDefault(output_counter)
-  val c_addr_stride_wire = WireDefault(c_addr_stride)
 
-  val w_address_wire = WireDefault(w_address)
   val w_address_sp = Mux(current_dataflow === Dataflow.WS.id.U, address + output_counter * c_addr_stride,
     address + (w_total_output_rows - 1.U - output_counter * c_addr_stride))
-  
+
   val write_to_acc = w_address_sp.is_acc_addr
-  val write_to_acc_wire = WireDefault(write_to_acc)
-  // non-MX: the full C address (acc C addresses need not be DIM-aligned, e.g. LoopConv), as upstream
+  // non-MX: the full C address (acc C addresses need not be DIM-aligned, e.g. LoopConv)
   val w_bank = Mux(write_to_acc, (if (use_mx_scaling) w_address else w_address_sp).acc_bank(), w_address_sp.sp_bank())
-  // single x quad (shared acc layout, DIM>=16): output rows 2r, 2r+1 share acc row r (row halves)
-  // write side: the mode of the compute being written (mesh tag), not the live config
+  // single x quad (shared acc layout, DIM>=16): rows 2r, 2r+1 share acc row r; uses the mesh tag's mode
   val o_mx = mesh.io.resp.bits.tag.mx
   val o_multi = if (use_mx_scaling) (o_mx.wgt_fmt =/= 0.U) || (o_mx.wgt_fmt === 0.U && o_mx.wgt_alt) ||
     (e4m3QuadThroughput.B && o_mx.wgt_quad) else false.B
@@ -1336,7 +1290,6 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   val w_row = if (use_mx_scaling) Mux(write_to_acc, Mux(acc_row_pair, w_address_pair.acc_row(),
     Mux(shared8, w_address_shared.acc_row(), w_address.acc_row())), w_address_sp.sp_row())
     else Mux(write_to_acc, w_address_sp.acc_row(), w_address_sp.sp_row())
-  val w_row_wire = WireDefault(w_row)
   val is_garbage_addr =address.is_garbage()
 
   val w_matrix_rows = mesh.io.resp.bits.tag.rows
@@ -1360,21 +1313,19 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
   // Write to normal scratchpad
   for(i <- 0 until sp_banks) {
     val activated_wdata = VecInit(mesh.io.resp.bits.data.map(v => VecInit(v.map { e =>
-      val e_clipped = e.clippedToWidthOf(weightType) 
+      val e_clipped = e.clippedToWidthOf(weightType)
       val e_act = MuxCase(e_clipped, Seq(
         (activation === Activation.RELU) -> e_clipped.relu))
 
       e_act
     })))
 
-    // In MX mode the requant FP8 output reaches the spad via a dedicated bank-write source, not this
-    // raw mesh-clip port; gating on !use_mx_scaling also skips the byte-mask below, which is malformed
-    // for the non-byte-aligned MX weightType.
+    // MX requant output reaches the spad via its own bank-write source, not this port
     if (ex_write_to_spad && !use_mx_scaling) {
       io.srams.write(i).valid := start_array_outputting && w_bank === i.U && !write_to_acc && !is_garbage_addr && write_this_row
       io.srams.write(i).addr := w_row
       io.srams.write(i).data := activated_wdata.asUInt
-      io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(weightTypeProjected.getWidth / (aligned_to * 8))(b))
+      io.srams.write(i).mask := w_mask.flatMap(b => Seq.fill(weightStorageType.getWidth / (aligned_to * 8))(b))
     } else {
       io.srams.write(i).valid := false.B
       io.srams.write(i).addr := DontCare
@@ -1407,8 +1358,7 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
 
           VecInit(row0Words ++ row1Words).asUInt.asTypeOf(io.acc.write(i).bits.data)
         }
-        // ACT single, WEI quad (mode6/7): the 2 distinct col-products land contiguously at lanes 0,1
-        // (A/B tested: reading 0,2 gives NaN -> lane2 not maintained; 0,1 is the correct read).
+        // ACT single, WEI quad (mode6/7): the 2 col-products are at lanes 0, 1
         val singleActQuadWei = {
           val cols = mesh.io.resp.bits.data.flatten.flatMap { e =>
             val w = e.withWidthOf(accType).asUInt
@@ -1418,29 +1368,24 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
           val z = Seq.fill(words.length)(0.U(64.W))
           Mux(acc_row_pair && output_counter(0), VecInit(z ++ words).asUInt, VecInit(words ++ z).asUInt).asTypeOf(io.acc.write(i).bits.data)
         }
-        // ACT quad, WEI single (mode2/5): lanes 0,1 = rows 2r,2r+1; a col-tile pair shares the quad layout, this
-        // tile's D cols at lane offset (0 or D/4) of each row half
+        // ACT quad, WEI single (mode2/5): lanes 0, 1 = rows 2r, 2r+1; D cols at lane offset 0 or D/4
         val quadActSingleWei = {
           val elems = mesh.io.resp.bits.data.flatten.map(_.withWidthOf(accType).asUInt)
           def words(lo: Int) = elems.map(_(lo + 15, lo)).grouped(4).map(g => Cat(g.reverse)).toSeq
           val z = Seq.fill(block_size / 4)(0.U(64.W))
           (VecInit(words(0) ++ z ++ words(16) ++ z).asUInt << (offset * 64.U)).asTypeOf(io.acc.write(i).bits.data)
         }
-        // Single E4M3 -> fmt0; act-single/wei-quad -> singleActQuadWei; act-quad/wei-single -> quadActSingleWei;
-        // both quad -> packed (2x2).
+        // E4M3 single -> fmt0; single act/quad wei, quad act/single wei, both quad -> packed 2x2
         io.acc.write(i).bits.data := Mux(!o_multi, Mux(o_multi_act, quadActSingleWei, fmt0_data),
           Mux(!o_multi_act, singleActQuadWei, packed_data))
       }
 
       io.acc.write(i).bits.acc := w_address_sp.accumulate
       io.acc.write(i).bits.mask := w_mask.flatMap(b => Seq.fill(accType.getWidth / (aligned_to * 8))(b))
-      // DIM=8 acc widen. QUAD: pass the COL-TILE parity (tile-base index bit) so the acc mem interleaves j/j+1 into
-      // one wide row. SINGLE: pass the LOCAL entry offset (address % block_size = 0,2,4,6) so the acc mem can mask
-      // this col-tile's 2 entries within its chunk (the chunk itself is derived from the write address there); the
-      // parity would collapse 4 distinct col-tiles to one bit and they would clobber each other.
+      // DIM=8 widen: QUAD passes the col-tile parity; SINGLE passes the local entry offset (0,2,4,6) for its mask
       io.acc.write(i).bits.scale_halves := mesh.io.resp.bits.tag.halves
-      io.acc.write(i).bits.scale_pos := mesh.io.resp.bits.tag.pos
-      io.acc.write(i).bits.scale_pos.row := output_counter
+      (io.acc.write(i).bits.scale_pos zip mesh.io.resp.bits.tag.pos).foreach { case (o, p) => o := p; o.row := output_counter }
+      io.acc.write(i).bits.scale_en.foreach(_ := true.B)
       io.acc.write(i).bits.wm.multi := o_multi
       io.acc.write(i).bits.wm.multi_act := o_multi_act
       io.acc.write(i).bits.wm.dtype := o_mx.act_fmt
@@ -1453,7 +1398,8 @@ class ExecuteController[T <: Data, U <: Data, V <: Data](xLen: Int, tagWidth: In
       io.acc.write(i).bits.acc := DontCare
       io.acc.write(i).bits.mask := DontCare
       io.acc.write(i).bits.scale_halves := DontCare
-      io.acc.write(i).bits.scale_pos := DontCare
+      io.acc.write(i).bits.scale_pos.foreach(_ := DontCare)
+      io.acc.write(i).bits.scale_en.foreach(_ := false.B)
       io.acc.write(i).bits.wm := DontCare
     }
 

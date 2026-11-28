@@ -23,19 +23,17 @@ object MxFloatFormat {
       FP8 -> 3.U,
       BF16 -> 8.U
     ))
-    
+
     val pmax = MuxLookup(bits, 448.U)(Seq(
-      FP4 -> 6.U,     
-      FP6 -> 28.U,   
-      FP8 -> 448.U,   
+      FP4 -> 6.U,
+      FP6 -> 28.U,
+      FP8 -> 448.U,
       BF16 -> 65024.U
     ))
 
-    // Block-scale floor = 0 for every format (_po2 convention): a block max normalizes into [1,2) so a
-    // chained requant output (which becomes the next matmul's A operand) never overflows the acc. Non-zero
-    // floors (old FP4=2, FP6=4) pushed chained values past the accumulator/finder range.
+    // block-scale floor 0 for every format: a block max normalizes into [1,2), so chained outputs stay in range
     val log2_pmax_floor = 0.U
-    
+
     (exp_bits, mant_bits, pmax, log2_pmax_floor)
   }
 }
@@ -92,8 +90,7 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val pair = Input(Bool())   // single weight: loop_bound_j counts DIM-col tiles, not 2*DIM quad tiles
   val rows_single_act = Input(Bool())   // single act: rows 2r, 2r+1 share an acc row, loop_bound_i counts DIM-row tiles
   val scale_mem_counter_reset_flag = Input(Bool())
-  // When set, the coalescer also flushes act block-scales transposed to [GN][M] onto
-  // scaleMem_write_act_resident (64b/beat); otherwise that port is idle.
+  // when set, the coalescer also flushes act scales transposed ([GN][M]) onto scaleMem_write_act_resident
   val scale_resident = Input(Bool())
   val scale_read_act_sel = Input(UInt(1.W))   // act-window half this matmul reads; its resident scales go to the other
   val scaleMem_write_act_resident = Decoupled(new ScalingFactorWriteReq(scaleMemActWriteAddrWidth, 64))
@@ -107,17 +104,15 @@ class MxRequantizerIO[T <: Data: Arithmetic](
   val linear_m = Input(UInt(16.W))
   val linear_base = Input(UInt(scaleMem_addr_width.W))   // overrides scale_mem_mvout_base_addr_act / scale_resident
   val linear_resident = Input(Bool())
-  val linear_pairs = Input(Bool())   // beats arrive in row pairs (m, b), (m+1, b) (FP4 / LUT SPAD_REQUANT)
   val sr_lut_rows = Input(Bool())    // LUT SPAD_REQUANT: act-out codebook = the beat's row (pair order) >> G
   val scale_flush_busy = Output(Bool())
-  // Shared use (SPAD_REQUANT beats interleaved with BF16 accumulator beats): each beat's own mx_mode decides
-  // quantize vs pass-through; quant_mode, when valid, sets the quantizer's format instead of mxacc_req.mx_mode.
-  // Interleaving is only valid with an 8-bit direct-coded quant format (no two-beat FP4/LUT output packing).
+  // shared use (SPAD_REQUANT + BF16 acc beats): each beat's mx_mode picks quantize vs pass-through; quant_mode
+  // overrides the format; only valid for 8-bit direct-coded formats
   val quant_mode = Input(Valid(UInt(2.W)))
   val sr_tag_in = Input(Bool())    // tags the beat entering on mxacc_req.mx_data_in
   val sr_tag_out = Output(Bool())  // tag of the beat on mxacc_req.mx_data_out
 }
-   
+
 class MxRequantizer[T <: Data](
   sp_data_width: Int,
   sp_addr_width: Int,
@@ -134,22 +129,24 @@ class MxRequantizer[T <: Data](
   sp_width_projected: Int,
   iterator_bitwidth: Int,
   meshColumns: Int, tileColumns: Int,
-  accType: T, weightTypeProjected: T,
+  accType: T, weightStorageType: T,
   config: GemminiRequantizerConfig,
   flexScales: Boolean = false
 )(implicit ev: Arithmetic[T]) extends Module {
-  
+
   import ev._
   val pipelineLatency = config.pipelineLatency
   val geom = MxGeom(meshColumns*tileColumns)
   val accCols = geom.R
   val acc_row_t = Vec(accCols, Vec(tileColumns, accType))
   // spad_row_t holds one requant beat's output = lanesPerBeat codes.
-  val spad_row_t = Vec(geom.lanesPerBeat/tileColumns, Vec(tileColumns, weightTypeProjected))
+  val spad_row_t = Vec(geom.lanesPerBeat/tileColumns, Vec(tileColumns, weightStorageType))
   val numChunks = geom.numChunks
   val tilesPerMxBlock = geom.T
   val half_acc_row_t = Vec((accCols*tileColumns)/numChunks, Vec(tileColumns, accType))
   val inputdataWidth = config.inputBits
+  require(pipelineLatency == 2, "MxRequantizer: quantize_valid timing assumes a 2-stage pipe")
+  require(inputdataWidth == 16, "MxRequantizer: the input decode assumes BF16")
   val io = IO(new MxRequantizerIO[T](
     sp_data_width,
     sp_addr_width,
@@ -170,14 +167,10 @@ class MxRequantizer[T <: Data](
     config,
     geom.lanesPerBeat
   ))
-  dontTouch(io)
   val flex_io = Option.when(flexScales)(IO(Input(new MxScaleFmtCfg)))   // output (next-layer A) scale format
   val scale_mem_mvout_base_addr_act = io.scale_mem_mvout_base_addr_act
 
   val scales_per_write = scaleMem_data_width / 8
-  val scale_write_addr_counter = RegInit(0.U(16.W))
-
-  val scale_buffer = RegInit(VecInit(Seq.fill(scaleSize)(0.U(8.W))))
   val quant_dataType = io.mxacc_req.mx_mode  //output data fromat
   val format_reg = RegInit(0.U(2.W))
   format_reg := Mux(io.quant_mode.valid, io.quant_mode.bits, quant_dataType.asUInt)(1, 0)
@@ -192,44 +185,23 @@ class MxRequantizer[T <: Data](
   io.scaleMem_write.valid := false.B
   io.scaleMem_write.bits := DontCare
 
-  def abs(x: UInt): UInt = {  
-    x & 0x7FFF.U  
+  def abs(x: UInt): UInt = {
+    x & 0x7FFF.U
   }
- 
-  def log2_floor(x: UInt): UInt = {
-    val width = x.getWidth
-    val result = Wire(UInt(log2Ceil(width).W))
-    result := 0.U
-    
-    for (i <- (width - 1) to 0 by -1) {
-      when(x(i)) {
-        result := i.U
-      }
-    }
-    result
-  }
-  
+
+
   val e5m2Lut = lutConfig.exists(_.projFormat == LutFP8E5M2)
-  val (exp_bits, mant_bits, pmax, log2_pmax_floor_raw) = MxFloatFormat(format_reg)
+  val (_, _, pmax, log2_pmax_floor_raw) = MxFloatFormat(format_reg)
   // Block-scale floor = 0 for every (format, altfmt) so chained requant outputs stay in acc/finder range.
   val log2_pmax_floor = log2_pmax_floor_raw
   val should_compute = Wire(Bool())
   val quantize_valid = RegNext(should_compute)
-  val quantized_buffer = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(8.W)))) 
-  dontTouch(quantized_buffer)
-  dontTouch( should_compute)
+  val quantized_buffer = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(8.W))))
   should_compute := false.B
   val quant_half_counter = RegInit(false.B)
   val first_half_buf     = RegInit(0.U((io.outputnumLanes*4).W))
 
-  // This is the datapath pack structure, not the literal element width: E5M2 and E4M3-quad have wider
-  // codes but ride the 6-bit LUT datapath (buffering, packing, coalescer cadence) like FP6.
-  val total_bits_raw = 1.U +& exp_bits +& mant_bits
-  val datapath_pack_mode = WireDefault(0.U(5.W))
-  datapath_pack_mode := Mux(format_reg === 0.U && (altfmt_reg || lut_en_reg), 6.U, total_bits_raw)
-
-  // Output packing: E4M3-single -> 8-bit direct codes; E4M3-quad/E5M2/E3M2/E2M3 -> 4-bit LUT indices;
-  // FP4 -> 4-bit direct. E4M3-single vs -quad share format0/altfmt0, split only by latched lut_en.
+  // output: E4M3-single 8-bit codes; E4M3-quad/E5M2/E3M2/E2M3 4-bit LUT indices; FP4 4-bit direct (lut_en splits format0)
   val out_is_fp4  = format_reg === 2.U
   val out_is_lut4 = lutConfig.isDefined.B && ((format_reg === 1.U) || (format_reg === 0.U && (altfmt_reg || lut_en_reg)))
   val out_is_8bit = (format_reg === 0.U && !altfmt_reg && !lut_en_reg)
@@ -242,10 +214,9 @@ class MxRequantizer[T <: Data](
   pipe_in.bits := DontCare
   val pipelined_out_0 = Pipeline(pipe_in, 1)
   val oldest_pipe_out = Pipeline(pipelined_out_0, pipelineLatency - 1)
-  
+
 
   val final_pipe_out = Wire(Decoupled(new MxRequantizerAccResp[T](half_acc_row_t, spad_row_t)(ev)))
-  dontTouch(final_pipe_out)
   val quantLut = lutConfig.map { l => Module(new QuantLut(
     l,
     outputnumLanes = io.outputnumLanes ,
@@ -274,30 +245,19 @@ class MxRequantizer[T <: Data](
 
   // Two-cycle accumulation registers for FP4 / FP6:
   val fp6_lut_out     = quantLut.map(q => Cat(q.io.projected_data.bits.reverse)).getOrElse(0.U((io.outputnumLanes*4).W))
-  val fp6_row0        = (0 until io.outputnumLanes).map(k => first_half_buf(4*k+3, 4*k))    
-  val fp6_row1        = (0 until io.outputnumLanes).map(k => fp6_lut_out(4*k+3, 4*k))      
+  val fp6_row0        = (0 until io.outputnumLanes).map(k => first_half_buf(4*k+3, 4*k))
+  val fp6_row1        = (0 until io.outputnumLanes).map(k => fp6_lut_out(4*k+3, 4*k))
   val fp6_interleaved = (0 until io.outputnumLanes/2).flatMap { j => Seq(fp6_row0(2*j), fp6_row1(2*j), fp6_row0(2*j+1), fp6_row1(2*j+1)) }
-  val fp6_combined    = Cat(fp6_interleaved.reverse)   
-  val fp6_combined_wire = WireDefault(fp6_combined)                        
-  val fp6_lut_out_wire = WireDefault(fp6_lut_out)
-  dontTouch(fp6_combined_wire)
-  dontTouch(fp6_lut_out_wire)
+  val fp6_combined    = Cat(fp6_interleaved.reverse)
 
   val fp4_row0        = (0 until io.outputnumLanes).map(k => first_half_buf(4*k+3, 4*k))
   val fp4_row1        = (0 until io.outputnumLanes).map(k => extracted_data(4*k+3, 4*k))
-  val fp4_row0_wire = WireDefault(VecInit(fp4_row0))
-  val fp4_row1_wire = WireDefault(VecInit(fp4_row1))
-  dontTouch(fp4_row0_wire)
-  dontTouch(fp4_row1_wire)
   val fp4_interleaved = (0 until io.outputnumLanes/2).flatMap { j => Seq(fp4_row0(2*j), fp4_row1(2*j), fp4_row0(2*j+1), fp4_row1(2*j+1)) }
-  val fp4_combined    = Cat(fp4_interleaved.reverse)                       
-  val fp4_combined_wire = WireDefault(fp4_combined)                        
-  dontTouch(fp4_combined_wire)
+  val fp4_combined    = Cat(fp4_interleaved.reverse)
 
   final_pipe_out.bits.out.quant_mx_data_out := 0.U.asTypeOf(spad_row_t)
   final_pipe_out.bits.out.is_garbage := false.B
-  // a two-beat output's garbage flag belongs to its beat: latched at the beat's quantize pulse and held, like its data,
-  // while the output waits (the live pair counter has already moved on to the next beat)
+  // a two-beat output's garbage flag is latched at its beat's quantize pulse and held with the data
   val garbage_held = RegInit(false.B)
   val lut_valid = quantLut.map(_.io.projected_data.valid).getOrElse(false.B)
   when(out_is_8bit) {
@@ -315,7 +275,7 @@ class MxRequantizer[T <: Data](
       }
     }
     final_pipe_out.bits.out.is_garbage := Mux(lut_valid, !quant_half_counter, garbage_held) && oldest_pipe_out.valid
-    final_pipe_out.valid :=  (oldest_pipe_out.valid)  
+    final_pipe_out.valid :=  (oldest_pipe_out.valid)
     final_pipe_out.bits.out.quant_mx_data_out := Mux(lut_valid, fp6_combined, quant_data_held).asTypeOf(spad_row_t)
 
   }.elsewhen(out_is_fp4) {
@@ -353,19 +313,16 @@ class MxRequantizer[T <: Data](
 
   val scale_room = WireDefault(true.B)   // the scale word queue can take this beat's words (driven below)
   val can_enqueue = pipe_in.ready && scale_room
-  val can_enqueue_wire = WireDefault(can_enqueue)
   // per beat: a BF16 beat passes through unquantized (same as datapath_pack_mode === 16 while the mode is static)
   val beat_full = pipelined_out_0.bits.mx_mode === MxFloatFormat.BF16
-  val full_precision_valid = RegNext(can_enqueue && pipelined_out_0.valid && beat_full)
 
-  dontTouch(can_enqueue_wire)
     // Only allow input handshake when queue has space
   io.mxacc_req.mx_data_in.ready := can_enqueue
-  
+
   io.mxacc_req.mx_data_out.bits.is_garbage := final_pipe_out.bits.out.is_garbage
   io.mxacc_req.mx_data_out.bits.full_mx_data_out := final_pipe_out.bits.out.full_mx_data_out
   io.mxacc_req.mx_data_out.bits.quant_mx_data_out  := final_pipe_out.bits.out.quant_mx_data_out
-  io.mxacc_req.mx_data_out.valid := (final_pipe_out.valid || full_precision_valid)
+  io.mxacc_req.mx_data_out.valid := final_pipe_out.valid
   io.mxacc_req.mx_data_out.bits.fromDMA := final_pipe_out.bits.out.fromDMA
   io.mxacc_req.mx_data_out.bits.acc_bank_id := final_pipe_out.bits.out.acc_bank_id
   io.mxacc_req.mx_data_out.bits.chunk_id := final_pipe_out.bits.out.chunk_id
@@ -374,7 +331,7 @@ class MxRequantizer[T <: Data](
 
   final_pipe_out.ready := io.mxacc_req.mx_data_out.ready
   oldest_pipe_out.ready := final_pipe_out.ready
-  
+
 
   should_compute := false.B
   when (can_enqueue) {
@@ -382,10 +339,8 @@ class MxRequantizer[T <: Data](
       should_compute := true.B
     }
   }
-  
+
   val flat64 = pipelined_out_0.bits.out.full_mx_data_out.flatten.map(_.asUInt)
-  val flat64_wire = WireDefault(VecInit(flat64))
-  dontTouch(flat64_wire)
   val reshaped_pipelined_out_0 = VecInit(
     flat64.flatMap(
       x => (0 until 4).map(i => x(16*(i+1)-1, 16*i))
@@ -396,11 +351,9 @@ class MxRequantizer[T <: Data](
   val numOutBlocks   = geom.blocksPerBeat
   val EPS_BIASED_EXP = 104.U(8.W)
   val scale_e8m0_vec    = Wire(Vec(numOutBlocks, UInt(8.W)))
-  val neg_e8m0_vec      = Wire(Vec(numOutBlocks, UInt(8.W)))
   val block_has_nan_vec = Wire(Vec(numOutBlocks, Bool()))
   val block_has_inf_vec = Wire(Vec(numOutBlocks, Bool()))
   val quantized_blocks  = Wire(Vec(io.outputnumLanes, UInt(8.W)))
-  dontTouch(scale_e8m0_vec); dontTouch(neg_e8m0_vec)
 
   for (blk <- 0 until numOutBlocks) {
     val elems = (0 until mxBlockSize).map(k => reshaped_pipelined_out_0(blk*mxBlockSize + k))
@@ -443,8 +396,7 @@ class MxRequantizer[T <: Data](
       scale_exponent := 0.S
       scale_e8m0 := 127.U
     }
-    // mx_flex_scales: s = amax / pmax encoded in out_fmt; elements are divided by s's mantissa here and by its
-    // power of two in brt. LUT outputs keep E8M0.
+    // mx_flex_scales: divide by s's mantissa here, its power of two in brt; LUT outputs keep E8M0
     val flex_code = WireDefault(scale_e8m0)
     val flex_neg = WireDefault(neg_e8m0_clamped)
     val flex_ms = WireDefault(0.U(MxScaleFmt.mantW.W))
@@ -465,7 +417,6 @@ class MxRequantizer[T <: Data](
       }
     }
     scale_e8m0_vec(blk) := flex_code
-    neg_e8m0_vec(blk)   := flex_neg
 
     val brt = Module(new BF16ScaleRoundToTiny(outputnumLanes = mxBlockSize, e5m2Lut = e5m2Lut))
     brt.io.in_bf16       := (if (flexScales) VecInit(elems.map(e => MxScaleFmt.divBf16(e, flex_ms))) else VecInit(elems))
@@ -490,7 +441,6 @@ class MxRequantizer[T <: Data](
       // LUT projection source: low rdataW bits of the quantized code (full 8-bit for E5M2, low-6 for FP6).
       val rdataW = lutConfig.get.rdataWidth
       val quant_fp6 = WireDefault(VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
-      dontTouch(quant_fp6)
       quant_fp6 := Mux(out_is_lut4, VecInit((0 until io.outputnumLanes).map(i => quantized_buffer(i)(rdataW - 1, 0))),
       VecInit(Seq.fill(io.outputnumLanes)(0.U(rdataW.W))))
 
@@ -534,12 +484,9 @@ class MxRequantizer[T <: Data](
       }
   }
 
-  
-  // Scale-factor stream: the E8M0 block scales leave block-major [GN][M] (byte b*M + m) -- the layout A-scales are read
-  // in -- instead of being buffered row-major. Within each block's column the scales arrive in ascending m (tile rows,
-  // then the next tile row-group), so each block in flight keeps one scales_per_write-byte staging word and emits it
-  // when full or at its column end. A column end that is not word-aligned (M % scales_per_write != 0) leaves a word
-  // shared with the next column: each side is written as a byte-masked partial Put.
+
+  // Scale stream: E8M0 scales leave block-major [GN][M] (byte b*M + m); each block in flight keeps one staging word,
+  // emitted when full or at its column end (unaligned ends: byte-masked partial Puts).
   //   fp8:    sb=super-block, bib=block-in-sb, m=16*g+row,        b=2*sb+bib
   //   nibble: sb=block(b),    bib=row-half,    m=32*g+16*bib+row, b=sb   (2 rows/beat)
   val ROWS_PER_HALF = meshColumns * tileColumns
@@ -564,9 +511,7 @@ class MxRequantizer[T <: Data](
   val ag_row = RegInit(0.U(log2Ceil(ROWS_PER_HALF).W))
   val blocks_in_sb = Mux(pw, 2.U,
                        Mux((ag_sb === (num_super - 1.U)) && gn_odd, 1.U, 2.U))
-  // Super-block arrivals = GN blocks / numOutBlocks blocks-per-arrival. At DIM16/32 GN==loop_bound_j*numOutBlocks
-  // so this equals loop_bound_j (unchanged); at DIM=8 (tile<block) loop_bound_j overcounts -> use GN/numOutBlocks.
-  // beats per row = ceil(GN / blocks per beat): an odd GN at DIM32 (N = 96) has a half-full last beat
+  // super-block arrivals = GN / numOutBlocks (= loop_bound_j at DIM16/32); beats per row = ceil(GN / blocks per beat)
   val sb_count = Mux(pw, ((GN +& (numOutBlocks - 1).U) / numOutBlocks.U), num_super)
   val super_block = Mux(pw, ag_sb, ag_jg * sbPerJg + ag_sb)
   val cur_b    = Mux(pw, ag_sb * numOutBlocks.U, (super_block << 1).asUInt + ag_bib)
@@ -611,7 +556,7 @@ class MxRequantizer[T <: Data](
             }.otherwise { ag_g := ag_g + 1.U }
           }.otherwise { ag_sb := ag_sb + 1.U }
         } else {
-          // DIM=16 (numOutBlocks==1): a super-block's 2 blocks arrive on separate beats; step bib 0->1 or cur_b stays even and block 1 is never written.
+          // DIM=16 (numOutBlocks==1): a super-block's 2 blocks arrive on separate beats, so step bib 0->1
           when(ag_bib === (blocks_in_sb - 1.U)) {
             ag_bib := 0.U
             when(ag_g === (tiles_I - 1.U)) {
@@ -627,8 +572,7 @@ class MxRequantizer[T <: Data](
   }
 
 
-  // ---- staging: one word per block in flight (a super-block's 2 blocks interleave on the fp8 path, a j-group's 4 at
-  // DIM32), keyed by block index mod nStreams; each cycle files numOutBlocks consecutive blocks of one row ----
+  // ---- staging: one word per block in flight, keyed by block index mod nStreams ----
   val sW       = scales_per_write
   val lgSW     = log2Ceil(sW)
   val nStreams = 4
@@ -676,8 +620,7 @@ class MxRequantizer[T <: Data](
   scale_q.io.enq.valid := enq.v.asUInt.orR
   scale_q.io.enq.bits  := enq
 
-  // ---- drain: per word one (masked) Put to the scale DRAM address, then, if resident, its 8-byte granules into
-  // the act-scale window (whole granules: M % 8 == 0) ----
+  // ---- drain: one (masked) Put per word, then, if resident, its 8-byte granules into the act-scale window ----
   val head    = scale_q.io.deq.bits
   val dq_k    = RegInit(0.U((log2Ceil(numOutBlocks) max 1).W))
   val dq_put  = RegInit(false.B)                         // this word's Put done

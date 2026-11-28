@@ -3,9 +3,8 @@ package gemmini
 import chisel3._
 import chisel3.util._
 
-// Runtime block-scale formats (mx_flex_scales). fmt: 0 = E8M0, 1 = E8M0 with round-to-nearest encode,
-// X in 2..7 = eXmY (X exponent bits relative to a signed per-operand base, Y = 8 - X mantissa bits, no sign,
-// saturating). Scales stay one byte, so storage and DMA layout are unchanged.
+// Runtime block-scale formats (mx_flex_scales): 0 = E8M0, 1 = E8M0 round-to-nearest, 2..7 = eXmY (signed
+// per-operand base, Y = 8 - X, saturating). Scales stay one byte.
 class MxScaleFmtCfg extends Bundle {
   val a_fmt = UInt(3.W)
   val w_fmt = UInt(3.W)
@@ -16,7 +15,6 @@ class MxScaleFmtCfg extends Bundle {
 }
 
 object MxScaleFmt {
-  val E8M0 = 0
   val E8RNE = 1
   val mantW = 6   // decoded mantissa: fraction bits of 1.m, Y <= 6
 
@@ -38,8 +36,7 @@ object MxScaleFmt {
     (bexp, mant)
   }
 
-  // bf16 x 2^(e9 - 254) x (1.mA)(1.mW): exact product, one RNE to bf16. Unit mantissas, zero/subnormal and Inf/NaN
-  // inputs take the exponent-add path unchanged (== AccumulatorMem.applyE9M0Scale).
+  // bf16 x 2^(e9 - 254) x (1.mA)(1.mW), one RNE; special and unit-mantissa inputs match applyE9M0Scale
   def applyBf16(v: UInt, e9: UInt, mA: UInt, mW: UInt, pow2: UInt => UInt): UInt = {
     val sign = v(15)
     val exp = v(14, 7)
@@ -56,13 +53,13 @@ object MxScaleFmt {
     val carry = rnd(8)
     val manOut = Mux(carry, 0.U(7.W), rnd(6, 0))
     val newExp = exp.zext +& e9.zext -& 254.S +& sh.zext +& carry.zext
-    val ce = Mux(newExp < 0.S, 0.U(8.W), Mux(newExp > 255.S, 255.U(8.W), newExp.asUInt(7, 0)))
+    val res = Mux(newExp <= 0.S, Cat(sign, 0.U(15.W)),
+      Mux(newExp >= 255.S, Cat(sign, "hff".U(8.W), 0.U(7.W)), Cat(sign, newExp.asUInt(7, 0), manOut)))
     val bypass = (mA === 0.U && mW === 0.U) || exp === 0.U || exp.andR
-    Mux(bypass, pow2(v), Cat(sign, ce, manOut))
+    Mux(bypass, pow2(v), res)
   }
 
-  // Encode s = amax / pmax as fmt. amax: biased exp (EPS-clamped) + 7-bit fraction; pmax = pmaxSig/8 x 2^log2pmax.
-  // Returns (scale code, unbiased exponent of the encoded s, 6-bit fraction of its mantissa).
+  // encode s = amax / pmax as fmt; returns (code, unbiased exponent, 6-bit fraction)
   def encode(amaxExp: UInt, amaxMan: UInt, pmaxSig: UInt, log2pmax: UInt, fmt: UInt, base: SInt): (UInt, SInt, UInt) = {
     val n = Cat(1.U(1.W), amaxMan) << 12                             // amax 1.f x 2^19
     val q = n / pmaxSig                                              // (amax/pmax mantissa ratio) x 2^16, in (2^15, 2^18)

@@ -73,11 +73,11 @@ class PE[T <: Data](inputType: T, weightType: T, outputType: T, accType: T, df: 
   val io = IO(new Bundle {
     val in_a = Input(inputType)
     val in_b = Input(outputType)
-    val in_d = Input(if (wide_prop) outputType else weightType)   // non-MX: upstream's outputType
+    val in_d = Input(if (wide_prop) outputType else weightType)   // non-MX: outputType
     val out_a = Output(inputType)
     val out_b = Output(outputType)
     val out_c = Output(outputType)
-    
+
     val in_control = Input(new PEControl(accType))
     val out_control = Output(new PEControl(accType))
 

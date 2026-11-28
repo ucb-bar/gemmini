@@ -44,9 +44,9 @@ object DSEBaseConfig {
     inputType = SInt(8.W),
     weightType = SInt(8.W),
     accType = SInt(32.W),
-    inputTypeProjected = SInt(8.W),
-    weightTypeProjected = SInt(8.W),
-    accTypeProjected = SInt(32.W),
+    inputStorageType = SInt(8.W),
+    weightStorageType = SInt(8.W),
+    accStorageType = SInt(32.W),
     spatialArrayInputType = SInt(8.W),
     spatialArrayWeightType = SInt(8.W),
     spatialArrayOutputType = SInt(19.W),
@@ -101,7 +101,7 @@ object DSEConfigs{
   val baseConfig = base.copy(headerFileName = "gemmini_params_dse1.h")
   val wsOnlyConfig = baseConfig.copy(dataflow = Dataflow.WS, headerFileName = "gemmini_params_dse2.h")
   val bothDataflowsConfig = baseConfig.copy(dataflow = Dataflow.BOTH, headerFileName = "gemmini_params_dse3.h")
-  val highBitwidthConfig = baseConfig.copy(inputType = SInt(32.W), spatialArrayOutputType = SInt(32.W),
+  val highBitwidthConfig = baseConfig.copy(inputType = SInt(32.W), inputStorageType = SInt(32.W), spatialArrayOutputType = SInt(32.W),
     headerFileName = "gemmini_params_dse4.h")
   val largerDimConfig = baseConfig.copy(meshRows = 32, meshColumns = 32, spatialArrayOutputType = SInt(20.W),
     headerFileName = "gemmini_params_dse5.h")

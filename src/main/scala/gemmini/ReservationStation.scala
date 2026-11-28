@@ -58,8 +58,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
     val busy = Output(Bool())
 
-    // vector queue: 0 = VPU idle, 1 = SPAD_REQUANT can start, 2 = an FP4 SPAD_REQUANT can start (requantizer
-    // drained of every beat); spad banks with requant rows still to be written
+    // vector queue: 0 = VPU idle, 1 = SPAD_REQUANT may start, 2 = FP4 SPAD_REQUANT may start; pending requant banks
     val vec_unit_ready = Input(Vec(3, Bool()))
     val vec_sr_fp4_waiting = Output(Bool())   // an FP4 SPAD_REQUANT is next and only waits for its unit
     val vec_pending_banks = Input(UInt(sp_banks.W))
@@ -67,8 +66,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     val mx_packed_acc = Input(Bool())
     val vec_free = Output(UInt(5.W))   // free vector-queue entries
     val ld_free = Output(UInt(log2Up(reservation_station_entries_ld + 1).W))   // free load-queue entries
-    // has_loop_retire_counter: every entry's valid bit, and the entry allocated this cycle (one-hot), both in the
-    // order ld ++ ex ++ st ++ vec
+    // has_loop_retire_counter: entry valid bits and this cycle's allocation (one-hot), order ld ++ ex ++ st ++ vec
     val entry_valid = Option.when(has_loop_retire_counter)(Output(UInt(n_all_entries.W)))
     val alloc_oh = Option.when(has_loop_retire_counter)(Output(UInt(n_all_entries.W)))
 
@@ -313,9 +311,8 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     dst.bits.start := cmd.rs2(31, 0).asTypeOf(local_addr_t)
     when (funct === PRELOAD_CMD) {
       val preload_rows = cmd.rs2(48 + log2Up(block_rows + 1) - 1, 48) * c_stride
-      // packed MX acc: the low bits of the C address pick a column group within the row group, not a row; range the
-      // group's rows (a range that starts mid-group would claim the next group's rows: false WAR on its stores)
-      when (io.mx_packed_acc && !MxCmdMode.quad(io.alloc.bits.mx.wgt) && dst.bits.start.is_acc_addr) {
+      // packed MX acc: low C-address bits pick a column group; range the whole group's rows
+      when (io.mx_packed_acc && !MxCmdMode.quad(io.alloc.bits.mxMode.wgt) && dst.bits.start.is_acc_addr) {
         dst.bits.start.data := cmd.rs2(31, 0).asTypeOf(local_addr_t).data & (~(block_rows - 1).U(dst.bits.start.data.getWidth.W)).asUInt
       }
       dst.bits.end := dst.bits.start + preload_rows
@@ -324,8 +321,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
       // TODO: make it so that spad move has its own load config states
       val mv_cols = cmd.rs2(32 + mvout_cols_bits - 1, 32)
       val mv_rows = cmd.rs2(48 + mvout_rows_bits - 1, 48)
-      // MX: an absolute row step (rs1 bit 63) spreads the rows. BF16 store (rs2[63]): row r's bf16Beats beats (kept
-      // >= 8) are consecutive at dst + r*step; others: rows*step + the tiled beats (codeBeats, one K-tile apart)
+      // MX absolute row step (rs1 bit 63); BF16 store (rs2[63]): bf16Beats consecutive beats per row at dst + r*step
       val st_step = cmd.rs1(62, 32)
       val geom = MxGeom(block_cols)
       val bf16_beats = geom.bf16Beats max 8
@@ -368,7 +364,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     }
 
     val is_load = funct === LOAD_CMD || funct === LOAD2_CMD || funct === LOAD3_CMD || (funct === CONFIG_CMD && config_cmd_type === CONFIG_LOAD)
-    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX) || (funct === CONFIG_SCALE_MEM)
+    val is_ex = funct === PRELOAD_CMD || funct_is_compute || (funct === CONFIG_CMD && config_cmd_type === CONFIG_EX) || (use_mx_scaling.B && funct === CONFIG_SCALE_MEM)
     val is_store = funct === STORE_CMD || funct === STORE_SPAD_CMD || (funct === CONFIG_CMD && (config_cmd_type === CONFIG_STORE || config_cmd_type === CONFIG_NORM))
     val is_norm = funct === CONFIG_CMD && config_cmd_type === CONFIG_NORM // normalization commands are a subset of store commands, so they still go in the store queue
 
@@ -402,13 +398,14 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     new_entry.opd.bits := DontCare
     when (is_vpu) {
       val vc = gemmini.vpu.VpuCmd.decode(cmd.rs1, cmd.rs2, log2Ceil(local_addr_t.spRows))
+      val (dstRows, src2Rows, dst2Rows) = gemmini.vpu.VpuCmd.footprints(vc)
       new_entry.opa_is_dst := true.B
-      new_entry.opa := spRange(vc.dst, gemmini.vpu.VpuCmd.dstRows(vc))
+      new_entry.opa := spRange(vc.dst, dstRows)
       new_entry.opb := spRange(vc.src1, vc.rows)
-      new_entry.opc := spRange(vc.src2, gemmini.vpu.VpuCmd.src2Rows(vc))
+      new_entry.opc := spRange(vc.src2, src2Rows)
       new_entry.opc.valid := gemmini.vpu.VpuOp.usesSrc2(vc.op)
       if (vpu_params.expSum) {
-        new_entry.opd := spRange(vc.dst2, gemmini.vpu.VpuCmd.dst2Rows(vc))
+        new_entry.opd := spRange(vc.dst2, dst2Rows)
         new_entry.opd.valid := gemmini.vpu.VpuOp.hasDst2(vc.op)
       }
     }.elsewhen (is_sreq) {
@@ -481,44 +478,35 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
     def conflicts(n: Entry, e: Entry): Bool =
       (n.opa_is_dst && ovAny(Seq(n.opa), opsOf(e))) || (e.opa_is_dst && ovAny(opsOf(n), Seq(e.opa))) ||
         ovAny(Seq(n.opd), opsOf(e)) || ovAny(opsOf(n), Seq(e.opd))
-    val is_scale_cfg = funct === CONFIG_SCALE_MEM
-    // a BF16 scratchpad store (rs2[63], set by StCSpad) shares the requantizer with SPAD_REQUANT beat by beat; only
-    // quantized stores (scale coalescer) are ordered against it
+    val is_scale_cfg = use_mx_scaling.B && funct === CONFIG_SCALE_MEM
+    // BF16 spad stores share the requantizer with SPAD_REQUANT; only quantized stores are ordered against it
     def bf16_store(c: RoCCCommand): Bool = c.inst.funct === STORE_SPAD_CMD && c.rs2(63)
-    // SPAD_REQUANT files resident act scales into act half 0; a managed, non-resident config reading act half 1
-    // touches neither, so it needn't wait for it
+    // SPAD_REQUANT writes act half 0; a managed non-resident config reading act half 1 need not wait
     val scale_cfg_after_sr = is_scale_cfg && !(cmd.rs2(17) && cmd.rs1(60) && !cmd.rs1(63))
-    // computes read the act scales of the last config ahead of them; a resident SPAD_REQUANT rewrites act half 0, so it
-    // waits for older ex entries issued under a config that may read act half 0 (WAR on the scales)
+    // a resident SPAD_REQUANT waits for older ex entries whose config may read act half 0 (scale WAR)
     val cfg_reads_act0 = RegInit(true.B)
     when (io.alloc.fire && is_scale_cfg) { cfg_reads_act0 := scale_cfg_after_sr }
     new_entry.reads_act0 := Mux(is_scale_cfg, scale_cfg_after_sr, cfg_reads_act0)
     val sr_resident = is_sreq && cmd.rs1(29)
     when (is_vec) {
-      // after older ld/ex/st that write rows it touches or read rows it writes; SPAD_REQUANT also after every older
-      // store (shared requantizer + scale coalescer; their act-scale reads finish before they complete)
+      // after older ld/ex/st with row conflicts; SPAD_REQUANT also after every older store (shared requantizer)
       new_entry.deps_ld := VecInit(entries_ld.map { e => e.valid && !e.bits.is_config && conflicts(new_entry, e.bits) })
       new_entry.deps_ex := VecInit(entries_ex.map { e => e.valid && (conflicts(new_entry, e.bits) ||
         (sr_resident && e.bits.reads_act0)) })
       new_entry.deps_st := VecInit(entries_st.map { e => e.valid && ((is_sreq && !bf16_store(e.bits.cmd.cmd)) ||
         conflicts(new_entry, e.bits)) })
-      // vector entries: SPAD_REQUANT (one unit) runs in order; VPU commands run side by side on the VPUs and next to
-      // SPAD_REQUANT. Across units they are ordered by row conflicts and by shared READ banks: each bank has one VPU
-      // read port, fixed-latency and always winning, so two readers of a bank would starve each other. Writes are a
-      // separate port (VPU writes are queued and arbitrated per bank), so sharing only a write bank is fine.
-      // opa is the destination of every vector entry; opb / opc are its sources.
+      // vector entries: SPAD_REQUANT in order, VPUs side by side; across units ordered by row conflicts and shared
+      // read banks (one always-winning VPU read port per bank). opa = destination, opb / opc = sources
       def read_banks(x: Entry): UInt = Seq(x.opb, x.opc).map(o => Mux(o.valid, o.bits.sp_banks_mask(), 0.U)).reduce(_ | _)
       new_entry.deps_vec := VecInit(entries_vec.map { e => e.valid &&
         ((is_sreq && e.bits.cmd.cmd.inst.funct === SPAD_REQUANT) || conflicts(new_entry, e.bits) ||
           (read_banks(new_entry) & read_banks(e.bits)) =/= 0.U) })
     }.otherwise {
-      // ld/ex/st after older vector entries they conflict with; stores (requantizer) and CONFIG_SCALE_MEM that may read
-      // act half 0 (the next matmul's act-scale reads must see the resident scales) after an older SPAD_REQUANT
+      // ld/ex/st after conflicting older vector entries; stores and act-half-0 CONFIG_SCALE_MEM after an older SPAD_REQUANT
       new_entry.deps_vec := VecInit(entries_vec.map { e => e.valid && !new_entry.is_config && (conflicts(new_entry, e.bits) ||
         (((is_store && !bf16_store(cmd)) || scale_cfg_after_sr) && e.bits.cmd.cmd.inst.funct === SPAD_REQUANT)) })
     }
-    // CONFIG_SCALE_MEM has no spad operands (its op ranges are decoded garbage), so the ex-vs-ld overlap above is a false
-    // RAW on every queued mvin; loads never touch the scale config (the ex controller waits for the scales to land)
+    // CONFIG_SCALE_MEM has no spad operands: skip the false RAW against queued mvins
     when (is_scale_cfg) { new_entry.deps_ld := VecInit(Seq.fill(reservation_station_entries_ld)(false.B)) }
 
     new_entry.allocated_at := instructions_allocated
@@ -689,8 +677,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
 
   // Explicitly mark "opb" in all ld/st queues entries as being invalid.
   // This helps us to reduce the total reservation table area
-  // (ex_write_to_spad: a STORE_SPAD keeps its accumulator source range in opb, so a younger matmul's acc writes wait
-  // for its read -- without it the WAR on the accumulator is lost)
+  // with STORE_SPAD, store entries keep opb (the acc rows read) so younger matmuls wait (WAR)
   (if (ex_write_to_spad) Seq(entries_ld) else Seq(entries_ld, entries_st)).foreach { entries_type =>
     entries_type.foreach { e =>
       e.bits.opb.valid := false.B
@@ -739,7 +726,7 @@ class ReservationStation[T <: Data : Arithmetic, U <: Data, V <: Data](config: G
   }.elsewhen(io.busy) {
     cycles_since_issue := cycles_since_issue + 1.U
   }
-  assert(cycles_since_issue < PlusArg("gemmini_timeout", 1000000), "pipeline stall")
+  assert(cycles_since_issue < PlusArg("gemmini_timeout", 10000), "pipeline stall")
 
   for (e <- entries) {
     dontTouch(e.bits.allocated_at)

@@ -3,21 +3,12 @@ package gemmini
 import chisel3._
 import chisel3.util._
 
-// SPAD_REQUANT: stream a row-major BF16 tile (M x N, N a multiple of 32) from the scratchpad through the existing
-// MxRequantizer. Row width W bits (128 at DIM16, 64 at DIM8, 256 at DIM32): a block = 512/W rows, its codes 256/W rows,
-// an operand-A tile T = W/8 rows. A requant beat carries B blocks (b..b+B-1) of one row: B = 1 at DIM8/16, 2 at DIM32
-// (64-lane requantizer, N a multiple of 64), so a beat reads I = B*512/W rows and writes O = B*256/W code rows
-// (DIM16: I 4, O 2, T 16; DIM8: I 8, O 4, T 8; DIM4: I 16, O 8, T 4; DIM32: I 4, O 2, T 32). Block (m, b) = 512/W consecutive spad rows from
-// src + (512/W)*(m*GN + b) -> 32 E4M3 codes at dst, flat (dst + O*(m*GN/B + b/B) + h) or operand-A tiled
-// (dst + ((m/T)*N/T + O*(b/B) + h)*T + m%T); the formulas below are written for W 128.
-// The walk is block-beat outer, row inner, so the requantizer streams the scales block-major [GN][M] (byte b*M + m)
-// to the command's scale DRAM address (and, if resident, the act-scale memory); no CONFIG_SCALE_MEM is involved.
-// FP4 (rs2[32]): blocks are fed in row pairs (m, b), (m+1, b); the requantizer packs each pair into 32 bytes (byte k =
-// row m col k low nibble | row m+1 high) = the FP4 operand-A layout, written as 2 rows at row pair p = m/2: flat
-// dst + 2*(p*GN + b) + h, tiled dst + ((p/16)*N/16 + 2b + h)*16 + p%16. Its first beat of each pair is garbage.
-// LUT (rs2[33]): same pair order / packing as FP4, but each code is the nearest index in row m's output codebook
-// (act-out LUT entry m >> G) of the LUT format given by rs2[34] (FP6 class, else FP8 class) and rs2[35] (alt format:
-// E2M3 / E5M2, else E3M2 / E4M3-quad); G = rs2[40:36]. Output codebooks: loaded flat (MX_LOAD_LUT sel 2) beforehand.
+// SPAD_REQUANT: stream a row-major BF16 tile (M x N, N % 32 == 0) from the scratchpad through MxRequantizer.
+// Row width W (64/128/256 bits at DIM8/16/32): a block = 512/W rows, its codes 256/W rows, operand-A tile T = W/8 rows;
+// a beat carries B blocks of one row (B = 2 at DIM32, else 1). Output flat or operand-A tiled (formulas for W 128).
+// Walk: block-beat outer, row inner, so scales leave block-major [GN][M] to the scale DRAM address (and act-scale mem
+// if resident). FP4 (rs2[32]) / LUT (rs2[33]): row pairs packed into the operand-A layout; LUT codes are nearest
+// indices in row m's output codebook (entry m >> G), format from rs2[34] (FP6 class) / rs2[35] (alt), G = rs2[40:36].
 class SpadRequantCmd(val addrW: Int) extends Bundle {
   val src   = UInt(addrW.W)
   val dst   = UInt(addrW.W)
@@ -50,9 +41,8 @@ object SpadRequantCmd {
 }
 
 object SpadRequantRows {
-  // exact spad footprints for ordering (RS, LoopMatmul) at rowBytes-byte rows (16 at DIM16, 8 at DIM8; tile height T =
-  // rowBytes): BF16 source M*N*2/rowBytes rows; E4M3 destination M*N/rowBytes (M rounded up to T if tiled); 4-bit
-  // destination M*N/(2*rowBytes) (M rounded up to 2T if tiled). rowBytes 16: M*N/8, M*N/16 (M16), M*N/32 (M32).
+  // exact spad footprints (RS, LoopMatmul) at rowBytes rows: BF16 src M*N*2/rowBytes; E4M3 dst M*N/rowBytes;
+  // 4-bit dst M*N/(2*rowBytes) (M rounded up to T / 2T if tiled)
   def src(c: SpadRequantCmd, rowBytes: Int): UInt = (c.m * c.n) >> log2Ceil(rowBytes / 2)
   def dst(c: SpadRequantCmd, rowBytes: Int): UInt = {
     val lg = log2Ceil(rowBytes)
@@ -107,8 +97,7 @@ class SpadRequant(addrW: Int, bankRowBits: Int, nBanks: Int, rowW: Int, maxScale
   val outTotal = Mux(c.nib, beats >> 1, beats)   // outputs (O code rows each)
   val rdCnt  = Reg(UInt(20.W))            // spad rows read (I per beat)
   val outCnt = Reg(UInt(16.W))            // outputs written
-  // beat walk: block-beat outer, row inner (rdM = 0..M-1; FP4 / LUT row pairs are consecutive rows), so each block's
-  // scales leave the requantizer in ascending m = the [GN][M] scale layout. rdRowBase = rdM * gn.
+  // beat walk: block-beat outer, row inner, so scales leave in [GN][M] order; rdRowBase = rdM * gn
   val rdM = Reg(UInt(16.W)); val rdB = Reg(UInt(16.W)); val rdRowBase = Reg(UInt(20.W)); val rdRow = Reg(UInt(lgIn.W))
   // outputs: om = row (E4M3) or row pair (4-bit), inner; ob = beat, outer; outRowBase = om * gnB
   val om     = Reg(UInt(16.W)); val ob = Reg(UInt(16.W)); val outRowBase = Reg(UInt(20.W))

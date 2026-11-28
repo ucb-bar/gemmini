@@ -34,13 +34,13 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
    tagType: U, df: Dataflow.Value, tree_reduction: Boolean, tile_latency: Int, output_delay: Int,
    tileRows: Int, tileColumns: Int, meshRows: Int, meshColumns: Int,
    leftBanks: Int, upBanks: Int, meshProdPrecisionList : Seq[T],
-   meshAccPrecisionList : Seq[T], use_mx_scaling: Boolean = true, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1,
+   meshAccPrecisionList : Seq[T], use_mx_scaling: Boolean = false, outBanks: Int = 1, n_simultaneous_matmuls: Int = -1,
    e4m3QuadThroughput: Boolean = false, has_transposer: Boolean = true, clock_gating: Boolean = true)
   extends Module {
 
   val A_TYPE = Vec(meshRows, Vec(tileRows, inputType))
-  val B_TYPE = Vec(meshColumns, Vec(tileColumns, outputType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
-  val C_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) 
+  val B_TYPE = Vec(meshColumns, Vec(tileColumns, if (use_mx_scaling) outputType else weightType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
+  val C_TYPE = Vec(meshColumns, Vec(tileColumns, outputType)) 
   val D_TYPE = Vec(meshColumns, Vec(tileColumns, weightType)) // TODO should this be weightType, inputType, or something like max(inputType, weightType)?
   val S_TYPE = Vec(meshColumns, Vec(tileColumns, new PEControl(accType)))
 
@@ -69,14 +69,8 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
     val tags_in_progress = Output(Vec(tagqlen, tagType))
   })
 
-  // Clock gating of the skew / control chains (clock_gating): the operand, control, id, last and output data chains of
-  // this wrapper and the mesh's output delays take one enable, pipe_en, which is low only while no request is held and
-  // no valid is anywhere in the pipeline. The valid chains themselves are never gated and are built from explicit
-  // registers so every stage is visible: their OR (plus the mesh's own valid stages) is the enable. With no valid in
-  // flight a frozen data chain is indistinguishable from a running one, and whenever a valid exists everything shifts
-  // in lockstep, so no consumed value changes; after reset the random register contents flush out exactly as they do
-  // without gating. Genus turns the enables into ICG cells. Elaborated only for the unbanked skew (the SRAM shifter of a
-  // banked skew runs free).
+  // clock_gating: the skew/control/output chains share one enable (pipe_en), low only when no request is held and no
+  // valid is in flight; valid chains are never gated. Unbanked skew only.
   val gate_chains = clock_gating && leftBanks == 1 && upBanks == 1 && outBanks == 1
   val pipe_en = Wire(Bool())
   val any_valid = Wire(Bool())
@@ -183,8 +177,7 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   pipe_en := (if (gate_chains) (req.valid || io.req.valid || any_valid) else true.B)
 
-  // Transposer
-  // has_transposer = false: no transposer is built and every operand bypasses it (WS, no transpose).
+  // Transposer (has_transposer = false: none built, operands bypass)
   val a_is_from_transposer = has_transposer.B &&
     Mux(req.bits.pe_control.dataflow === Dataflow.OS.id.U, !req.bits.a_transpose, req.bits.a_transpose)
   val b_is_from_transposer = has_transposer.B && req.bits.pe_control.dataflow === Dataflow.OS.id.U && req.bits.bd_transpose
@@ -215,22 +208,14 @@ class MeshWithDelays[T <: Data: Arithmetic, U <: TagQueueTag with Data]
 
   // TODO wire only to *_buf here, instead of io.*.bits
   val a_shifter_in = WireInit(Mux(a_is_from_transposer, transposer_out.asTypeOf(A_TYPE), a_buf))
-  // non-MX: widen each transposed inputType lane to B_TYPE's outputType (a raw asTypeOf would scramble the lanes)
-  val transposer_out_b = if (use_mx_scaling) transposer_out.asTypeOf(B_TYPE) else {
-    val ev = implicitly[Arithmetic[T]]; import ev._
-    VecInit(transposer_out.map(r => VecInit(r.map(_.withWidthOf(outputType))))).asTypeOf(B_TYPE)
-  }
-  val b_shifter_in = WireInit(Mux(b_is_from_transposer, transposer_out_b, b_buf))
+  val b_shifter_in = WireInit(Mux(b_is_from_transposer, transposer_out.asTypeOf(B_TYPE), b_buf))
   val d_shifter_in = WireInit(Mux(d_is_from_transposer,
     VecInit(transposer_out.flatten.reverse.grouped(tileRows).map(VecInit(_)).toSeq).asTypeOf(D_TYPE), d_buf))
-  
+
   mesh.io.in_a := shifted(a_shifter_in, leftBanks)
   mesh.io.in_b := shifted(b_shifter_in, upBanks)
   mesh.io.in_d := shifted(d_shifter_in, upBanks)
-  
-  dontTouch(mesh.io.in_a)
-  dontTouch(mesh.io.in_b)
-  dontTouch(mesh.io.in_d)
+
 
   def ctrlShift[T <: Data](x: T, n: Int): T = if (gate_chains) ShiftRegister(x, n, pipe_en) else ShiftRegister(x, n)
   mesh.io.in_control.zipWithIndex.foreach { case (ss, i) =>

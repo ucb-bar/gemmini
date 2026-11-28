@@ -118,6 +118,13 @@ class AccumulatorScale[T <: Data, U <: Data](
   val out = Wire(Decoupled(new AccumulatorScaleResp[T](
     fullDataType, rDataType, chunk_t)(ev)))
 
+  require(num_scale_units == -1 || !use_mx_scaling, "MX requantization needs a single scale unit")
+  io.mx_req_io.mx_data_in.valid := false.B
+  io.mx_req_io.mx_data_in.bits := DontCare
+  io.mx_req_io.mx_mode := 0.U
+  io.mx_req_io.mx_fp8_altfmt := false.B
+  io.mx_req_io.mx_data_out.ready := false.B
+
   if (num_scale_units == -1) {
     val data = io.in.bits.acc_read_resp.data
     val act = io.in.bits.acc_read_resp.act
@@ -176,11 +183,6 @@ class AccumulatorScale[T <: Data, U <: Data](
       out.bits.acc_bank_id := io.mx_req_io.mx_data_out.bits.acc_bank_id
       out.bits.chunk_id := io.mx_req_io.mx_data_out.bits.chunk_id
     } else {
-      io.mx_req_io.mx_data_in.valid := false.B
-      io.mx_req_io.mx_data_in.bits := DontCare
-      io.mx_req_io.mx_mode := 0.U
-      io.mx_req_io.mx_fp8_altfmt := false.B
-      io.mx_req_io.mx_data_out.ready := false.B
 
       val in = Wire(Decoupled(new AccumulatorReadRespWithFullData(fullDataType, scale_t, chunk_t)(ev)))
       in.valid := io.in.valid
@@ -234,6 +236,8 @@ class AccumulatorScale[T <: Data, U <: Data](
           regs(i).bits  := io.in.bits
           out_regs(i).fromDMA := io.in.bits.acc_read_resp.fromDMA
           out_regs(i).acc_bank_id := io.in.bits.acc_read_resp.acc_bank_id
+          out_regs(i).chunk_id := io.in.bits.acc_read_resp.chunk_id
+          out_regs(i).is_garbage := false.B
           fired_masks(i).foreach(_ := false.B)
           completed_masks(i).foreach(_ := false.B)
         }

@@ -5,7 +5,7 @@ import chisel3.util._
 
 
 class ScalingFactorReadReq extends Bundle {
-  val scaling_enable = Bool() 
+  val scaling_enable = Bool()
   val halves = UInt(2.W)   // {wgt, act} half, carried with the write so a config switch needs no drain
   val multi = Bool()       // the producing compute's weight / activation quad mode (selects the scale layout)
   val multi_act = Bool()
@@ -27,7 +27,7 @@ object MxScalePos {
   def stamp(rs: UInt, lo: Int, v: UInt): UInt = (rs & ~(0x1ff.U(64.W) << lo)) | (v(8, 0) << lo)
 }
 
-class ScalingFactorReadResp(numRows: Int, numCols: Int, flex: Boolean = false) extends Bundle {  
+class ScalingFactorReadResp(numRows: Int, numCols: Int, flex: Boolean = false) extends Bundle {
   val combined_scales = Vec(numRows/2, UInt(36.W))
   // mx_flex_scales: (act, weight) 6-bit mantissa fractions, 4 x 12 bits per lane in combined_scales' layout
   val mant = Option.when(flex)(Vec(numRows/2, UInt(48.W)))
@@ -48,25 +48,23 @@ class ScalingFactorMemIO(addrWidth: Int, dataWidth: Int, numRows: Int, numCols: 
   val mx_fp8_altfmt = Input(Bool())   // code0 sub-format: 1 = E5M2 (4-bit LUT output, nibble scale layout)
   val scaleMemCntl = Input(new ScalingFactorCntl(meshRows*tileRows)) // dummy output to match interface
   val counter_i = Input(UInt(16.W))
-  val counter_j = Input(UInt(16.W))  
+  val counter_j = Input(UInt(16.W))
   val counter_k = Input(UInt(16.W))
   val i = Input(UInt(16.W))
-  val j = Input(UInt(16.W))  
+  val j = Input(UInt(16.W))
   val k = Input(UInt(16.W))
 }
 
 class ScalingFactorMem(
-  depth: Int = 64,                     
-  sramWidth: Int = 128,                 
-  actOutputScalingWidth: Int = 8,       
+  depth: Int = 64,
+  sramWidth: Int = 128,
+  actOutputScalingWidth: Int = 8,
   numBanks: Int = 8,
   testConfig: Boolean = false ,
   meshRows: Int,
   tileRows: Int,
   flexScales: Boolean = false,
 ) extends Module {
-  val scaleMemSizeFactor = 4
-  val doubleBufferFactor = 2
   val totalSizeBytes = depth*sramWidth*numBanks/8
   val bytesPerBank = sramWidth / 8
   require(sramWidth >= 64 || sramWidth == 32, "scale-mem lines: 4 bytes or a multiple of 8")
@@ -74,12 +72,11 @@ class ScalingFactorMem(
   val scaleWords = (sramWidth / 64) max 1
   val halfWordLines = sramWidth < 64
   val AddrWidth = log2Ceil(totalSizeBytes)
-  val bankaddressWidth = log2Ceil(numBanks)
   val totalScales = 2*meshRows*tileRows
-  val counterWidth = log2Ceil(totalScales)  
+  val counterWidth = log2Ceil(totalScales)
   val io = IO(new ScalingFactorMemIO(
-    AddrWidth, 
-    64, 
+    AddrWidth,
+    64,
     2*meshRows*tileRows,  // 32 rows (activation scales)
     2*meshRows*tileRows,   // 32 columns (weight scales)
     meshRows,
@@ -88,14 +85,11 @@ class ScalingFactorMem(
   ))
   val flex_io = Option.when(flexScales)(IO(Input(new MxScaleFmtCfg)))
 
-  val initByte = 0x7e.U(8.W)
-  val defaultRow = VecInit(Seq.fill(bytesPerBank)(initByte)) 
   val counter_i = io.counter_i
   val counter_j = io.counter_j
   val counter_k = io.counter_k
-  // Per-bank depth from scale_mem config (DIM16->128, DIM32->64); was hardcoded 64, capping resident K at 1024.
+  // Per-bank depth from scale_mem config (DIM16->128, DIM32->64).
   val depth_sram = depth
-  val half_sfMem_rows = depth_sram * numBanks / 2
   val bankDataT = Vec(bytesPerBank, UInt(8.W))
   // 4-byte lines: each bank is 2 row-interleaved sub-banks (row r -> sub r(0), row r >> 1), so one 8-B loader word
   // fills logical rows r, r+1 of one bank (single-throughput layout) in one cycle. One write call per sub-bank.
@@ -137,10 +131,9 @@ class ScalingFactorMem(
   val combined_scales_valid = WireDefault(false.B)
 
   // Per-axis scale layout: 16-wide (single) iff that operand is single-throughput, else 32-wide (quad).
-  // For symmetric configs both equal the legacy fp8Mode; they differ only for dual throughput.
+  // Equal for symmetric configs; they differ only for dual throughput.
   val fp8Mode_wei = !io.mx_multi_elem       // weight single -> 16-wide weight (column) scales
   val fp8Mode_act = !io.mx_multi_elem_act   // act single    -> 16-wide act (row) scales
-  val fp8Mode = fp8Mode_act && fp8Mode_wei  // legacy both-single path (E4M3-single symmetric)
   // write side: the loading command's layout when it gives one (loop loads), else the live mode
   val fp8Mode_wei_wr = Mux(io.wr_layout_w.valid, !io.wr_layout_w.bits, fp8Mode_wei)
   val fp8Mode_act_wr = Mux(io.wr_layout_act.valid, !io.wr_layout_act.bits, fp8Mode_act)
@@ -151,15 +144,10 @@ class ScalingFactorMem(
   // FP8 mode
   val write_row_addr_w_fp8 = WireInit(write_addr_w(log2Ceil(bytesPerBank) + log2Ceil(depth_sram) - 1, log2Ceil(bytesPerBank)))
   val bank_idx_w_fp8 = WireInit(write_addr_w(log2Ceil(bytesPerBank) + log2Ceil(depth_sram) + 1, log2Ceil(bytesPerBank) + log2Ceil(depth_sram)))
-  // Non-FP8 mode  
+  // Non-FP8 mode
   val bank_idx_w_internal = WireInit(write_addr_w(log2Ceil(bytesPerBank)))
   val write_row_addr_w_nonfp8 = WireInit(write_addr_w(log2Ceil(bytesPerBank) + log2Ceil(depth_sram), log2Ceil(bytesPerBank) + 1))
   val bank_idx_w_nonfp8 = WireInit(write_addr_w(log2Ceil(bytesPerBank) + log2Ceil(depth_sram) + 2, log2Ceil(bytesPerBank) + log2Ceil(depth_sram) + 1))
-  dontTouch(write_row_addr_w_fp8)
-  dontTouch(bank_idx_w_fp8)
-  dontTouch(bank_idx_w_internal)
-  dontTouch(write_row_addr_w_nonfp8)
-  dontTouch(bank_idx_w_nonfp8)
 
   if (halfWordLines) {
     // 4-byte lines: quad -> word bytes 0-3 / 4-7 to the bank pair, same row; single -> rows r, r+1 of one bank
@@ -187,7 +175,7 @@ class ScalingFactorMem(
       write_weight_counter := write_weight_counter + 1.U
       write_weight_words(write_weight_counter) := io.scale_mem_write_w.bits.data
   }
-  
+
   val write_addr_a = io.scale_mem_write_act.bits.addr
   val write_act_counter  = RegInit(0.U((log2Ceil(scaleWords) max 1).W))
   val write_act_words = RegInit(VecInit(Seq.fill(scaleWords)(0.U(64.W))))
@@ -198,11 +186,6 @@ class ScalingFactorMem(
   val bank_idx_act_internal = WireInit(write_addr_a(log2Ceil(bytesPerBank)))
   val write_row_addr_act_nonfp8 = WireInit(write_addr_a(log2Ceil(bytesPerBank) + log2Ceil(depth_sram), log2Ceil(bytesPerBank) + 1))
   val bank_idx_act_nonfp8 = WireInit(write_addr_a(log2Ceil(bytesPerBank) + log2Ceil(depth_sram) + 2, log2Ceil(bytesPerBank) + log2Ceil(depth_sram) + 1))
-  dontTouch(write_row_addr_act_fp8)
-  dontTouch(bank_idx_act_fp8)
-  dontTouch(bank_idx_act_internal)
-  dontTouch(write_row_addr_act_nonfp8)
-  dontTouch(bank_idx_act_nonfp8)
   if (halfWordLines) {
     val halves = io.scale_mem_write_act.bits.data.asTypeOf(Vec(2, bankDataT))
     when (io.scale_mem_write_act.fire) {
@@ -230,8 +213,6 @@ class ScalingFactorMem(
   }
 
 
-  val max_block_fp8 = meshRows * tileRows
-  val max_block_non_fp8 = 2 * meshRows * tileRows
 
   // MxGeom.T k-tiles share one block scale -> advance the scale-row address once every T k-tiles
   val kScaleShift = log2Ceil(MxGeom(meshRows*tileRows).T)
@@ -251,30 +232,22 @@ class ScalingFactorMem(
   val double_buffer_act_sel = io.read_req.bits.halves(0)
   val double_buffer_w_sel = io.read_req.bits.halves(1)
 
-  dontTouch(read_row_addr_act)
-  dontTouch(read_row_addr_w)
-  dontTouch(read_bank_idx_act)
-  dontTouch(read_bank_idx_w)
-  dontTouch(read_row_addr_act_real)
-  dontTouch(read_row_addr_w_real)
 
   io.scale_mem_write_w.ready := true.B
   io.scale_mem_write_act.ready := true.B
 
   val act_scales = WireDefault(VecInit(Seq.fill(meshRows*tileRows * 2)(0.U(8.W))))
   val weight_scales = WireDefault(VecInit(Seq.fill(meshRows*tileRows * 2)(0.U(8.W))))
-  dontTouch(act_scales)
-  dontTouch(weight_scales)
-  
- 
+
+
 
   def multiplyScalesE8M0(act: UInt, weight: UInt): UInt = {
     val sum = act +& weight
     sum(8, 0)
   }
-  val read_fire_real = WireDefault(false.B) 
+  val read_fire_real = WireDefault(false.B)
   val read_fire_real_d = RegNext(read_fire_real)
-  
+
   read_fire_real := read_fire && (rq_row === 0.U)
 
   // read side: the mode of the requesting write (request cycle) and its registered copy (response cycle)
@@ -365,10 +338,10 @@ class ScalingFactorMem(
     for(j <- 0 until 2*meshRows*tileRows) {
       when(read_fire_d1) {
         combined_scales_buffer(i)(j) := multiplyScalesE8M0(act_exp(i), weight_exp(j))
-        combined_scales_valid := true.B  
+        combined_scales_valid := true.B
       }.otherwise {
         combined_scales_buffer(i)(j) := 0.U
-        combined_scales_valid := false.B  
+        combined_scales_valid := false.B
       }
     }
   }
@@ -423,8 +396,8 @@ class ScalingFactorMem(
         }
       }.otherwise{
         for (i <- 0 until meshRows*tileRows) {
-          val scale_row_0 = combined_scales_buffer_reg((scale_counter_d1 << 1.U))      
-          val scale_row_1 = combined_scales_buffer_reg((scale_counter_d1 << 1.U) + 1.U) 
+          val scale_row_0 = combined_scales_buffer_reg((scale_counter_d1 << 1.U))
+          val scale_row_1 = combined_scales_buffer_reg((scale_counter_d1 << 1.U) + 1.U)
           val scale_all = Cat(scale_row_1.asUInt, scale_row_0.asUInt)
           io.read_resp.bits.combined_scales(i) := scale_all(36*i+35, 36*i)
         }
